@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Built-in CIS repository management module.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Cis.Abstractions\Cis.Abstractions.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" />
+    <PackageReference Include="YamlDotNet" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Cis.Modules.Repository.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\docs\templates\default-design-guidelines.md" Link="Defaults\default-design-guidelines.md" />
+    <EmbeddedResource Include="..\..\docs\templates\design-guidelines-template.md" Link="Defaults\design-guidelines-template.md" />
+  </ItemGroup>
+</Project>

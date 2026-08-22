@@ -1,0 +1,6 @@
+schema_version: 1
+
+repository:
+  id: change-impact-studio
+
+documentation_root: docs

@@ -1,0 +1,49 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Cis.Providers.Tracker.GitHub/Cis.Providers.Tracker.GitHub.csproj" />
+    <Project Path="src/Cis.Providers.Tracker.Jira/Cis.Providers.Tracker.Jira.csproj" />
+    <Project Path="src/Cis.Modules.Ai/Cis.Modules.Ai.csproj" />
+    <Project Path="src/Cis.Modules.Agent/Cis.Modules.Agent.csproj" />
+    <Project Path="src/Cis.Modules.Api/Cis.Modules.Api.csproj" />
+    <Project Path="src/Cis.Abstractions/Cis.Abstractions.csproj" />
+    <Project Path="src/Cis.Host/Cis.Host.csproj" />
+    <Project Path="src/Cis.Modules.Context/Cis.Modules.Context.csproj" />
+    <Project Path="src/Cis.Modules.Brd/Cis.Modules.Brd.csproj" />
+    <Project Path="src/Cis.Modules.Change/Cis.Modules.Change.csproj" />
+    <Project Path="src/Cis.Modules.Decision/Cis.Modules.Decision.csproj" />
+    <Project Path="src/Cis.Modules.Design/Cis.Modules.Design.csproj" />
+    <Project Path="src/Cis.Modules.Diagnostics/Cis.Modules.Diagnostics.csproj" />
+    <Project Path="src/Cis.Modules.Docs/Cis.Modules.Docs.csproj" />
+    <Project Path="src/Cis.Modules.Feedback/Cis.Modules.Feedback.csproj" />
+    <Project Path="src/Cis.Modules.Generate/Cis.Modules.Generate.csproj" />
+    <Project Path="src/Cis.Modules.Graph/Cis.Modules.Graph.csproj" />
+    <Project Path="src/Cis.Modules.Host/Cis.Modules.Host.csproj" />
+    <Project Path="src/Cis.Modules.Impact/Cis.Modules.Impact.csproj" />
+    <Project Path="src/Cis.Modules.Index/Cis.Modules.Index.csproj" />
+    <Project Path="src/Cis.Modules.Learn/Cis.Modules.Learn.csproj" />
+    <Project Path="src/Cis.Modules.Plan/Cis.Modules.Plan.csproj" />
+    <Project Path="src/Cis.Modules.Repository/Cis.Modules.Repository.csproj" />
+    <Project Path="src/Cis.Modules.Skills/Cis.Modules.Skills.csproj" />
+    <Project Path="src/Cis.Modules.Standards/Cis.Modules.Standards.csproj" />
+    <Project Path="src/Cis.Modules.TechnicalIntent/Cis.Modules.TechnicalIntent.csproj" />
+    <Project Path="src/Cis.Modules.Tracker/Cis.Modules.Tracker.csproj" />
+    <Project Path="src/Cis.Modules.Workflow/Cis.Modules.Workflow.csproj" />
+    <Project Path="src/Cis.Modules.Verify/Cis.Modules.Verify.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Cis.Modules.Api.Tests/Cis.Modules.Api.Tests.csproj" />
+    <Project Path="tests/Cis.Modules.Feedback.Tests/Cis.Modules.Feedback.Tests.csproj" />
+    <Project Path="tests/Cis.Modules.Index.Tests/Cis.Modules.Index.Tests.csproj" />
+    <Project Path="tests/Cis.Modules.Brd.Tests/Cis.Modules.Brd.Tests.csproj" />
+    <Project Path="tests/Cis.Modules.Context.Tests/Cis.Modules.Context.Tests.csproj" />
+    <Project Path="tests/Cis.Modules.Delivery.Tests/Cis.Modules.Delivery.Tests.csproj" />
+    <Project Path="tests/Cis.Modules.Docs.Tests/Cis.Modules.Docs.Tests.csproj" />
+    <Project Path="tests/Cis.Modules.Graph.Tests/Cis.Modules.Graph.Tests.csproj" />
+    <Project Path="tests/Cis.Host.Tests/Cis.Host.Tests.csproj" />
+    <Project Path="tests/Cis.Modules.Repository.Tests/Cis.Modules.Repository.Tests.csproj" />
+    <Project Path="tests/Cis.Modules.Skills.Tests/Cis.Modules.Skills.Tests.csproj" />
+    <Project Path="tests/Cis.Modules.Standards.Tests/Cis.Modules.Standards.Tests.csproj" />
+    <Project Path="tests/Cis.Modules.TechnicalIntent.Tests/Cis.Modules.TechnicalIntent.Tests.csproj" />
+    <Project Path="tests/Cis.Modules.Tracker.Tests/Cis.Modules.Tracker.Tests.csproj" />
+  </Folder>
+</Solution>

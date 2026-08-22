@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Built-in CIS bounded delivery planning module.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Cis.Abstractions\Cis.Abstractions.csproj" />
+    <ProjectReference Include="..\Cis.Modules.Change\Cis.Modules.Change.csproj" />
+    <ProjectReference Include="..\Cis.Modules.Decision\Cis.Modules.Decision.csproj" />
+    <ProjectReference Include="..\Cis.Modules.Impact\Cis.Modules.Impact.csproj" />
+    <ProjectReference Include="..\Cis.Modules.Feedback\Cis.Modules.Feedback.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" />
+  </ItemGroup>
+</Project>

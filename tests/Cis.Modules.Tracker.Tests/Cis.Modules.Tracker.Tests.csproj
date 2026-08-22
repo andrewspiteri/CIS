@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><IsTestProject>true</IsTestProject><IsPackable>false</IsPackable></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Cis.Providers.Tracker.GitHub\Cis.Providers.Tracker.GitHub.csproj" />
+    <ProjectReference Include="..\..\src\Cis.Providers.Tracker.Jira\Cis.Providers.Tracker.Jira.csproj" />
+    <ProjectReference Include="..\..\src\Cis.Modules.Tracker\Cis.Modules.Tracker.csproj" />
+    <ProjectReference Include="..\..\src\Cis.Host\Cis.Host.csproj" />
+    <ProjectReference Include="..\..\src\Cis.Modules.Repository\Cis.Modules.Repository.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+</Project>

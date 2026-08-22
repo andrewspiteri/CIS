@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><Description>Portable provider-neutral agent task envelopes and governed result ingestion.</Description></PropertyGroup>
+  <ItemGroup><ProjectReference Include="..\Cis.Abstractions\Cis.Abstractions.csproj" /></ItemGroup>
+  <ItemGroup><PackageReference Include="System.CommandLine" /></ItemGroup>
+</Project>

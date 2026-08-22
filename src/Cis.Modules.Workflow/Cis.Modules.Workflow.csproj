@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><Description>Deterministic, resumable CIS workflow execution and run evidence.</Description></PropertyGroup>
+  <ItemGroup><ProjectReference Include="..\Cis.Abstractions\Cis.Abstractions.csproj" /></ItemGroup>
+  <ItemGroup><PackageReference Include="System.CommandLine" /></ItemGroup>
+</Project>

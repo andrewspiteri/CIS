@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Cis.Host\Cis.Host.csproj" />
+    <ProjectReference Include="..\..\src\Cis.Modules.Change\Cis.Modules.Change.csproj" />
+    <ProjectReference Include="..\..\src\Cis.Modules.Agent\Cis.Modules.Agent.csproj" />
+    <ProjectReference Include="..\..\src\Cis.Modules.Ai\Cis.Modules.Ai.csproj" />
+    <ProjectReference Include="..\..\src\Cis.Modules.Diagnostics\Cis.Modules.Diagnostics.csproj" />
+    <ProjectReference Include="..\..\src\Cis.Modules.Generate\Cis.Modules.Generate.csproj" />
+    <ProjectReference Include="..\..\src\Cis.Modules.Learn\Cis.Modules.Learn.csproj" />
+    <ProjectReference Include="..\..\src\Cis.Modules.Verify\Cis.Modules.Verify.csproj" />
+    <ProjectReference Include="..\..\src\Cis.Modules.Workflow\Cis.Modules.Workflow.csproj" />
+    <ProjectReference Include="..\..\src\Cis.Modules.Context\Cis.Modules.Context.csproj" />
+    <ProjectReference Include="..\..\src\Cis.Modules.Decision\Cis.Modules.Decision.csproj" />
+    <ProjectReference Include="..\..\src\Cis.Modules.Design\Cis.Modules.Design.csproj" />
+    <ProjectReference Include="..\..\src\Cis.Modules.Feedback\Cis.Modules.Feedback.csproj" />
+    <ProjectReference Include="..\..\src\Cis.Modules.Docs\Cis.Modules.Docs.csproj" />
+    <ProjectReference Include="..\..\src\Cis.Modules.Graph\Cis.Modules.Graph.csproj" />
+    <ProjectReference Include="..\..\src\Cis.Modules.Impact\Cis.Modules.Impact.csproj" />
+    <ProjectReference Include="..\..\src\Cis.Modules.Plan\Cis.Modules.Plan.csproj" />
+    <ProjectReference Include="..\..\src\Cis.Modules.Repository\Cis.Modules.Repository.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+</Project>

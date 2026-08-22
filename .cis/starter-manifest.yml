@@ -1,0 +1,1307 @@
+schema_version: 1
+repository_shape: monorepo
+components:
+- id: cis-abstractions
+  root: src/Cis.Abstractions
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - shared-library
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - src/Cis.Abstractions/Cis.Abstractions.csproj
+- id: cis-host
+  root: src/Cis.Host
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - package-producer
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - src/Cis.Host/Cis.Host.csproj
+- id: cis-modules-agent
+  root: src/Cis.Modules.Agent
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - shared-library
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - src/Cis.Modules.Agent/Cis.Modules.Agent.csproj
+- id: cis-modules-ai
+  root: src/Cis.Modules.Ai
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - shared-library
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - src/Cis.Modules.Ai/Cis.Modules.Ai.csproj
+- id: cis-modules-api
+  root: src/Cis.Modules.Api
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - shared-library
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - src/Cis.Modules.Api/Cis.Modules.Api.csproj
+- id: cis-modules-brd
+  root: src/Cis.Modules.Brd
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - shared-library
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - src/Cis.Modules.Brd/Cis.Modules.Brd.csproj
+- id: cis-modules-change
+  root: src/Cis.Modules.Change
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - shared-library
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - src/Cis.Modules.Change/Cis.Modules.Change.csproj
+- id: cis-modules-context
+  root: src/Cis.Modules.Context
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - shared-library
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - src/Cis.Modules.Context/Cis.Modules.Context.csproj
+- id: cis-modules-decision
+  root: src/Cis.Modules.Decision
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - shared-library
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - src/Cis.Modules.Decision/Cis.Modules.Decision.csproj
+- id: cis-modules-design
+  root: src/Cis.Modules.Design
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - shared-library
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - src/Cis.Modules.Design/Cis.Modules.Design.csproj
+- id: cis-modules-diagnostics
+  root: src/Cis.Modules.Diagnostics
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - shared-library
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - src/Cis.Modules.Diagnostics/Cis.Modules.Diagnostics.csproj
+- id: cis-modules-docs
+  root: src/Cis.Modules.Docs
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - shared-library
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - src/Cis.Modules.Docs/Cis.Modules.Docs.csproj
+- id: cis-modules-feedback
+  root: src/Cis.Modules.Feedback
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - shared-library
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - src/Cis.Modules.Feedback/Cis.Modules.Feedback.csproj
+- id: cis-modules-generate
+  root: src/Cis.Modules.Generate
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - shared-library
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - src/Cis.Modules.Generate/Cis.Modules.Generate.csproj
+- id: cis-modules-graph
+  root: src/Cis.Modules.Graph
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - shared-library
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - src/Cis.Modules.Graph/Cis.Modules.Graph.csproj
+- id: cis-modules-host
+  root: src/Cis.Modules.Host
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - shared-library
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - src/Cis.Modules.Host/Cis.Modules.Host.csproj
+- id: cis-modules-impact
+  root: src/Cis.Modules.Impact
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - shared-library
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - src/Cis.Modules.Impact/Cis.Modules.Impact.csproj
+- id: cis-modules-index
+  root: src/Cis.Modules.Index
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - shared-library
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - src/Cis.Modules.Index/Cis.Modules.Index.csproj
+- id: cis-modules-learn
+  root: src/Cis.Modules.Learn
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - shared-library
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - src/Cis.Modules.Learn/Cis.Modules.Learn.csproj
+- id: cis-modules-plan
+  root: src/Cis.Modules.Plan
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - shared-library
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - src/Cis.Modules.Plan/Cis.Modules.Plan.csproj
+- id: cis-modules-repository
+  root: src/Cis.Modules.Repository
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - shared-library
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - src/Cis.Modules.Repository/Cis.Modules.Repository.csproj
+- id: cis-modules-skills
+  root: src/Cis.Modules.Skills
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - shared-library
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - src/Cis.Modules.Skills/Cis.Modules.Skills.csproj
+- id: cis-modules-standards
+  root: src/Cis.Modules.Standards
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - shared-library
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - src/Cis.Modules.Standards/Cis.Modules.Standards.csproj
+- id: cis-modules-technicalintent
+  root: src/Cis.Modules.TechnicalIntent
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - shared-library
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - src/Cis.Modules.TechnicalIntent/Cis.Modules.TechnicalIntent.csproj
+- id: cis-modules-tracker
+  root: src/Cis.Modules.Tracker
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - shared-library
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - src/Cis.Modules.Tracker/Cis.Modules.Tracker.csproj
+- id: cis-modules-verify
+  root: src/Cis.Modules.Verify
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - shared-library
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - src/Cis.Modules.Verify/Cis.Modules.Verify.csproj
+- id: cis-modules-workflow
+  root: src/Cis.Modules.Workflow
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - shared-library
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - src/Cis.Modules.Workflow/Cis.Modules.Workflow.csproj
+- id: cis-providers-tracker-github
+  root: src/Cis.Providers.Tracker.GitHub
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - shared-library
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - src/Cis.Providers.Tracker.GitHub/Cis.Providers.Tracker.GitHub.csproj
+- id: cis-providers-tracker-jira
+  root: src/Cis.Providers.Tracker.Jira
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - shared-library
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - src/Cis.Providers.Tracker.Jira/Cis.Providers.Tracker.Jira.csproj
+- id: cis-host-tests
+  root: tests/Cis.Host.Tests
+  languages:
+  - csharp
+  frameworks:
+  - dotnet-test
+  roles:
+  - test-automation
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - tests/Cis.Host.Tests/Cis.Host.Tests.csproj
+  - .NET test SDK markers
+- id: cis-modules-api-tests
+  root: tests/Cis.Modules.Api.Tests
+  languages:
+  - csharp
+  frameworks:
+  - dotnet-test
+  roles:
+  - test-automation
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - tests/Cis.Modules.Api.Tests/Cis.Modules.Api.Tests.csproj
+  - .NET test SDK markers
+- id: cis-modules-brd-tests
+  root: tests/Cis.Modules.Brd.Tests
+  languages:
+  - csharp
+  frameworks:
+  - dotnet-test
+  roles:
+  - test-automation
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - tests/Cis.Modules.Brd.Tests/Cis.Modules.Brd.Tests.csproj
+  - .NET test SDK markers
+- id: cis-modules-context-tests
+  root: tests/Cis.Modules.Context.Tests
+  languages:
+  - csharp
+  frameworks:
+  - dotnet-test
+  roles:
+  - test-automation
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - tests/Cis.Modules.Context.Tests/Cis.Modules.Context.Tests.csproj
+  - .NET test SDK markers
+- id: cis-modules-delivery-tests
+  root: tests/Cis.Modules.Delivery.Tests
+  languages:
+  - csharp
+  frameworks:
+  - dotnet-test
+  roles:
+  - test-automation
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - tests/Cis.Modules.Delivery.Tests/Cis.Modules.Delivery.Tests.csproj
+  - .NET test SDK markers
+- id: cis-modules-docs-tests
+  root: tests/Cis.Modules.Docs.Tests
+  languages:
+  - csharp
+  frameworks:
+  - dotnet-test
+  roles:
+  - test-automation
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - tests/Cis.Modules.Docs.Tests/Cis.Modules.Docs.Tests.csproj
+  - .NET test SDK markers
+- id: cis-modules-feedback-tests
+  root: tests/Cis.Modules.Feedback.Tests
+  languages:
+  - csharp
+  frameworks:
+  - dotnet-test
+  roles:
+  - test-automation
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - tests/Cis.Modules.Feedback.Tests/Cis.Modules.Feedback.Tests.csproj
+  - .NET test SDK markers
+- id: cis-modules-graph-tests
+  root: tests/Cis.Modules.Graph.Tests
+  languages:
+  - csharp
+  frameworks:
+  - dotnet-test
+  roles:
+  - test-automation
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - tests/Cis.Modules.Graph.Tests/Cis.Modules.Graph.Tests.csproj
+  - .NET test SDK markers
+- id: cis-modules-index-tests
+  root: tests/Cis.Modules.Index.Tests
+  languages:
+  - csharp
+  frameworks:
+  - dotnet-test
+  roles:
+  - test-automation
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - tests/Cis.Modules.Index.Tests/Cis.Modules.Index.Tests.csproj
+  - .NET test SDK markers
+- id: cis-modules-repository-tests
+  root: tests/Cis.Modules.Repository.Tests
+  languages:
+  - csharp
+  frameworks:
+  - dotnet-test
+  roles:
+  - test-automation
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - tests/Cis.Modules.Repository.Tests/Cis.Modules.Repository.Tests.csproj
+  - .NET test SDK markers
+- id: cis-modules-skills-tests
+  root: tests/Cis.Modules.Skills.Tests
+  languages:
+  - csharp
+  frameworks:
+  - dotnet-test
+  roles:
+  - test-automation
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - tests/Cis.Modules.Skills.Tests/Cis.Modules.Skills.Tests.csproj
+  - .NET test SDK markers
+- id: cis-modules-standards-tests
+  root: tests/Cis.Modules.Standards.Tests
+  languages:
+  - csharp
+  frameworks:
+  - dotnet-test
+  roles:
+  - test-automation
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - tests/Cis.Modules.Standards.Tests/Cis.Modules.Standards.Tests.csproj
+  - .NET test SDK markers
+- id: cis-modules-technicalintent-tests
+  root: tests/Cis.Modules.TechnicalIntent.Tests
+  languages:
+  - csharp
+  frameworks:
+  - dotnet-test
+  roles:
+  - test-automation
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - tests/Cis.Modules.TechnicalIntent.Tests/Cis.Modules.TechnicalIntent.Tests.csproj
+  - .NET test SDK markers
+- id: cis-modules-tracker-tests
+  root: tests/Cis.Modules.Tracker.Tests
+  languages:
+  - csharp
+  frameworks:
+  - dotnet-test
+  roles:
+  - test-automation
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - tests/Cis.Modules.Tracker.Tests/Cis.Modules.Tracker.Tests.csproj
+  - .NET test SDK markers
+- id: change-impact-studio
+  root: vscode-extension
+  languages:
+  - javascript
+  frameworks:
+  - vscode-extension
+  roles:
+  - tooling
+  capabilities:
+  - commands
+  - configuration
+  - packages
+  confidence: high
+  evidence:
+  - vscode-extension/package.json
+  - vscode-extension package dependency
+managed_artifacts:
+- id: guidance.instruction.csharp.cis-abstractions
+  path: .github/instructions/cis-abstractions-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:539990e0ca789857992f2668df2eed6016465b42e0f8ce65be9c5f67eaad62ab
+  ownership: managed
+- id: guidance.instruction.business-requirements
+  path: .github/instructions/cis-business-requirements.instructions.md
+  definition: guidance.instruction.business-requirements
+  template_version: 1
+  applied_hash: sha256:02a7718ee5e956607307d7ee34c7995fe5ea81296939278e2c12a59ab27f2b76
+  ownership: human
+- id: guidance.instruction.change-delivery
+  path: .github/instructions/cis-change-delivery.instructions.md
+  definition: guidance.instruction.change-delivery
+  template_version: 1
+  applied_hash: sha256:5abbb1f8f5ef09f5bd6d92f43801d24aa9d0ec3138a02a032ccb50deb50a0ee6
+  ownership: human
+- id: guidance.instruction.delivery-execution
+  path: .github/instructions/cis-delivery-execution.instructions.md
+  definition: guidance.instruction.delivery-execution
+  template_version: 1
+  applied_hash: sha256:2a9eed3f9e2c87111c8066da9363c95e3ba14e7c9f2763a296c4d6bdbafdb495
+  ownership: human
+- id: guidance.instruction.external-tracker
+  path: .github/instructions/cis-external-tracker.instructions.md
+  definition: guidance.instruction.external-tracker
+  template_version: 1
+  applied_hash: sha256:4490303b0c0b0a8ec85f7dfedf11219a2186f029ae97e437272140e790b3a3f0
+  ownership: human
+- id: guidance.instruction.feature-specifications
+  path: .github/instructions/cis-feature-specifications.instructions.md
+  definition: guidance.instruction.feature-specifications
+  template_version: 1
+  applied_hash: sha256:b584407b14ac368e85bf7ae6eb84a8184e5892e87e32f4ea62377aa6d29a58a9
+  ownership: managed
+- id: guidance.instruction.feedback-loop
+  path: .github/instructions/cis-feedback-loop.instructions.md
+  definition: guidance.instruction.feedback-loop
+  template_version: 1
+  applied_hash: sha256:d95d55ccdc77deb7e3bbf8b5d2b5b6ffbc554d9b96e16d9a6d528934f1ebcac7
+  ownership: managed
+- id: guidance.instruction.csharp.cis-host
+  path: .github/instructions/cis-host-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:a5168365a5d9aadacfc96a0a9b0067fb76a809f7bad6f4486c67330baba68971
+  ownership: managed
+- id: guidance.instruction.csharp.cis-host-tests
+  path: .github/instructions/cis-host-tests-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:f980c82d60cd0901f4ee73dd5f43ae15f2c2b0d59b400dabbf19b526607dd434
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-agent
+  path: .github/instructions/cis-modules-agent-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:72968952ad1ed7f9fbb4ad950916f5e7da4fc3468cefd5fe8d381043c7b9ec01
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-ai
+  path: .github/instructions/cis-modules-ai-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:7c93d3449f90144ab90b787da5f03a290dd45cc9fa327d53e8e6d8718a48ec47
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-api
+  path: .github/instructions/cis-modules-api-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:1dc124b78466449bf2c85c6c2f9d7e87a3381692fbba2ab70d25357373839dfb
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-api-tests
+  path: .github/instructions/cis-modules-api-tests-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:43054d0a395cf33f200f058db231b87969d5ef6e71daf68497cd6ba68122a83f
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-brd
+  path: .github/instructions/cis-modules-brd-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:61b685c56ebb268de986cf92fd3a87b1467d1b7aa6d7a80114568b0b2ac7d247
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-brd-tests
+  path: .github/instructions/cis-modules-brd-tests-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:ba3726e9dd3ae6f402bf9018fc8d66f36e3d46787ead3e992ac70935e3ff025a
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-change
+  path: .github/instructions/cis-modules-change-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:fe873c4a85b0e57ed221bdf1e020c9bf825d75acb5a340c9110eef07219227f2
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-context
+  path: .github/instructions/cis-modules-context-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:8a0409220c89d63645eb8ea6b9e6c8e51ae5d43d1acec3a9b9020a1bc5411481
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-context-tests
+  path: .github/instructions/cis-modules-context-tests-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:5754672484ffe9cf8936f9a982ffbe5bc37c091b77a2c708b49125e40c62f939
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-decision
+  path: .github/instructions/cis-modules-decision-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:5146d40cc84552f8b7d973906acaba1623f272f112ab164cb9bc6c415f36f2f3
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-delivery-tests
+  path: .github/instructions/cis-modules-delivery-tests-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:79bb36214cd099875a7407727c5756ce3f5161c24e1e3111f0475b06b4455d16
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-design
+  path: .github/instructions/cis-modules-design-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:fb60b8d37dada25417cb38335fa8669fe796d5bf68a6e4034e342b311441a835
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-diagnostics
+  path: .github/instructions/cis-modules-diagnostics-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:8dbb2b6a7447081e7818b7a73c5e1ccb6ae7bcc08662f4f24fdcfaf76022d61c
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-docs
+  path: .github/instructions/cis-modules-docs-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:c9eb724ff4bb9ff6987025f2fd62692a86deb262c7f46b6923e9c22fedb6b3a2
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-docs-tests
+  path: .github/instructions/cis-modules-docs-tests-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:f6ecaf7183ee82bd25e312fa486f64572ac3881f4857f0cd7ce8af9ecd8830e8
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-feedback
+  path: .github/instructions/cis-modules-feedback-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:f60030384fb01ec300e9bece43a2e2d5f9f16d28cead578131ef317a818a2a82
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-feedback-tests
+  path: .github/instructions/cis-modules-feedback-tests-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:25ab60cba54b16c6feaa8f5027011981b09416cdc5aca9b8886906c75c712b36
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-generate
+  path: .github/instructions/cis-modules-generate-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:34fa0f378f54de3908f19270ec0a5335ca79e64a6ea422749727687d59bfc69a
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-graph
+  path: .github/instructions/cis-modules-graph-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:6d84ee8693c1f36c3e896793eedfdf9233eea5272bd30128edbe91501c95cb8c
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-graph-tests
+  path: .github/instructions/cis-modules-graph-tests-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:a995bbd063c52f621d6f31c122a75b083cbefc5d633242b8c7886e9d21c274cc
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-host
+  path: .github/instructions/cis-modules-host-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:966f4a6b4b6e057e9dd5394f42315384abe2b7925b9d399114b3dd292e2cc56c
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-impact
+  path: .github/instructions/cis-modules-impact-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:411fd53df0aaa9b896e3e9f5a78073aca71184570ab6c527f172a2d0d33c7ac8
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-index
+  path: .github/instructions/cis-modules-index-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:d4f7fcae3aa2c693e9d4499b4c57cc4b105b25f7f3c79ece9586cfb9e2b86f9d
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-index-tests
+  path: .github/instructions/cis-modules-index-tests-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:08a8ed126248978b060d1657aa9d21711c2df9020b74190d1e9abbd567a570ef
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-learn
+  path: .github/instructions/cis-modules-learn-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:e6b833d1fa397353d79cb2919a2dcdb314fb513d5daf05f1dca2622c9bcabda1
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-plan
+  path: .github/instructions/cis-modules-plan-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:697ed91d4a334253018c529c943c87dea08e6094810c8230445250500616b9ad
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-repository
+  path: .github/instructions/cis-modules-repository-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:8ae3e1cf6ee2a39ebe2a63579673cab8c98c541458e974edf00e24fc9310e5e8
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-repository-tests
+  path: .github/instructions/cis-modules-repository-tests-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:ad8430fbcff0c725614480ea5465f53cb0c53bc64e7d47c7d92e8f1592004d54
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-skills
+  path: .github/instructions/cis-modules-skills-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:b0848ce5872d6bc64a5bd635c303cd279f668ae7fe27328f3d543a730022e490
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-skills-tests
+  path: .github/instructions/cis-modules-skills-tests-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:5dd5724316190d1d3e565de8af489d76ab98a94ce9c3d7e5c1e084a859e99ec4
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-standards
+  path: .github/instructions/cis-modules-standards-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:a3894dd4a052a709758524185b0a655dd8bbfe2c322d274fb4ea365b50faf44a
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-standards-tests
+  path: .github/instructions/cis-modules-standards-tests-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:6d812af521b9ad05b17c9d863a2f5d0772b512ab1ffb498d8d46bfad3aa4eb09
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-technicalintent
+  path: .github/instructions/cis-modules-technicalintent-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:178b11271af5153fd9eb4133b74db9d30454efa8adb989e58e340b869687a692
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-technicalintent-tests
+  path: .github/instructions/cis-modules-technicalintent-tests-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:28a3b945bf6ce498c52ed7cbca8c30eaef024100a04a5de31619fd1135f478f0
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-tracker
+  path: .github/instructions/cis-modules-tracker-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:b9b0f81cc016e07dd3fae67cbf01723fd107e1311185e8a441966c00bba54fff
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-tracker-tests
+  path: .github/instructions/cis-modules-tracker-tests-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:f6b91d9d0e6a07cebad2b2ed683aa644faf52368d8f00c8efaa3d16f07f1fb0e
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-verify
+  path: .github/instructions/cis-modules-verify-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:b24e143647c1ae08f27f05a7d1ddcdab12d6db0d1a4aff4fef5b40069b92bb62
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-workflow
+  path: .github/instructions/cis-modules-workflow-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:eb552920318418124dbb0f11d61970e3d43a9b1d9540cd61a26c31b7f68996cc
+  ownership: managed
+- id: guidance.instruction.csharp.cis-providers-tracker-github
+  path: .github/instructions/cis-providers-tracker-github-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:fd3cc58e324761b2e6842882477800f0e7caa17be3ce83b477a8fbec88d6d730
+  ownership: managed
+- id: guidance.instruction.csharp.cis-providers-tracker-jira
+  path: .github/instructions/cis-providers-tracker-jira-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:085e11bf6b4637d4723a95a5613193c654b6279426e8a736b8bec81463860996
+  ownership: managed
+- id: guidance.instruction.repository
+  path: .github/instructions/cis-repository.instructions.md
+  definition: guidance.instruction.repository
+  template_version: 1
+  applied_hash: sha256:eade6b5cf62146d08baf3d55b8e0034656628f32f990784d1cc1b97a919c1804
+  ownership: human
+- id: guidance.instruction.standards-governance
+  path: .github/instructions/cis-standards-governance.instructions.md
+  definition: guidance.instruction.standards-governance
+  template_version: 1
+  applied_hash: sha256:2ed955e0db763a1011b98f3869e992031e4ca096a24c10bcd6bd63933bfdbd67
+  ownership: managed
+- id: guidance.instruction.technical-intent
+  path: .github/instructions/cis-technical-intent.instructions.md
+  definition: guidance.instruction.technical-intent
+  template_version: 1
+  applied_hash: sha256:a61caef8624f11a307756ce87790a8fc5ed9cf202e670d11f8fe59365d72be11
+  ownership: managed
+- id: guidance.skill.add-architecture-tests
+  path: .github/skills/cis-add-architecture-tests/SKILL.md
+  definition: guidance.skill.add-architecture-tests
+  template_version: 1
+  applied_hash: sha256:bce27894f797b7b5a95e9b4191f7396620f8186b410b185c4f37b60c4c61f654
+  ownership: managed
+- id: guidance.skill.add-documentation
+  path: .github/skills/cis-add-documentation/SKILL.md
+  definition: guidance.skill.add-documentation
+  template_version: 1
+  applied_hash: sha256:5efa80edee231f7a6714a3b738c863611d7065899c57a6cd71f44a81743d057f
+  ownership: managed
+- id: guidance.skill.add-mutation-tests
+  path: .github/skills/cis-add-mutation-tests/SKILL.md
+  definition: guidance.skill.add-mutation-tests
+  template_version: 1
+  applied_hash: sha256:1a53470c73aedce285fc0f501e48541c7394f4b1e6191a143e782aeaa19a02c3
+  ownership: managed
+- id: guidance.skill.add-unit-tests
+  path: .github/skills/cis-add-unit-tests/SKILL.md
+  definition: guidance.skill.add-unit-tests
+  template_version: 1
+  applied_hash: sha256:1caa133a38fbee30806a9901c667d5d379a10959e6df276ac2bf3c09417bf8c2
+  ownership: managed
+- id: guidance.skill.api-contract-governance
+  path: .github/skills/cis-api-contract-governance/SKILL.md
+  definition: guidance.skill.api-contract-governance
+  template_version: 1
+  applied_hash: sha256:d3562b4141ebeebb99724800b073b999bc57e3b5e36b921b3500a671db656558
+  ownership: human
+- id: guidance.skill.bounded-planning
+  path: .github/skills/cis-bounded-planning/SKILL.md
+  definition: guidance.skill.bounded-planning
+  template_version: 1
+  applied_hash: sha256:db7d30b037084686ba3a8e81af79643c474a233820034b63591f6d0093929555
+  ownership: managed
+- id: guidance.skill.change-dossier
+  path: .github/skills/cis-change-dossier/SKILL.md
+  definition: guidance.skill.change-dossier
+  template_version: 1
+  applied_hash: sha256:48a79f1cff5c984f804f5647b8f26af765647a16949fb85697b18a1b8313fa62
+  ownership: managed
+- id: guidance.skill.change-impact
+  path: .github/skills/cis-change-impact/SKILL.md
+  definition: guidance.skill.change-impact
+  template_version: 1
+  applied_hash: sha256:96d0f4520f9d120b7fe5c65a6ba3be2cc2fa335eac748f8a5d66ee9f40f62d3a
+  ownership: human
+- id: guidance.skill.decision-review
+  path: .github/skills/cis-decision-review/SKILL.md
+  definition: guidance.skill.decision-review
+  template_version: 1
+  applied_hash: sha256:06f1b4d25ace4ace5ead58e9054679cb5722a46cd55422ba34f4f073315cd695
+  ownership: managed
+- id: guidance.skill.delivery-execution
+  path: .github/skills/cis-delivery-execution/SKILL.md
+  definition: guidance.skill.delivery-execution
+  template_version: 1
+  applied_hash: sha256:55a43d8f91350e8660b9d2fe559a7b52203bf76cfae5fa43f2dd9405ee565090
+  ownership: human
+- id: guidance.skill.dependency-upgrades
+  path: .github/skills/cis-dependency-upgrades/SKILL.md
+  definition: guidance.skill.dependency-upgrades
+  template_version: 1
+  applied_hash: sha256:01099afc2c29872d4bd51513a4c9708fc64e7543d37bf20a1a748d3397eb4240
+  ownership: managed
+- id: guidance.skill.design-review
+  path: .github/skills/cis-design-review/SKILL.md
+  definition: guidance.skill.design-review
+  template_version: 1
+  applied_hash: sha256:f932e1221b1ea665957d7a8d84ab8554dc55e4e54402ca73bcb1fe3e2d25c2a6
+  ownership: human
+- id: guidance.skill.documentation
+  path: .github/skills/cis-documentation/SKILL.md
+  definition: guidance.skill.documentation
+  template_version: 1
+  applied_hash: sha256:f3a46e0c909eea85ae42d107b44c56d8208c393b76c309e0a9dc24c38136636c
+  ownership: managed
+- id: guidance.skill.dotnet-test
+  path: .github/skills/cis-dotnet-test/SKILL.md
+  definition: guidance.skill.dotnet-test
+  template_version: 1
+  applied_hash: sha256:e290ffbda7e0641f515873821f03cf5ed5087714b7bfd897cdcb27c84b44fc4e
+  ownership: managed
+- id: guidance.skill.external-tracker-sync
+  path: .github/skills/cis-external-tracker-sync/SKILL.md
+  definition: guidance.skill.external-tracker-sync
+  template_version: 1
+  applied_hash: sha256:4757f78be485faf3bd67296ccb3a1fd00b4a97b65fe66e8363174304040a2c61
+  ownership: human
+- id: guidance.skill.feedback-loop
+  path: .github/skills/cis-feedback-loop/SKILL.md
+  definition: guidance.skill.feedback-loop
+  template_version: 1
+  applied_hash: sha256:98676485cef16d878ac2bbdf6ebd1c3c4f2b7a2c2b1eeef755803c8f73637dfb
+  ownership: managed
+- id: guidance.skill.file-index
+  path: .github/skills/cis-file-index/SKILL.md
+  definition: guidance.skill.file-index
+  template_version: 1
+  applied_hash: sha256:9acc0beb86e68d89f80e5cb8d6e946561ff09f81b26762659bb19b3ab217d8ac
+  ownership: managed
+- id: guidance.skill.govern-business-requirements
+  path: .github/skills/cis-govern-business-requirements/SKILL.md
+  definition: guidance.skill.govern-business-requirements
+  template_version: 1
+  applied_hash: sha256:1945cf8b7e483b87831358b787177ec334a4e8562bddd5f0efafc68f602f3e1f
+  ownership: managed
+- id: guidance.skill.govern-technical-intent
+  path: .github/skills/cis-govern-technical-intent/SKILL.md
+  definition: guidance.skill.govern-technical-intent
+  template_version: 1
+  applied_hash: sha256:b2b97191f81ea2437d72d7cb60b9afa8a01ddfe0c290ba2250bacf47a555f8f9
+  ownership: managed
+- id: guidance.skill.graph-context
+  path: .github/skills/cis-graph-context/SKILL.md
+  definition: guidance.skill.graph-context
+  template_version: 1
+  applied_hash: sha256:7a32f302d5d58c159c9ef18c2eeaf609c2a176af9c8979898b10ad5f0c1f0896
+  ownership: managed
+- id: guidance.skill.impact-review
+  path: .github/skills/cis-impact-review/SKILL.md
+  definition: guidance.skill.impact-review
+  template_version: 1
+  applied_hash: sha256:19990df3214928e8c3d8d955a8ea3873f6556f54891d5e150778a1719110e3b4
+  ownership: managed
+- id: guidance.skill.import-repositories
+  path: .github/skills/cis-import-repositories/SKILL.md
+  definition: guidance.skill.import-repositories
+  template_version: 1
+  applied_hash: sha256:1664ba929a62be3061327be042ac6abb5a32d14b42e3f300c4e85ab319be96f7
+  ownership: managed
+- id: guidance.skill.maintain-contracts
+  path: .github/skills/cis-maintain-contracts/SKILL.md
+  definition: guidance.skill.maintain-contracts
+  template_version: 1
+  applied_hash: sha256:c261206eb09002ef85251522ac0e6c5fd7fd4d3b9b25431bb430dde08d71aede
+  ownership: managed
+- id: guidance.skill.maintain-domain-behaviour
+  path: .github/skills/cis-maintain-domain-behaviour/SKILL.md
+  definition: guidance.skill.maintain-domain-behaviour
+  template_version: 1
+  applied_hash: sha256:2ec629dd1e4bf05a7c5edce060dd6cf206af5d8e49593286771580aa45681101
+  ownership: managed
+- id: guidance.skill.release-rollout
+  path: .github/skills/cis-release-rollout/SKILL.md
+  definition: guidance.skill.release-rollout
+  template_version: 1
+  applied_hash: sha256:d68ebd4ff1317fd6325d1d986690680a952f1b2f6966bfcb34ee50feacb5e236
+  ownership: managed
+- id: guidance.skill.repository-bootstrap
+  path: .github/skills/cis-repository-bootstrap/SKILL.md
+  definition: guidance.skill.repository-bootstrap
+  template_version: 1
+  applied_hash: sha256:39f9f6d1d36a8e77fd009fd1f3bf9f262ce35bc765d7f08bcd52d535c8455e42
+  ownership: human
+- id: guidance.skill.skill-governance
+  path: .github/skills/cis-skill-governance/SKILL.md
+  definition: guidance.skill.skill-governance
+  template_version: 1
+  applied_hash: sha256:cf9d0169166b9cbd692a3f198456a67fd75f36aa39d1ebf4ff529fc8df0a261e
+  ownership: managed
+- id: guidance.skill.standards-governance
+  path: .github/skills/cis-standards-governance/SKILL.md
+  definition: guidance.skill.standards-governance
+  template_version: 1
+  applied_hash: sha256:248453be045fcee2becbd4e2f860d08d93e7968a50478154f9aef69e9a802484
+  ownership: managed
+- id: guidance.skill.validate-completion
+  path: .github/skills/cis-validate-completion/SKILL.md
+  definition: guidance.skill.validate-completion
+  template_version: 1
+  applied_hash: sha256:181754b2bd3c6ef2f252a8b2b662582a611fd09a542180b3e7b5063e521c1f90
+  ownership: managed
+- id: guidance.skill.verification
+  path: .github/skills/cis-verification/SKILL.md
+  definition: guidance.skill.verification
+  template_version: 1
+  applied_hash: sha256:a88e852e20310f29a376790fed5ae6ad54a79265b66355bd8cbde265349e610a
+  ownership: managed
+- id: guidance.skill.write-adr
+  path: .github/skills/cis-write-adr/SKILL.md
+  definition: guidance.skill.write-adr
+  template_version: 1
+  applied_hash: sha256:5ceac30ff61412dd1688eccbea23185cd15768a0f581d9767e57b1a4d48af38c
+  ownership: managed
+- id: reference.ai-routing-profile
+  path: docs/references/ai-routing-profile.md
+  definition: reference.ai-routing-profile
+  template_version: 1
+  applied_hash: sha256:1dcf996f5eb478e89dd0caa73aa61c5b980277f5dcdb400deb00b0839c1f8777
+  ownership: human
+- id: reference.api-governance-profile
+  path: docs/references/api-governance-profile.md
+  definition: reference.api-governance-profile
+  template_version: 1
+  applied_hash: sha256:bce8a19cf1b893000db372131c8aa594bb3d52c7c2da68616d25f46ef3548582
+  ownership: human
+- id: reference.configuration-dictionary.reference
+  path: docs/references/configuration-dictionary.md
+  definition: reference.configuration-dictionary
+  template_version: 1
+  applied_hash: sha256:30421333729056c781f34115d37928af56dcd33417766777cff43fce824002b5
+  ownership: human
+- id: reference.diagnostics-profile
+  path: docs/references/diagnostics-profile.md
+  definition: reference.diagnostics-profile
+  template_version: 1
+  applied_hash: sha256:2efd9f124d78b5330da370b5c7419882fc6d2dfb0cee391a3a65d5144292751c
+  ownership: human
+- id: reference.external-tracker-profile
+  path: docs/references/external-tracker-profile.md
+  definition: reference.external-tracker-profile
+  template_version: 1
+  applied_hash: sha256:ee0796903ef6c3dffea6756071392e31a849a9289f4012644d687f1981dfe149
+  ownership: human
+- id: guidance.implementation-skill-packs
+  path: docs/references/implementation-skill-packs.md
+  definition: guidance.implementation-skill-packs
+  template_version: 1
+  applied_hash: sha256:f30c5d8824dcaccee5e845c591497893e5bba02650ec71525e9a9f5ddaa9a27f
+  ownership: managed
+- id: reference.learning-history
+  path: docs/references/learning-history.md
+  definition: reference.learning-history
+  template_version: 1
+  applied_hash: sha256:ed7de0a1fbf6afdaebbab919971844a6b198ab753c6270a132bb44cf8de4fd32
+  ownership: human
+- id: reference.module-ownership-map.reference
+  path: docs/references/module-ownership-map.md
+  definition: reference.module-ownership-map
+  template_version: 1
+  applied_hash: sha256:85407b3cd8082382a46d350a906d16686cf08ae8f80b585bec774f2aa68a98f6
+  ownership: human
+- id: reference.package-catalogue.reference
+  path: docs/references/package-catalogue.md
+  definition: reference.package-catalogue
+  template_version: 1
+  applied_hash: sha256:e107cd9b667c2b3db4a6348f0b89a915758f34fad1e51411fb0a89e1e7766c91
+  ownership: human
+- id: repository.profile
+  path: docs/references/repository-profile.md
+  definition: repository.profile
+  template_version: 1
+  applied_hash: sha256:b86624a2408383ec1c3218c3075b5cbe9971c8f52e59751ffab4154087b2f202
+  ownership: human
+- id: reference.standards-conformance-matrix
+  path: docs/references/standards-conformance-matrix.md
+  definition: reference.standards-conformance-matrix
+  template_version: 1
+  applied_hash: sha256:1cfcaff4b117c0c07f28bab9ef6a409f909e44ecda874f6654bc7e07b3f418c8
+  ownership: managed
+- id: reference.task-type-capability-selections
+  path: docs/references/task-type-capability-selections.md
+  definition: reference.task-type-capability-selections
+  template_version: 1
+  applied_hash: sha256:6bcf0e706909ea20ed92242fe28f606983c1401f9833e36006b634c4284e7248
+  ownership: human
+- id: reference.traceability-matrix.reference
+  path: docs/references/traceability-matrix.md
+  definition: reference.traceability-matrix
+  template_version: 1
+  applied_hash: sha256:edfecd82aa24d42171499085d7c1867174569535518caff9b7afb3e122a2ee69
+  ownership: human
+- id: specification.api-design-and-governance
+  path: docs/specs/api-design-and-governance-spec.md
+  definition: specification.api-design-and-governance
+  template_version: 1
+  applied_hash: sha256:b7a93678c0317af6860b67db8d737779c954d7f9bfc76d8ac6f7bf08f26ba37f
+  ownership: human
+- id: reference.configuration-dictionary.spec
+  path: docs/specs/configuration-dictionary-spec.md
+  definition: reference.configuration-dictionary
+  template_version: 1
+  applied_hash: sha256:08b603e534c02c716da311f5d04cec9078c83596cbb04e7d2de28b62639622b2
+  ownership: human
+- id: specification.delivery-and-assurance
+  path: docs/specs/delivery-and-assurance-spec.md
+  definition: specification.delivery-and-assurance
+  template_version: 1
+  applied_hash: sha256:fc6f30c07f613cec7204e55ca720ce2103646550e1bc3194932799c5f2c514ab
+  ownership: human
+- id: specification.design-guidelines
+  path: docs/specs/design-guidelines.md
+  definition: specification.design-guidelines
+  template_version: 1
+  applied_hash: sha256:e374acb3e87962e013ace4c5fcc9d7491194269801c1f22bbc9f58aef79a6a01
+  ownership: managed
+- id: specification.external-tracker-synchronization
+  path: docs/specs/external-tracker-synchronization-spec.md
+  definition: specification.external-tracker-synchronization
+  template_version: 1
+  applied_hash: sha256:e3749955f23f246131af07aa42e9a4c61ee45b3ea4b730a7a9dd9f0fe3f8c77d
+  ownership: human
+- id: reference.module-ownership-map.spec
+  path: docs/specs/module-ownership-map-spec.md
+  definition: reference.module-ownership-map
+  template_version: 1
+  applied_hash: sha256:d0610c91f44872c684e65b0c189dc346c961a36aaa35696b4354000c0e2baf81
+  ownership: managed
+- id: reference.package-catalogue.spec
+  path: docs/specs/package-catalogue-spec.md
+  definition: reference.package-catalogue
+  template_version: 1
+  applied_hash: sha256:053ddba1b1ebbf9a704271b99d2fda628d088963086715ac1589346e36a3700a
+  ownership: managed
+- id: specification.product-intent
+  path: docs/specs/product-intent-spec.md
+  definition: specification.product-intent
+  template_version: 1
+  applied_hash: sha256:5d824f944d8565a56daddb81e170856b2587bbffa3964f76058bd49826e6c21f
+  ownership: human
+- id: specification.public-endpoint-caching-policy
+  path: docs/specs/public-endpoint-caching-policy-spec.md
+  definition: specification.public-endpoint-caching-policy
+  template_version: 1
+  applied_hash: sha256:36db3c0013a11a81558df7d73810f8ef317952476dafd5cc5aab4d29a40e80d2
+  ownership: human
+- id: specification.repository-delivery-policy
+  path: docs/specs/repository-delivery-policy-spec.md
+  definition: specification.repository-delivery-policy
+  template_version: 1
+  applied_hash: sha256:68df079c128add2cc388e4dd50c2a44310be035995d1363262628ae33e1428fd
+  ownership: human
+- id: specification.standards-governance
+  path: docs/specs/standards-governance-spec.md
+  definition: specification.standards-governance
+  template_version: 1
+  applied_hash: sha256:1069f14b43a5eb1fea9b06b172e548c721cad23aaed2fb8011059a05193ac90b
+  ownership: managed
+- id: specification.system-context
+  path: docs/specs/system-context-spec.md
+  definition: specification.system-context
+  template_version: 1
+  applied_hash: sha256:529384ef458f15664295dac48dcaca6d45f166a067a59627e38288a6e640930c
+  ownership: human
+- id: specification.technical-intent
+  path: docs/specs/technical-intent-spec.md
+  definition: specification.technical-intent
+  template_version: 1
+  applied_hash: sha256:7266c69c6595548a4066fe9c04bc5ae49bfad0d4b6b2daee0cc970f028382fec
+  ownership: human
+- id: reference.traceability-matrix.spec
+  path: docs/specs/traceability-matrix-spec.md
+  definition: reference.traceability-matrix
+  template_version: 1
+  applied_hash: sha256:30a0257558189f4fcc989165905763afaab1b09ea2d61249c8eddbfeb6cc4644
+  ownership: managed
+- id: standard.default.agent-documentation-compliance
+  path: docs/standards/agent-documentation-compliance-standard.md
+  definition: standard.default.agent-documentation-compliance
+  template_version: 1
+  applied_hash: sha256:d0fec1f89402fc84661fb940440542d1778856b0969d5c47480670543ff503e7
+  ownership: managed
+- id: standard.documentation-governance
+  path: docs/standards/documentation-governance-standard.md
+  definition: standard.documentation-governance
+  template_version: 1
+  applied_hash: sha256:1c3292e3bcd4352da69f24d6be16f2fae64a84959d755cab79d30fd5921ebfa6
+  ownership: managed
+- id: standard.default.testing
+  path: docs/standards/testing-standard.md
+  definition: standard.default.testing
+  template_version: 1
+  applied_hash: sha256:54e734fb09d1a05d6f52f740e0db7bc14dd8fb6bc912a338013330bdc67d19f7
+  ownership: managed
+- id: template.adr
+  path: docs/templates/adr-template.md
+  definition: template.adr
+  template_version: 1
+  applied_hash: sha256:c70e3e61f82b0be87e0a0facc3ef927db59664ae889904993b1d384f97105109
+  ownership: managed
+- id: template.design-guidelines
+  path: docs/templates/design-guidelines-template.md
+  definition: template.design-guidelines
+  template_version: 1
+  applied_hash: sha256:54af86d67857b7d7f0c1b66bde3c8e7fdd544fb6984a6d67b174d066348f4754
+  ownership: managed
+- id: template.feature-spec
+  path: docs/templates/feature-spec-template.md
+  definition: template.feature-spec
+  template_version: 1
+  applied_hash: sha256:e168c0298d1f6cfed36c125a3887737066566245decd4ff826024f4cf626eafa
+  ownership: human
+- id: template.standard-inference-pattern
+  path: docs/templates/standard-pattern-template.md
+  definition: template.standard-inference-pattern
+  template_version: 1
+  applied_hash: sha256:7f86033674eb5f573f1c1051169e2358dec983c2e9703f881810805cf4ff23e3
+  ownership: managed
+- id: template.standard
+  path: docs/templates/standard-template.md
+  definition: template.standard
+  template_version: 1
+  applied_hash: sha256:fa29d66719eb436d2f27b7e1861e588bc77464cd1d1c95734542aebee11ead8f
+  ownership: managed
+- id: workflow.standard-delivery
+  path: docs/workflows/standard-delivery.md
+  definition: workflow.standard-delivery
+  template_version: 1
+  applied_hash: sha256:86c2f527aa26e5d14f3dc88e36f4193eed1ac0af90371e0c0d2362b4367afc6b
+  ownership: human

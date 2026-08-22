@@ -1,0 +1,44 @@
+{
+  "name": "change-impact-studio",
+  "displayName": "Change Impact Studio",
+  "description": "Thin Visual Studio Code client for the CIS CLI and canonical Markdown records.",
+  "version": "0.1.0",
+  "publisher": "andrewspiteri",
+  "license": "MIT",
+  "engines": { "vscode": "^1.95.0" },
+  "categories": ["Other"],
+  "keywords": ["change-impact", "architecture", "ai-delivery", "planning"],
+  "main": "./extension.js",
+  "activationEvents": ["onView:cis.workspace", "onCommand:cis.refresh"],
+  "contributes": {
+    "commands": [
+      { "command": "cis.refresh", "title": "CIS: Refresh Workspace" },
+      { "command": "cis.open", "title": "CIS: Open Canonical Markdown" },
+      { "command": "cis.repoInit", "title": "CIS: Initialize Repository" },
+      { "command": "cis.repoDoctor", "title": "CIS: Run Repository Doctor" },
+      { "command": "cis.graphBuild", "title": "CIS: Build Context Graph" },
+      { "command": "cis.contextSearch", "title": "CIS: Search Context" },
+      { "command": "cis.trackerStatus", "title": "CIS: Show Tracker Status" },
+      { "command": "cis.aiStatus", "title": "CIS: Show AI Provider Status" }
+    ],
+    "viewsContainers": {
+      "activitybar": [{ "id": "cis", "title": "Change Impact Studio", "icon": "media/cis.svg" }]
+    },
+    "views": { "cis": [{ "id": "cis.workspace", "name": "Workspace" }] },
+    "menus": {
+      "view/title": [{ "command": "cis.refresh", "when": "view == cis.workspace", "group": "navigation" }],
+      "view/item/context": [{ "command": "cis.open", "when": "view == cis.workspace && viewItem == cis.file", "group": "inline" }]
+    },
+    "configuration": {
+      "title": "Change Impact Studio",
+      "properties": {
+        "cis.executablePath": { "type": "string", "default": "cis", "description": "Path to the CIS CLI executable. Arguments are not accepted; use a wrapper executable when needed." },
+        "cis.documentationRoot": { "type": "string", "default": "docs/cis", "description": "Repository-relative documentation root shown before initialization metadata is available." }
+      }
+    }
+  },
+  "scripts": {
+    "check": "node --check extension.js && node --test test/*.test.js",
+    "test": "node --test test/*.test.js"
+  }
+}

@@ -1,0 +1,61 @@
+using Cis.Host;
+using Cis.Modules.Change;
+using Cis.Modules.Ai;
+using Cis.Modules.Agent;
+using Cis.Modules.Api;
+using Cis.Modules.Brd;
+using Cis.Modules.Context;
+using Cis.Modules.Decision;
+using Cis.Modules.Design;
+using Cis.Modules.Diagnostics;
+using Cis.Modules.Docs;
+using Cis.Modules.Feedback;
+using Cis.Modules.Graph;
+using Cis.Modules.Generate;
+using Cis.Modules.Host;
+using Cis.Modules.Impact;
+using Cis.Modules.Index;
+using Cis.Modules.Learn;
+using Cis.Modules.Plan;
+using Cis.Modules.Repository;
+using Cis.Modules.Skills;
+using Cis.Modules.Standards;
+using Cis.Modules.TechnicalIntent;
+using Cis.Modules.Tracker;
+using Cis.Modules.Workflow;
+using Cis.Modules.Verify;
+using Cis.Providers.Tracker.GitHub;
+using Cis.Providers.Tracker.Jira;
+
+using var application = new CisHostBuilder()
+    .AddModule(new HostModule())
+    .AddModule(new RepositoryModule())
+    .AddModule(new SkillsModule())
+    .AddModule(new StandardsModule())
+    .AddModule(new WorkspaceModule())
+    .AddModule(new AiModule())
+    .AddModule(new AgentModule())
+    .AddModule(new DocsModule())
+    .AddModule(new ApiModule())
+    .AddModule(new GraphModule())
+    .AddModule(new ContextModule())
+    .AddModule(new IndexModule())
+    .AddModule(new LearnModule())
+    .AddModule(new FeedbackModule())
+    .AddModule(new GenerateModule())
+    .AddModule(new BrdModule())
+    .AddModule(new TechnicalIntentModule())
+    .AddModule(new ChangeModule())
+    .AddModule(new DecisionModule())
+    .AddModule(new DesignModule())
+    .AddModule(new DiagnosticsModule())
+    .AddModule(new ImpactModule())
+    .AddModule(new PlanModule())
+    .AddModule(new TrackerModule())
+    .AddModule(new WorkflowModule())
+    .AddModule(new VerifyModule())
+    .AddModule(new GitHubTrackerProviderModule())
+    .AddModule(new JiraTrackerProviderModule())
+    .Build();
+
+return application.Invoke(args);

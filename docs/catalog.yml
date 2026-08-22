@@ -1,0 +1,1126 @@
+schema_version: 1
+repository: change-impact-studio
+documents:
+  - id: change-impact-studio:manual:cis-standards-import
+    path: docs/manual/cis_standards_import.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-standards-audit
+    path: docs/manual/cis_standards_audit.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-standards-inventory
+    path: docs/manual/cis_standards_inventory.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-standards-applicable
+    path: docs/manual/cis_standards_applicable.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-standards-validate
+    path: docs/manual/cis_standards_validate.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-standards-conformance
+    path: docs/manual/cis_standards_conformance.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:spec:implementation-skill-packs-validation
+    path: docs/specs/implementation-skill-packs-and-validation-spec.md
+    type: specification
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-skills-inventory
+    path: docs/manual/cis_skills_inventory.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-skills-validate
+    path: docs/manual/cis_skills_validate.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-skills-import
+    path: docs/manual/cis_skills_import.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-skills-audit
+    path: docs/manual/cis_skills_audit.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:reference:ai-routing-profile
+    path: docs/references/ai-routing-profile.md
+    type: ai-routing-profile
+    status: active
+    authority: canonical
+  - id: change-impact-studio:reference:diagnostics-profile
+    path: docs/references/diagnostics-profile.md
+    type: diagnostics-profile
+    status: active
+    authority: canonical
+  - id: change-impact-studio:reference:learning-history
+    path: docs/references/learning-history.md
+    type: learning-history
+    status: active
+    authority: canonical
+  - id: change-impact-studio:workflow:standard-delivery
+    path: docs/workflows/standard-delivery.md
+    type: workflow-definition
+    status: active
+    authority: canonical
+  - id: change-impact-studio:spec:execution-assurance-learning
+    path: docs/specs/execution-assurance-and-learning-spec.md
+    type: specification
+    status: active
+    authority: canonical
+  - id: change-impact-studio:spec:vscode-client
+    path: docs/specs/vscode-client-spec.md
+    type: specification
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-ai-providers
+    path: docs/manual/cis_ai_providers.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-ai-models
+    path: docs/manual/cis_ai_models.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-ai-routes
+    path: docs/manual/cis_ai_routes.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-ai-usage
+    path: docs/manual/cis_ai_usage.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-ai-evaluate
+    path: docs/manual/cis_ai_evaluate.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-ai-cache-status
+    path: docs/manual/cis_ai_cache_status.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-generate-templates
+    path: docs/manual/cis_generate_templates.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-generate-describe
+    path: docs/manual/cis_generate_describe.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-generate-validate
+    path: docs/manual/cis_generate_validate.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-generate-render
+    path: docs/manual/cis_generate_render.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-workflow-list
+    path: docs/manual/cis_workflow_list.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-workflow-describe
+    path: docs/manual/cis_workflow_describe.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-workflow-run
+    path: docs/manual/cis_workflow_run.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-workflow-status
+    path: docs/manual/cis_workflow_status.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-workflow-log
+    path: docs/manual/cis_workflow_log.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-workflow-summarise
+    path: docs/manual/cis_workflow_summarise.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-agent-providers
+    path: docs/manual/cis_agent_providers.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-agent-prepare
+    path: docs/manual/cis_agent_prepare.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-agent-import-result
+    path: docs/manual/cis_agent_import_result.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-agent-status
+    path: docs/manual/cis_agent_status.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-verify-diff
+    path: docs/manual/cis_verify_diff.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-verify-compare
+    path: docs/manual/cis_verify_compare.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-verify-validate
+    path: docs/manual/cis_verify_validate.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-verify-evidence
+    path: docs/manual/cis_verify_evidence.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-verify-accept
+    path: docs/manual/cis_verify_accept.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-diagnostics-sources
+    path: docs/manual/cis_diagnostics_sources.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-diagnostics-summary
+    path: docs/manual/cis_diagnostics_summary.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-diagnostics-events
+    path: docs/manual/cis_diagnostics_events.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-diagnostics-tail
+    path: docs/manual/cis_diagnostics_tail.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-diagnostics-analyse
+    path: docs/manual/cis_diagnostics_analyse.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-learn-collect
+    path: docs/manual/cis_learn_collect.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-learn-propose
+    path: docs/manual/cis_learn_propose.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-learn-review
+    path: docs/manual/cis_learn_review.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-learn-apply
+    path: docs/manual/cis_learn_apply.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-learn-history
+    path: docs/manual/cis_learn_history.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:spec:implementation-roadmap
+    path: docs/specs/implementation-roadmap.md
+    type: specification
+    status: active
+    authority: canonical
+  - id: change-impact-studio:docs:root
+    path: docs/README.md
+    type: navigation
+    status: active
+    authority: routing
+  - id: change-impact-studio:docs:architecture-decisions
+    path: docs/architecture/decisions/README.md
+    type: navigation
+    status: active
+    authority: routing
+  - id: change-impact-studio:docs:changes
+    path: docs/changes/README.md
+    type: navigation
+    status: active
+    authority: routing
+  - id: change-impact-studio:docs:references
+    path: docs/references/README.md
+    type: navigation
+    status: active
+    authority: routing
+  - id: change-impact-studio:reference:task-type-capability-selections
+    path: docs/references/task-type-capability-selections.md
+    type: task-type-capability-selections
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:root
+    path: docs/manual/README.md
+    type: navigation
+    status: active
+    authority: routing
+  - id: change-impact-studio:manual:cis-host-modules
+    path: docs/manual/cis_host_modules.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-repo-init
+    path: docs/manual/cis_repo_init.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-repo-import
+    path: docs/manual/cis_repo_import.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-repo-list
+    path: docs/manual/cis_repo_list.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-repo-doctor
+    path: docs/manual/cis_repo_doctor.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-workspace-init
+    path: docs/manual/cis_workspace_init.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-graph-build
+    path: docs/manual/cis_graph_build.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-graph-validate
+    path: docs/manual/cis_graph_validate.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-graph-find
+    path: docs/manual/cis_graph_find.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-graph-related
+    path: docs/manual/cis_graph_related.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-graph-trace
+    path: docs/manual/cis_graph_trace.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-graph-export
+    path: docs/manual/cis_graph_export.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-context-contract
+    path: docs/manual/cis_context_contract.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-context-search
+    path: docs/manual/cis_context_search.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-context-symbol
+    path: docs/manual/cis_context_symbol.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-context-tests-for
+    path: docs/manual/cis_context_tests_for.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-context-references
+    path: docs/manual/cis_context_references.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-context-callers
+    path: docs/manual/cis_context_callers.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-brd-discover
+    path: docs/manual/cis_brd_discover.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-brd-init
+    path: docs/manual/cis_brd_init.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-brd-reconcile
+    path: docs/manual/cis_brd_reconcile.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-brd-status
+    path: docs/manual/cis_brd_status.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-brd-validate
+    path: docs/manual/cis_brd_validate.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-brd-approve
+    path: docs/manual/cis_brd_approve.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-context-pack
+    path: docs/manual/cis_context_pack.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-docs-inventory
+    path: docs/manual/cis_docs_inventory.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-docs-validate
+    path: docs/manual/cis_docs_validate.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:spec:cli-repository-initialisation
+    path: docs/specs/cli-and-repository-initialisation-spec.md
+    type: technical-specification
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:spec:module-catalog
+    path: docs/specs/module-catalog-spec.md
+    type: architecture-specification
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:spec:documentation-inventory-validation
+    path: docs/specs/documentation-inventory-and-validation-spec.md
+    type: technical-specification
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:spec:classification-driven-initialisation
+    path: docs/specs/classification-driven-initialisation-spec.md
+    type: architecture-specification
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:spec:ui-framework-resolution
+    path: docs/specs/ui-framework-resolution-spec.md
+    type: architecture-specification
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:spec:context-model-and-graph
+    path: docs/specs/context-model-and-graph-spec.md
+    type: architecture-specification
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:spec:business-requirements-governance
+    path: docs/specs/business-requirements-governance-spec.md
+    type: governance-specification
+    status: active
+    authority: canonical
+
+  - id: change-impact-studio:reference:configuration-dictionary
+    path: docs/references/configuration-dictionary.md
+    type: contract-reference
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:reference:module-ownership-map
+    path: docs/references/module-ownership-map.md
+    type: domain-behaviour-reference
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:reference:package-catalogue
+    path: docs/references/package-catalogue.md
+    type: contract-reference
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:reference:repository-profile
+    path: docs/references/repository-profile.md
+    type: repository-profile
+    status: active
+    authority: canonical
+  - id: change-impact-studio:reference:traceability-matrix
+    path: docs/references/traceability-matrix.md
+    type: traceability-reference
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:spec:configuration-dictionary
+    path: docs/specs/configuration-dictionary-spec.md
+    type: contract-governance-specification
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:spec:delivery-and-assurance
+    path: docs/specs/delivery-and-assurance-spec.md
+    type: repository-specification
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:spec:module-ownership-map
+    path: docs/specs/module-ownership-map-spec.md
+    type: domain-behaviour-governance-specification
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:spec:package-catalogue
+    path: docs/specs/package-catalogue-spec.md
+    type: contract-governance-specification
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:spec:product-intent
+    path: docs/specs/product-intent-spec.md
+    type: repository-specification
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:spec:system-context
+    path: docs/specs/system-context-spec.md
+    type: repository-specification
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:spec:technical-intent
+    path: docs/specs/technical-intent-spec.md
+    type: repository-specification
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:spec:traceability-matrix
+    path: docs/specs/traceability-matrix-spec.md
+    type: traceability-governance-specification
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:template:adr
+    path: docs/templates/adr-template.md
+    type: template
+    status: active
+    authority: canonical
+  - id: change-impact-studio:template:feature-spec
+    path: docs/templates/feature-spec-template.md
+    type: template
+    status: active
+    authority: canonical
+  - id: change-impact-studio:template:design-guidelines
+    path: docs/templates/design-guidelines-template.md
+    type: template
+    status: active
+    authority: canonical
+  - id: change-impact-studio:design-guidelines:default
+    path: docs/templates/default-design-guidelines.md
+    type: design-guidelines
+    status: active
+    authority: canonical
+  - id: change-impact-studio:spec:change-impact-and-planning
+    path: docs/specs/change-impact-and-planning-spec.md
+    type: specification
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:spec:public-endpoint-caching-policy
+    path: docs/specs/public-endpoint-caching-policy-spec.md
+    type: specification
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:spec:api-design-and-governance
+    path: docs/specs/api-design-and-governance-spec.md
+    type: specification
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:reference:api-governance-profile
+    path: docs/references/api-governance-profile.md
+    type: api-governance-profile
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:manual:cis-api-discover
+    path: docs/manual/cis_api_discover.md
+    type: manual
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-api-inventory
+    path: docs/manual/cis_api_inventory.md
+    type: manual
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-api-validate
+    path: docs/manual/cis_api_validate.md
+    type: manual
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-api-diff
+    path: docs/manual/cis_api_diff.md
+    type: manual
+    status: active
+    authority: canonical
+  - id: change-impact-studio:spec:task-type-contract
+    path: docs/specs/task-type-contract-spec.md
+    type: specification
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:task-type:core.coordination.scope-guard
+    path: docs/specs/coordination-scope-guard-task-type.md
+    type: task-type-definition
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:task-type:core.design.wireframe
+    path: docs/specs/wireframe-task-type.md
+    type: task-type-definition
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:task-type:core.design.visual
+    path: docs/specs/visual-design-task-type.md
+    type: task-type-definition
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:task-type:core.documentation.contracts
+    path: docs/specs/documentation-contracts-task-type.md
+    type: task-type-definition
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:task-type:core.security.permissions
+    path: docs/specs/security-permissions-task-type.md
+    type: task-type-definition
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:task-type:core.data.persistence
+    path: docs/specs/data-persistence-task-type.md
+    type: task-type-definition
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:task-type:core.data.database-migration
+    path: docs/specs/database-migration-task-type.md
+    type: task-type-definition
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:task-type:core.data.backfill
+    path: docs/specs/data-backfill-task-type.md
+    type: task-type-definition
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:task-type:core.api.contract
+    path: docs/specs/api-contract-task-type.md
+    type: task-type-definition
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:task-type:core.backend.behavior
+    path: docs/specs/backend-behavior-task-type.md
+    type: task-type-definition
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:task-type:core.frontend.implementation
+    path: docs/specs/frontend-implementation-task-type.md
+    type: task-type-definition
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:task-type:core.integration.handoff
+    path: docs/specs/integration-handoff-task-type.md
+    type: task-type-definition
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:task-type:core.infrastructure.deployment
+    path: docs/specs/infrastructure-deployment-task-type.md
+    type: task-type-definition
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:task-type:core.operations.observability
+    path: docs/specs/observability-operations-task-type.md
+    type: task-type-definition
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:task-type:core.lifecycle.carry-forward
+    path: docs/specs/lifecycle-carry-forward-task-type.md
+    type: task-type-definition
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:task-type:core.release.rollout
+    path: docs/specs/rollout-release-task-type.md
+    type: task-type-definition
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:task-type:core.verification
+    path: docs/specs/verification-task-type.md
+    type: task-type-definition
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:task-type:core.assurance.independent
+    path: docs/specs/independent-assurance-task-type.md
+    type: task-type-definition
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:task-type:core.delivery.final-sweep
+    path: docs/specs/final-delivery-sweep-task-type.md
+    type: task-type-definition
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:spec:task-type-extension-policy
+    path: docs/specs/task-type-extension-policy.md
+    type: architecture-specification
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:spec:repository-delivery-policy
+    path: docs/specs/repository-delivery-policy-spec.md
+    type: governance-specification
+    status: draft
+    authority: canonical
+
+  - id: change-impact-studio:analysis:task-planning-implementation-readiness
+    path: docs/specs/task-planning-implementation-readiness.md
+    type: gap-analysis
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:manual:cis-change-create
+    path: docs/manual/cis_change_create.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-change-rebaseline
+    path: docs/manual/cis_change_rebaseline.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-change-list
+    path: docs/manual/cis_change_list.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-change-show
+    path: docs/manual/cis_change_show.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-change-status
+    path: docs/manual/cis_change_status.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-change-close
+    path: docs/manual/cis_change_close.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-impact-analyse
+    path: docs/manual/cis_impact_analyse.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-impact-findings
+    path: docs/manual/cis_impact_findings.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-impact-accept
+    path: docs/manual/cis_impact_accept.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-impact-reject
+    path: docs/manual/cis_impact_reject.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-impact-defer
+    path: docs/manual/cis_impact_defer.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-impact-completeness
+    path: docs/manual/cis_impact_completeness.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-plan-build
+    path: docs/manual/cis_plan_build.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-plan-import-spec
+    path: docs/manual/cis_plan_import_spec.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-plan-show
+    path: docs/manual/cis_plan_show.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-plan-validate
+    path: docs/manual/cis_plan_validate.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-plan-approve
+    path: docs/manual/cis_plan_approve.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-plan-status
+    path: docs/manual/cis_plan_status.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-plan-capability-status
+    path: docs/manual/cis_plan_capability_status.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-plan-capability-select
+    path: docs/manual/cis_plan_capability_select.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-decision-list
+    path: docs/manual/cis_decision_list.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-decision-create
+    path: docs/manual/cis_decision_create.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-decision-resolve
+    path: docs/manual/cis_decision_resolve.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-decision-defer
+    path: docs/manual/cis_decision_defer.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-decision-promote
+    path: docs/manual/cis_decision_promote.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:spec:file-index-cards
+    path: docs/specs/file-index-card-spec.md
+    type: repository-specification
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-ai-status
+    path: docs/manual/cis_ai_status.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-index-build
+    path: docs/manual/cis_index_build.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-index-status
+    path: docs/manual/cis_index_status.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-index-find
+    path: docs/manual/cis_index_find.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:spec:feedback-loop
+    path: docs/specs/feedback-loop-spec.md
+    type: repository-specification
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-feedback-summary
+    path: docs/manual/cis_feedback_summary.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-feedback-usage
+    path: docs/manual/cis_feedback_usage.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-feedback-opportunities
+    path: docs/manual/cis_feedback_opportunities.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-plan-task-transition
+    path: docs/manual/cis_plan_task_transition.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-plan-task-migrate-type
+    path: docs/manual/cis_plan_task_migrate_type.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-design-templates
+    path: docs/manual/cis_design_templates.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-design-scaffold
+    path: docs/manual/cis_design_scaffold.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-design-wireframe-validate
+    path: docs/manual/cis_design_wireframe_validate.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-design-wireframe-approve
+    path: docs/manual/cis_design_wireframe_approve.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-design-wireframe-reject
+    path: docs/manual/cis_design_wireframe_reject.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-design-render
+    path: docs/manual/cis_design_render.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-design-validate
+    path: docs/manual/cis_design_validate.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-design-approve
+    path: docs/manual/cis_design_approve.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-design-reject
+    path: docs/manual/cis_design_reject.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-design-status
+    path: docs/manual/cis_design_status.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:spec:core-task-type-catalog
+    path: docs/specs/core-task-type-catalog.md
+    type: specification
+    status: active
+    authority: canonical
+
+  - id: change-impact-studio:spec:design-guidelines
+    path: docs/specs/design-guidelines.md
+    type: design-guidelines
+    status: active
+    authority: canonical
+  - id: change-impact-studio:spec:external-tracker-synchronization
+    path: docs/specs/external-tracker-synchronization-spec.md
+    type: specification
+    status: active
+    authority: canonical
+  - id: change-impact-studio:reference:external-tracker-profile
+    path: docs/references/external-tracker-profile.md
+    type: external-tracker-profile
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-tracker-plan
+    path: docs/manual/cis_tracker_plan.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-tracker-push
+    path: docs/manual/cis_tracker_push.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-tracker-pull
+    path: docs/manual/cis_tracker_pull.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-tracker-status
+    path: docs/manual/cis_tracker_status.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-tracker-resolve
+    path: docs/manual/cis_tracker_resolve.md
+    type: command-reference
+    status: active
+    authority: canonical
+
+  - id: change-impact-studio:reference:implementation-skill-packs
+    path: docs/references/implementation-skill-packs.md
+    type: implementation-skill-pack-profile
+    status: active
+    authority: canonical
+
+  - id: change-impact-studio:reference:standards-conformance-matrix
+    path: docs/references/standards-conformance-matrix.md
+    type: standards-conformance-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:spec:standards-governance
+    path: docs/specs/standards-governance-spec.md
+    type: governance-specification
+    status: active
+    authority: canonical
+  - id: change-impact-studio:standard:documentation-governance
+    path: docs/standards/documentation-governance-standard.md
+    type: standard
+    status: active
+    authority: canonical
+  - id: change-impact-studio:template:standard
+    path: docs/templates/standard-template.md
+    type: template
+    status: active
+    authority: canonical
+
+  - id: change-impact-studio:standard:agent-documentation-compliance
+    path: docs/standards/agent-documentation-compliance-standard.md
+    type: standard
+    status: active
+    authority: canonical
+  - id: change-impact-studio:standard:testing
+    path: docs/standards/testing-standard.md
+    type: standard
+    status: active
+    authority: canonical
+
+  - id: change-impact-studio:spec:standard-pattern-catalogue-inference
+    path: docs/specs/standard-pattern-catalogue-and-inference-spec.md
+    type: technical-specification
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-standards-patterns
+    path: docs/manual/cis_standards_patterns.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-standards-infer
+    path: docs/manual/cis_standards_infer.md
+    type: command-reference
+    status: active
+    authority: canonical
+
+  - id: change-impact-studio:template:standard-inference-pattern
+    path: docs/templates/standard-pattern-template.md
+    type: template
+    status: active
+    authority: canonical
+  - id: change-impact-studio:spec:technical-intent-governance
+    path: docs/specs/technical-intent-governance-spec.md
+    type: governance-specification
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-technical-intent-init
+    path: docs/manual/cis_technical_intent_init.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-technical-intent-validate
+    path: docs/manual/cis_technical_intent_validate.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-technical-intent-status
+    path: docs/manual/cis_technical_intent_status.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-technical-intent-approve
+    path: docs/manual/cis_technical_intent_approve.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:spec:brd-high-level-backlog
+    path: docs/specs/brd-high-level-backlog-spec.md
+    type: specification
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-brd-backlog-build
+    path: docs/manual/cis_brd_backlog_build.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-brd-backlog-validate
+    path: docs/manual/cis_brd_backlog_validate.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-brd-backlog-status
+    path: docs/manual/cis_brd_backlog_status.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-brd-backlog-approve
+    path: docs/manual/cis_brd_backlog_approve.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-brd-backlog-start
+    path: docs/manual/cis_brd_backlog_start.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-brd-feature-validate
+    path: docs/manual/cis_brd_feature_validate.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-brd-feature-status
+    path: docs/manual/cis_brd_feature_status.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-brd-feature-approve
+    path: docs/manual/cis_brd_feature_approve.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-verify-finalize
+    path: docs/manual/cis_verify_finalize.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:standard:versioning-release
+    path: docs/standards/versioning-and-release.md
+    type: standard
+    status: active
+    authority: canonical

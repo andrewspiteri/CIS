@@ -1,0 +1,1 @@
+<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><Description>Bounded runtime diagnostics evidence and deterministic analysis.</Description></PropertyGroup><ItemGroup><ProjectReference Include="..\Cis.Abstractions\Cis.Abstractions.csproj"/></ItemGroup><ItemGroup><PackageReference Include="System.CommandLine"/></ItemGroup></Project>

@@ -1,0 +1,13 @@
+bin/
+obj/
+.vs/
+.idea/
+TestResults/
+coverage/
+.cis/local/
+.cis/cache/
+.cis/runs/
+*.user
+*.suo
+artifacts/
+.codex-tmp/

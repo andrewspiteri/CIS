@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Built-in CIS context graph construction and query module.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Cis.Abstractions\Cis.Abstractions.csproj" />
+    <ProjectReference Include="..\Cis.Modules.Docs\Cis.Modules.Docs.csproj" />
+    <ProjectReference Include="..\Cis.Modules.Api\Cis.Modules.Api.csproj" />
+    <ProjectReference Include="..\Cis.Modules.Tracker\Cis.Modules.Tracker.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" />
+    <PackageReference Include="System.CommandLine" />
+  </ItemGroup>
+</Project>

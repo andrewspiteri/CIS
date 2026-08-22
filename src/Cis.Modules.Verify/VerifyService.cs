@@ -1,0 +1,346 @@
+using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using Cis.Abstractions;
+using Cis.Modules.Change;
+using Cis.Modules.Plan;
+
+namespace Cis.Modules.Verify;
+
+public sealed record VerifyFileChange(string Status, string Path, string RepositoryId = "");
+public sealed record VerifyRepositoryBaseline(string RepositoryId, string BaselineKind, string Baseline, bool Exact);
+public sealed record VerifyFinding(string Severity, string Code, string Message, string? Path);
+public sealed record VerifySnapshot(int SchemaVersion, string ChangeId, string Baseline, string CapturedAtUtc,
+    IReadOnlyList<VerifyFileChange> Files, string Digest, IReadOnlyList<VerifyRepositoryBaseline>? Repositories = null);
+public sealed record VerifyResult(string Status, string? RepositoryPath, string? ChangeId, VerifySnapshot? Snapshot,
+    IReadOnlyList<VerifyFinding> Findings, IReadOnlyList<string> Evidence, bool Applied)
+{
+    public int ExitCode => Findings.Any(x => x.Severity == "error") ? 4 : 0;
+}
+
+public sealed class VerifyService
+{
+    public const string RootPath = ".cis/local/verify";
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
+    private readonly ICisRepositoryContextResolver _resolver;
+    private readonly ChangeDossierStore _changes;
+    private readonly ICisWorkspaceRegistry? _workspaceRegistry;
+    private readonly PlanningService? _planning;
+    private readonly Func<DateTimeOffset> _clock;
+
+    public VerifyService(ICisRepositoryContextResolver resolver, ChangeDossierStore changes,
+        Func<DateTimeOffset>? clock = null, ICisWorkspaceRegistry? workspaceRegistry = null,
+        PlanningService? planning = null)
+    {
+        _resolver = resolver;
+        _changes = changes;
+        _clock = clock ?? (() => DateTimeOffset.UtcNow);
+        _workspaceRegistry = workspaceRegistry;
+        _planning = planning;
+    }
+
+    public VerifyResult Diff(string repo, string change)
+    {
+        if (!Setup(repo, change, out var context, out var dossier, out var findings))
+            return New(context, change, null, findings, [], false, "invalid");
+        var snapshot = Capture(context!, dossier!, findings);
+        if (snapshot is null) return New(context, change, null, findings, [], false, "invalid");
+        Write(SnapshotPath(context!, change), JsonSerializer.Serialize(snapshot, JsonOptions));
+        return New(context, change, snapshot, findings, [], true, "captured");
+    }
+
+    public VerifyResult Compare(string repo, string change)
+    {
+        if (!Setup(repo, change, out var context, out _, out var findings))
+            return New(context, change, null, findings, [], false, "invalid");
+        var snapshot = ReadSnapshot(context!, change, findings);
+        if (snapshot is null) return New(context, change, null, findings, [], false, "missing-baseline");
+
+        var scope = PlannedScope(context!, change);
+        var authority = context!.RepositoryId;
+        var actualRepos = snapshot.Files.Select(x => RepoId(x, authority)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var knownRepos = Repositories(context, findings).Select(x => x.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var id in scope.Repositories.Where(x => !knownRepos.Contains(x)))
+            findings.Add(new("error", "CIS-VERIFY-REPOSITORY-MISSING", "Task target is not a registered workspace repository.", id));
+        foreach (var id in scope.Repositories.Where(x => !actualRepos.Contains(x)))
+            findings.Add(new("warning", "CIS-VERIFY-PLANNED-MISSING", "Planned repository has no observed change.", id));
+        foreach (var id in actualRepos.Where(x => !x.Equals(authority, StringComparison.OrdinalIgnoreCase) && !scope.Repositories.Contains(x)))
+            findings.Add(new("warning", "CIS-VERIFY-UNPLANNED", "Observed repository is not named by a task target.", id));
+        foreach (var target in scope.Paths.Where(x => !snapshot.Files.Any(y => PathMatches(x, y, authority))))
+            findings.Add(new("warning", "CIS-VERIFY-PLANNED-MISSING", "Planned target path has no observed change.", target.Display));
+        return New(context, change, snapshot, findings, [], false, "compared");
+    }
+
+    public VerifyResult Validate(string repo, string change)
+    {
+        var compared = Compare(repo, change);
+        if (compared.RepositoryPath is null) return compared;
+        var context = _resolver.Resolve(compared.RepositoryPath).Context!;
+        var dossier = _changes.Read(context.RepositoryPath, change)!;
+        var findings = compared.Findings.ToList();
+        var snapshot = compared.Snapshot;
+        if (snapshot is not null)
+        {
+            if (snapshot.SchemaVersion < 2)
+                findings.Add(new("error", "CIS-VERIFY-SNAPSHOT-VERSION", "Run `cis verify diff` again to create a workspace-aware snapshot.", null));
+            if (snapshot.Files.Count == 0)
+                findings.Add(new("error", "CIS-VERIFY-EMPTY", "An empty snapshot cannot satisfy final verification.", null));
+            if (snapshot.Digest != Digest(snapshot.Files))
+                findings.Add(new("error", "CIS-VERIFY-DIGEST", "Snapshot digest does not match its inventory.", null));
+            var liveFindings = new List<VerifyFinding>();
+            var live = Capture(context, dossier, liveFindings);
+            findings.AddRange(liveFindings.Where(x => x.Severity == "error"));
+            if (live is not null && live.Digest != snapshot.Digest)
+                findings.Add(new("error", "CIS-VERIFY-SNAPSHOT-STALE", "Repository state changed after capture. Run `cis verify diff` again.", null));
+        }
+
+        var dir = Path.Combine(context.DocumentationPath, "changes", change);
+        var plan = Path.Combine(dir, "plan.md");
+        var design = Path.Combine(dir, "design.md");
+        if (!File.Exists(plan) || !Regex.IsMatch(File.ReadAllText(plan), @"(?im)^status:\s*(Approved|Complete|Accepted)\s*$"))
+            findings.Add(new("error", "CIS-VERIFY-PLAN", "Plan is not approved.", Relative(context, plan)));
+        var planText = File.Exists(plan) ? File.ReadAllText(plan) : string.Empty;
+        var designRequired = !Regex.IsMatch(planText, @"(?im)^feature_spec_frontend:\s*false\s*$");
+        if (designRequired && File.Exists(design) && File.ReadAllText(design).Contains("approval_status:", StringComparison.OrdinalIgnoreCase)
+            && !Regex.IsMatch(File.ReadAllText(design), @"(?im)^approval_status:\s*Approved\s*$"))
+            findings.Add(new("error", "CIS-VERIFY-DESIGN", "Design approval is not complete.", Relative(context, design)));
+        var taskDir = Path.Combine(dir, "agent-tasks");
+        var tasks = Directory.Exists(taskDir) ? Directory.EnumerateFiles(taskDir, "*.md") : [];
+        foreach (var task in tasks.Where(x => !HasVerificationDisposition(File.ReadAllText(x))))
+            findings.Add(new("error", "CIS-VERIFY-TASK", "Task lacks a verification-ready lifecycle disposition.", Relative(context, task)));
+        var verification = Path.Combine(dir, "verification.md");
+        if (!File.Exists(verification) || !File.ReadLines(verification).Any(x => x.TrimStart().StartsWith('|') && x.Contains("Passed", StringComparison.OrdinalIgnoreCase)))
+            findings.Add(new("error", "CIS-VERIFY-EVIDENCE", "No passing verification evidence is recorded.", Relative(context, verification)));
+        return New(context, change, snapshot, findings, ReadEvidence(verification), false,
+            findings.Any(x => x.Severity == "error") ? "invalid" : "valid");
+    }
+
+    public VerifyResult Evidence(string repo, string change, string task, string check, string artifact, string result, string notes)
+    {
+        if (!Setup(repo, change, out var context, out _, out var findings))
+            return New(context, change, null, findings, [], false, "invalid");
+        if (new[] { task, check, artifact, result }.Any(string.IsNullOrWhiteSpace))
+            findings.Add(new("error", "CIS-VERIFY-EVIDENCE-INPUT", "Task, check, artifact, and result are required.", null));
+        if (findings.Any(x => x.Severity == "error")) return New(context, change, null, findings, [], false, "invalid");
+        var path = Path.Combine(context!.DocumentationPath, "changes", change, "verification.md");
+        File.AppendAllText(path, $"| {Esc(task)} | {Esc(check)} | `{Esc(artifact)}` | {Esc(result)} | {Esc(notes)} |\n");
+        return New(context, change, ReadSnapshot(context, change, findings), findings, ReadEvidence(path), true, "recorded");
+    }
+
+    public VerifyResult Accept(string repo, string change, string reviewer, string reason)
+    {
+        var valid = Validate(repo, change);
+        if (valid.ExitCode != 0) return valid;
+        if (string.IsNullOrWhiteSpace(reviewer) || string.IsNullOrWhiteSpace(reason))
+            return Invalid(valid, "CIS-VERIFY-AUTHORITY", "Reviewer and reason are required.");
+        if (valid.Snapshot is null || valid.Snapshot.Files.Count == 0 || valid.Snapshot.SchemaVersion < 2)
+            return Invalid(valid, "CIS-VERIFY-SNAPSHOT-REQUIRED", "Acceptance requires a current non-empty workspace-aware snapshot.");
+        var context = _resolver.Resolve(valid.RepositoryPath!).Context!;
+        var path = Path.Combine(context.DocumentationPath, "changes", change, "verification.md");
+        var text = new Regex(@"(?im)^status:\s*[^\r\n]+$").Replace(File.ReadAllText(path), "status: Accepted", 1);
+        text = text.TrimEnd() + $"\n\n## Human acceptance\n\n- Reviewer: {Esc(reviewer)}\n- Accepted UTC: {_clock().ToUniversalTime():O}\n- Rationale: {Esc(reason)}\n- Snapshot digest: `{valid.Snapshot.Digest}`\n";
+        Write(path, text);
+        return valid with { Status = "accepted", Applied = true, Evidence = ReadEvidence(path) };
+    }
+
+    public VerifyResult Finalize(string repo, string change, string reviewer, string reason)
+    {
+        var valid = Validate(repo, change);
+        if (valid.ExitCode != 0) return valid;
+        if (string.IsNullOrWhiteSpace(reviewer) || string.IsNullOrWhiteSpace(reason))
+            return Invalid(valid, "CIS-VERIFY-AUTHORITY", "Reviewer and reason are required.");
+        if (_planning is null)
+            return Invalid(valid, "CIS-VERIFY-FINALIZE-SERVICE", "The planning lifecycle service is unavailable.");
+
+        var plan = _planning.Status(repo, change);
+        if (plan.ExitCode != 0)
+            return Invalid(valid, "CIS-VERIFY-FINALIZE-PLAN", string.Join(" ", plan.Errors));
+        var finalSweep = plan.WorkItems.SingleOrDefault(x => x.TaskTypeKey == "core.delivery.final-sweep");
+        var coordination = plan.WorkItems.SingleOrDefault(x => x.TaskTypeKey == "core.coordination.scope-guard");
+        if (finalSweep is null || coordination is null || finalSweep.TaskPath is null || coordination.TaskPath is null)
+            return Invalid(valid, "CIS-VERIFY-FINALIZE-TASKS", "Finalization requires one final sweep and one coordination scope guard.");
+
+        var context = _resolver.Resolve(repo).Context!;
+        var dossierDirectory = Path.Combine(context.DocumentationPath, "changes", change);
+        var protectedPaths = new[]
+        {
+            Path.Combine(dossierDirectory, "proposal.md"),
+            Path.Combine(dossierDirectory, "plan.md"),
+            Path.Combine(dossierDirectory, "verification.md"),
+            Path.Combine(dossierDirectory, "events.jsonl"),
+            Path.Combine(dossierDirectory, finalSweep.TaskPath!.Replace('/', Path.DirectorySeparatorChar)),
+            Path.Combine(dossierDirectory, coordination.TaskPath!.Replace('/', Path.DirectorySeparatorChar)),
+            SnapshotPath(context, change),
+        }.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var originals = protectedPaths.ToDictionary(path => path,
+            path => File.Exists(path) ? File.ReadAllBytes(path) : null,
+            StringComparer.OrdinalIgnoreCase);
+        VerifyResult Rollback(VerifyResult failure)
+        {
+            foreach (var item in originals)
+            {
+                if (item.Value is null) { if (File.Exists(item.Key)) File.Delete(item.Key); }
+                else { Directory.CreateDirectory(Path.GetDirectoryName(item.Key)!); File.WriteAllBytes(item.Key, item.Value); }
+            }
+            return failure;
+        }
+
+        var transitionReason = $"Final acceptance by {reviewer}: {reason}";
+        if (!finalSweep.Status.Equals("Complete", StringComparison.OrdinalIgnoreCase))
+        {
+            var transitioned = _planning.TransitionTask(new(repo, change, finalSweep.Id, "Complete", reviewer, transitionReason));
+            if (transitioned.ExitCode != 0)
+                return Rollback(Invalid(valid, "CIS-VERIFY-FINALIZE-SWEEP", string.Join(" ", transitioned.Errors)));
+        }
+        if (!coordination.Status.Equals("Complete", StringComparison.OrdinalIgnoreCase))
+        {
+            var transitioned = _planning.TransitionTask(new(repo, change, coordination.Id, "Complete", reviewer, transitionReason));
+            if (transitioned.ExitCode != 0)
+                return Rollback(Invalid(valid, "CIS-VERIFY-FINALIZE-COORDINATION", string.Join(" ", transitioned.Errors)));
+        }
+
+        var closed = _changes.Close(repo, change);
+        if (closed.ExitCode != 0)
+            return Rollback(Invalid(valid, "CIS-VERIFY-FINALIZE-CLOSE", string.Join(" ", closed.Errors)));
+        var captured = Diff(repo, change);
+        if (captured.ExitCode != 0) return Rollback(captured);
+        var accepted = Accept(repo, change, reviewer, reason);
+        return accepted.ExitCode == 0 ? accepted with { Status = "finalized" } : Rollback(accepted);
+    }
+
+    private VerifySnapshot? Capture(CisRepositoryContext context, ChangeDossier dossier, List<VerifyFinding> findings)
+    {
+        var declared = (dossier.RepositoryBaselines ?? []).ToDictionary(x => x.RepositoryId, StringComparer.OrdinalIgnoreCase);
+        var files = new List<VerifyFileChange>();
+        var baselines = new List<VerifyRepositoryBaseline>();
+        foreach (var repository in Repositories(context, findings).OrderBy(x => x.Id, StringComparer.Ordinal))
+        {
+            var exact = declared.TryGetValue(repository.Id, out var stored);
+            var kind = exact ? stored!.BaselineKind : "git";
+            var baseline = exact ? stored!.Baseline : repository.Id.Equals(context.RepositoryId, StringComparison.OrdinalIgnoreCase)
+                ? dossier.Baseline : Git(repository.RepositoryPath, repository.Id, findings, "rev-parse", "HEAD").Trim();
+            if (!exact && repository.Id != context.RepositoryId)
+                findings.Add(new("warning", "CIS-VERIFY-BASELINE-FALLBACK", "Legacy dossier has no participant creation baseline; current HEAD is used.", repository.Id));
+            if (!kind.Equals("git", StringComparison.OrdinalIgnoreCase) || baseline.Length == 0)
+            {
+                findings.Add(new("error", "CIS-VERIFY-BASELINE", "Verification requires a Git baseline.", repository.Id));
+                continue;
+            }
+            baselines.Add(new(repository.Id, kind, baseline, exact));
+            files.AddRange(GitDiff(repository.RepositoryPath, repository.Id, baseline, findings));
+        }
+        if (findings.Any(x => x.Severity == "error")) return null;
+        var ordered = files.DistinctBy(x => $"{x.RepositoryId}\u001f{x.Status}\u001f{x.Path}", StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x.RepositoryId, StringComparer.Ordinal).ThenBy(x => x.Path, StringComparer.Ordinal).ToArray();
+        return new(2, dossier.Id, dossier.Baseline, _clock().ToUniversalTime().ToString("O"), ordered, Digest(ordered), baselines);
+    }
+
+    private IReadOnlyList<CisWorkspaceRepository> Repositories(CisRepositoryContext context, List<VerifyFinding> findings)
+    {
+        if (_workspaceRegistry is not null)
+        {
+            var result = _workspaceRegistry.Resolve(context.RepositoryPath);
+            if (result.IsSuccess && result.Workspace is not null) return result.Workspace.Repositories;
+            if (File.Exists(Path.Combine(context.RepositoryPath, ".cis", "workspace.yml")))
+                findings.AddRange(result.Errors.Select(x => new VerifyFinding("error", "CIS-VERIFY-WORKSPACE", x, null)));
+        }
+        return [new(context.RepositoryId, context.RepositoryPath, context.DocumentationRoot, "authority")];
+    }
+
+    private bool Setup(string repo, string change, out CisRepositoryContext? context, out ChangeDossier? dossier, out List<VerifyFinding> findings)
+    {
+        var result = _resolver.Resolve(repo);
+        context = result.Context;
+        findings = result.Errors.Select(x => new VerifyFinding("error", "CIS-VERIFY-REPOSITORY", x, null)).ToList();
+        dossier = context is null ? null : _changes.Read(context.RepositoryPath, change);
+        if (context is not null && dossier is null) findings.Add(new("error", "CIS-VERIFY-CHANGE", $"Unknown change '{change}'.", null));
+        return context is not null && dossier is not null && findings.Count == 0;
+    }
+
+    private static IReadOnlyList<VerifyFileChange> GitDiff(string repo, string id, string baseline, List<VerifyFinding> findings)
+    {
+        var tracked = Git(repo, id, findings, "diff", "--name-status", "--find-renames", baseline)
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(x => x.TrimEnd('\r').Split('\t'))
+            .Where(x => x.Length >= 2).Select(x => new VerifyFileChange(x[0], x[^1].Replace('\\', '/'), id));
+        var untracked = Git(repo, id, findings, "ls-files", "--others", "--exclude-standard")
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(x => new VerifyFileChange("??", x.TrimEnd('\r').Replace('\\', '/'), id));
+        return tracked.Concat(untracked)
+            .Where(x => !x.Path.StartsWith(".cis/local/", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+    }
+
+    private static string Git(string repo, string id, List<VerifyFinding> findings, params string[] args)
+    {
+        try
+        {
+            using var process = new Process { StartInfo = new("git") { WorkingDirectory = repo, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true } };
+            foreach (var arg in args) process.StartInfo.ArgumentList.Add(arg);
+            process.Start(); var output = process.StandardOutput.ReadToEnd(); var error = process.StandardError.ReadToEnd(); process.WaitForExit();
+            if (process.ExitCode == 0) return output;
+            findings.Add(new("error", "CIS-VERIFY-GIT", error.Trim(), id));
+        }
+        catch (Exception e) when (e is IOException or System.ComponentModel.Win32Exception) { findings.Add(new("error", "CIS-VERIFY-GIT", e.Message, id)); }
+        return string.Empty;
+    }
+
+    private static Scope PlannedScope(CisRepositoryContext context, string change)
+    {
+        var root = Path.Combine(context.DocumentationPath, "changes", change, "agent-tasks");
+        var repos = new HashSet<string>(StringComparer.OrdinalIgnoreCase); var paths = new HashSet<TargetPath>();
+        if (!Directory.Exists(root)) return new(repos, paths);
+        foreach (var file in Directory.EnumerateFiles(root, "*.md"))
+        {
+            var lines = File.ReadAllLines(file);
+            var targets = lines.FirstOrDefault(x => x.StartsWith("targets:", StringComparison.OrdinalIgnoreCase));
+            if (targets is not null) foreach (Match m in Regex.Matches(targets, "[\\\"'](?<id>[^\\\"']+)[\\\"']")) repos.Add(m.Groups["id"].Value.Trim());
+            var inOutputs = false;
+            foreach (var line in lines)
+            {
+                if (Regex.IsMatch(line, @"^##\s+Required outputs\s*$", RegexOptions.IgnoreCase)) { inOutputs = true; continue; }
+                if (inOutputs && line.StartsWith("## ")) inOutputs = false;
+                var explicitTarget = Regex.IsMatch(line, @"^\s*(?:[-*]\s*)?Targets?(?:\s+files?|\s+paths?)?\s*[:`]", RegexOptions.IgnoreCase);
+                if (!inOutputs && !explicitTarget) continue;
+                foreach (Match m in Regex.Matches(line, @"`(?<p>[^`\r\n]+[/\\][^`\r\n]+)`"))
+                {
+                    var value = m.Groups["p"].Value; if (value.Contains(' ') || Uri.TryCreate(value, UriKind.Absolute, out _)) continue;
+                    var split = value.IndexOf("::", StringComparison.Ordinal);
+                    paths.Add(split > 0 ? new(value[..split], Normalize(value[(split + 2)..])) : new(null, Normalize(value)));
+                }
+            }
+        }
+        return new(repos, paths);
+    }
+
+    private static bool PathMatches(TargetPath target, VerifyFileChange actual, string authority)
+        => (target.RepositoryId is null || target.RepositoryId.Equals(RepoId(actual, authority), StringComparison.OrdinalIgnoreCase))
+           && target.Path.Equals(actual.Path, StringComparison.OrdinalIgnoreCase);
+    private static string RepoId(VerifyFileChange item, string authority) => string.IsNullOrWhiteSpace(item.RepositoryId) ? authority : item.RepositoryId;
+    private static VerifySnapshot? ReadSnapshot(CisRepositoryContext context, string change, List<VerifyFinding> findings)
+    {
+        var path = SnapshotPath(context, change); if (!File.Exists(path)) { findings.Add(new("error", "CIS-VERIFY-SNAPSHOT", "Run `cis verify diff` first.", null)); return null; }
+        try { return JsonSerializer.Deserialize<VerifySnapshot>(File.ReadAllText(path), JsonOptions); }
+        catch (JsonException e) { findings.Add(new("error", "CIS-VERIFY-SNAPSHOT", e.Message, Relative(context, path))); return null; }
+    }
+    private static bool HasVerificationDisposition(string text)
+    {
+        var status = Regex.Match(text, @"(?im)^task_status:\s*(?<v>[^\r\n]+)").Groups["v"].Value;
+        var category = Regex.Match(text, @"(?im)^category:\s*(?<v>[^\r\n]+)").Groups["v"].Value;
+        if (PlanTaskDispositionPolicy.IsTerminal(status, category)) return true;
+        return Regex.IsMatch(text, @"(?im)^task_status:\s*InProgress\s*$") && Regex.IsMatch(text, @"(?im)^task_type:\s*core\.delivery\.final-sweep\s*$")
+            && !Regex.IsMatch(text, @"(?m)^\s*-\s*\[\s\]\s+") && Regex.IsMatch(text, @"(?im)^\|[^\r\n]*\|\s*Passed\s*\|");
+    }
+    private static VerifyResult Invalid(VerifyResult result, string code, string message) => result with { Status = "invalid", Findings = result.Findings.Append(new VerifyFinding("error", code, message, null)).ToArray() };
+    private static string Digest(IEnumerable<VerifyFileChange> files) => Sha(string.Join("\n", files.Select(x => $"{x.RepositoryId}\t{x.Status}\t{x.Path}")));
+    private static IReadOnlyList<string> ReadEvidence(string path) => File.Exists(path) ? File.ReadLines(path).Where(x => x.TrimStart().StartsWith('|') && !x.Contains("---")).ToArray() : [];
+    private static string SnapshotPath(CisRepositoryContext c, string id) => Path.Combine(c.RepositoryPath, RootPath.Replace('/', Path.DirectorySeparatorChar), id, "snapshot.json");
+    private static string Relative(CisRepositoryContext c, string path) => Path.GetRelativePath(c.RepositoryPath, path).Replace(Path.DirectorySeparatorChar, '/');
+    private static string Normalize(string path) => path.Replace('\\', '/').TrimStart('.', '/');
+    private static string Esc(string? value) => (value ?? "").Replace('|', '/').Replace('\r', ' ').Replace('\n', ' ').Trim();
+    private static string Sha(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
+    private static void Write(string path, string text) { Directory.CreateDirectory(Path.GetDirectoryName(path)!); var temp = path + ".tmp"; File.WriteAllText(temp, text); File.Move(temp, path, true); }
+    private static VerifyResult New(CisRepositoryContext? c, string id, VerifySnapshot? s, IReadOnlyList<VerifyFinding> f, IReadOnlyList<string> e, bool a, string status) => new(status, c?.RepositoryPath, id, s, f, e, a);
+    private sealed record Scope(HashSet<string> Repositories, HashSet<TargetPath> Paths);
+    private sealed record TargetPath(string? RepositoryId, string Path) { public string Display => RepositoryId is null ? Path : $"{RepositoryId}::{Path}"; }
+}

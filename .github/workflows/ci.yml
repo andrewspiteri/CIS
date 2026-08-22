@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: dotnet restore ChangeImpactStudio.slnx
+      - run: dotnet build ChangeImpactStudio.slnx -c Release --no-restore
+      - run: dotnet test ChangeImpactStudio.slnx -c Release --no-build --no-restore
+      - run: node --check vscode-extension/extension.js
+      - run: node --test vscode-extension/test/*.test.js
+
+  release-smoke:
+    needs: verify
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - shell: pwsh
+        run: ./tools/build-release.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cis-release-smoke
+          path: artifacts/release
+

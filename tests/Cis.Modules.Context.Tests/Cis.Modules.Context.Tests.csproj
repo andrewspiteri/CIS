@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsTestProject>true</IsTestProject>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Cis.Modules.Context\Cis.Modules.Context.csproj" />
+    <ProjectReference Include="..\..\src\Cis.Modules.Docs\Cis.Modules.Docs.csproj" />
+    <ProjectReference Include="..\..\src\Cis.Modules.Graph\Cis.Modules.Graph.csproj" />
+    <ProjectReference Include="..\..\src\Cis.Modules.Repository\Cis.Modules.Repository.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+</Project>

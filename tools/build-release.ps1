@@ -35,10 +35,42 @@ try {
     git archive --format=zip --output=$sourceArchive HEAD
 
     $toolPath = Join-Path $resolvedOutput ".tool-smoke"
-    New-Item -ItemType Directory -Force -Path $toolPath | Out-Null
-    dotnet tool install AndrewSpiteri.ChangeImpactStudio --tool-path $toolPath --version $version --add-source $resolvedOutput --ignore-failed-sources
-    & (Join-Path $toolPath "cis") --help | Out-Null
-    Remove-Item -LiteralPath $toolPath -Recurse -Force
+    $toolPackageCache = Join-Path $resolvedOutput ".tool-smoke-packages"
+    $toolNugetConfig = Join-Path $resolvedOutput ".tool-smoke.nuget.config"
+    $escapedPackageSource = [Security.SecurityElement]::Escape($resolvedOutput)
+    [IO.File]::WriteAllText($toolNugetConfig, @"
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <clear />
+    <add key="release-under-test" value="$escapedPackageSource" />
+  </packageSources>
+</configuration>
+"@, [Text.UTF8Encoding]::new($false))
+    $previousNugetPackages = $env:NUGET_PACKAGES
+    try {
+        $env:NUGET_PACKAGES = $toolPackageCache
+        New-Item -ItemType Directory -Force -Path $toolPath | Out-Null
+        dotnet tool install AndrewSpiteri.ChangeImpactStudio --tool-path $toolPath --version $version --configfile $toolNugetConfig --no-cache
+        $packagedCis = Join-Path $toolPath "cis"
+        & $packagedCis --help | Out-Null
+        $loadedModules = (& $packagedCis host modules --format agent) -join "`n"
+        foreach ($requiredModule in @("module=skills;", "module=standards;", "module=technical-intent;", "module=verify;")) {
+            if (-not $loadedModules.Contains($requiredModule, [StringComparison]::Ordinal)) {
+                throw "Packaged CLI did not register required module marker '$requiredModule'."
+            }
+        }
+        & $packagedCis skills --help | Out-Null
+        & $packagedCis standards --help | Out-Null
+        & $packagedCis technical-intent --help | Out-Null
+        & $packagedCis verify --help | Out-Null
+    }
+    finally {
+        $env:NUGET_PACKAGES = $previousNugetPackages
+        if (Test-Path -LiteralPath $toolPath) { Remove-Item -LiteralPath $toolPath -Recurse -Force }
+        if (Test-Path -LiteralPath $toolPackageCache) { Remove-Item -LiteralPath $toolPackageCache -Recurse -Force }
+        if (Test-Path -LiteralPath $toolNugetConfig) { Remove-Item -LiteralPath $toolNugetConfig -Force }
+    }
 
     $checksums = Get-ChildItem -LiteralPath $resolvedOutput -File | Sort-Object Name | ForEach-Object {
         "{0}  {1}" -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name

@@ -1153,8 +1153,8 @@ managed_artifacts:
   path: docs/references/standards-conformance-matrix.md
   definition: reference.standards-conformance-matrix
   template_version: 1
-  applied_hash: sha256:1cfcaff4b117c0c07f28bab9ef6a409f909e44ecda874f6654bc7e07b3f418c8
-  ownership: managed
+  applied_hash: sha256:4effff16650854d6392fea13f5d1100cff3e14f3899e6a2bb667fd1672f84527
+  ownership: human
 - id: reference.task-type-capability-selections
   path: docs/references/task-type-capability-selections.md
   definition: reference.task-type-capability-selections

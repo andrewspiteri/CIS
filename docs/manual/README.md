@@ -113,6 +113,7 @@ Each loaded module owns one top-level command group. The following leaf commands
 | [`cis technical-intent init`](cis_technical_intent_init.md) | Bind workspace technical direction to the Active BRD and participant graph baselines. |
 | [`cis technical-intent validate`](cis_technical_intent_validate.md) | Validate technical-intent completeness, decisions, currency, and approval evidence. |
 | [`cis technical-intent status`](cis_technical_intent_status.md) | Report effective technical-intent lifecycle and drift state. |
+| [`cis technical-intent refresh`](cis_technical_intent_refresh.md) | Refresh unchanged BRD, technical-intent, and backlog baselines without duplicate approval. |
 | [`cis technical-intent approve`](cis_technical_intent_approve.md) | Record explicit human approval of valid, current technical direction. |
 | [`cis docs inventory`](cis_docs_inventory.md) | Inventory Markdown beneath the configured documentation root. |
 | [`cis docs validate`](cis_docs_validate.md) | Validate the documentation catalog and its Markdown files. |
@@ -143,6 +144,7 @@ Each loaded module owns one top-level command group. The following leaf commands
 | [`cis decision promote`](cis_decision_promote.md) | Promote a resolved durable decision into a catalogued ADR. |
 | [`cis plan build`](cis_plan_build.md) | Build bounded work from accepted impacts. |
 | [`cis plan import-spec`](cis_plan_import_spec.md) | Import a feature specification and generate a catalogued, complexity-bounded issue pack with design and verification gates. |
+| [`cis plan derive`](cis_plan_derive.md) | Atomically carry current feature approval through eligible impacts and the exact generated plan. |
 | [`cis plan show`](cis_plan_show.md) | Show the canonical dependency-aware plan. |
 | [`cis plan validate`](cis_plan_validate.md) | Validate coverage, dependencies, decisions, acceptance, and tests. |
 | [`cis plan approve`](cis_plan_approve.md) | Record explicit human approval of a valid plan. |
@@ -152,12 +154,13 @@ Each loaded module owns one top-level command group. The following leaf commands
 | [`cis plan task transition`](cis_plan_task_transition.md) | Move a generated task through its audited lifecycle while enforcing gates. |
 | [`cis plan task migrate-type`](cis_plan_task_migrate_type.md) | Migrate an extension task to the selected compatible provider while preserving human evidence. |
 | [`cis design templates`](cis_design_templates.md) | List reusable application-shell/component templates and possible token savings. |
-| [`cis design scaffold`](cis_design_scaffold.md) | Scaffold one self-contained renderer from approved textual wireframes. |
+| [`cis design scaffold`](cis_design_scaffold.md) | Scaffold one self-contained renderer from validated textual wireframes. |
 | [`cis design wireframe-validate`](cis_design_wireframe_validate.md) | Validate classified screens, states, actions, paths, and coverage before human review. |
 | [`cis design wireframe-approve`](cis_design_wireframe_approve.md) | Approve the exact textual screen, action, state, and path contract. |
 | [`cis design wireframe-reject`](cis_design_wireframe_reject.md) | Reject textual wireframes with preserved digest and rationale. |
 | [`cis design render`](cis_design_render.md) | Render the PNG pack and activate the global human-review pause. |
 | [`cis design validate`](cis_design_validate.md) | Validate renderer, guideline, shell, provenance, and artifact evidence. |
+| [`cis design reconcile`](cis_design_reconcile.md) | Carry current feature authority across an unchanged PNG refresh without duplicating approval. |
 | [`cis design approve`](cis_design_approve.md) | Approve exact renderer/manifest hashes and release the global design gate. |
 | [`cis design reject`](cis_design_reject.md) | Reject the pack, preserve hashes, remove PNGs, and retain the pause. |
 | [`cis design status`](cis_design_status.md) | Show the current design gate, approval, renderer, and artifacts. |

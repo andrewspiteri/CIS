@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using Cis.Abstractions;
 using Cis.Modules.Change;
 
 namespace Cis.Modules.Design;
@@ -11,10 +12,12 @@ public sealed class DesignService
     private readonly DesignTemplateCatalog _templates;
     private readonly Func<DateTimeOffset> _clock;
     private readonly IDesignProcessRunner _runner;
+    private readonly IReadOnlyList<ICisFeatureApprovalAuthority> _featureAuthorities;
 
     public DesignService(
         ChangeDossierStore changes,
         DesignTemplateCatalog templates,
+        IEnumerable<ICisFeatureApprovalAuthority> featureAuthorities,
         Func<DateTimeOffset>? clock = null,
         IDesignProcessRunner? runner = null)
     {
@@ -22,6 +25,7 @@ public sealed class DesignService
         _templates = templates;
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
         _runner = runner ?? new NodeDesignProcessRunner();
+        _featureAuthorities = featureAuthorities.ToArray();
     }
 
     public DesignResult Templates()
@@ -36,10 +40,8 @@ public sealed class DesignService
 
         var wireframePath = _changes.DossierFile(change, "wireframes.md");
         var wireframe = File.ReadAllText(wireframePath);
-        if (!FrontMatter(wireframe, "approval_status").Equals("Approved", StringComparison.OrdinalIgnoreCase))
-        {
-            return Error(change.Id, "Textual wireframes require explicit approval before renderer scaffolding.");
-        }
+        var wireframeValidation = ValidateWireframes(request.RepositoryPath, request.ChangeId);
+        if (wireframeValidation.ExitCode != 0) return wireframeValidation;
         var screens = ParseScreens(wireframe);
         if (screens.Count == 0)
         {
@@ -50,7 +52,7 @@ public sealed class DesignService
         if (guidelinePath is null) return Error(change.Id, "No governed design-guidelines document was found.");
         var relativeGuideline = Relative(change.RepositoryPath, guidelinePath);
         var guidelineSha = Sha(File.ReadAllBytes(guidelinePath));
-        var wireframeSha = ApprovedWireframeSha(wireframe) ?? WireframeBodySha(wireframe);
+        var wireframeSha = CurrentApprovedWireframeSha(wireframe) ?? WireframeBodySha(wireframe);
         var slug = Slug(request.Feature);
         if (slug.Length == 0) return Error(change.Id, "Feature name must produce a non-empty renderer filename.");
         var rendererPath = Path.Combine(Path.GetDirectoryName(wireframePath)!, "assets", $"render-{slug}-screens.mjs");
@@ -107,6 +109,7 @@ public sealed class DesignService
         {
             ["renderer"] = rendererRelative,
             ["wireframeSha256"] = wireframeSha,
+            ["wireframeApproval"] = FrontMatter(wireframe, "approval_status"),
             ["guidelineSha256"] = guidelineSha,
             ["templates"] = string.Join(',', usedTemplates.Select(template => template.Id)),
         });
@@ -154,23 +157,21 @@ public sealed class DesignService
         }
 
         var wireframes = File.ReadAllText(_changes.DossierFile(change, "wireframes.md"));
-        if (!FrontMatter(wireframes, "approval_status").Equals("Approved", StringComparison.OrdinalIgnoreCase))
-        {
-            diagnostics.Add("ERROR: Textual wireframes are not approved.");
-        }
-        var approvedWireframeSha = ApprovedWireframeSha(wireframes);
-        if (approvedWireframeSha is null)
-        {
-            diagnostics.Add("ERROR: Approved textual wireframes must record their exact approval digest.");
-        }
-        else if (rendererPath is not null && File.Exists(rendererPath))
+        var recordedWireframeSha = ApprovedWireframeSha(wireframes);
+        var approvedWireframeSha = CurrentApprovedWireframeSha(wireframes);
+        var governedWireframeSha = approvedWireframeSha ?? WireframeBodySha(wireframes);
+        if (rendererPath is not null && File.Exists(rendererPath))
         {
             var renderer = File.ReadAllText(rendererPath);
-            Required(renderer, $"wireframeSha256: \"{approvedWireframeSha}\"",
-                "Renderer wireframe provenance must match the exact human-approved digest.", diagnostics);
-            if (!design.Contains($"`{approvedWireframeSha}`", StringComparison.Ordinal))
-                diagnostics.Add("ERROR: design.md wireframe provenance must match the exact human-approved digest.");
+            Required(renderer, $"wireframeSha256: \"{governedWireframeSha}\"",
+                "Renderer wireframe provenance must match the exact validated wireframe digest.", diagnostics);
+            if (!design.Contains($"`{governedWireframeSha}`", StringComparison.Ordinal))
+                diagnostics.Add("ERROR: design.md wireframe provenance must match the exact validated wireframe digest.");
         }
+        if (recordedWireframeSha is not null && approvedWireframeSha is null)
+            diagnostics.Add("INFO: The earlier wireframe approval is stale; design approval or eligible unchanged-manifest reconciliation will renew authority for the current digest.");
+        else if (approvedWireframeSha is null)
+            diagnostics.Add("INFO: Wireframe authority will be recorded atomically with design approval.");
         var classifiedScreens = ParseScreens(wireframes);
         if (classifiedScreens.Count == 0 || classifiedScreens.Any(screen => !ValidFrontendType(screen.FrontendType)))
         {
@@ -384,15 +385,28 @@ public sealed class DesignService
         var change = _changes.Read(request.RepositoryPath, request.ChangeId)!;
         if (!validation.GateStatus!.Equals("PausedForReview", StringComparison.OrdinalIgnoreCase))
             return Error(change.Id, "Design approval requires a PausedForReview design pack.");
+        var wireframes = File.ReadAllText(_changes.DossierFile(change, "wireframes.md"));
+        if (CurrentApprovedWireframeSha(wireframes) is null)
+        {
+            var wireframeApproval = ApproveWireframes(request);
+            if (wireframeApproval.ExitCode != 0) return wireframeApproval;
+            _changes.AppendEvent(change, "wireframe-authority-carried-with-design", new Dictionary<string, string>
+            {
+                ["reviewer"] = request.Reviewer.Trim(),
+                ["rationale"] = request.Rationale.Trim(),
+                ["sha256"] = WireframeBodySha(wireframes),
+            });
+        }
+        var wireframeSha = WireframeBodySha(wireframes);
         var designPath = _changes.DossierFile(change, "design.md");
         var design = File.ReadAllText(designPath);
         var rendererSha = Sha(File.ReadAllBytes(Path.Combine(change.RepositoryPath, validation.RendererPath!.Replace('/', Path.DirectorySeparatorChar))));
         design = ReplaceSection(design, "## Approval decision", $"""
 ## Approval decision
 
-| Decision | Reviewer | Date | Renderer SHA-256 | PNG manifest SHA-256 | Rationale |
-| --- | --- | --- | --- | --- | --- |
-| Approved | {Cell(request.Reviewer)} | {_clock():yyyy-MM-ddTHH:mm:ssZ} | `{rendererSha}` | `{ManifestSha(validation.Artifacts)}` | {Cell(request.Rationale)} |
+| Decision | Reviewer | Date | Wireframe SHA-256 | Renderer SHA-256 | PNG manifest SHA-256 | Rationale |
+| --- | --- | --- | --- | --- | --- | --- |
+| Approved | {Cell(request.Reviewer)} | {_clock():yyyy-MM-ddTHH:mm:ssZ} | `{wireframeSha}` | `{rendererSha}` | `{ManifestSha(validation.Artifacts)}` | {Cell(request.Rationale)} |
 """);
         design = FrontMatter(design, "status", "Approved");
         design = FrontMatter(design, "approval_status", "Approved");
@@ -401,9 +415,113 @@ public sealed class DesignService
         _changes.AppendEvent(change, "design-approved", new Dictionary<string, string>
         {
             ["reviewer"] = request.Reviewer.Trim(), ["rationale"] = request.Rationale.Trim(),
-            ["rendererSha256"] = rendererSha, ["manifestSha256"] = ManifestSha(validation.Artifacts),
+            ["wireframeSha256"] = wireframeSha, ["rendererSha256"] = rendererSha,
+            ["manifestSha256"] = ManifestSha(validation.Artifacts),
         });
         return validation with { Status = "approved", GateStatus = "Approved", ApprovalStatus = "Approved", Applied = true };
+    }
+
+    public DesignResult Reconcile(string repositoryPath, string changeId)
+    {
+        var validation = Validate(repositoryPath, changeId);
+        if (validation.ExitCode != 0) return validation;
+        var change = _changes.Read(repositoryPath, changeId)!;
+        if (!string.Equals(validation.GateStatus, "PausedForReview", StringComparison.OrdinalIgnoreCase))
+            return Error(change.Id, "Design reconciliation requires a PausedForReview design pack.");
+
+        var planPath = _changes.DossierFile(change, "plan.md");
+        var plan = File.ReadAllText(planPath);
+        if (!FrontMatter(plan, "status").Equals("Approved", StringComparison.OrdinalIgnoreCase))
+            return Error(change.Id, "Design reconciliation requires an Approved delivery plan.");
+        var featurePath = FrontMatter(plan, "feature_spec_path");
+        var plannedFeatureSha = FrontMatter(plan, "feature_spec_sha256").ToLowerInvariant();
+        if (featurePath.Length == 0 || !Regex.IsMatch(plannedFeatureSha, "^sha256:[0-9a-f]{64}$", RegexOptions.CultureInvariant))
+            return Error(change.Id, "The Approved plan must pin feature_spec_path and feature_spec_sha256.");
+
+        var featureAbsolute = Path.GetFullPath(Path.Combine(change.RepositoryPath,
+            featurePath.Replace('/', Path.DirectorySeparatorChar)));
+        var repositoryRoot = Path.GetFullPath(change.RepositoryPath).TrimEnd(Path.DirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        if (!featureAbsolute.StartsWith(repositoryRoot, comparison) || !File.Exists(featureAbsolute))
+            return Error(change.Id, $"The plan's feature specification is missing or outside the repository: {featurePath}");
+        var currentFeatureSha = Sha(File.ReadAllBytes(featureAbsolute));
+        if (!currentFeatureSha.Equals(plannedFeatureSha, StringComparison.OrdinalIgnoreCase))
+            return Error(change.Id, $"The Approved plan is stale: feature digest is {currentFeatureSha}, expected {plannedFeatureSha}.");
+
+        var applicable = _featureAuthorities.Select(authority => authority.Evaluate(change.RepositoryPath, featurePath))
+            .Where(result => result.Applicable).ToArray();
+        if (applicable.Length != 1)
+            return Error(change.Id, applicable.Length == 0
+                ? "No feature-approval authority applies; explicit design approval is required."
+                : "Multiple feature-approval authorities apply; resolve the authority conflict before reconciliation.");
+        var authority = applicable[0];
+        if (!authority.Ready)
+            return Error(change.Id, authority.Errors.Count == 0
+                ? "The feature approval is not current; explicit design approval is required."
+                : string.Join(" ", authority.Errors));
+        if (!string.Equals(authority.FeaturePath, featurePath, comparison)
+            || string.IsNullOrWhiteSpace(authority.Reviewer)
+            || string.IsNullOrWhiteSpace(authority.Rationale))
+            return Error(change.Id, "Feature authority is missing the exact path, reviewer, or rationale required for carry-forward.");
+
+        var designPath = _changes.DossierFile(change, "design.md");
+        var design = File.ReadAllText(designPath);
+        var priorManifest = PriorApprovedManifestSha(design);
+        if (priorManifest is null)
+            return Error(change.Id, "No earlier approved design manifest exists; explicit design approval is required.");
+        var currentManifest = ManifestSha(validation.Artifacts);
+        if (!priorManifest.Equals(currentManifest, StringComparison.OrdinalIgnoreCase))
+            return Error(change.Id, $"Rendered pixels changed ({priorManifest} -> {currentManifest}); explicit design review is required.");
+
+        var wireframePath = _changes.DossierFile(change, "wireframes.md");
+        var wireframes = File.ReadAllText(wireframePath);
+        var wireframeSha = WireframeBodySha(wireframes);
+        var rationale = $"Authority carried forward from currently approved feature {authority.ItemId ?? featurePath}: {authority.Rationale} Rendered PNG manifest is unchanged from the earlier approved revision.";
+        wireframes = ReplaceSection(wireframes, "## Approval decision", $"""
+## Approval decision
+
+| Decision | Reviewer | Date | Wireframe SHA-256 | Rationale |
+| --- | --- | --- | --- | --- |
+| Authority carried forward | {Cell(authority.Reviewer)} | {_clock():yyyy-MM-ddTHH:mm:ssZ} | `{wireframeSha}` | {Cell(rationale)} |
+""");
+        wireframes = FrontMatter(wireframes, "status", "Approved");
+        wireframes = FrontMatter(wireframes, "approval_status", "Approved");
+        File.WriteAllText(wireframePath, wireframes);
+
+        var rendererSha = Sha(File.ReadAllBytes(Path.Combine(change.RepositoryPath,
+            validation.RendererPath!.Replace('/', Path.DirectorySeparatorChar))));
+        design = ReplaceSection(design, "## Approval decision", $"""
+## Approval decision
+
+| Decision | Reviewer | Date | Wireframe SHA-256 | Renderer SHA-256 | PNG manifest SHA-256 | Rationale |
+| --- | --- | --- | --- | --- | --- | --- |
+| Authority carried forward | {Cell(authority.Reviewer)} | {_clock():yyyy-MM-ddTHH:mm:ssZ} | `{wireframeSha}` | `{rendererSha}` | `{currentManifest}` | {Cell(rationale)} |
+""");
+        design = FrontMatter(design, "status", "Approved");
+        design = FrontMatter(design, "approval_status", "Approved");
+        design = FrontMatter(design, "gate_status", "Approved");
+        File.WriteAllText(designPath, design);
+        _changes.AppendEvent(change, "design-authority-carried-forward", new Dictionary<string, string>
+        {
+            ["feature"] = authority.ItemId ?? featurePath,
+            ["featurePath"] = featurePath,
+            ["featureSha256"] = currentFeatureSha,
+            ["reviewer"] = authority.Reviewer.Trim(),
+            ["wireframeSha256"] = wireframeSha,
+            ["rendererSha256"] = rendererSha,
+            ["manifestSha256"] = currentManifest,
+            ["priorManifestSha256"] = priorManifest,
+        });
+        return validation with
+        {
+            Status = "authority-carried-forward",
+            GateStatus = "Approved",
+            ApprovalStatus = "Approved",
+            Diagnostics = validation.Diagnostics.Append(
+                $"INFO: Authority carried forward from {authority.ItemId ?? featurePath}; PNG manifest is unchanged.").ToArray(),
+            Applied = true,
+        };
     }
 
     public DesignResult Reject(DesignReviewRequest request)
@@ -530,7 +648,7 @@ Rejected PNG files are removed. Preserve their manifest hashes and review eviden
     }
 
     private static bool HasAuthoringPlaceholder(string value)
-        => Regex.IsMatch(value, @"\b(?:TODO|TBD)\b|(?i:\bto be completed\b)",
+        => Regex.IsMatch(value, @"(?<![A-Za-z0-9_-])(?:TODO|TBD)(?![A-Za-z0-9_-])|(?i:\bto be completed\b)",
             RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
     private static int FrontendTypeOrder(string value) => value switch { "public" => 0, "customer" => 1, "backoffice" => 2, _ => 3 };
 
@@ -635,14 +753,33 @@ Rejected PNG files are removed. Preserve their manifest hashes and review eviden
     {
         var index = content.IndexOf("## Approval decision", StringComparison.Ordinal);
         var body = index < 0 ? content : content[..index];
+        // Workflow transitions must not invalidate the content they approve. The
+        // approval command changes these two fields after computing the digest,
+        // so normalize them to their review-state values before hashing.
+        body = FrontMatter(body, "status", "ReadyForReview");
+        body = FrontMatter(body, "approval_status", "NotReviewed");
         return Sha(Encoding.UTF8.GetBytes(body.Replace("\r\n", "\n", StringComparison.Ordinal).TrimEnd() + "\n"));
     }
     private static string? ApprovedWireframeSha(string content)
     {
         var match = Regex.Match(content,
-            @"(?m)^\|\s*Approved\s*\|[^\r\n]*?`(?<sha>sha256:[0-9a-fA-F]{64})`[^\r\n]*\r?$",
+            @"(?m)^\|\s*(?:Approved|Authority carried forward)\s*\|[^\r\n]*?`(?<sha>sha256:[0-9a-fA-F]{64})`[^\r\n]*\r?$",
             RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
         return match.Success ? match.Groups["sha"].Value.ToLowerInvariant() : null;
+    }
+    private static string? PriorApprovedManifestSha(string content)
+    {
+        var match = Regex.Match(SectionBody(content, "## Approval decision"),
+            @"(?m)^\|\s*(?:Approved|Authority carried forward)\s*\|[^\r\n]*?`sha256:[0-9a-fA-F]{64}`\s*\|\s*`sha256:[0-9a-fA-F]{64}`\s*\|\s*`(?<sha>sha256:[0-9a-fA-F]{64})`\s*\|",
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        return match.Success ? match.Groups["sha"].Value.ToLowerInvariant() : null;
+    }
+    private static string? CurrentApprovedWireframeSha(string content)
+    {
+        var approved = ApprovedWireframeSha(content);
+        return approved is not null && approved.Equals(WireframeBodySha(content), StringComparison.OrdinalIgnoreCase)
+            ? approved
+            : null;
     }
     private static string Relative(string root, string path) => Path.GetRelativePath(root, path).Replace('\\', '/');
     private static string Cell(string value) => value.Replace('|', '/').Replace("\r", " ").Replace("\n", " ").Trim();

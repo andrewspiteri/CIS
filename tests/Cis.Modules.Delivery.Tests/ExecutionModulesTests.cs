@@ -5,8 +5,12 @@ using Cis.Modules.Agent;
 using Cis.Modules.Ai;
 using Cis.Modules.Change;
 using Cis.Modules.Diagnostics;
+using Cis.Modules.Decision;
 using Cis.Modules.Generate;
+using Cis.Modules.Graph;
+using Cis.Modules.Impact;
 using Cis.Modules.Learn;
+using Cis.Modules.Plan;
 using Cis.Modules.Repository;
 using Cis.Modules.Verify;
 using Cis.Modules.Workflow;
@@ -183,13 +187,53 @@ public sealed class ExecutionModulesTests
         repository.Write("docs/cis/changes/CIS-0001/agent-tasks/WORK-001.md", "---\ntask_status: Complete\n---\n# Work\nTarget `src/example.txt`\n");
         repository.Write("src/example.txt", "changed\n");
         var changes = new ChangeDossierStore(new CisRepositoryContextResolver(), Clock);
-        var service = new VerifyService(new CisRepositoryContextResolver(), changes, Clock);
+        var service = new VerifyService(new CisRepositoryContextResolver(), changes, [], Clock);
 
         Assert.Equal("captured", service.Diff(repository.Path, "CIS-0001").Status);
         Assert.Equal(0, service.Validate(repository.Path, "CIS-0001").ExitCode);
         var accepted = service.Accept(repository.Path, "CIS-0001", "andrew", "All deterministic evidence passed.");
         Assert.Equal("accepted", accepted.Status);
         Assert.Contains("status: Accepted", File.ReadAllText(System.IO.Path.Combine(repository.Path, "docs", "cis", "changes", "CIS-0001", "verification.md")), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Verify_EvidenceDoesNotChangeVerificationWhenSnapshotIsMissing()
+    {
+        using var repository = ExecutionRepository.Create(git: true);
+        var baseline = repository.Head();
+        repository.Write("docs/cis/changes/CIS-0007/proposal.md", $"---\nchange_id: CIS-0007\ntitle: Evidence fixture\noutcome: Safe evidence\nstatus: Active\nbaseline_kind: git\nbaseline: {baseline}\ngraph_build_id: graph-1\nimpact_roots: []\n---\n");
+        const string original = "---\nstatus: Draft\n---\n# Verification\n| Task | Check | Artifact | Result | Notes |\n|---|---|---|---|---|";
+        repository.Write("docs/cis/changes/CIS-0007/verification.md", original);
+        var changes = new ChangeDossierStore(new CisRepositoryContextResolver(), Clock);
+        var service = new VerifyService(new CisRepositoryContextResolver(), changes, [], Clock);
+
+        var result = service.Evidence(repository.Path, "CIS-0007", "WORK-010", "tests", "dotnet test", "Passed", "exact fixture");
+
+        Assert.Equal(4, result.ExitCode);
+        Assert.False(result.Applied);
+        Assert.Contains(result.Findings, item => item.Code == "CIS-VERIFY-SNAPSHOT");
+        Assert.Equal(original, File.ReadAllText(System.IO.Path.Combine(repository.Path, "docs", "cis", "changes", "CIS-0007", "verification.md")));
+    }
+
+    [Fact]
+    public void Verify_EvidenceStartsANewLineWhenVerificationHasNoTrailingLineBreak()
+    {
+        using var repository = ExecutionRepository.Create(git: true);
+        var baseline = repository.Head();
+        repository.Write("docs/cis/changes/CIS-0008/proposal.md", $"---\nchange_id: CIS-0008\ntitle: Evidence fixture\noutcome: Valid markdown evidence\nstatus: Active\nbaseline_kind: git\nbaseline: {baseline}\ngraph_build_id: graph-1\nimpact_roots: []\n---\n");
+        const string original = "---\nstatus: Draft\n---\n# Verification\n| Task | Check | Artifact | Result | Notes |\n|---|---|---|---|---|";
+        repository.Write("docs/cis/changes/CIS-0008/verification.md", original);
+        var changes = new ChangeDossierStore(new CisRepositoryContextResolver(), Clock);
+        var service = new VerifyService(new CisRepositoryContextResolver(), changes, [], Clock);
+        Assert.Equal(0, service.Diff(repository.Path, "CIS-0008").ExitCode);
+
+        var result = service.Evidence(repository.Path, "CIS-0008", "WORK-010", "tests", "dotnet test", "Passed", "exact fixture");
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.True(result.Applied);
+        var content = File.ReadAllText(System.IO.Path.Combine(repository.Path, "docs", "cis", "changes", "CIS-0008", "verification.md"));
+        Assert.Contains("|---|---|---|---|---|" + Environment.NewLine + "| WORK-010 | tests | `dotnet test` | Passed | exact fixture |", content, StringComparison.Ordinal);
+        Assert.Single(result.Evidence, item => item.Contains("WORK-010", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -216,7 +260,7 @@ public sealed class ExecutionModulesTests
         repository.Write("docs/cis/changes/CIS-0002/agent-tasks/WORK-001.md", "---\ntask_status: Complete\n---\n# Work\nTarget `src/example.txt`\n\n## Context and evidence\n\n- Governed reference: `docs/specs/business-requirements.md`.\n- Governed reference: `https://example.test/reference`.\n");
         repository.Write("src/example.txt", "changed\n");
         var changes = new ChangeDossierStore(new CisRepositoryContextResolver(), Clock);
-        var service = new VerifyService(new CisRepositoryContextResolver(), changes, Clock);
+        var service = new VerifyService(new CisRepositoryContextResolver(), changes, [], Clock);
 
         Assert.Equal("captured", service.Diff(repository.Path, "CIS-0002").Status);
         var compared = service.Compare(repository.Path, "CIS-0002");
@@ -254,7 +298,7 @@ public sealed class ExecutionModulesTests
         repository.Write("docs/cis/changes/CIS-0003/agent-tasks/WORK-160.md", "---\r\ntask_status: Complete\r\ncategory: verification\r\n---\r\n# Verification\r\n");
         repository.Write("docs/cis/changes/CIS-0003/agent-tasks/WORK-180.md", "---\r\ntask_status: InProgress\r\ntask_type: core.delivery.final-sweep\r\ncategory: delivery\r\n---\r\n# Final sweep\r\n- [x] Reconciled.\r\n| Check | Result |\r\n|---|---|\r\n| completion | Passed |\r\n");
         var changes = new ChangeDossierStore(new CisRepositoryContextResolver(), Clock);
-        var service = new VerifyService(new CisRepositoryContextResolver(), changes, Clock);
+        var service = new VerifyService(new CisRepositoryContextResolver(), changes, [], Clock);
 
         Assert.Equal("captured", service.Diff(repository.Path, "CIS-0003").Status);
         Assert.Equal(0, service.Validate(repository.Path, "CIS-0003").ExitCode);
@@ -309,7 +353,7 @@ public sealed class ExecutionModulesTests
         var resolver = new CisRepositoryContextResolver();
         var registry = new WorkspaceRegistry(resolver);
         var changes = new ChangeDossierStore(resolver, Clock, workspaceRegistry: registry);
-        var service = new VerifyService(resolver, changes, Clock, registry);
+        var service = new VerifyService(resolver, changes, [], Clock, registry);
 
         var result = service.Diff(authority.Path, "CIS-0004");
 
@@ -329,7 +373,7 @@ public sealed class ExecutionModulesTests
         repository.Write("docs/cis/changes/CIS-0005/verification.md", "---\nstatus: Draft\n---\n| Task | Check | Artifact | Result | Notes |\n|---|---|---|---|---|\n| W | test | `x` | Passed | x |\n");
         repository.Write("docs/cis/changes/CIS-0005/agent-tasks/WORK-001.md", "---\ntask_status: Complete\n---\n");
         var changes = new ChangeDossierStore(new CisRepositoryContextResolver(), Clock);
-        var service = new VerifyService(new CisRepositoryContextResolver(), changes, Clock);
+        var service = new VerifyService(new CisRepositoryContextResolver(), changes, [], Clock);
         Assert.Equal(0, service.Diff(repository.Path, "CIS-0005").ExitCode);
         var snapshotPath = System.IO.Path.Combine(repository.Path, ".cis", "local", "verify", "CIS-0005", "snapshot.json");
         File.WriteAllText(snapshotPath, JsonSerializer.Serialize(new VerifySnapshot(2, "CIS-0005", baseline, Clock().ToString("O"), [],
@@ -342,7 +386,74 @@ public sealed class ExecutionModulesTests
         Assert.Contains("status: Draft", File.ReadAllText(System.IO.Path.Combine(repository.Path, "docs", "cis", "changes", "CIS-0005", "verification.md")));
     }
 
+    [Fact]
+    public void Verify_RejectsAStaleGovernedFeatureApproval()
+    {
+        using var repository = ExecutionRepository.Create(git: true);
+        var baseline = repository.Head();
+        repository.Write("docs/cis/changes/CIS-0006/proposal.md", $"---\nchange_id: CIS-0006\ntitle: Feature authority\noutcome: Governed delivery\nstatus: Active\nbaseline_kind: git\nbaseline: {baseline}\ngraph_build_id: graph-1\nimpact_roots: []\n---\n");
+        repository.Write("docs/cis/changes/CIS-0006/plan.md", "---\nstatus: Approved\nfeature_spec_frontend: false\nfeature_spec_path: docs/specs/features/example.md\n---\n");
+        repository.Write("docs/cis/changes/CIS-0006/verification.md", "---\nstatus: Draft\n---\n| Task | Check | Artifact | Result | Notes |\n|---|---|---|---|---|\n| W | test | `x` | Passed | x |\n");
+        repository.Write("docs/cis/changes/CIS-0006/agent-tasks/WORK-001.md", "---\ntask_status: Complete\n---\n");
+        repository.Write("docs/specs/features/example.md", "---\nhigh_level_item: HLT-FR-001\nstatus: Active\n---\n");
+        var resolver = new CisRepositoryContextResolver();
+        var changes = new ChangeDossierStore(resolver, Clock);
+        var authority = new FakeFeatureAuthority(new(true, false, "HLT-FR-001", "docs/specs/features/example.md",
+            null, null, null, ["Feature specification HLT-FR-001 is stale."]));
+        var service = new VerifyService(resolver, changes, [authority], Clock);
+
+        Assert.Equal(0, service.Diff(repository.Path, "CIS-0006").ExitCode);
+
+        var result = service.Validate(repository.Path, "CIS-0006");
+
+        Assert.Equal(4, result.ExitCode);
+        Assert.Contains(result.Findings, item => item.Code == "CIS-VERIFY-FEATURE-AUTHORITY"
+            && item.Message.Contains("stale", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Verify_RejectsImportedFeatureCasesWithoutAutomatedTestTraceability()
+    {
+        using var repository = ExecutionRepository.Create(git: true);
+        var baseline = repository.Head();
+        repository.Write("docs/cis/changes/CIS-0009/proposal.md", $"---\nchange_id: CIS-0009\ntitle: Automation coverage\noutcome: Covered delivery\nstatus: Active\nbaseline_kind: git\nbaseline: {baseline}\ngraph_build_id: graph-1\nimpact_roots: []\n---\n");
+        repository.Write("docs/cis/changes/CIS-0009/plan.md", "---\nstatus: Approved\nfeature_spec_frontend: false\nfeature_spec_path: docs/cis/specs/example.md\n---\n");
+        repository.Write("docs/cis/changes/CIS-0009/test-cases.md", """
+---
+type: manual-test-cases
+status: Draft
+---
+
+### TC-EXAMPLE-001-001: Verify example
+
+- Automation status: Pending
+- Automated test references: None
+""");
+        repository.Write("docs/cis/changes/CIS-0009/verification.md", "---\nstatus: Draft\n---\n| Task | Check | Artifact | Result | Notes |\n|---|---|---|---|---|\n| W | test | `x` | Passed | x |\n");
+        repository.Write("docs/cis/changes/CIS-0009/agent-tasks/WORK-001.md", "---\ntask_status: Complete\n---\n");
+        repository.Write("src/changed.cs", "namespace Example;\n");
+        var resolver = new CisRepositoryContextResolver();
+        var changes = new ChangeDossierStore(resolver, Clock);
+        var planning = new PlanningService(
+            changes,
+            new ImpactAnalysisService(changes, new GraphQueryService(resolver)),
+            new DecisionService(changes, resolver),
+            resolver);
+        var service = new VerifyService(resolver, changes, [], Clock, planning: planning);
+
+        Assert.Equal(0, service.Diff(repository.Path, "CIS-0009").ExitCode);
+        var result = service.Validate(repository.Path, "CIS-0009");
+
+        Assert.Contains(result.Findings, item => item.Code == "CIS-VERIFY-AUTOMATION-COVERAGE"
+            && item.Message.Contains("TC-EXAMPLE-001-001", StringComparison.Ordinal));
+    }
+
     private static DateTimeOffset Clock() => DateTimeOffset.Parse("2026-08-14T12:00:00Z");
+
+    private sealed class FakeFeatureAuthority(CisFeatureApproval result) : ICisFeatureApprovalAuthority
+    {
+        public CisFeatureApproval Evaluate(string repositoryPath, string featureSpecificationPath) => result;
+    }
 
     private sealed class FakeGeneration : ICisTextGenerationService
     {

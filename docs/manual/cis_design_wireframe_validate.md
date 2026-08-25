@@ -22,7 +22,8 @@ InProgress, or ReadyForReview. It checks:
 
 - canonical document type and matching change identity;
 - case-sensitive standalone `TODO`/`TBD` authoring markers and the phrase
-  `to be completed` without confusing product names such as Friends Todo;
+  `to be completed` without confusing product names or hyphen/underscore-delimited
+  identifiers such as `CUS-TODO-BOARD`;
 - a non-empty, unique screen inventory;
 - exactly `public`, `customer`, or `backoffice` classification per screen;
 - concrete application routes beginning with `/`;

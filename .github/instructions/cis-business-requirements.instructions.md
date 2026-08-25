@@ -9,7 +9,7 @@ applyTo: "docs/specs/business-requirements.md"
 - File existence, deterministic extraction, graph freshness, or agent review never proves business currency.
 - Complete business outcomes, scope, actors, capabilities, requirements, constraints, success measures, traceability, and open questions through human review.
 - Preserve CIS baseline and source block markers, candidate IDs, source and approval hashes, and participant graph identities.
-- After creating or changing a feature specification, rebuild its repository graph and run `cis brd reconcile`; new or changed evidence invalidates prior approval.
+- After implementation graph rebuilds, run `cis technical-intent refresh`. Pure managed-baseline drift preserves the original BRD, technical-intent, and backlog approvals. If its BRD stage blocks, use `cis brd reconcile` to expose the exact source/semantic delta and request review only for that delta.
 - `Adopted` feature specifications must be incorporated into relevant BRD sections and cited by their managed source ID in Traceability.
 - Agents may discover, draft, propose reconciliation edits, reconcile managed evidence, and validate. They may not select source assessments, invent stakeholder decisions, claim semantic absorption without corresponding BRD edits, or run `cis brd approve` without explicit user authorization for the reviewer and rationale.
 - `Active` requires recorded human approval. Evidence drift may reduce it to `Stale`; automation may never restore `Active`.
@@ -17,4 +17,4 @@ applyTo: "docs/specs/business-requirements.md"
 - After backlog approval, use `cis brd backlog start --item <HLT-ID>` for a dependency-ready outcome. Complete the generated Draft and run `cis brd feature validate --item <HLT-ID>` before presenting it for approval.
 - Run `cis brd feature approve --item <HLT-ID> --reviewer <human> --reason <rationale>` only with explicit authority. Rebuild the graph and reconcile an approved feature into the BRD before change planning.
 - High-level backlog approval authorizes feature-specification preparation only; detailed implementation work still requires a change dossier, impact review, and bounded plan.
-- Feature approval accepts the detailed scope only; it does not authorize implementation, deployment, or release.
+- Feature approval accepts the detailed scope only; it does not directly authorize implementation, deployment, or release. Its exact current authority may be reused by `cis plan derive` for eligible deterministic impacts and the exact validated bounded plan; uncertainty or expanded scope requires another human decision.

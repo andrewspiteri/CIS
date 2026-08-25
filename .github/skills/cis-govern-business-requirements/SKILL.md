@@ -11,7 +11,7 @@ description: Discover possible BRDs, domain-equivalent product-design documents 
 2. Run `cis graph build --workspace <workspace>` and `cis graph validate --workspace <workspace>` before intake.
 3. Run `cis brd discover --workspace <workspace> --format agent`. Treat every found BRD, product-design document such as a GDD, or feature specification as unverified source evidence; absence creates no implied requirements.
 4. Run `cis brd init --workspace <workspace> --title <title>`. Preserve the authority repository's canonical document and catalog entry.
-5. During delivery, rebuild the affected repository graph after a feature specification is created or changed, then run `cis brd status`. If it is Stale or reports unassessed evidence, run `cis brd reconcile --workspace <workspace>`.
+5. After implementation graph rebuilds, run `cis technical-intent refresh --workspace <workspace> --format agent` before starting the next feature. Do not request renewed BRD, technical-intent, or backlog approval when this safe refresh succeeds. If its BRD stage blocks on new or materially changed source evidence, use `cis brd reconcile --workspace <workspace> --format agent`, review the exact semantic delta, and request only the authority that delta requires.
 6. Review every source row. Set Assessment to `Adopted`, `Reference`, or `Rejected` and record rationale. For an Adopted feature specification, incorporate its business intent into the relevant BRD sections and cite its `BRD-SRC-*` ID in Traceability.
 7. Rebuild workspace graphs after canonical edits, then run `cis brd validate` and `cis brd status`.
 8. Present validation errors, warnings, participant baseline drift, unresolved sources, and approval readiness to the user.
@@ -20,7 +20,7 @@ description: Discover possible BRDs, domain-equivalent product-design documents 
 11. Run `cis brd backlog approve --reviewer <human> --reason <rationale>` only with explicit authority. An approved high-level item may then become a feature specification; it is not an implementation task.
 12. Start only a dependency-ready item with `cis brd backlog start --item <HLT-ID>`. Complete the generated Draft specification and run `cis brd feature validate --item <HLT-ID>` until it is Ready for Approval.
 13. Present the exact feature scope, validation result, and approval rationale. Run `cis brd feature approve --item <HLT-ID> --reviewer <human> --reason <rationale>` only with explicit human authority.
-14. After feature approval, rebuild the graph and reconcile the now-eligible feature evidence into the BRD. Renew downstream technical-intent and backlog authority before creating a change dossier.
+14. After feature approval, rebuild the graph and reconcile the now-eligible feature evidence into the BRD. Use `cis technical-intent refresh`; renew downstream authority only when it reports an actual semantic change.
 
 ## Guardrails
 

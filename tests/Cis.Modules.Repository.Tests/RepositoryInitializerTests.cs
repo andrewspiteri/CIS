@@ -1632,12 +1632,22 @@ public sealed class RepositoryInitializerTests
             "SKILL.md"));
         Assert.Contains("cis plan validate", planningSkill, StringComparison.Ordinal);
         Assert.Contains("cis plan import-spec", planningSkill, StringComparison.Ordinal);
+        Assert.Contains("cis plan derive", planningSkill, StringComparison.Ordinal);
+        Assert.Contains("do not request separate impact or plan approvals", planningSkill, StringComparison.Ordinal);
         Assert.Contains("wireframe", planningSkill, StringComparison.Ordinal);
         Assert.Contains("decomposed parent", planningSkill, StringComparison.Ordinal);
         Assert.Contains("agent-tasks/WORK-NNN.md", planningSkill, StringComparison.Ordinal);
         Assert.Contains("design.md", planningSkill, StringComparison.Ordinal);
         Assert.Contains("verification.md", planningSkill, StringComparison.Ordinal);
-        Assert.Contains("Never approve a plan autonomously", planningSkill, StringComparison.Ordinal);
+        Assert.Contains("Never forge or infer feature authority", planningSkill, StringComparison.Ordinal);
+        var designReviewSkill = File.ReadAllText(Path.Combine(
+            repository.Path,
+            ".github",
+            "skills",
+            "cis-design-review",
+            "SKILL.md"));
+        Assert.Contains("wireframe-approve` is optional", designReviewSkill, StringComparison.Ordinal);
+        Assert.Contains("wireframe digest, renderer, and PNG manifest together", designReviewSkill, StringComparison.Ordinal);
         var trackerSkill = File.ReadAllText(Path.Combine(
             repository.Path,
             ".github",
@@ -1659,7 +1669,8 @@ public sealed class RepositoryInitializerTests
             "instructions",
             "cis-change-delivery.instructions.md"));
         Assert.Contains("applyTo: \"docs/cis/changes/**\"", deliveryInstruction, StringComparison.Ordinal);
-        Assert.Contains("may not exercise human disposition", deliveryInstruction, StringComparison.Ordinal);
+        Assert.Contains("may not invent human disposition", deliveryInstruction, StringComparison.Ordinal);
+        Assert.Contains("cis plan derive", deliveryInstruction, StringComparison.Ordinal);
         Assert.Contains("cis plan import-spec", deliveryInstruction, StringComparison.Ordinal);
         var brdInstruction = File.ReadAllText(Path.Combine(
             repository.Path,

@@ -3,7 +3,7 @@ title: "BRD High-Level Backlog"
 type: specification
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-16"
+last_reviewed: "2026-08-23"
 review_cadence: "on BRD decomposition workflow change"
 cis:
   stable_id: change-impact-studio:spec:brd-high-level-backlog
@@ -68,7 +68,11 @@ frontend types, exact repository routing, and no placeholders. The source digest
 scoped to the stable backlog item so unrelated feature-link updates do not revoke review.
 Explicit feature approval records human authority and a content digest. The resulting
 Active feature becomes eligible BRD evidence; it must be reconciled and assessed before
-downstream change planning. Feature approval does not authorize implementation.
+downstream change planning. Feature approval does not directly authorize implementation,
+deployment, or release. CIS may reuse its exact reviewer, rationale, path, and content
+digest to atomically adopt eligible deterministic impacts and approve the resulting
+bounded plan through `cis plan derive`; any uncertainty or scope expansion requires a
+new human decision before implementation.
 An unapproved feature cannot report Ready for Approval while its backlog is stale. An
 already Active feature retains its own item-scoped authority during the intentional BRD
 absorption and downstream renewal cycle.
@@ -81,3 +85,9 @@ dependencies, feature-specification links, and notes for unchanged requirement I
 Schema migration re-derives dependencies in older, unapproved generated rows once; it
 never replaces dependencies in an Active backlog. Schema 3 then preserves dependency
 lists, including an explicitly empty list, as human-managed decisions.
+
+After implementation graph rebuilds, `cis technical-intent refresh` safely reconciles
+the BRD, technical-intent baselines, and backlog. When only managed graph/provenance
+identities changed, all existing approvals remain attributed to their original human
+reviewers and no renewal prompt is required. New evidence or changed product, technical,
+or backlog semantics stops the refresh at the affected authority.

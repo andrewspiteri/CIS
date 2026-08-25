@@ -431,11 +431,19 @@ public sealed class BrdWorkflowTests
         Assert.Equal("approved", approved.Status);
         Assert.Equal("Active", approved.Validation!.EffectiveStatus);
         Assert.Equal("unchanged", backlog.ApproveFeature(environment.Authority.Path, "HLT-FR-001", "Product owner", "Feature scope accepted").Status);
+        var carriedAuthority = new BrdFeatureApprovalAuthority(backlog).Evaluate(
+            environment.Authority.Path, started.RelativePath!);
+        Assert.True(carriedAuthority.Applicable);
+        Assert.True(carriedAuthority.Ready, string.Join(Environment.NewLine, carriedAuthority.Errors));
+        Assert.Equal("Product owner", carriedAuthority.Reviewer);
+        Assert.Equal("HLT-FR-001", carriedAuthority.ItemId);
 
         File.WriteAllText(path, File.ReadAllText(path).Replace("Deliver `HLT-FR-001`", "Provide `HLT-FR-001`", StringComparison.Ordinal));
         var stale = backlog.FeatureStatus(environment.Authority.Path, "HLT-FR-001");
         Assert.Equal("Stale", stale.Validation!.EffectiveStatus);
         Assert.False(stale.Validation.Current);
+        Assert.False(new BrdFeatureApprovalAuthority(backlog)
+            .Evaluate(environment.Authority.Path, started.RelativePath!).Ready);
         var brdBeforeRenewal = environment.Service.Status(environment.Authority.Path);
         Assert.Equal("Active", brdBeforeRenewal.Validation!.EffectiveStatus);
 

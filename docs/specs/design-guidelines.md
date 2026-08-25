@@ -5,7 +5,7 @@ status: Active
 version: "1.0"
 scope: Repository
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-13"
+last_reviewed: "2026-08-23"
 review_cadence: "on visual-language change"
 cis:
   stable_id: change-impact-studio:spec:design-guidelines
@@ -243,7 +243,7 @@ deliverables, credibility, and call to action.
 
 ### Product screens
 
-Use the approved textual wireframe as the behavioral authority. Preserve its Screen
+Use the validated textual wireframe as the behavioral authority. Preserve its Screen
 IDs, routes, actions, states, permissions, and exclusions. Visual design may improve
 hierarchy and clarity but may not change behavior.
 

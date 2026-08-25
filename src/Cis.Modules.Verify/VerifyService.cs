@@ -23,14 +23,17 @@ public sealed record VerifyResult(string Status, string? RepositoryPath, string?
 public sealed class VerifyService
 {
     public const string RootPath = ".cis/local/verify";
+    private const int GitCommandTimeoutMilliseconds = 30_000;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private readonly ICisRepositoryContextResolver _resolver;
     private readonly ChangeDossierStore _changes;
     private readonly ICisWorkspaceRegistry? _workspaceRegistry;
     private readonly PlanningService? _planning;
+    private readonly IReadOnlyList<ICisFeatureApprovalAuthority> _featureAuthorities;
     private readonly Func<DateTimeOffset> _clock;
 
     public VerifyService(ICisRepositoryContextResolver resolver, ChangeDossierStore changes,
+        IEnumerable<ICisFeatureApprovalAuthority> featureAuthorities,
         Func<DateTimeOffset>? clock = null, ICisWorkspaceRegistry? workspaceRegistry = null,
         PlanningService? planning = null)
     {
@@ -39,6 +42,7 @@ public sealed class VerifyService
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
         _workspaceRegistry = workspaceRegistry;
         _planning = planning;
+        _featureAuthorities = featureAuthorities.ToArray();
     }
 
     public VerifyResult Diff(string repo, string change)
@@ -102,6 +106,19 @@ public sealed class VerifyService
         if (!File.Exists(plan) || !Regex.IsMatch(File.ReadAllText(plan), @"(?im)^status:\s*(Approved|Complete|Accepted)\s*$"))
             findings.Add(new("error", "CIS-VERIFY-PLAN", "Plan is not approved.", Relative(context, plan)));
         var planText = File.Exists(plan) ? File.ReadAllText(plan) : string.Empty;
+        if (_planning is not null)
+        {
+            var planValidation = _planning.Validate(context.RepositoryPath, change);
+            foreach (var error in planValidation.Errors.Concat(planValidation.Validation?.Errors ?? []))
+                findings.Add(new("error", "CIS-VERIFY-PLAN-CURRENCY", error, Relative(context, plan)));
+            if (Regex.IsMatch(planText, @"(?im)^feature_spec_path:\s*.+$"))
+            {
+                foreach (var error in _planning.ValidateManualTestAutomationCoverage(context.RepositoryPath, change))
+                    findings.Add(new("error", "CIS-VERIFY-AUTOMATION-COVERAGE", error,
+                        Relative(context, Path.Combine(dir, "test-cases.md"))));
+            }
+        }
+        ValidateFeatureAuthority(context, plan, planText, findings);
         var designRequired = !Regex.IsMatch(planText, @"(?im)^feature_spec_frontend:\s*false\s*$");
         if (designRequired && File.Exists(design) && File.ReadAllText(design).Contains("approval_status:", StringComparison.OrdinalIgnoreCase)
             && !Regex.IsMatch(File.ReadAllText(design), @"(?im)^approval_status:\s*Approved\s*$"))
@@ -124,9 +141,23 @@ public sealed class VerifyService
         if (new[] { task, check, artifact, result }.Any(string.IsNullOrWhiteSpace))
             findings.Add(new("error", "CIS-VERIFY-EVIDENCE-INPUT", "Task, check, artifact, and result are required.", null));
         if (findings.Any(x => x.Severity == "error")) return New(context, change, null, findings, [], false, "invalid");
+        var snapshot = ReadSnapshot(context!, change, findings);
+        if (snapshot is null || findings.Any(x => x.Severity == "error"))
+            return New(context, change, snapshot, findings, [], false, "invalid");
         var path = Path.Combine(context!.DocumentationPath, "changes", change, "verification.md");
-        File.AppendAllText(path, $"| {Esc(task)} | {Esc(check)} | `{Esc(artifact)}` | {Esc(result)} | {Esc(notes)} |\n");
-        return New(context, change, ReadSnapshot(context, change, findings), findings, ReadEvidence(path), true, "recorded");
+        var separator = File.Exists(path) && new FileInfo(path).Length > 0 && !EndsWithLineBreak(path)
+            ? Environment.NewLine
+            : string.Empty;
+        File.AppendAllText(path, $"{separator}| {Esc(task)} | {Esc(check)} | `{Esc(artifact)}` | {Esc(result)} | {Esc(notes)} |{Environment.NewLine}");
+        return New(context, change, snapshot, findings, ReadEvidence(path), true, "recorded");
+    }
+
+    private static bool EndsWithLineBreak(string path)
+    {
+        using var stream = File.OpenRead(path);
+        if (stream.Length == 0) return true;
+        stream.Seek(-1, SeekOrigin.End);
+        return stream.ReadByte() is '\n' or '\r';
     }
 
     public VerifyResult Accept(string repo, string change, string reviewer, string reason)
@@ -277,7 +308,19 @@ public sealed class VerifyService
         {
             using var process = new Process { StartInfo = new("git") { WorkingDirectory = repo, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true } };
             foreach (var arg in args) process.StartInfo.ArgumentList.Add(arg);
-            process.Start(); var output = process.StandardOutput.ReadToEnd(); var error = process.StandardError.ReadToEnd(); process.WaitForExit();
+            process.Start();
+            var outputTask = process.StandardOutput.ReadToEndAsync();
+            var errorTask = process.StandardError.ReadToEndAsync();
+            if (!process.WaitForExit(GitCommandTimeoutMilliseconds))
+            {
+                process.Kill(entireProcessTree: true);
+                process.WaitForExit();
+                findings.Add(new("error", "CIS-VERIFY-GIT-TIMEOUT",
+                    $"Git command exceeded {GitCommandTimeoutMilliseconds / 1000} seconds: git {string.Join(' ', args)}", id));
+                return string.Empty;
+            }
+            var output = outputTask.GetAwaiter().GetResult();
+            var error = errorTask.GetAwaiter().GetResult();
             if (process.ExitCode == 0) return output;
             findings.Add(new("error", "CIS-VERIFY-GIT", error.Trim(), id));
         }
@@ -330,6 +373,29 @@ public sealed class VerifyService
         if (PlanTaskDispositionPolicy.IsTerminal(status, category)) return true;
         return Regex.IsMatch(text, @"(?im)^task_status:\s*InProgress\s*$") && Regex.IsMatch(text, @"(?im)^task_type:\s*core\.delivery\.final-sweep\s*$")
             && !Regex.IsMatch(text, @"(?m)^\s*-\s*\[\s\]\s+") && Regex.IsMatch(text, @"(?im)^\|[^\r\n]*\|\s*Passed\s*\|");
+    }
+    private void ValidateFeatureAuthority(CisRepositoryContext context, string planPath, string planText,
+        ICollection<VerifyFinding> findings)
+    {
+        var match = Regex.Match(planText, @"(?im)^feature_spec_path:\s*(?<value>[^\r\n]+)$");
+        if (!match.Success) return;
+        var featurePath = match.Groups["value"].Value.Trim().Trim('"', '\'');
+        if (featurePath.Length == 0) return;
+        var applicable = _featureAuthorities.Select(authority => authority.Evaluate(context.RepositoryPath, featurePath))
+            .Where(result => result.Applicable).ToArray();
+        if (applicable.Length == 0) return;
+        if (applicable.Length > 1)
+        {
+            findings.Add(new("error", "CIS-VERIFY-FEATURE-AUTHORITY",
+                "Multiple feature-approval authorities apply; resolve the authority conflict before verification.",
+                Relative(context, planPath)));
+            return;
+        }
+        if (applicable[0].Ready) return;
+        var message = applicable[0].Errors.Count > 0
+            ? string.Join(" ", applicable[0].Errors)
+            : "The governed feature approval is not current enough for final verification.";
+        findings.Add(new("error", "CIS-VERIFY-FEATURE-AUTHORITY", message, Relative(context, planPath)));
     }
     private static VerifyResult Invalid(VerifyResult result, string code, string message) => result with { Status = "invalid", Findings = result.Findings.Append(new VerifyFinding("error", code, message, null)).ToArray() };
     private static string Digest(IEnumerable<VerifyFileChange> files) => Sha(string.Join("\n", files.Select(x => $"{x.RepositoryId}\t{x.Status}\t{x.Path}")));

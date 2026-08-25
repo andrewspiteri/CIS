@@ -177,6 +177,54 @@ public sealed class ImpactAnalysisService
         return new ImpactResult(state, change.Id, change.GraphBuildId, findings, CalculateCompleteness(findings, document.Truncated), [], true);
     }
 
+    public ImpactResult CarryForwardApprovedFeature(
+        string repositoryPath,
+        string changeId,
+        string featureItemId,
+        string featurePath,
+        string approvedContentHash,
+        string reviewer)
+    {
+        var change = _changes.Read(repositoryPath, changeId);
+        if (change is null)
+            return Error(changeId, $"Change dossier was not found: {changeId}");
+
+        var document = ReadImpact(change);
+        if (document.Findings.Count == 0)
+            return Error(change.Id, "Impact analysis must run before approved feature authority can carry forward.");
+        if (document.Truncated)
+            return Error(change.Id, "Truncated impact analysis requires explicit human review and cannot use authority carry-forward.");
+        if (document.Findings.Any(item => item.State == "deferred"))
+            return Error(change.Id, "Deferred impact findings require explicit human review and cannot use authority carry-forward.");
+        var uncertain = document.Findings
+            .Where(item => item.State == "proposed" && item.Confidence.Equals("low", StringComparison.OrdinalIgnoreCase))
+            .Select(item => item.Id)
+            .ToArray();
+        if (uncertain.Length > 0)
+            return Error(change.Id, "Low-confidence impact findings require explicit human review: " + string.Join(", ", uncertain));
+
+        var proposed = document.Findings.Where(item => item.State == "proposed").ToArray();
+        if (proposed.Length == 0)
+            return new ImpactResult("unchanged", change.Id, change.GraphBuildId, document.Findings,
+                CalculateCompleteness(document.Findings, document.Truncated), [], false);
+
+        var reason = Clean($"Carried forward from the current human approval of {featureItemId} ({featurePath}, {approvedContentHash}).");
+        var findings = document.Findings.Select(item => item.State == "proposed"
+            ? item with { State = "accepted", ReviewReason = reason }
+            : item).ToArray();
+        WriteImpact(change, findings, document.Truncated);
+        _changes.AppendEvent(change, "impact-authority-carried-forward", new Dictionary<string, string>
+        {
+            ["featureItemId"] = featureItemId,
+            ["featurePath"] = featurePath,
+            ["approvedContentHash"] = approvedContentHash,
+            ["approvedBy"] = reviewer,
+            ["acceptedFindings"] = proposed.Length.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        });
+        return new ImpactResult("authority-carried-forward", change.Id, change.GraphBuildId, findings,
+            CalculateCompleteness(findings, document.Truncated), [], true);
+    }
+
     public ImpactResult Completeness(string repositoryPath, string changeId)
     {
         var change = _changes.Read(repositoryPath, changeId);

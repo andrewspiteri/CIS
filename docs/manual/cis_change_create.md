@@ -22,10 +22,17 @@ cis change create --title <text> --outcome <text>
 
 Each `--root` becomes an initial impact-analysis root. The command requires an
 initialized repository and built graph, refuses an existing or invalid ID, writes
-`proposal.md`, `impact.md`, `decisions.md`, `plan.md`, `design.md`, `verification.md`,
-an `agent-tasks/` directory, and `events.jsonl`. The Markdown records are added to
+`proposal.md`, `impact.md`, `decisions.md`, `plan.md`, `wireframes.md`, `design.md`,
+`test-cases.md`, `test-cases.csv`, `verification.md`, an `agent-tasks/` directory,
+and `events.jsonl`. The Markdown records are added to
 `catalog.yml`. `design.md` is the explicit UI-approval ledger; `verification.md` is
-the cross-task execution-evidence ledger. In a workspace authority, creation also requires
+the cross-task execution-evidence ledger. The initially empty manual-test files are
+populated together when a feature specification is imported or derived. In a workspace authority, creation also requires
 an Active, current technical intent; use `cis technical-intent status` to diagnose the
 gate. Exit `0` means created; exit `2` means
 invalid repository, graph, input, or collision.
+
+The initial proposal contains an outcome-acceptance placeholder. A human may replace it
+for an ad-hoc change. For a current approved feature, `cis plan derive` replaces only that
+placeholder with the feature's exact approved requirement criteria and preserves any
+existing human-managed proposal criteria.

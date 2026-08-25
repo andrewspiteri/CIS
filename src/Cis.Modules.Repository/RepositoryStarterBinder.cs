@@ -2505,21 +2505,21 @@ internal sealed class RepositoryStarterBinder
 
         # CIS Bounded Planning
 
-        1. Run `cis impact completeness <change-id>` and stop if planning is not ready.
-        2. Run `cis decision list <change-id>` and surface blocking or advisory decisions.
-        3. When a governed feature specification exists, run `cis plan import-spec <change-id> --file <repo-relative-spec.md>`; otherwise run `cis plan build <change-id>`.
+        1. Run `cis impact analyse <change-id>` against the approved feature scope.
+        2. For a current explicitly approved CIS feature, run `cis plan derive <change-id> --file <repo-relative-spec.md>`. This atomically carries the existing authority through eligible deterministic impacts, any untouched proposal-acceptance placeholder, and the exact validated plan; do not request separate impact or plan approvals when it succeeds. Existing human-managed proposal criteria are preserved.
+        3. If derivation stops, surface only the reported low-confidence, deferred, truncated, conflicting, stale, or invalid exception. Use explicit `cis impact accept|reject|defer`, `cis plan import-spec`, and `cis plan approve` only as the fallback after the human resolves that exception. When no governed feature exists, use `cis plan build <change-id>`.
         4. Run `cis plan show <change-id>` and open every linked `agent-tasks/WORK-NNN.md`; the plan table is only the dependency ledger, not the complete task contract. After re-import, inspect `agent-tasks/retired/`, archived catalog routes, and `plan-task-retired|reactivated` events; preserved evidence never grants renewed completion.
-        5. Verify each task has bounded required changes, exclusions, accepted graph evidence, dependencies and gates, acceptance checklists, targeted validation, a completion-evidence table, and explicit deferral/residual-risk handling.
+        5. Verify each task has bounded required changes, exclusions, accepted graph evidence, dependencies and gates, acceptance checklists, targeted validation, a completion-evidence table, and explicit deferral/residual-risk handling. Review generated `test-cases.md` and `test-cases.csv`; every feature requirement must have one stable manual case and the Markdown-recorded CSV hash must match. During implementation, place each exact `TC-*` ID in its automated test name, framework metadata, or adjacent traceability annotation, then rerun the unchanged feature import to refresh `repository::path:line` mappings. `Pending` is allowed while planning, but final verification requires every case to be `Automated`. Record executions in `verification.md`, not in the generated catalogue.
         6. Classify every UI-bearing requirement, screen, wireframe task, design task, and frontend implementation task as exactly `public`, `customer`, or `backoffice`. Generate a matched wireframe -> design -> frontend chain for each affected type.
         7. For every unauthenticated endpoint, require `PUBLIC-ENDPOINT-CACHE` obligations in Security, API contract, Backend, Observability, Verification, and Independent assurance: every response traverses a governed cache and the public route/controller/handler never directly accesses a database or repository, including on cache miss.
-        8. For UI-bearing scope, require `coordination -> wireframe approval -> design approval -> every downstream task`. Treat `wireframes.md` and `design.md` as canonical review records. When design enters `ReadyForReview`, stop all non-review work until explicit approval.
+        8. For UI-bearing scope, require `coordination -> validated wireframes -> design authority -> every downstream task`. Treat `wireframes.md` and `design.md` as canonical review records. By default `cis design approve` approves the exact wireframe digest and rendered design pack together; use standalone wireframe approval only when an early behavior-only checkpoint is intentionally requested. When design enters `ReadyForReview`, stop all non-review work until explicit approval, or use `cis design reconcile` only when a current approved feature and Approved plan authorize the refresh and the regenerated PNG manifest exactly matches the earlier approved manifest.
         9. Require applicable documentation, security, data, database-migration, backfill, API, backend, frontend, integration, infrastructure, observability, lifecycle, rollout, verification, assurance, and final-sweep workstreams. Product-specific search/projection belongs to an extension provider, not CIS core.
         10. Confirm every task is low, medium, or high complexity and every high item is a decomposed parent with at least two bounded children.
         11. Run `cis plan validate <change-id>` and resolve every error. Use `cis plan task transition <change-id> <task-id> --status <state> --actor <identity> --reason <rationale>` for lifecycle changes. Completion requires resolved evidence and snapshots sanitized tool-usage counts/savings into the task and `verification.md`.
         12. If planning reports an extension capability conflict, run `cis plan capability status`, present all candidates, and use `cis plan capability select` only after explicit human selection. Selection never migrates existing tasks; use `cis plan task migrate-type` with human reviewer and rationale for each compatible instance.
-        13. Run `cis plan approve <change-id> --reviewer <identity> --reason <rationale>` only after the user explicitly approves the exact validated issue pack.
+        13. Run `cis plan approve <change-id> --reviewer <identity> --reason <rationale>` only when new plan authority is required and the user explicitly approves the exact validated issue pack. Never duplicate a successful `cis plan derive` approval.
 
-        Never approve a plan autonomously, hide advisory warnings, remove accepted scope to make validation pass, or treat a draft plan as implementation authority.
+        Never forge or infer feature authority, approve a plan autonomously, hide advisory warnings, remove accepted scope to make validation pass, or treat a draft plan as implementation authority.
         """;
 
     private static string CreateExternalTrackerSyncSkill(string documentationRoot) => $$"""
@@ -2567,12 +2567,12 @@ internal sealed class RepositoryStarterBinder
         1. Read `.cis/repository.yml`, then read `<documentation-root>/references/ui-framework-profile.md` when present and verify its evidence against manifests, imports, shared components, shell code, and theme assets. Preserve an existing UI framework; use the classification-bound default only when no framework is in use.
         2. Classify every screen as exactly `public`, `customer`, or `backoffice`, then complete `wireframes.md` with stable routes, states, actions, side effects, destination paths, and negative behavior.
         3. Run `cis design wireframe-validate <change-id>` and resolve every screen, classification, state, action, destination-path, coverage, or placeholder error before review.
-        4. Obtain explicit human wireframe approval and record the exact digest.
+        4. A separate `cis design wireframe-approve` is optional and is used only when the team explicitly wants an early behavior-only checkpoint.
         5. Run `cis design templates --format agent` before writing renderer helpers. Select `shell.standard-app` when persistent navigation is justified or `shell.minimal-app` for a simple single-surface product, then reuse every applicable governed component template—including buttons, fields, selects/dropdowns, choice controls, tabs/navigation, dialogs/alerts, cards, forms, tables, and states—to reduce repeated code and token usage.
         6. Run `cis design scaffold <change-id> --feature <slug> --component <template-id> --format agent`; customize only feature content while preserving the shared shell and component behavior.
         7. Run `cis design validate <change-id>` and resolve guideline, shell, component, provenance, or renderer errors.
         8. Run `cis design render <change-id>`. Successful rendering enters `PausedForReview`; stop all non-review work immediately.
-        9. Present the PNG pack at original resolution. Only a human may run `cis design approve|reject` with reviewer identity and rationale.
+        9. Present a visually changed PNG pack at original resolution. Only a human may run `cis design approve|reject` with reviewer identity and rationale. Approval records the exact validated wireframe digest, renderer, and PNG manifest together unless the wireframe already has a separate approval. For a provenance-only refresh after an approved feature change, `cis design reconcile` may carry existing authority forward only when the Approved plan pins the current feature and every PNG hash is unchanged.
         10. On rejection, revise only wireframes/design assets and resubmit; all other delivery work remains paused.
         11. On approval, preserve exact renderer and PNG-manifest hashes before downstream work resumes.
 
@@ -2770,7 +2770,7 @@ internal sealed class RepositoryStarterBinder
         2. Run `cis graph build --workspace <workspace>` and `cis graph validate --workspace <workspace>` before intake.
         3. Run `cis brd discover --workspace <workspace> --format agent`. Treat every found BRD, product-design document such as a GDD, or feature specification as unverified source evidence; absence creates no implied requirements.
         4. Run `cis brd init --workspace <workspace> --title <title>`. Preserve the authority repository's canonical document and catalog entry.
-        5. During delivery, rebuild the affected repository graph after a feature specification is created or changed, then run `cis brd status`. If it is Stale or reports unassessed evidence, run `cis brd reconcile --workspace <workspace>`.
+        5. After implementation graph rebuilds, run `cis technical-intent refresh --workspace <workspace> --format agent` before starting the next feature. Do not request renewed BRD, technical-intent, or backlog approval when this safe refresh succeeds. If its BRD stage blocks on new or materially changed source evidence, use `cis brd reconcile --workspace <workspace> --format agent`, review the exact semantic delta, and request only the authority that delta requires.
         6. Review every source row. Set Assessment to `Adopted`, `Reference`, or `Rejected` and record rationale. For an Adopted feature specification, incorporate its business intent into the relevant BRD sections and cite its `BRD-SRC-*` ID in Traceability.
         7. Rebuild workspace graphs after canonical edits, then run `cis brd validate` and `cis brd status`.
         8. Present validation errors, warnings, participant baseline drift, unresolved sources, and approval readiness to the user.
@@ -2779,7 +2779,7 @@ internal sealed class RepositoryStarterBinder
         11. Run `cis brd backlog approve --reviewer <human> --reason <rationale>` only with explicit authority. An approved high-level item may then become a feature specification; it is not an implementation task.
         12. Start only a dependency-ready item with `cis brd backlog start --item <HLT-ID>`. Complete the generated Draft specification and run `cis brd feature validate --item <HLT-ID>` until it is Ready for Approval.
         13. Present the exact feature scope, validation result, and approval rationale. Run `cis brd feature approve --item <HLT-ID> --reviewer <human> --reason <rationale>` only with explicit human authority.
-        14. After feature approval, rebuild the graph and reconcile the now-eligible feature evidence into the BRD. Renew downstream technical-intent and backlog authority before creating a change dossier.
+        14. After feature approval, rebuild the graph and reconcile the now-eligible feature evidence into the BRD. Use `cis technical-intent refresh`; renew downstream authority only when it reports an actual semantic change.
 
         ## Guardrails
 
@@ -2803,11 +2803,12 @@ internal sealed class RepositoryStarterBinder
         5. Record each bounded unresolved choice in `Open technical decisions` with a stable `TI-DEC-*` ID, required gate, status, and rationale. Agents may propose options but never select or defer them without explicit human authority.
         6. Run `cis technical-intent validate` and `status`. Resolve every placeholder, unresolved decision, stale BRD hash, and participant-baseline drift.
         7. Run `cis technical-intent approve --reviewer <human> --reason <rationale>` only after the user explicitly authorizes that exact approval.
-        8. Rebuild and strictly validate the workspace graph after approval. Recheck status before `cis change create` and `cis plan build|import-spec`.
+        8. After approved implementation changes participant graph IDs, run `cis technical-intent refresh`. Never request renewed BRD, technical-intent, or backlog approval when all three remain Active/current; review only the stage that blocks on a material semantic change.
+        9. Rebuild and strictly validate the workspace graph after approval. Recheck status before `cis change create` and `cis plan build|import-spec|derive`.
 
         ## Guardrails
 
-        Preserve managed baseline markers and identities. Do not treat Draft, Ready for Approval, or Stale as Active; infer architecture decisions; approve on a user's behalf; edit approval hashes; or bypass the readiness gate. BRD or participant drift requires renewed human review.
+        Preserve managed baseline markers and identities. Do not treat Draft, Ready for Approval, or Stale as Active; infer architecture decisions; approve on a user's behalf; edit approval hashes; or bypass the readiness gate. Pure managed-baseline drift is reconciled by `cis technical-intent refresh`; material business or technical drift requires renewed human review.
         """;
 
     private static string CreateVerificationSkill() => """
@@ -3137,7 +3138,7 @@ internal sealed class RepositoryStarterBinder
         "- Use `.github/skills/cis-feedback-loop/SKILL.md` to review automatic local usage, possible token savings, repeated failures, and compact-output opportunities.\n" +
         "- Use `.github/skills/cis-graph-context/SKILL.md` before broad repository searches or impact analysis; never edit `.cis/local/` derived state.\n" +
         "- Use `.github/skills/cis-change-dossier/SKILL.md`, `cis-impact-review`, `cis-decision-review`, and `cis-bounded-planning` for reviewed change delivery.\n" +
-        "- Treat `impact accept|reject|defer`, `decision resolve|defer|promote`, `plan approve`, and `change close` as explicit human-authority commands.\n" +
+        "- Treat `impact accept|reject|defer`, `decision resolve|defer|promote`, `plan approve`, and `change close` as explicit human-authority commands. `cis plan derive` may reuse a tool-confirmed current feature approval for eligible deterministic impacts and the exact plan; it does not create new human authority.\n" +
         "- Inspect callers, contracts, tests, configuration, permissions, events, and operational effects before changing behavior.\n" +
         "- Update contract and domain-behavior references in the same change as implementation.\n" +
         "- For API changes, use `.github/skills/cis-api-contract-governance/SKILL.md`; run `cis api discover`, strict validation, compatibility diff when baselined, then rebuild the graph.\n" +
@@ -3178,20 +3179,21 @@ internal sealed class RepositoryStarterBinder
 
         - Treat proposal, impact, decision, and plan Markdown as canonical review records.
         - Use `cis change`, `cis impact`, `cis decision`, and `cis plan` commands for managed lifecycle and table changes.
-        - Import governed feature specifications with `cis plan import-spec`; do not copy them into a competing source of truth.
+        - For a current approved CIS feature, prefer `cis plan derive`; it carries the exact existing authority through eligible deterministic impacts and the generated plan atomically. Use `cis plan import-spec` and explicit impact/plan review only for reported exceptions or sources without reusable approval authority. Never copy the feature into a competing source of truth.
         - Treat `plan.md` as the dependency ledger and each `agent-tasks/WORK-NNN.md` file as the executable task contract.
         - Require complexity, bounded required changes, exclusions, evidence, dependencies, acceptance checklists, validation, completion evidence, and deferral rationale in every task.
-        - For UI-bearing scope, complete and approve `wireframes.md`, reuse `cis design templates`, and render every screen inside the governed application shell.
+        - For UI-bearing scope, validate `wireframes.md`, reuse `cis design templates`, and render every screen inside the governed application shell. By default the rendered-design decision approves the exact wireframe digest and visual pack together; a separate wireframe approval is optional.
         - Classify every frontend requirement, screen, design artifact, and frontend task as `public`, `customer`, or `backoffice`; do not merge affected types into an unclassified UI task.
         - Every unauthenticated endpoint must traverse a governed cache. Its route/controller/handler must not directly access a database, database context/client, query provider, or repository, including on cache miss; apply and verify `PUBLIC-ENDPOINT-CACHE` obligations.
-        - A successful `cis design render` sets the global design gate to `PausedForReview`; stop all non-review work until a human runs `cis design approve` or `cis design reject` with reviewer identity and rationale.
+        - A successful `cis design render` sets the global design gate to `PausedForReview`; stop all non-review work until a human runs `cis design approve` or `cis design reject` with reviewer identity and rationale, or until `cis design reconcile` deterministically carries current feature authority across an unchanged PNG manifest. Reconciliation is not a new approval and fails closed on any mismatch.
         - Rejection preserves renderer/PNG hashes and rationale, removes rejected PNGs, and permits only wireframe/design revision while the pause remains active.
         - Record exact cross-task validation and assurance evidence in `verification.md`.
+        - Treat `test-cases.md` and `test-cases.csv` as synchronized derived feature artifacts. Review requirement coverage. Put every stable `TC-*` identity in its corresponding automated test name, framework metadata, or adjacent traceability annotation, then regenerate both through `cis plan import-spec` or `cis plan derive` after test or source changes to refresh exact cross-repository mappings. Planning may retain `Pending`; final verification must not. Keep execution results in `verification.md`.
         - Final Delivery Sweep owns the deterministic planned-versus-actual audit and readiness recommendation. Coordination owns explicit human final acceptance and may complete only after the sweep and all child dispositions are resolved.
         - Capture a workspace-aware `cis verify diff` after evidence stabilizes. Never accept a legacy, empty, digest-invalid, or stale snapshot; use `cis verify finalize` for explicitly authorized final acceptance.
         - Apply the target repository's `{{documentationRoot}}/specs/repository-delivery-policy-spec.md`; plan approval does not itself authorize branch, commit, push, pull-request, merge, tag, release, or remote-issue mutation.
         - Do not hand-edit stable IDs, exact baselines, finding disposition, decision state, plan approval, or audit events.
-        - Deterministic analysis and AI may propose findings, questions, options, and work; they may not exercise human disposition, resolution, approval, or closure authority.
+        - Deterministic analysis and AI may propose findings, questions, options, and work; they may not invent human disposition, resolution, approval, or closure authority. `cis plan derive` may reuse tool-confirmed current feature authority with exact provenance and must stop on uncertainty.
         - Preserve rejected and deferred records with rationale rather than deleting them.
         - Rebuild and validate the graph after canonical decisions or promoted ADRs change.
         - Validate the plan before implementation and run strict documentation validation after canonical updates.
@@ -3209,14 +3211,14 @@ internal sealed class RepositoryStarterBinder
         - File existence, deterministic extraction, graph freshness, or agent review never proves business currency.
         - Complete business outcomes, scope, actors, capabilities, requirements, constraints, success measures, traceability, and open questions through human review.
         - Preserve CIS baseline and source block markers, candidate IDs, source and approval hashes, and participant graph identities.
-        - After creating or changing a feature specification, rebuild its repository graph and run `cis brd reconcile`; new or changed evidence invalidates prior approval.
+        - After implementation graph rebuilds, run `cis technical-intent refresh`. Pure managed-baseline drift preserves the original BRD, technical-intent, and backlog approvals. If its BRD stage blocks, use `cis brd reconcile` to expose the exact source/semantic delta and request review only for that delta.
         - `Adopted` feature specifications must be incorporated into relevant BRD sections and cited by their managed source ID in Traceability.
         - Agents may discover, draft, propose reconciliation edits, reconcile managed evidence, and validate. They may not select source assessments, invent stakeholder decisions, claim semantic absorption without corresponding BRD edits, or run `cis brd approve` without explicit user authorization for the reviewer and rationale.
         - `Active` requires recorded human approval. Evidence drift may reduce it to `Stale`; automation may never restore `Active`.
         - After BRD and technical-intent approval, use `cis brd backlog build` to create the reviewed high-level bridge. Do not jump directly from the BRD to executable tasks.
         - High-level backlog approval authorizes feature-specification preparation only; use `cis brd backlog start --item <HLT-ID>` for dependency-ready items, complete the Draft, and run `cis brd feature validate --item <HLT-ID>` before review.
         - Run `cis brd feature approve --item <HLT-ID> --reviewer <human> --reason <rationale>` only with explicit authority. Rebuild the graph and reconcile the approved feature into the BRD before change planning.
-        - Feature approval accepts detailed scope only; implementation still requires a change dossier, impact review, and bounded plan.
+        - Feature approval accepts detailed scope only; it does not directly authorize implementation, deployment, or release. Its exact current authority may be reused by `cis plan derive` for eligible deterministic impacts and the exact validated bounded plan; uncertainty or expanded scope requires another human decision.
         """;
 
     private static string CreateFeatureSpecificationInstruction(string documentationRoot) => $$"""
@@ -3231,8 +3233,9 @@ internal sealed class RepositoryStarterBinder
         - Use structured `FEAT-*` requirements with a bounded surface, frontend type, testable requirement, and acceptance criteria.
         - Complete every required section explicitly; use a reasoned `Not applicable` statement rather than a placeholder.
         - Run `cis brd feature validate --item <HLT-ID>` and present the exact scope and validation result before requesting approval.
-        - Never run `cis brd feature approve` without explicit human reviewer identity and rationale. Approval accepts scope only and does not authorize implementation.
+        - Never run `cis brd feature approve` without explicit human reviewer identity and rationale. Approval accepts scope and may be carried by `cis plan derive` only through eligible deterministic impacts and the exact validated plan; it does not directly authorize implementation or release.
         - After approval, rebuild the graph and reconcile the feature as BRD evidence before change planning.
+        - For the reconciled current feature, prefer `cis plan derive` and do not request separate impact or plan approvals when it succeeds. Surface only exceptional low-confidence, deferred, truncated, conflicting, stale, or invalid results for human review.
         """;
 
     private static string CreateTechnicalIntentInstruction(string documentationRoot) => $$"""
@@ -3247,7 +3250,7 @@ internal sealed class RepositoryStarterBinder
         - Preserve `cis:technical-intent-baseline` markers, the BRD hash, participant build IDs, stable identity, schema, and approval digest.
         - Complete every required technical section and keep unresolved choices in the structured `TI-DEC-*` table.
         - Agents may draft technical direction and options. Only explicit human authority may resolve or defer decisions and run `cis technical-intent approve` with the exact reviewer and rationale.
-        - `cis change create`, `cis plan build`, and `cis plan import-spec` are blocked in a workspace authority unless technical intent is Active and current.
+        - `cis change create`, `cis plan build`, `cis plan import-spec`, and `cis plan derive` are blocked in a workspace authority unless technical intent is Active and current.
         - Rebuild the workspace graph after canonical edits or approval. BRD, participant-baseline, or approved-content drift makes the intent non-current.
         """;
 

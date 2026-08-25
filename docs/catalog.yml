@@ -1,6 +1,11 @@
 schema_version: 1
 repository: change-impact-studio
 documents:
+  - id: change-impact-studio:spec:manual-test-case-artifacts
+    path: docs/specs/manual-test-case-artifacts-spec.md
+    type: specification
+    status: draft
+    authority: canonical
   - id: change-impact-studio:manual:cis-standards-import
     path: docs/manual/cis_standards_import.md
     type: command-reference
@@ -778,6 +783,11 @@ documents:
     type: command-reference
     status: active
     authority: canonical
+  - id: change-impact-studio:manual:cis-plan-derive
+    path: docs/manual/cis_plan_derive.md
+    type: command-reference
+    status: active
+    authority: canonical
   - id: change-impact-studio:manual:cis-plan-show
     path: docs/manual/cis_plan_show.md
     type: command-reference
@@ -923,6 +933,11 @@ documents:
     type: command-reference
     status: active
     authority: canonical
+  - id: change-impact-studio:manual:cis-design-reconcile
+    path: docs/manual/cis_design_reconcile.md
+    type: command-reference
+    status: active
+    authority: canonical
   - id: change-impact-studio:manual:cis-design-approve
     path: docs/manual/cis_design_approve.md
     type: command-reference
@@ -1061,6 +1076,11 @@ documents:
     authority: canonical
   - id: change-impact-studio:manual:cis-technical-intent-status
     path: docs/manual/cis_technical_intent_status.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-technical-intent-refresh
+    path: docs/manual/cis_technical_intent_refresh.md
     type: command-reference
     status: active
     authority: canonical

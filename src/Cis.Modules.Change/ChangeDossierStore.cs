@@ -108,6 +108,8 @@ public sealed partial class ChangeDossierStore
         WriteNew(Path.Combine(dossierPath, "plan.md"), RenderEmptyPlan(change));
         WriteNew(Path.Combine(dossierPath, "wireframes.md"), RenderEmptyWireframes(change));
         WriteNew(Path.Combine(dossierPath, "design.md"), RenderEmptyDesign(change));
+        WriteNew(Path.Combine(dossierPath, "test-cases.md"), RenderEmptyManualTestCases(change));
+        WriteNew(Path.Combine(dossierPath, "test-cases.csv"), RenderEmptyManualTestCasesCsv());
         WriteNew(Path.Combine(dossierPath, "verification.md"), RenderEmptyVerification(change));
         WriteNew(Path.Combine(dossierPath, "events.jsonl"), string.Empty);
         AppendEvent(change, "change-created", new Dictionary<string, string>
@@ -401,7 +403,7 @@ public sealed partial class ChangeDossierStore
         builder.AppendLine();
         builder.AppendLine("## Constraints");
         builder.AppendLine();
-        builder.AppendLine("- Human review is required for impact disposition and plan approval.");
+        builder.AppendLine("- Human authority is required for impact disposition and plan approval; `cis plan derive` may carry forward an exact current feature approval without requesting it again.");
         builder.AppendLine("- Scope expansion must be recorded as a new finding or decision.");
         builder.AppendLine();
         builder.AppendLine("## Acceptance criteria");
@@ -536,6 +538,31 @@ independent-assurance findings as agent tasks are completed.
 | --- | --- | --- | --- | --- |
 """;
 
+    private static string RenderEmptyManualTestCases(ChangeDossier change)
+        => $"""
+---
+title: {Yaml(change.Id + " manual test cases")}
+type: manual-test-cases
+status: NotGenerated
+change_id: {change.Id}
+test_case_count: 0
+automated_test_case_count: 0
+automation_pending_count: 0
+csv_path: test-cases.csv
+generation: deterministic
+authority: derived
+---
+
+# Manual test cases
+
+Run `cis plan import-spec {change.Id} --file <feature-specification>` or
+`cis plan derive {change.Id} --file <approved-feature-specification>` to generate
+the human-readable catalogue and synchronized CSV import projection.
+""";
+
+    private static string RenderEmptyManualTestCasesCsv()
+        => "\"ID\",\"Title\",\"Section\",\"Priority\",\"Type\",\"Preconditions\",\"Steps\",\"Expected Result\",\"References\",\"Frontend Type\",\"Automation Status\",\"Automated Test References\"\r\n";
+
     private static string RenderEmptyWireframes(ChangeDossier change)
         => $"""
 ---
@@ -662,9 +689,9 @@ Rejected PNG files are removed. Preserve their manifest hashes and review eviden
 
 ## Approval decision
 
-| Decision | Reviewer | Date | Renderer SHA-256 | PNG manifest SHA-256 | Rationale |
-| --- | --- | --- | --- | --- | --- |
-| Not reviewed | TODO | TODO | TODO | TODO | TODO |
+| Decision | Reviewer | Date | Wireframe SHA-256 | Renderer SHA-256 | PNG manifest SHA-256 | Rationale |
+| --- | --- | --- | --- | --- | --- | --- |
+| Not reviewed | TODO | TODO | TODO | TODO | TODO | TODO |
 """;
 
     private static void RegisterCatalogEntries(CisRepositoryContext context, ChangeDossier change)
@@ -679,6 +706,7 @@ Rejected PNG files are removed. Preserve their manifest hashes and review eviden
             ("plan.md", "delivery-plan", "plan"),
             ("wireframes.md", "textual-wireframes", "wireframes"),
             ("design.md", "design-approval", "design"),
+            ("test-cases.md", "manual-test-cases", "manual-test-cases"),
             ("verification.md", "verification-record", "verification"),
         })
         {

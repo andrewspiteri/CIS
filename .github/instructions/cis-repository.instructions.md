@@ -17,7 +17,7 @@ applyTo: "**"
 - Use `.github/skills/cis-feedback-loop/SKILL.md` to review automatic local usage, possible token savings, repeated failures, and compact-output opportunities.
 - Use `.github/skills/cis-graph-context/SKILL.md` before broad repository searches or impact analysis; never edit `.cis/local/` derived state.
 - Use `.github/skills/cis-change-dossier/SKILL.md`, `cis-impact-review`, `cis-decision-review`, and `cis-bounded-planning` for reviewed change delivery.
-- Treat `impact accept|reject|defer`, `decision resolve|defer|promote`, `plan approve`, and `change close` as explicit human-authority commands.
+- Treat `impact accept|reject|defer`, `decision resolve|defer|promote`, `plan approve`, and `change close` as explicit human-authority commands. `cis plan derive` may reuse a tool-confirmed current feature approval for eligible deterministic impacts and the exact plan; it does not create new human authority.
 - Inspect callers, contracts, tests, configuration, permissions, events, and operational effects before changing behavior.
 - Update contract and domain-behavior references in the same change as implementation.
 - For API changes, use `.github/skills/cis-api-contract-governance/SKILL.md`; run `cis api discover`, strict validation, compatibility diff when baselined, then rebuild the graph.

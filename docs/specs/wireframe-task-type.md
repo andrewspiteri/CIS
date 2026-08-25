@@ -2,10 +2,10 @@
 title: "Task Type: Wireframe"
 type: task-type-definition
 status: Draft
-version: "0.1"
+version: "0.2"
 scope: "Product:ChangeImpactStudio"
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-13"
+last_reviewed: "2026-08-23"
 review_cadence: "on planning-model change"
 cis:
   stable_id: change-impact-studio:task-type:core.design.wireframe
@@ -91,8 +91,8 @@ The description states, in reading order:
 
 Screen IDs remain unique across all three frontend types. A feature spanning more than
 one type keeps the screens in the same canonical `wireframes.md`, but each screen and
-each generated wireframe task is explicitly classified; approval covers the exact
-classified inventory digest.
+each generated wireframe task is explicitly classified; the design review covers the
+exact classified inventory digest unless an earlier behavior-only review is requested.
 
 ### 5.3 Actions and paths
 
@@ -144,7 +144,8 @@ The task owner must:
 7. Map UI requirements, exclusions, and prohibited behavior to screens and actions.
 8. Compare the proposed flow with existing routes and interaction patterns.
 9. Resolve product ambiguity through decisions rather than visual-design guesses.
-10. Present the textual wireframe for human behavioral and navigation review.
+10. Validate the textual wireframe before rendering; present it separately only when
+    an early behavior-only human checkpoint is intentionally required.
 
 ## 7. Required outputs
 
@@ -153,7 +154,8 @@ The task owner must:
 - Complete action-and-path tables.
 - Journey and requirement coverage mapping.
 - Open questions and decisions blocking visual design.
-- Human review decision and approved wireframe revision/digest.
+- Exact wireframe revision/digest bound to the rendered-design review, plus any optional
+  earlier behavior-only review decision.
 
 ## 8. Dependencies and approval gate
 
@@ -161,11 +163,12 @@ Wireframing begins after Coordination / scope guard establishes the feature boun
 It may proceed alongside documentation, security analysis, and early technical
 discovery when it does not consume their unresolved decisions.
 
-Visual design is blocked until a human approves the wireframe's behavior, screen
-inventory, actions, and navigation paths. This approval does not approve visual
-appearance and does not authorize downstream implementation. After wireframe
-approval, Visual design is the next delivery task and becomes the global review
-barrier described by `core.design.visual`.
+Visual design is blocked until deterministic validation confirms the wireframe's
+structure, screen inventory, actions, navigation paths, and coverage. Visual design is
+then the global review barrier described by `core.design.visual`. By default one human
+decision approves the exact wireframe digest and rendered pack together; teams may use
+`cis design wireframe-approve` when they intentionally want an earlier behavior-only
+checkpoint. Neither path authorizes downstream implementation before design approval.
 
 ## 9. Acceptance criteria
 
@@ -182,7 +185,8 @@ barrier described by `core.design.visual`.
       are described or have justified non-applicability.
 - [ ] UI requirements and exclusions are traceable to screens, actions, or states.
 - [ ] No visual choice is being used to hide unresolved product behavior.
-- [ ] A human approved the behavioral/navigation contract and its exact revision.
+- [ ] The exact behavioral/navigation digest is ready to be approved with the rendered
+      design pack, or has an intentional standalone human approval.
 
 ## 10. Negative criteria
 
@@ -202,8 +206,8 @@ The task must not:
 
 Deterministic validation checks unique screen/action identities, required fields,
 route syntax, destination resolution, entry-point reciprocity, state coverage,
-requirement/exclusion coverage, absence of TODO placeholders, source provenance, and
-the recorded approval revision.
+requirement/exclusion coverage, absence of TODO placeholders, and source provenance.
+After combined or standalone review, it also validates the recorded approval revision.
 
 Human review checks product flow, terminology, information priority, user escape
 paths, permission boundaries, and whether a designer could render the screens
@@ -217,7 +221,7 @@ without making behavioral decisions.
 | Wireframe artifact | `wireframes.md` path and SHA-256 digest |
 | Coverage report | Requirements, exclusions, screens, states, actions, and journeys |
 | Route validation | Exact command/result and unresolved destinations |
-| Review | Reviewer, timestamp, decision, rationale, and approved digest |
+| Review | Combined design reviewer, timestamp, decision, rationale, and approved digest; or the optional standalone wireframe decision |
 
 ## 13. Deferral and complexity
 
@@ -239,4 +243,5 @@ group while retaining one canonical cross-screen navigation map.
 - Labels: `cis`, `task-type:wireframe`, and affected platform labels.
 - Body: source scope, required screens/states, canonical `wireframes.md` link, review
   gate, and dependencies.
-- Completion: approved textual wireframe digest; attached images alone do not close it.
+- Completion: validated textual wireframe digest bound to the design review; attached
+  images alone do not close it.

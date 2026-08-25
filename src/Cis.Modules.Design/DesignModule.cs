@@ -30,11 +30,12 @@ public sealed class DesignModule : ICisModule
         design.Subcommands.Add(TemplatesCommand(service));
         design.Subcommands.Add(ScaffoldCommand(service));
         design.Subcommands.Add(Simple("wireframe-validate", "Validate textual screen behavior, classification, states, actions, paths, and coverage before human review.", service.ValidateWireframes));
-        design.Subcommands.Add(Review("wireframe-approve", "Approve textual screen behavior and paths before visual design.", service.ApproveWireframes));
+        design.Subcommands.Add(Review("wireframe-approve", "Optionally approve textual screen behavior separately; the default design approval records both exact digests.", service.ApproveWireframes));
         design.Subcommands.Add(Review("wireframe-reject", "Reject textual wireframes with review rationale.", service.RejectWireframes));
         design.Subcommands.Add(Simple("render", "Render PNGs and enter the global design-review pause.", service.Render));
-        design.Subcommands.Add(Simple("validate", "Validate wireframe approval, renderer, guideline provenance, and PNG evidence.", service.Validate));
-        design.Subcommands.Add(Review("approve", "Approve the exact renderer and PNG manifest and release the global gate.", service.Approve));
+        design.Subcommands.Add(Simple("validate", "Validate wireframe provenance, renderer, guideline provenance, and PNG evidence.", service.Validate));
+        design.Subcommands.Add(Simple("reconcile", "Carry current approved feature authority across a provenance-only refresh when rendered pixels are unchanged.", service.Reconcile));
+        design.Subcommands.Add(Review("approve", "Approve the exact wireframe, renderer, and PNG manifest together and release the global gate.", service.Approve));
         design.Subcommands.Add(Review("reject", "Reject the design, preserve hashes/rationale, remove rejected PNGs, and keep work paused.", service.Reject));
         design.Subcommands.Add(Simple("status", "Show the current design gate, approval, renderer, and artifact state.", service.Status));
         commands.Add(design);
@@ -56,7 +57,7 @@ public sealed class DesignModule : ICisModule
 
     private static Command ScaffoldCommand(DesignService service)
     {
-        var command = new Command("scaffold", "Generate one self-contained Sharp/SVG renderer from approved textual wireframes and reusable templates.");
+        var command = new Command("scaffold", "Generate one self-contained Sharp/SVG renderer from valid textual wireframes and reusable templates.");
         var id = new Argument<string>("change-id");
         var feature = new Option<string>("--feature") { Required = true, Description = "Feature name used for renderer identity." };
         var shell = new Option<string>("--shell") { DefaultValueFactory = _ => "shell.standard-app", Description = "Required application-shell template ID." };

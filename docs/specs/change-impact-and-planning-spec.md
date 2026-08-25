@@ -5,7 +5,7 @@ status: Draft
 version: "0.1"
 scope: "Product:ChangeImpactStudio"
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-09"
+last_reviewed: "2026-08-23"
 review_cadence: "on change-workflow change"
 cis:
   stable_id: change-impact-studio:spec:change-impact-and-planning
@@ -21,7 +21,8 @@ without copying repository-specific implementation.
 
 The controlling principle is:
 
-> Deterministic analysis may propose scope; humans accept scope and approve plans.
+> Humans approve product intent once; CIS may carry that exact authority through
+> deterministic, bounded derivation while stopping on uncertainty or changed scope.
 
 ## 2. Canonical dossier
 
@@ -35,12 +36,15 @@ changes/CIS-0001/
 |-- plan.md
 |-- wireframes.md
 |-- design.md
+|-- test-cases.md
+|-- test-cases.csv
 |-- verification.md
 |-- agent-tasks/
 `-- events.jsonl
 ```
 
-The four Markdown documents are catalogued canonical records. `events.jsonl` is an
+The Markdown documents are catalogued reviewable records. `test-cases.csv` is a
+hash-bound test-management projection and `events.jsonl` is an
 append-only audit trail. Graph queries and context packs are derived evidence.
 
 `proposal.md` records the outcome, exact Git commit or graph build baseline, initial
@@ -71,11 +75,18 @@ Allowed states are:
 | State | Authority | Meaning |
 | --- | --- | --- |
 | `proposed` | deterministic analyser | Requires review; not approved scope |
-| `accepted` | human command | Must be covered by bounded work |
+| `accepted` | human command or eligible authority carry-forward | Must be covered by bounded work |
 | `rejected` | human command | Reviewed and excluded with a reason |
 | `deferred` | human command | Acknowledged but unresolved outside the approved plan |
 
 AI may later propose additional findings but may not set a human disposition.
+
+When an exact, current feature specification already has explicit human approval,
+`cis plan derive` may carry that authority to deterministic findings that are neither
+low-confidence, deferred, nor produced by truncated analysis. This is provenance reuse,
+not autonomous approval: the original reviewer, rationale, source path, and approved
+content digest remain the authority basis. Any ambiguity or expanded risk stops for
+individual human disposition.
 
 ## 4. Completeness
 
@@ -135,6 +146,19 @@ canonical Markdown feature specification. Native documents declare
 functional-requirements table with stable IDs and acceptance criteria or a numbered
 Goals section whose entries receive deterministic `GOAL-NNN` IDs. The plan records
 the source path and SHA-256 digest rather than copying the specification.
+
+`cis plan derive <change-id> --file <path>` is the default path for a current,
+explicitly approved CIS feature. It verifies the registered feature authority, adopts
+only eligible deterministic impacts, imports the same task pack, validates it, and
+records the exact feature approval as the plan approval basis. When the proposal still
+contains only its initialization placeholder, derivation carries the feature requirement
+IDs and exact approved acceptance criteria into that section; existing human-managed
+criteria are never overwritten. The operation is atomic:
+failure restores prior impact dispositions, generated files, and catalog state. It
+stops on stale or ambiguous approval, truncated analysis, deferred or low-confidence
+findings, unresolved provider conflicts, blocking decisions, mismatched scope, or an
+invalid generated plan. The explicit impact/import/approve commands remain available
+for those exceptions and for specifications without reusable CIS authority.
 
 Before task instantiation, planning resolves applicable extension definitions by
 capability. Mutually exclusive providers stop planning until a human records the
@@ -219,23 +243,32 @@ Every generated row links to a catalogued `agent-tasks/WORK-NNN.md` document con
 `wireframes.md` is the canonical textual screen contract. It defines stable screens,
 their public/customer/backoffice classification, states, visible content, actions,
 conditions, side effects, and concrete navigation
-paths without choosing visual styling. The visual design task converts the approved
+paths without choosing visual styling. The visual design task converts the validated
 wireframe into one self-contained JavaScript renderer and its deterministic PNG
 screen pack using JavaScript-generated SVG and the pinned Sharp renderer. The render
 must cite and conform to an approved repository design-guideline path and digest;
 missing or conflicting guidelines block design approval. `design.md` is the durable
 renderer, asset, guideline-conformance, validation, and human
 approval record. UI-bearing plans must enforce
-`coordination -> wireframe approval -> visual/interaction design approval -> all
+`coordination -> validated wireframes -> visual/interaction design approval -> all
 remaining delivery work`. A completed design pack enters a global review pause: all
 non-review work stops until a human approves it. Rejection permits only wireframe and
 design revision before resubmission. Design approval releases, but does not itself
-approve, downstream tasks. Plan approval does not automatically approve screen
-designs. `verification.md` is the
+approve, downstream tasks. By default one design decision approves the exact validated
+wireframe digest, renderer, and PNG manifest atomically. A standalone wireframe approval
+remains available for teams that intentionally want an earlier behavior-only review,
+but it is not a mandatory additional stop. Plan approval does not automatically approve
+screen designs. `verification.md` is the
 cross-task ledger of commands, artifacts, results, blockers, coverage, and independent
 assurance. Generated task documents may evolve with execution evidence after plan
 approval, but their stable identity, source provenance, scope, and dependency fields
 remain managed.
+
+Every imported feature also generates `test-cases.md` and `test-cases.csv` from one
+deterministic case model. Each functional requirement has one stable manual-test ID,
+preconditions, numbered steps, exact expected result, priority/type, requirement
+reference, and frontend classification. Markdown records the source feature digest and
+the exact CSV hash. Manual execution results remain in `verification.md`.
 
 ## 7. Validation and approval
 
@@ -252,14 +285,18 @@ Plan validation fails when:
 - unauthenticated endpoint scope lacks any required `PUBLIC-ENDPOINT-CACHE` task or
   task-document obligation;
 - `verification.md` is absent;
+- either manual-test artifact is absent, stale, incomplete, or hash-inconsistent;
 - acceptance criteria or validation is absent;
-- outcome-level acceptance criteria remain TODO;
+- outcome-level acceptance criteria remain TODO after any eligible approved-feature
+  carry-forward;
 - any blocking decision is open or deferred;
 - impact review is incomplete or truncated; or
 - no bounded work exists.
 
-`cis plan approve` is the explicit human approval action. It cannot approve an invalid
-plan. An approved plan cannot be silently rebuilt.
+`cis plan approve` records new explicit human plan authority and cannot approve an
+invalid plan. `cis plan derive` may instead reuse the exact current feature authority;
+it never creates a reviewer or rationale and cannot bypass an exceptional finding.
+An approved plan cannot be silently rebuilt.
 
 ## 8. Idempotency and audit
 
@@ -279,6 +316,12 @@ execute agents, or mark implementation complete.
 - Advisory deferred decisions remain visible without blocking approval.
 - Resolved durable decisions can be promoted idempotently into catalogued ADRs.
 - A valid plan can be explicitly approved and a second approval is unchanged.
+- A current approved feature can atomically derive eligible impacts and an approved
+  exact plan without duplicate approval prompts.
+- Low-confidence, deferred, truncated, stale, ambiguous, or invalid derivation rolls
+  back and requests only the exceptional human decision.
+- One rendered-design decision approves the bound wireframe digest and PNG pack; a
+  separate wireframe checkpoint remains optional.
 - A changed graph baseline blocks impact analysis rather than silently changing scope.
 - Managed dossier creation does not change the product/source graph identity.
 - A genuine pre-impact rebaseline updates managed baseline fields and appends actor,

@@ -20,6 +20,8 @@ public sealed class PlanningService
     private readonly TaskTypeCapabilityStore _capabilities;
     private readonly ToolUsageStore? _toolUsage;
     private readonly IReadOnlyList<IChangeReadinessCheck> _readinessChecks;
+    private readonly IReadOnlyList<ICisFeatureApprovalAuthority> _featureAuthorities;
+    private readonly ManualTestAutomationScanner _automationScanner;
     private readonly Func<DateTimeOffset> _clock;
 
     public PlanningService(
@@ -31,7 +33,9 @@ public sealed class PlanningService
         ToolUsageStore? toolUsage = null,
         TaskTypeCapabilityStore? capabilities = null,
         IEnumerable<IChangeReadinessCheck>? readinessChecks = null,
-        Func<DateTimeOffset>? clock = null)
+        Func<DateTimeOffset>? clock = null,
+        IEnumerable<ICisFeatureApprovalAuthority>? featureAuthorities = null,
+        ICisWorkspaceRegistry? workspaceRegistry = null)
     {
         _changes = changes;
         _impacts = impacts;
@@ -42,6 +46,8 @@ public sealed class PlanningService
         _capabilities = capabilities ?? new TaskTypeCapabilityStore(resolver);
         _readinessChecks = (readinessChecks ?? []).ToArray();
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
+        _featureAuthorities = (featureAuthorities ?? []).ToArray();
+        _automationScanner = new ManualTestAutomationScanner(resolver, workspaceRegistry);
     }
 
     public PlanResult Build(string repositoryPath, string changeId)
@@ -132,8 +138,9 @@ public sealed class PlanningService
                     $"Task {item.Id} uses replaced extension type '{item.TaskTypeKey}'. Run `cis plan task migrate-type` before re-import.").ToArray(),
                 false, existing.Source);
         var accepted = impact.Findings.Where(item => item.State == "accepted").ToArray();
-        var built = FeatureIssuePackBuilder.Build(change.RepositoryPath, request.FeatureSpecPath, accepted, _taskTypes,
-            capabilityStatus.Selections, existing.WorkItems);
+        var automationReferences = _automationScanner.Scan(change.RepositoryPath);
+        var built = FeatureIssuePackBuilder.Build(change.RepositoryPath, request.FeatureSpecPath, change.Id, accepted, _taskTypes,
+            capabilityStatus.Selections, existing.WorkItems, automationReferences);
         if (built.Pack is null)
         {
             PersistCapabilityConflicts(change, built.Conflicts);
@@ -156,6 +163,8 @@ public sealed class PlanningService
         var content = RenderPlan(change, planStatus, workItems, source);
         var path = _changes.DossierFile(change, "plan.md");
         var applied = WriteIfChanged(path, content);
+        applied |= WriteIfChanged(_changes.DossierFile(change, "test-cases.md"), pack.ManualTestCasesMarkdown);
+        applied |= WriteIfChanged(_changes.DossierFile(change, "test-cases.csv"), pack.ManualTestCasesCsv);
         var taskRoot = Path.Combine(Path.GetDirectoryName(path)!, "agent-tasks");
         Directory.CreateDirectory(taskRoot);
         foreach (var task in pack.TaskDocuments)
@@ -167,6 +176,7 @@ public sealed class PlanningService
         }
         applied |= RetireObsoleteTasks(change, existing.WorkItems, workItems, source);
         applied |= RegisterFeatureSpecCatalogEntry(change, source);
+        applied |= RegisterManualTestCasesCatalogEntry(change);
         applied |= RegisterTaskCatalogEntries(change, workItems);
         if (applied)
         {
@@ -185,6 +195,8 @@ public sealed class PlanningService
                 ["source"] = source.Path,
                 ["sourceSha256"] = source.Sha256,
                 ["requirements"] = source.Requirements.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["manualTestCases"] = pack.ManualTestCaseCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["automatedTestCases"] = pack.AutomatedManualTestCaseCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 ["workItems"] = workItems.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
             });
         }
@@ -192,6 +204,96 @@ public sealed class PlanningService
         var validation = ValidateInternal(change, workItems, planStatus, source);
         return new PlanResult(applied ? "imported" : "unchanged", change.Id, planStatus, workItems,
             validation, [], applied, source);
+    }
+
+    public PlanResult DeriveFromApprovedFeature(FeatureSpecImportRequest request)
+    {
+        var change = _changes.Read(request.RepositoryPath, request.ChangeId);
+        if (change is null)
+            return Error(request.ChangeId, $"Change dossier was not found: {request.ChangeId}");
+
+        var applicable = _featureAuthorities
+            .Select(authority => authority.Evaluate(request.RepositoryPath, request.FeatureSpecPath))
+            .Where(result => result.Applicable)
+            .ToArray();
+        if (applicable.Length == 0)
+            return Blocked(change.Id,
+                "No current governed feature approval applies to this specification. Use explicit impact disposition and `cis plan approve`.");
+        if (applicable.Length > 1)
+            return Blocked(change.Id, "Multiple feature-approval authorities apply; resolve the authority conflict before planning.");
+        var feature = applicable[0];
+        if (!feature.Ready)
+            return Blocked(change.Id, feature.Errors.Count > 0
+                ? feature.Errors.ToArray()
+                : ["The feature approval is not current enough to carry forward."]);
+
+        var dossier = Path.GetDirectoryName(_changes.DossierFile(change, "plan.md"))!;
+        var context = _resolver.Resolve(request.RepositoryPath).Context;
+        if (context is null) return Error(change.Id, "The repository context could not be resolved.");
+        Dictionary<string, byte[]> originals;
+        byte[] catalog;
+        try
+        {
+            originals = SnapshotTree(dossier);
+            catalog = File.ReadAllBytes(context.CatalogPath);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return Error(change.Id, $"Could not snapshot the planning state before derivation: {exception.Message}");
+        }
+        PlanResult Rollback(PlanResult failure)
+        {
+            RestoreTree(dossier, originals);
+            File.WriteAllBytes(context.CatalogPath, catalog);
+            return failure;
+        }
+
+        try
+        {
+            var impact = _impacts.CarryForwardApprovedFeature(
+                request.RepositoryPath,
+                change.Id,
+                feature.ItemId!,
+                feature.FeaturePath!,
+                feature.ApprovedContentHash!,
+                feature.Reviewer!);
+            if (impact.ExitCode != 0)
+                return Rollback(Blocked(change.Id, impact.Diagnostics
+                    .Select(message => message.StartsWith("ERROR: ", StringComparison.Ordinal) ? message[7..] : message)
+                    .ToArray()));
+
+            var parsedFeature = ParseFeatureSpec(request.RepositoryPath, request.FeatureSpecPath);
+            if (parsedFeature.Spec is null)
+                return Rollback(Blocked(change.Id, parsedFeature.Errors.ToArray()));
+            CarryForwardOutcomeAcceptance(change, parsedFeature.Spec);
+
+            var imported = ImportSpec(request);
+            if (imported.ExitCode != 0 || imported.Validation is not { Valid: true })
+                return Rollback(imported with { Status = "blocked" });
+
+            var basis = $"approved-feature:{feature.ItemId}:{feature.ApprovedContentHash}";
+            var approved = ApproveCore(
+                request.RepositoryPath,
+                change.Id,
+                feature.Reviewer!,
+                $"Authority carried forward from the approved feature {feature.ItemId}: {feature.Rationale}",
+                basis);
+            if (approved.ExitCode != 0)
+                return Rollback(approved);
+
+            _changes.AppendEvent(change, "delivery-plan-authority-carried-forward", new Dictionary<string, string>
+            {
+                ["featureItemId"] = feature.ItemId!,
+                ["featurePath"] = feature.FeaturePath!,
+                ["approvedContentHash"] = feature.ApprovedContentHash!,
+                ["approvedBy"] = feature.Reviewer!,
+            });
+            return approved with { Status = "derived-and-approved" };
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            return Rollback(Error(change.Id, $"Derived planning failed atomically: {exception.Message}"));
+        }
     }
 
     public PlanResult Show(string repositoryPath, string changeId)
@@ -354,6 +456,14 @@ public sealed class PlanningService
         => Approve(repositoryPath, changeId, Environment.UserName, "Explicit plan approval recorded by the caller.");
 
     public PlanResult Approve(string repositoryPath, string changeId, string reviewer, string rationale)
+        => ApproveCore(repositoryPath, changeId, reviewer, rationale, null);
+
+    private PlanResult ApproveCore(
+        string repositoryPath,
+        string changeId,
+        string reviewer,
+        string rationale,
+        string? approvalBasis)
     {
         var change = _changes.Read(repositoryPath, changeId);
         if (change is null)
@@ -385,15 +495,39 @@ public sealed class PlanningService
             "status: Approved",
             System.Text.RegularExpressions.RegexOptions.CultureInvariant,
             TimeSpan.FromSeconds(1));
-        content = content.Replace("authority: human-approved", $"approved_by: {JsonSerializer.Serialize(reviewer.Trim())}{Environment.NewLine}approval_rationale: {JsonSerializer.Serialize(rationale.Trim())}{Environment.NewLine}authority: human-approved", StringComparison.Ordinal);
+        var approval = $"approved_by: {JsonSerializer.Serialize(reviewer.Trim())}{Environment.NewLine}" +
+            $"approval_rationale: {JsonSerializer.Serialize(rationale.Trim())}{Environment.NewLine}" +
+            (approvalBasis is null ? string.Empty : $"approval_basis: {JsonSerializer.Serialize(approvalBasis)}{Environment.NewLine}") +
+            "authority: human-approved";
+        content = content.Replace("authority: human-approved", approval, StringComparison.Ordinal);
         File.WriteAllText(path, content);
         _changes.AppendEvent(change, "plan-approved", new Dictionary<string, string>
         {
             ["workItems"] = plan.WorkItems.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["reviewer"] = reviewer.Trim(),
             ["rationale"] = rationale.Trim(),
+            ["approvalBasis"] = approvalBasis ?? "direct-human-plan-review",
         });
         return new PlanResult("approved", change.Id, "Approved", plan.WorkItems, validation, [], true, plan.Source);
+    }
+
+    private static Dictionary<string, byte[]> SnapshotTree(string root)
+        => Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
+            .ToDictionary(path => Path.GetRelativePath(root, path), File.ReadAllBytes, StringComparer.OrdinalIgnoreCase);
+
+    private static void RestoreTree(string root, IReadOnlyDictionary<string, byte[]> snapshot)
+    {
+        foreach (var path in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories).ToArray())
+        {
+            var relative = Path.GetRelativePath(root, path);
+            if (!snapshot.ContainsKey(relative)) File.Delete(path);
+        }
+        foreach (var item in snapshot)
+        {
+            var path = Path.Combine(root, item.Key);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllBytes(path, item.Value);
+        }
     }
 
     public PlanResult Status(string repositoryPath, string changeId)
@@ -773,6 +907,7 @@ public sealed class PlanningService
             {
                 errors.Add("Imported feature plans require a durable verification.md evidence ledger.");
             }
+            ValidateManualTestCaseArtifacts(change, source, errors);
         }
 
         if (HasCycle(workItems))
@@ -809,6 +944,91 @@ public sealed class PlanningService
         }
 
         return new PlanValidation(errors.Count == 0, errors, warnings, accepted.Count, covered.Intersect(accepted).Count(), openDecisions);
+    }
+
+    private void ValidateManualTestCaseArtifacts(ChangeDossier change, PlanSource source, ICollection<string> errors)
+    {
+        var markdownPath = _changes.DossierFile(change, "test-cases.md");
+        var csvPath = _changes.DossierFile(change, "test-cases.csv");
+        if (!File.Exists(markdownPath))
+        {
+            errors.Add("Imported feature plans require a human-readable test-cases.md manual-test catalogue.");
+            return;
+        }
+        if (!File.Exists(csvPath))
+        {
+            errors.Add("Imported feature plans require a test-cases.csv test-management import projection.");
+            return;
+        }
+
+        var markdown = File.ReadAllText(markdownPath);
+        var csv = File.ReadAllText(csvPath);
+        if (!Regex.IsMatch(markdown, @"(?im)^type:\s*manual-test-cases\s*$"))
+            errors.Add("test-cases.md must declare type: manual-test-cases.");
+        if (!markdown.Contains($"feature_spec_path: {JsonSerializer.Serialize(source.Path)}", StringComparison.Ordinal)
+            || !markdown.Contains($"feature_spec_sha256: {JsonSerializer.Serialize(source.Sha256)}", StringComparison.Ordinal))
+            errors.Add("Manual test cases are stale relative to the imported feature specification.");
+        if (!Regex.IsMatch(markdown, $@"(?im)^test_case_count:\s*{source.Requirements}\s*$"))
+            errors.Add($"Manual test case count must equal the {source.Requirements} imported requirements.");
+
+        var expectedHeader = string.Join(',', new[]
+        {
+            "ID", "Title", "Section", "Priority", "Type", "Preconditions", "Steps",
+            "Expected Result", "References", "Frontend Type", "Automation Status", "Automated Test References",
+        }.Select(value => $"\"{value}\""));
+        if (!csv.StartsWith(expectedHeader + "\r\n", StringComparison.Ordinal))
+            errors.Add("test-cases.csv does not use the supported portable test-management header.");
+        var actualCsvSha = "sha256:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(csv))).ToLowerInvariant();
+        if (!markdown.Contains($"csv_sha256: {JsonSerializer.Serialize(actualCsvSha)}", StringComparison.Ordinal))
+            errors.Add("test-cases.csv differs from the projection bound by test-cases.md; rerun feature planning.");
+        foreach (var requirementId in source.RequirementIds)
+        {
+            if (!markdown.Contains($"`{requirementId}`", StringComparison.Ordinal)
+                || !csv.Contains($"\"{requirementId.Replace("\"", "\"\"", StringComparison.Ordinal)}\"", StringComparison.Ordinal))
+                errors.Add($"Manual test artifacts do not cover feature requirement: {requirementId}");
+        }
+    }
+
+    public IReadOnlyList<string> ValidateManualTestAutomationCoverage(string repositoryPath, string changeId)
+    {
+        var change = _changes.Read(repositoryPath, changeId);
+        if (change is null) return [$"Change dossier was not found: {changeId}"];
+        var markdownPath = _changes.DossierFile(change, "test-cases.md");
+        if (!File.Exists(markdownPath)) return ["Automated-test traceability requires test-cases.md."];
+
+        var markdown = File.ReadAllText(markdownPath);
+        var matches = Regex.Matches(markdown, @"(?im)^###\s+(?<id>TC-[A-Z0-9]+(?:-[A-Z0-9]+)*):[^\r\n]*\r?$")
+            .Cast<Match>()
+            .ToArray();
+        if (matches.Length == 0) return ["Automated-test traceability requires at least one generated TC-* test case."];
+
+        var discovered = _automationScanner.Scan(change.RepositoryPath);
+        var errors = new List<string>();
+        for (var index = 0; index < matches.Length; index++)
+        {
+            var id = matches[index].Groups["id"].Value.ToUpperInvariant();
+            var sectionEnd = index + 1 < matches.Length ? matches[index + 1].Index : markdown.Length;
+            var section = markdown[matches[index].Index..sectionEnd];
+            var references = discovered.TryGetValue(id, out var found) ? found : [];
+            if (references.Count == 0)
+            {
+                errors.Add($"Manual test case {id} is not referenced by any recognized automated test source.");
+                continue;
+            }
+
+            if (!Regex.IsMatch(section, @"(?im)^- Automation status:\s*Automated\s*$"))
+            {
+                errors.Add($"Manual test case {id} has automated coverage but its catalogue is stale; rerun `cis plan import-spec`.");
+                continue;
+            }
+
+            foreach (var reference in references.Where(reference => !section.Contains($"`{reference}`", StringComparison.Ordinal)))
+            {
+                errors.Add($"Manual test case {id} is missing current automated-test reference {reference}; rerun `cis plan import-spec`.");
+            }
+        }
+
+        return errors.Distinct(StringComparer.Ordinal).ToArray();
     }
 
     private static IReadOnlyList<string> ValidateSourceCurrency(ChangeDossier change, PlanSource? source)
@@ -1419,10 +1639,10 @@ public sealed class PlanningService
         builder.AppendLine();
         builder.AppendLine("- All impact findings reviewed; no deferred impact hidden from scope.");
         builder.AppendLine("- All required decisions resolved.");
-        builder.AppendLine("- Human approval recorded through `cis plan approve`.");
+        builder.AppendLine("- Human authority recorded through `cis plan approve` or carried from a current approved feature by `cis plan derive`.");
         if (source?.FrontendChanges == true)
         {
-            builder.AppendLine("- Global UI gate: coordination -> approved wireframe -> approved design -> all downstream work.");
+            builder.AppendLine("- Global UI gate: coordination -> validated wireframe -> combined wireframe/design approval -> all downstream work.");
             builder.AppendLine("- `PausedForReview` or rejected design stops every non-review task until explicit design approval.");
         }
         builder.AppendLine();
@@ -1584,6 +1804,31 @@ public sealed class PlanningService
     type: {source.DocumentType}
     status: draft
     authority: canonical
+""";
+        File.WriteAllText(resolution.Context.CatalogPath,
+            catalog + (catalog.EndsWith('\n') ? string.Empty : Environment.NewLine) + addition);
+        return true;
+    }
+
+    private bool RegisterManualTestCasesCatalogEntry(ChangeDossier change)
+    {
+        var resolution = _resolver.Resolve(change.RepositoryPath);
+        if (!resolution.IsSuccess || resolution.Context is null) return false;
+        var catalog = File.ReadAllText(resolution.Context.CatalogPath);
+        var stableId = $"{resolution.Context.RepositoryId}:change:{change.Id.ToLowerInvariant()}:manual-test-cases";
+        var registeredPath = $"{change.RelativePath}/test-cases.md";
+        if (TryReplaceCatalogEntry(catalog, stableId, registeredPath, "draft", out var updated))
+        {
+            if (string.Equals(updated, catalog, StringComparison.Ordinal)) return false;
+            File.WriteAllText(resolution.Context.CatalogPath, updated);
+            return true;
+        }
+        var addition = $"""
+  - id: {stableId}
+    path: {registeredPath}
+    type: manual-test-cases
+    status: draft
+    authority: derived
 """;
         File.WriteAllText(resolution.Context.CatalogPath,
             catalog + (catalog.EndsWith('\n') ? string.Empty : Environment.NewLine) + addition);
@@ -1851,6 +2096,27 @@ public sealed class PlanningService
                 && !line.Contains("TODO", StringComparison.OrdinalIgnoreCase));
     }
 
+    private void CarryForwardOutcomeAcceptance(ChangeDossier change, FeatureSpecification feature)
+    {
+        if (HasOutcomeAcceptanceCriteria(change)) return;
+
+        var path = _changes.DossierFile(change, "proposal.md");
+        var content = File.Exists(path) ? File.ReadAllText(path) : string.Empty;
+        var bullets = feature.Requirements.Select(requirement =>
+            $"- `{requirement.Id}`: {requirement.AcceptanceCriteria.Trim()}");
+        var section = "## Acceptance criteria" + Environment.NewLine + Environment.NewLine
+            + string.Join(Environment.NewLine, bullets);
+        var revised = ReplaceMarkdownSection(content, "## Acceptance criteria", section);
+        if (!WriteIfChanged(path, revised)) return;
+
+        _changes.AppendEvent(change, "proposal-acceptance-authority-carried-forward", new Dictionary<string, string>
+        {
+            ["source"] = feature.RelativePath,
+            ["sourceSha256"] = feature.Sha256,
+            ["requirements"] = feature.Requirements.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        });
+    }
+
     private static bool HasCycle(IReadOnlyList<PlanWorkItem> items)
     {
         var dependencies = items.ToDictionary(item => item.Id, item => item.DependsOn, StringComparer.Ordinal);
@@ -1922,6 +2188,9 @@ public sealed class PlanningService
 
     private static PlanResult Error(string? changeId, params string[] messages)
         => new("invalid", changeId, null, [], null, messages, false);
+
+    private static PlanResult Blocked(string? changeId, params string[] messages)
+        => new("blocked", changeId, null, [], new(false, messages, [], 0, 0, 0), [], false);
 
     private static string Unquote(string value)
         => value.Length >= 2 && value[0] == '"' && value[^1] == '"'

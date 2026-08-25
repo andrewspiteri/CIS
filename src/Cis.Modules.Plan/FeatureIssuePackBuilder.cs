@@ -11,10 +11,12 @@ internal static partial class FeatureIssuePackBuilder
     public static FeatureIssuePackBuildResult Build(
         string repositoryPath,
         string requestedPath,
+        string changeId,
         IReadOnlyList<ImpactFinding> accepted,
         TaskTypeRegistry registry,
         IReadOnlyList<TaskTypeCapabilitySelection> selections,
-        IReadOnlyList<PlanWorkItem> existingItems)
+        IReadOnlyList<PlanWorkItem> existingItems,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> automationReferences)
     {
         var parsed = Parse(repositoryPath, requestedPath);
         if (parsed.Spec is null)
@@ -49,7 +51,9 @@ internal static partial class FeatureIssuePackBuilder
             item => item.TaskPath!,
             item => RenderTask(spec, source, item, items, accepted),
             StringComparer.OrdinalIgnoreCase);
-        return new(new FeatureIssuePack(source, items, documents, spec.Title), [], []);
+        var manualTests = BuildManualTestCases(changeId, spec, source, automationReferences);
+        return new(new FeatureIssuePack(source, items, documents, spec.Title,
+            manualTests.Markdown, manualTests.Csv, manualTests.Count, manualTests.AutomatedCount), [], []);
     }
 
     private static IReadOnlyList<PlanWorkItem> BuildItems(
@@ -271,10 +275,10 @@ internal static partial class FeatureIssuePackBuilder
     private static IReadOnlyList<string> RequiredOutputs(string category) => category switch
     {
         "coordination" => ["Approved dependency ledger", "Coverage and gate inventory", "Final child disposition"],
-        "wireframe" => ["wireframes.md", "Screen/action/path coverage", "Human wireframe approval"],
-        "design" => ["Self-contained Sharp/SVG .mjs renderer", "PNG manifest", "design.md approval record"],
+        "wireframe" => ["wireframes.md", "Validated screen/action/path coverage", "Exact digest bound to design review"],
+        "design" => ["Self-contained Sharp/SVG .mjs renderer", "PNG manifest", "Combined wireframe/design approval record"],
         "documentation" => ["Updated canonical specifications, contracts, decisions, and references"],
-        "verification" => ["verification.md evidence ledger", "Requirement and negative-criteria coverage"],
+        "verification" => ["verification.md evidence ledger", "test-cases.md manual test catalogue with automated-test traceability", "test-cases.csv test-management import", "Requirement and negative-criteria coverage"],
         "assurance" => ["Independent findings and disposition", "Residual-risk record"],
         "delivery" => ["Planned-versus-actual report", "Reproducible handoff evidence"],
         _ => [$"Completed {category} artifacts", "Reproducible validation evidence"],
@@ -430,6 +434,178 @@ internal static partial class FeatureIssuePackBuilder
         builder.AppendLine("|---|---|---|---|---|");
         return builder.ToString();
     }
+
+    private static ManualTestCaseArtifacts BuildManualTestCases(
+        string changeId,
+        FeatureSpec spec,
+        PlanSource source,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> automationReferences)
+    {
+        var cases = spec.Requirements.Select(requirement =>
+        {
+            var idPart = Regex.Replace(requirement.Id.ToUpperInvariant(), "[^A-Z0-9]+", "-").Trim('-');
+            var id = $"TC-{idPart}-001";
+            var title = TestTitle(requirement.Text);
+            var section = requirement.FrontendType is not null
+                ? $"Frontend / {TitleCase(requirement.FrontendType)}"
+                : string.IsNullOrWhiteSpace(requirement.Surface)
+                    ? "General"
+                    : TitleCase(requirement.Surface!);
+            var type = TestType(requirement);
+            var priority = TitleCase(requirement.Complexity);
+            var preconditions = $"The feature build matching {source.Sha256} is deployed in a manual-test environment. "
+                + $"The tester has the actor, data, configuration, and permissions needed for {requirement.Id}.";
+            var steps = TestSteps(requirement);
+            var references = automationReferences.TryGetValue(id, out var found) ? found : [];
+            return new ManualTestCase(id, title, section, priority, type, preconditions, steps,
+                CleanLine(requirement.AcceptanceCriteria), requirement.Id,
+                requirement.FrontendType ?? "not-applicable",
+                references.Count > 0 ? "Automated" : "Pending",
+                references);
+        }).ToArray();
+
+        var csv = RenderManualTestCasesCsv(cases);
+        var csvSha256 = "sha256:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(csv))).ToLowerInvariant();
+        var markdown = RenderManualTestCasesMarkdown(changeId, spec, source, cases, csvSha256);
+        return new(markdown, csv, cases.Length, cases.Count(test => test.AutomationStatus == "Automated"));
+    }
+
+    private static string RenderManualTestCasesMarkdown(
+        string changeId,
+        FeatureSpec spec,
+        PlanSource source,
+        IReadOnlyList<ManualTestCase> cases,
+        string csvSha256)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine("---");
+        builder.AppendLine($"title: {JsonSerializer.Serialize(changeId + " manual test cases")}");
+        builder.AppendLine("type: manual-test-cases");
+        builder.AppendLine("status: Draft");
+        builder.AppendLine($"change_id: {changeId}");
+        builder.AppendLine($"feature_spec_path: {JsonSerializer.Serialize(source.Path)}");
+        builder.AppendLine($"feature_spec_sha256: {JsonSerializer.Serialize(source.Sha256)}");
+        builder.AppendLine($"test_case_count: {cases.Count}");
+        builder.AppendLine($"automated_test_case_count: {cases.Count(test => test.AutomationStatus == "Automated")}");
+        builder.AppendLine($"automation_pending_count: {cases.Count(test => test.AutomationStatus == "Pending")}");
+        builder.AppendLine("csv_path: test-cases.csv");
+        builder.AppendLine($"csv_sha256: {JsonSerializer.Serialize(csvSha256)}");
+        builder.AppendLine("generation: deterministic");
+        builder.AppendLine("authority: derived");
+        builder.AppendLine("---");
+        builder.AppendLine();
+        builder.AppendLine("# Manual test cases");
+        builder.AppendLine();
+        builder.AppendLine($"Generated from `{source.Path}`. Regenerate through feature planning after the source specification changes; do not record execution results in this derived catalogue.");
+        builder.AppendLine();
+        builder.AppendLine("The companion `test-cases.csv` uses one row per case and portable field names that can be mapped during import into TestRail or another test-management system.");
+        builder.AppendLine();
+        builder.AppendLine("## Coverage summary");
+        builder.AppendLine();
+        builder.AppendLine("| Test case | Title | Section | Priority | Type | Requirement | Frontend type | Automation |");
+        builder.AppendLine("| --- | --- | --- | --- | --- | --- | --- | --- |");
+        foreach (var test in cases)
+        {
+            builder.AppendLine($"| {MarkdownCell(test.Id)} | {MarkdownCell(test.Title)} | {MarkdownCell(test.Section)} | {MarkdownCell(test.Priority)} | {MarkdownCell(test.Type)} | {MarkdownCell(test.RequirementId)} | {MarkdownCell(test.FrontendType)} | {MarkdownCell(test.AutomationStatus)} |");
+        }
+
+        builder.AppendLine();
+        builder.AppendLine("## Test case definitions");
+        foreach (var test in cases)
+        {
+            builder.AppendLine();
+            builder.AppendLine($"### {test.Id}: {test.Title}");
+            builder.AppendLine();
+            builder.AppendLine($"- Requirement: `{test.RequirementId}`");
+            builder.AppendLine($"- Section: {test.Section}");
+            builder.AppendLine($"- Priority: {test.Priority}");
+            builder.AppendLine($"- Type: {test.Type}");
+            builder.AppendLine($"- Frontend type: `{test.FrontendType}`");
+            builder.AppendLine($"- Automation status: {test.AutomationStatus}");
+            builder.AppendLine($"- Automated test references: {(test.AutomatedTestReferences.Count == 0 ? "None" : string.Join("; ", test.AutomatedTestReferences.Select(reference => $"`{reference}`")))}");
+            builder.AppendLine();
+            builder.AppendLine("#### Preconditions");
+            builder.AppendLine();
+            builder.AppendLine(test.Preconditions);
+            builder.AppendLine();
+            builder.AppendLine("#### Steps");
+            builder.AppendLine();
+            foreach (var step in test.Steps) builder.AppendLine($"1. {step}");
+            builder.AppendLine();
+            builder.AppendLine("#### Expected result");
+            builder.AppendLine();
+            builder.AppendLine(test.ExpectedResult);
+        }
+        return builder.ToString();
+    }
+
+    private static string RenderManualTestCasesCsv(IReadOnlyList<ManualTestCase> cases)
+    {
+        var rows = new List<string>
+        {
+            string.Join(',', new[]
+            {
+                "ID", "Title", "Section", "Priority", "Type", "Preconditions", "Steps",
+                "Expected Result", "References", "Frontend Type", "Automation Status", "Automated Test References",
+            }.Select(CsvCell)),
+        };
+        rows.AddRange(cases.Select(test => string.Join(',', new[]
+        {
+            test.Id, test.Title, test.Section, test.Priority, test.Type, test.Preconditions,
+            string.Join("\n", test.Steps.Select((step, index) => $"{index + 1}. {step}")),
+            test.ExpectedResult, test.RequirementId, test.FrontendType, test.AutomationStatus,
+            string.Join("\n", test.AutomatedTestReferences),
+        }.Select(CsvCell))));
+        return string.Join("\r\n", rows) + "\r\n";
+    }
+
+    private static IReadOnlyList<string> TestSteps(FeatureRequirement requirement)
+    {
+        var open = requirement.Frontend
+            ? $"Open the approved {requirement.FrontendType ?? "customer"} entry point for requirement {requirement.Id}."
+            : requirement.HasContract
+                ? $"Use the supported application or API client to reach the boundary governed by {requirement.Id}."
+                : $"Prepare the supported product or operational boundary governed by {requirement.Id}.";
+        return
+        [
+            open,
+            $"Establish the normal actor, data, and configuration preconditions without bypassing authorization or validation.",
+            $"Perform the required behavior: {CleanLine(requirement.Text)}",
+            "Observe the resulting user-visible, API, persistence, and operational state that applies.",
+        ];
+    }
+
+    private static string TestTitle(string requirement)
+    {
+        var title = CleanLine(requirement);
+        title = Regex.Replace(title, @"^(?:the system|the application|the user|a user)\s+(?:shall|must|can)\s+", string.Empty,
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        if (title.Length > 120) title = title[..117].TrimEnd() + "...";
+        return title.Length == 0 ? "Verify governed requirement" : char.ToUpperInvariant(title[0]) + title[1..];
+    }
+
+    private static string TestType(FeatureRequirement requirement)
+    {
+        var signal = $"{requirement.Surface} {requirement.Text} {requirement.AcceptanceCriteria}".ToLowerInvariant();
+        if (ContainsAny(signal, "security", "permission", "authorization", "forbidden", "sensitive")) return "Security";
+        if (ContainsAny(signal, "accessibility", "keyboard", "screen reader", "wcag")) return "Accessibility";
+        if (ContainsAny(signal, "migration", "schema", "database", "persistence")) return "Data and persistence";
+        if (requirement.HasContract) return "API and contract";
+        if (requirement.Frontend) return "User interface";
+        return "Functional";
+    }
+
+    private static string CsvCell(string value)
+    {
+        var safe = value.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+        var first = safe.TrimStart().FirstOrDefault();
+        if (first is '=' or '+' or '-' or '@') safe = "'" + safe;
+        return $"\"{safe.Replace("\"", "\"\"", StringComparison.Ordinal)}\"";
+    }
+
+    private static string MarkdownCell(string value) => value.Replace('|', '/').Replace('\r', ' ').Replace('\n', ' ').Trim();
+    private static string TitleCase(string value) => string.Join(' ', value.Replace('-', ' ').Split(' ', StringSplitOptions.RemoveEmptyEntries)
+        .Select(word => char.ToUpperInvariant(word[0]) + word[1..].ToLowerInvariant()));
 
     private static bool IncludesOutcomeAcceptance(string category)
         => category is not ("documentation" or "security" or "data" or "database-migration" or "data-backfill" or "contract" or "backend" or "observability" or "rollout");
@@ -621,8 +797,7 @@ internal static partial class FeatureIssuePackBuilder
                 && (Surface(requirement.Surface, "backend", "api", "contract", "full-stack")
                     || ContainsApiSignal($" {requirement.Text} {requirement.AcceptanceCriteria}".ToLowerInvariant())))
             || ContainsAny(requirementSignal, "public application endpoint", "public endpoint", "public api",
-                "unauthenticated endpoint", "without requiring authentication", "without authentication")
-            || all.Contains("public-endpoint-cache", StringComparison.Ordinal);
+                "unauthenticated endpoint", "without requiring authentication", "without authentication");
         var exclusions = ParseListSection(sections, "non-goal", "out of scope", "exclusion");
         var hash = "sha256:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content))).ToLowerInvariant();
         return new(new FeatureSpec(title, type!, relative, hash, all, classified, targets, stack, references, sections,
@@ -904,6 +1079,15 @@ internal static partial class FeatureIssuePackBuilder
     private static bool ContainsSchemaMigrationSignal(FeatureRequirement requirement)
     {
         var text = $" {requirement.Text} {requirement.AcceptanceCriteria}".ToLowerInvariant();
+        text = Regex.Replace(text,
+            @"(?i)\bno\s+(?:new\s+)?(?:service\s+or\s+)?(?:(?:schema|database|sqlite)\s+)?migrations?\s+(?:is|are)\s+(?:required|needed)\b",
+            string.Empty, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        text = Regex.Replace(text,
+            @"(?i)\b(?:does\s+not|doesn't|will\s+not|won't)\s+require\s+(?:a\s+|any\s+)?(?:(?:schema|database|sqlite)\s+)?migrations?\b",
+            string.Empty, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        text = Regex.Replace(text,
+            @"(?i)\bwithout\s+(?:a\s+|any\s+)?(?:(?:schema|database|sqlite)\s+)?migrations?\b",
+            string.Empty, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
         if (ContainsAny(text, "schema migration", "database migration", "create table", "alter table",
                 "new table", "new column", "database schema"))
             return true;
@@ -1080,13 +1264,31 @@ internal static partial class FeatureIssuePackBuilder
         string? FrontendType);
     private sealed record TaskInstance(Cis.Abstractions.CisTaskTypeDefinition Definition, string? FrontendType);
     private sealed record FeatureParseResult(FeatureSpec? Spec, IReadOnlyList<string> Errors);
+    private sealed record ManualTestCase(
+        string Id,
+        string Title,
+        string Section,
+        string Priority,
+        string Type,
+        string Preconditions,
+        IReadOnlyList<string> Steps,
+        string ExpectedResult,
+        string RequirementId,
+        string FrontendType,
+        string AutomationStatus,
+        IReadOnlyList<string> AutomatedTestReferences);
+    private sealed record ManualTestCaseArtifacts(string Markdown, string Csv, int Count, int AutomatedCount);
 }
 
 internal sealed record FeatureIssuePack(
     PlanSource Source,
     IReadOnlyList<PlanWorkItem> WorkItems,
     IReadOnlyDictionary<string, string> TaskDocuments,
-    string Title);
+    string Title,
+    string ManualTestCasesMarkdown,
+    string ManualTestCasesCsv,
+    int ManualTestCaseCount,
+    int AutomatedManualTestCaseCount);
 
 internal sealed record FeatureIssuePackBuildResult(
     FeatureIssuePack? Pack,

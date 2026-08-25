@@ -25,6 +25,7 @@ public sealed class BrdModule : ICisModule
         services.TryAddSingleton<DocumentationCatalogMerger>();
         services.AddSingleton<BrdService>();
         services.AddSingleton<BrdBacklogService>();
+        services.AddSingleton<ICisFeatureApprovalAuthority, BrdFeatureApprovalAuthority>();
     }
 
     public void RegisterCommands(ICisCommandRegistry commands, IServiceProvider services)

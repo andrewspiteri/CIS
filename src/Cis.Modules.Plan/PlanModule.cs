@@ -31,6 +31,7 @@ public sealed class PlanModule : ICisModule
         var plan = new Command(Name, Description);
         plan.Subcommands.Add(Create("build", "Build bounded work from accepted impact findings.", service.Build));
         plan.Subcommands.Add(CreateImportSpecCommand(service));
+        plan.Subcommands.Add(CreateDeriveCommand(service));
         plan.Subcommands.Add(Create("show", "Show the current durable plan.", service.Show));
         plan.Subcommands.Add(Create("validate", "Validate impact coverage, dependencies, decisions, acceptance, and validation.", service.Validate));
         plan.Subcommands.Add(CreateApproveCommand(service));
@@ -211,6 +212,43 @@ public sealed class PlanModule : ICisModule
         command.SetAction(parseResult =>
         {
             var result = service.ImportSpec(new FeatureSpecImportRequest(
+                parseResult.GetValue(repo) ?? Directory.GetCurrentDirectory(),
+                parseResult.GetValue(id) ?? string.Empty,
+                parseResult.GetValue(file) ?? string.Empty));
+            Render(result, parseResult.GetValue(format) is "json" or "agent"
+                ? parseResult.GetValue(format)!
+                : "human");
+            return result.ExitCode;
+        });
+        return command;
+    }
+
+    private static Command CreateDeriveCommand(PlanningService service)
+    {
+        var command = new Command("derive", "Carry current feature approval through deterministic impact adoption and exact plan generation without another approval stop.");
+        var id = new Argument<string>("change-id");
+        var file = new Option<string>("--file")
+        {
+            Required = true,
+            Description = "Repository-relative Active/current backlog feature specification.",
+        };
+        var repo = new Option<string>("--repo")
+        {
+            DefaultValueFactory = _ => Directory.GetCurrentDirectory(),
+            Description = "Repository path.",
+        };
+        var format = new Option<string>("--format")
+        {
+            DefaultValueFactory = _ => "human",
+            Description = "Output format: human, json, or agent.",
+        };
+        command.Arguments.Add(id);
+        command.Options.Add(file);
+        command.Options.Add(repo);
+        command.Options.Add(format);
+        command.SetAction(parseResult =>
+        {
+            var result = service.DeriveFromApprovedFeature(new FeatureSpecImportRequest(
                 parseResult.GetValue(repo) ?? Directory.GetCurrentDirectory(),
                 parseResult.GetValue(id) ?? string.Empty,
                 parseResult.GetValue(file) ?? string.Empty));

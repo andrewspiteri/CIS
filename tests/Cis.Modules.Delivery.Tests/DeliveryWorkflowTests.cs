@@ -77,7 +77,7 @@ public sealed class DeliveryWorkflowTests
         var change = Assert.IsType<ChangeDossier>(result.Change);
         Assert.Equal("CIS-0001", change.Id);
         Assert.StartsWith("sha256:", change.GraphBuildId, StringComparison.Ordinal);
-        foreach (var file in new[] { "proposal.md", "impact.md", "decisions.md", "plan.md", "wireframes.md", "design.md", "verification.md", "events.jsonl" })
+        foreach (var file in new[] { "proposal.md", "impact.md", "decisions.md", "plan.md", "wireframes.md", "design.md", "test-cases.md", "test-cases.csv", "verification.md", "events.jsonl" })
         {
             Assert.True(File.Exists(services.Changes.DossierFile(change, file)));
         }
@@ -88,9 +88,59 @@ public sealed class DeliveryWorkflowTests
         Assert.Contains("changes/CIS-0001/verification.md", catalog, StringComparison.Ordinal);
         Assert.Contains("changes/CIS-0001/design.md", catalog, StringComparison.Ordinal);
         Assert.Contains("changes/CIS-0001/wireframes.md", catalog, StringComparison.Ordinal);
+        Assert.Contains("changes/CIS-0001/test-cases.md", catalog, StringComparison.Ordinal);
         Assert.True(Directory.Exists(Path.Combine(Path.GetDirectoryName(
             services.Changes.DossierFile(change, "plan.md"))!, "agent-tasks")));
         Assert.Equal(0, services.DocsValidation.Validate(repository.Path, strict: false).ExitCode);
+    }
+
+    [Fact]
+    public void PlanDerive_CarriesApprovedFeatureAuthorityAcrossImpactsAndPlanAtomically()
+    {
+        using var repository = TemporaryRepository.Create();
+        const string featurePath = "docs/cis/specs/approved-order-feature.md";
+        var authority = new StaticFeatureApprovalAuthority(featurePath);
+        var services = CreateServices(featureAuthorities: [authority]);
+        var change = Assert.IsType<ChangeDossier>(services.Changes.Create(new ChangeCreateRequest(
+            repository.Path,
+            "Approved order lookup",
+            "Customers can retrieve the approved order representation.",
+            [new ChangeRoot("orders-api", "component")])).Change);
+        var analysis = services.Impacts.Analyse(new ImpactAnalyseRequest(
+            repository.Path, change.Id, [], 2, 200, false));
+        Assert.NotEmpty(analysis.Findings);
+        Assert.All(analysis.Findings, finding => Assert.Equal("proposed", finding.State));
+        repository.Write(featurePath, """
+---
+title: Approved order lookup
+type: feature-specification
+status: Active
+---
+
+## Functional requirements
+
+| ID | Surface | Frontend type | Requirement | Acceptance criteria |
+| --- | --- | --- | --- | --- |
+| ORDER-001 | backend | not-applicable | Return the approved order representation. | The API returns the governed representation for an existing order. |
+""");
+
+        var derived = services.Plans.DeriveFromApprovedFeature(new FeatureSpecImportRequest(
+            repository.Path, change.Id, featurePath));
+
+        Assert.Equal(0, derived.ExitCode);
+        Assert.Equal("derived-and-approved", derived.Status);
+        Assert.Equal("Approved", derived.PlanStatus);
+        Assert.True(derived.Validation!.Valid);
+        Assert.All(services.Impacts.ReadImpact(change).Findings, finding => Assert.NotEqual("proposed", finding.State));
+        var plan = File.ReadAllText(services.Changes.DossierFile(change, "plan.md"));
+        Assert.Contains("approval_basis: \"approved-feature:HLT-FR-001:sha256:approved-feature\"", plan, StringComparison.Ordinal);
+        Assert.Contains("approved_by: \"Product owner\"", plan, StringComparison.Ordinal);
+        var proposal = File.ReadAllText(services.Changes.DossierFile(change, "proposal.md"));
+        Assert.Contains("- `ORDER-001`: The API returns the governed representation for an existing order.", proposal, StringComparison.Ordinal);
+        Assert.DoesNotContain("TODO: define outcome-level acceptance criteria", proposal, StringComparison.Ordinal);
+        var events = File.ReadAllText(services.Changes.DossierFile(change, "events.jsonl"));
+        Assert.Contains("impact-authority-carried-forward", events, StringComparison.Ordinal);
+        Assert.Contains("proposal-acceptance-authority-carried-forward", events, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -336,6 +386,26 @@ public sealed class DeliveryWorkflowTests
         Assert.Contains("| ID | Category | Complexity | Parent |", planContent, StringComparison.Ordinal);
         Assert.Contains("cis:execution-manifest -->", planContent, StringComparison.Ordinal);
 
+        var testCasesMarkdownPath = services.Changes.DossierFile(change, "test-cases.md");
+        var testCasesCsvPath = services.Changes.DossierFile(change, "test-cases.csv");
+        var testCasesMarkdown = File.ReadAllText(testCasesMarkdownPath);
+        var testCasesCsv = File.ReadAllText(testCasesCsvPath);
+        Assert.Contains("type: manual-test-cases", testCasesMarkdown, StringComparison.Ordinal);
+        Assert.Contains("test_case_count: 1", testCasesMarkdown, StringComparison.Ordinal);
+        Assert.Contains("### TC-CHECKOUT-001-001:", testCasesMarkdown, StringComparison.Ordinal);
+        Assert.Contains("`CHECKOUT-001`", testCasesMarkdown, StringComparison.Ordinal);
+        Assert.Contains("An authorized customer completes checkout", testCasesMarkdown, StringComparison.Ordinal);
+        Assert.Contains("automation_pending_count: 1", testCasesMarkdown, StringComparison.Ordinal);
+        Assert.Contains("- Automation status: Pending", testCasesMarkdown, StringComparison.Ordinal);
+        Assert.StartsWith("\"ID\",\"Title\",\"Section\",\"Priority\",\"Type\",\"Preconditions\",\"Steps\",\"Expected Result\",\"References\",\"Frontend Type\",\"Automation Status\",\"Automated Test References\"\r\n", testCasesCsv, StringComparison.Ordinal);
+        Assert.Contains("\"CHECKOUT-001\"", testCasesCsv, StringComparison.Ordinal);
+        Assert.Contains("\"customer\"", testCasesCsv, StringComparison.Ordinal);
+        var csvSha = "sha256:" + Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(testCasesCsv))).ToLowerInvariant();
+        Assert.Contains($"csv_sha256: \"{csvSha}\"", testCasesMarkdown, StringComparison.Ordinal);
+        var verificationTask = Assert.Single(imported.WorkItems, item => item.Category == "verification");
+        Assert.Contains("test-cases.md manual test catalogue with automated-test traceability", verificationTask.RequiredOutputs!);
+        Assert.Contains("test-cases.csv test-management import", verificationTask.RequiredOutputs!);
+
         var repeated = services.Plans.ImportSpec(new FeatureSpecImportRequest(
             repository.Path,
             change.Id,
@@ -348,6 +418,107 @@ public sealed class DeliveryWorkflowTests
             repository.Path, change.Id, backend.Id, "InProgress", "delivery-agent", "Begin approved backend scope."));
         Assert.Equal(2, blocked.ExitCode);
         Assert.Contains(blocked.Errors, error => error.Contains("design gate", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void PlanImportSpec_RepairsDriftedManualTestCsvAndNeutralizesFormulaCells()
+    {
+        using var repository = TemporaryRepository.Create();
+        var services = CreateServices();
+        var change = Assert.IsType<ChangeDossier>(services.Changes.Create(new ChangeCreateRequest(
+            repository.Path, "Export reviewed orders", "Operators can export the reviewed order list safely.",
+            [new ChangeRoot("orders-api", "component")])).Change);
+        var analysis = services.Impacts.Analyse(new ImpactAnalyseRequest(repository.Path, change.Id, [], 2, 200, false));
+        foreach (var finding in analysis.Findings)
+            services.Impacts.Disposition(repository.Path, change.Id, finding.Id, "accepted", "Reviewed scope.");
+        DefineAcceptanceCriteria(services.Changes.DossierFile(change, "proposal.md"));
+        repository.Write("docs/cis/specs/order-export-feature-spec.md", """
+---
+title: Order export
+type: feature-specification
+status: Draft
+---
+
+## Functional requirements
+
+| ID | Surface | Frontend type | Requirement | Acceptance criteria |
+| --- | --- | --- | --- | --- |
+| EXPORT-001 | frontend | backoffice | =Export the reviewed order list, with the selected filters. | The downloaded file contains only the selected, authorized records. |
+""");
+        var imported = services.Plans.ImportSpec(new FeatureSpecImportRequest(
+            repository.Path, change.Id, "docs/cis/specs/order-export-feature-spec.md"));
+        Assert.Equal(0, imported.ExitCode);
+        var csvPath = services.Changes.DossierFile(change, "test-cases.csv");
+        var generated = File.ReadAllText(csvPath);
+        Assert.Contains("\"'=Export the reviewed order list, with the selected filters.\"", generated, StringComparison.Ordinal);
+
+        File.AppendAllText(csvPath, "\"UNREVIEWED\"\r\n");
+        var invalid = services.Plans.Validate(repository.Path, change.Id);
+        Assert.False(invalid.Validation!.Valid);
+        Assert.Contains(invalid.Validation.Errors, error => error.Contains("differs from the projection", StringComparison.Ordinal));
+
+        var repaired = services.Plans.ImportSpec(new FeatureSpecImportRequest(
+            repository.Path, change.Id, "docs/cis/specs/order-export-feature-spec.md"));
+        Assert.Equal(0, repaired.ExitCode);
+        Assert.True(repaired.Applied);
+        Assert.Equal(generated, File.ReadAllText(csvPath));
+        Assert.True(repaired.Validation!.Valid);
+    }
+
+    [Fact]
+    public void PlanImportSpec_RefreshesManualCasesFromStableAutomatedTestReferences()
+    {
+        using var repository = TemporaryRepository.Create();
+        var services = CreateServices();
+        var change = Assert.IsType<ChangeDossier>(services.Changes.Create(new ChangeCreateRequest(
+            repository.Path, "Automated order review", "Reviewers can approve an eligible order.",
+            [new ChangeRoot("orders-api", "component")])).Change);
+        var analysis = services.Impacts.Analyse(new ImpactAnalyseRequest(repository.Path, change.Id, [], 2, 200, false));
+        foreach (var finding in analysis.Findings)
+            services.Impacts.Disposition(repository.Path, change.Id, finding.Id, "accepted", "Reviewed scope.");
+        DefineAcceptanceCriteria(services.Changes.DossierFile(change, "proposal.md"));
+        repository.Write("docs/cis/specs/order-review-feature-spec.md", """
+---
+title: Order review
+type: feature-specification
+status: Draft
+---
+
+## Functional requirements
+
+| ID | Surface | Requirement | Acceptance criteria |
+| --- | --- | --- | --- |
+| REVIEW-001 | backend | An eligible order can be approved once. | A repeated approval is idempotent and preserves the approved state. |
+""");
+        repository.Write("node_modules/example/order.test.ts", "test('TC-REVIEW-001-001 vendor copy', () => {});");
+
+        var pending = services.Plans.ImportSpec(new FeatureSpecImportRequest(
+            repository.Path, change.Id, "docs/cis/specs/order-review-feature-spec.md"));
+        Assert.Equal(0, pending.ExitCode);
+        var markdownPath = services.Changes.DossierFile(change, "test-cases.md");
+        Assert.Contains("- Automation status: Pending", File.ReadAllText(markdownPath), StringComparison.Ordinal);
+        Assert.Contains(services.Plans.ValidateManualTestAutomationCoverage(repository.Path, change.Id),
+            error => error.Contains("TC-REVIEW-001-001", StringComparison.Ordinal));
+
+        repository.Write("tests/order-review.test.ts", """
+describe('order review', () => {
+  test('TC-REVIEW-001-001 approves an eligible order idempotently', () => {});
+});
+""");
+        var synchronized = services.Plans.ImportSpec(new FeatureSpecImportRequest(
+            repository.Path, change.Id, "docs/cis/specs/order-review-feature-spec.md"));
+
+        Assert.Equal(0, synchronized.ExitCode);
+        Assert.True(synchronized.Applied);
+        var markdown = File.ReadAllText(markdownPath);
+        Assert.Contains("automated_test_case_count: 1", markdown, StringComparison.Ordinal);
+        Assert.Contains("automation_pending_count: 0", markdown, StringComparison.Ordinal);
+        Assert.Contains("- Automation status: Automated", markdown, StringComparison.Ordinal);
+        Assert.Contains("::tests/order-review.test.ts:2`", markdown, StringComparison.Ordinal);
+        Assert.Empty(services.Plans.ValidateManualTestAutomationCoverage(repository.Path, change.Id));
+        Assert.Contains("\"Automated\",\"", File.ReadAllText(services.Changes.DossierFile(change, "test-cases.csv")), StringComparison.Ordinal);
+        Assert.Contains("::tests/order-review.test.ts:2\"",
+            File.ReadAllText(services.Changes.DossierFile(change, "test-cases.csv")), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -452,10 +623,53 @@ status: Draft
     }
 
     [Fact]
-    public void DesignScaffold_RequiresApprovedWireframesAndReusesShellAndComponentTemplates()
+    public void PlanImportSpec_DoesNotTreatAnExplicitlyInapplicablePublicEndpointPolicyAsPublicScope()
     {
         using var repository = TemporaryRepository.Create();
-        var services = CreateServices(new FakeDesignProcessRunner());
+        var services = CreateServices();
+        var change = Assert.IsType<ChangeDossier>(services.Changes.Create(new ChangeCreateRequest(
+            repository.Path, "Manage access link", "Owners manage one customer-only access-request link.",
+            [new ChangeRoot("orders-api", "component")])).Change);
+        var analysis = services.Impacts.Analyse(new ImpactAnalyseRequest(repository.Path, change.Id, [], 2, 200, false));
+        foreach (var finding in analysis.Findings)
+            services.Impacts.Disposition(repository.Path, change.Id, finding.Id, "accepted", "Reviewed customer endpoint scope.");
+        DefineAcceptanceCriteria(services.Changes.DossierFile(change, "proposal.md"));
+        repository.Write("docs/cis/specs/customer-access-link-feature-spec.md", """
+---
+title: Customer access link
+type: feature-specification
+status: Draft
+---
+
+## Functional requirements
+
+| ID | Surface | Frontend type | Requirement | Acceptance criteria |
+|---|---|---|---|---|
+| LINK-001 | api | customer | The verified owner can retrieve the current access-request link. | The private no-store customer endpoint returns bounded status. |
+
+## API policy
+
+These are customer endpoints, so `PUBLIC-ENDPOINT-CACHE` is not applicable. A future
+unauthenticated join route belongs to another feature and is not included here.
+""");
+
+        var imported = services.Plans.ImportSpec(new FeatureSpecImportRequest(
+            repository.Path, change.Id, "docs/cis/specs/customer-access-link-feature-spec.md"));
+
+        Assert.Equal(0, imported.ExitCode);
+        Assert.False(imported.Source!.PublicEndpoints);
+        Assert.DoesNotContain(imported.WorkItems, item =>
+            item.AcceptanceCriteria.Contains("PUBLIC-ENDPOINT-CACHE", StringComparison.Ordinal));
+        Assert.True(imported.Validation!.Valid);
+    }
+
+    [Fact]
+    public void DesignApproval_CombinesValidWireframesAndRenderedPackWhileReusingTemplates()
+    {
+        using var repository = TemporaryRepository.Create();
+        const string featurePath = "docs/cis/specs/order-list-feature.md";
+        var services = CreateServices(new FakeDesignProcessRunner(),
+            featureAuthorities: [new StaticFeatureApprovalAuthority(featurePath)]);
         var change = Assert.IsType<ChangeDossier>(services.Changes.Create(new ChangeCreateRequest(
             repository.Path,
             "Add order list",
@@ -478,11 +692,11 @@ authority: human-reviewed
 
 | Screen ID | Frontend type | Name | Route/path | Platform | Actors/access | Entry points | Purpose |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| ORDERS-LIST | backoffice | Orders | /backoffice/orders | Web | Internal operator | Application navigation | Find and inspect orders. |
+| CUS-TODO-BOARD | customer | Friends Todo board | /app/lists/{listId} | Web | Current list actor | List detail route | Find and maintain todos. |
 
 ## Screen definitions
 
-### ORDERS-LIST: Orders
+### CUS-TODO-BOARD: Friends Todo board
 
 #### Description
 
@@ -492,7 +706,7 @@ The application rail and top bar surround a page header, filters, and the standa
 
 | Action ID | Label/control | Available when | User action | Result/side effect | Destination path | Destination screen | Failure/denied behavior |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| OPEN-ORDER | Order row | The order is visible | Select the row | No mutation | /backoffice/orders/{id} | ORDER-DETAIL | Keep the list visible and show an access error. |
+| OPEN-TODO | Todo card | The todo is visible | Select the card | No mutation | /app/lists/{listId} | CUS-TODO-BOARD | Keep the board visible and show an access error. |
 
 #### States
 
@@ -502,7 +716,7 @@ The application rail and top bar surround a page header, filters, and the standa
 
 | Requirement/exclusion | Screen IDs | Action IDs | States | Notes |
 | --- | --- | --- | --- | --- |
-| Backoffice order discovery | ORDERS-LIST | OPEN-ORDER | All required states | Covered. |
+| Customer todo lifecycle | CUS-TODO-BOARD | OPEN-TODO | All required states | Covered. |
 
 ## Approval decision
 
@@ -516,14 +730,6 @@ The application rail and top bar surround a page header, filters, and the standa
         Assert.Equal("wireframes-valid", wireframeValidation.Status);
         Assert.Contains(wireframeValidation.Diagnostics,
             item => item.Contains("screens=1", StringComparison.Ordinal) && item.Contains("actions=1", StringComparison.Ordinal));
-
-        var beforeApproval = services.Designs.Scaffold(new DesignScaffoldRequest(
-            repository.Path, change.Id, "order-list", "shell.standard-app", ["component.table"]));
-        Assert.Equal(2, beforeApproval.ExitCode);
-        Assert.Equal(0, services.Designs.ApproveWireframes(new DesignReviewRequest(
-            repository.Path, change.Id, "product-owner", "Behavior, paths, and failure states are correct.")).ExitCode);
-        var approvedWireframeSha = File.ReadAllText(wireframePath).Split('`')
-            .Single(value => value.StartsWith("sha256:", StringComparison.Ordinal));
 
         var scaffolded = services.Designs.Scaffold(new DesignScaffoldRequest(
             repository.Path, change.Id, "order-list", "shell.standard-app",
@@ -553,8 +759,14 @@ The application rail and top bar surround a page header, filters, and the standa
         Assert.Contains("applicationShell(screen, content)", renderer, StringComparison.Ordinal);
         Assert.Contains("shell.minimal-app@", renderer, StringComparison.Ordinal);
         Assert.Contains("guidelineSha256", renderer, StringComparison.Ordinal);
-        Assert.Contains($"wireframeSha256: \"{approvedWireframeSha}\"", renderer, StringComparison.Ordinal);
-        Assert.Contains("\"name\": \"Orders\"", renderer, StringComparison.Ordinal);
+        var preparedWireframeSha = wireframeValidation.Diagnostics
+            .SelectMany(item => item.Split(';'))
+            .Select(item => item.Split('=', 2))
+            .Where(item => item.Length == 2 && item[0].Equals("wireframeSha256", StringComparison.Ordinal))
+            .Select(item => item[1])
+            .Single();
+        Assert.Contains($"wireframeSha256: \"{preparedWireframeSha}\"", renderer, StringComparison.Ordinal);
+        Assert.Contains("\"name\": \"Friends Todo board\"", renderer, StringComparison.Ordinal);
         Assert.DoesNotContain("â", renderer, StringComparison.Ordinal);
         renderer = renderer.Replace("function radioGroup", "function unusedRadioGroup", StringComparison.Ordinal);
         File.WriteAllText(Path.Combine(repository.Path,
@@ -588,6 +800,68 @@ The application rail and top bar surround a page header, filters, and the standa
             repository.Path, change.Id, "product-owner", "The revised shell and standard table are approved."));
         Assert.Equal(0, approved.ExitCode);
         Assert.Equal("Approved", approved.GateStatus);
+        var approvedWireframes = File.ReadAllText(wireframePath);
+        Assert.Contains("approval_status: Approved", approvedWireframes, StringComparison.Ordinal);
+        Assert.Contains($"`{preparedWireframeSha}`", approvedWireframes, StringComparison.Ordinal);
+        var approvedDesign = File.ReadAllText(services.Changes.DossierFile(change, "design.md"));
+        Assert.Contains("| Decision | Reviewer | Date | Wireframe SHA-256 | Renderer SHA-256 | PNG manifest SHA-256 | Rationale |", approvedDesign, StringComparison.Ordinal);
+        Assert.Contains($"`{preparedWireframeSha}`", approvedDesign, StringComparison.Ordinal);
+        var approvedValidation = services.Designs.Validate(repository.Path, change.Id);
+        Assert.Equal(0, approvedValidation.ExitCode);
+        Assert.Equal("valid", approvedValidation.Status);
+        Assert.DoesNotContain(approvedValidation.Diagnostics,
+            item => item.Contains("wireframe provenance", StringComparison.OrdinalIgnoreCase));
+
+        repository.Write(featurePath, "# Approved order-list feature\n\nThe list remains visually unchanged.\n");
+        var featureSha = "sha256:" + Convert.ToHexString(SHA256.HashData(
+            File.ReadAllBytes(Path.Combine(repository.Path, featurePath.Replace('/', Path.DirectorySeparatorChar))))).ToLowerInvariant();
+        File.WriteAllText(services.Changes.DossierFile(change, "plan.md"), $"""
+---
+title: Order list delivery plan
+type: delivery-plan
+status: Approved
+change_id: {change.Id}
+feature_spec_path: "{featurePath}"
+feature_spec_sha256: "{featureSha}"
+---
+
+# Delivery plan
+""");
+        var revisedWireframes = File.ReadAllText(wireframePath)
+            .Replace("Find and maintain todos.", "Find and maintain todos. Return focus to the entry field after submission.", StringComparison.Ordinal);
+        File.WriteAllText(wireframePath, revisedWireframes);
+        var revisedWireframeSha = services.Designs.ValidateWireframes(repository.Path, change.Id).Diagnostics
+            .SelectMany(item => item.Split(';'))
+            .Select(item => item.Split('=', 2))
+            .Where(item => item.Length == 2 && item[0].Equals("wireframeSha256", StringComparison.Ordinal))
+            .Select(item => item[1])
+            .Single();
+        File.WriteAllText(rendererPath, File.ReadAllText(rendererPath)
+            .Replace(preparedWireframeSha, revisedWireframeSha, StringComparison.Ordinal));
+        var designPath = services.Changes.DossierFile(change, "design.md");
+        File.WriteAllText(designPath, File.ReadAllText(designPath)
+            .Replace(preparedWireframeSha, revisedWireframeSha, StringComparison.Ordinal));
+        Assert.Equal(0, services.Designs.Render(repository.Path, change.Id).ExitCode);
+
+        var reconciled = services.Designs.Reconcile(repository.Path, change.Id);
+        Assert.Equal(0, reconciled.ExitCode);
+        Assert.Equal("authority-carried-forward", reconciled.Status);
+        Assert.Equal("Approved", reconciled.GateStatus);
+        Assert.Contains("| Authority carried forward | Product owner |", File.ReadAllText(wireframePath), StringComparison.Ordinal);
+        Assert.Contains("| Authority carried forward | Product owner |", File.ReadAllText(designPath), StringComparison.Ordinal);
+        Assert.Equal(0, services.Designs.Validate(repository.Path, change.Id).ExitCode);
+
+        Assert.Equal(0, services.Designs.Render(repository.Path, change.Id).ExitCode);
+        var changedPng = services.Designs.Status(repository.Path, change.Id).Artifacts.Single().Path;
+        using (var stream = File.OpenWrite(Path.Combine(repository.Path, changedPng.Replace('/', Path.DirectorySeparatorChar))))
+        {
+            stream.Seek(0, SeekOrigin.End);
+            stream.WriteByte(0);
+        }
+        var changedPixels = services.Designs.Reconcile(repository.Path, change.Id);
+        Assert.Equal(2, changedPixels.ExitCode);
+        Assert.Contains(changedPixels.Diagnostics,
+            item => item.Contains("Rendered pixels changed", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -1018,6 +1292,7 @@ status: Draft
             | AUTH-005 | delivery | not-applicable | Runtime configuration shall isolate the managed API key and anonymous secrets. | Deployment configuration fails closed for mixed values. |
             | AUTH-006 | delivery | not-applicable | Authentication diagnostics shall emit redacted logs and metrics. | Telemetry excludes identity and credential values. |
             | AUTH-007 | api | public | The backend shall expose the SuperTokens identity protocol routes. | Protocol responses are `no-store`. |
+            | AUTH-008 | delivery | not-applicable | Existing runtime topology shall remain repeatable. | No new service or migration is required in this feature; SQLite restart behavior remains unchanged. |
 
             ## UX, screens, and accessibility
 
@@ -1396,6 +1671,7 @@ status: Draft
         Assert.Equal(0, application.Invoke(["impact", "completeness", "--help"]));
         Assert.Equal(0, application.Invoke(["plan", "build", "--help"]));
         Assert.Equal(0, application.Invoke(["plan", "import-spec", "--help"]));
+        Assert.Equal(0, application.Invoke(["plan", "derive", "--help"]));
         Assert.Equal(0, application.Invoke(["plan", "validate", "--help"]));
         Assert.Equal(0, application.Invoke(["plan", "approve", "--help"]));
         Assert.Equal(0, application.Invoke(["plan", "capability", "status", "--help"]));
@@ -1406,6 +1682,7 @@ status: Draft
         Assert.Equal(0, application.Invoke(["design", "scaffold", "--help"]));
         Assert.Equal(0, application.Invoke(["design", "wireframe-validate", "--help"]));
         Assert.Equal(0, application.Invoke(["design", "render", "--help"]));
+        Assert.Equal(0, application.Invoke(["design", "reconcile", "--help"]));
         Assert.Equal(0, application.Invoke(["design", "approve", "--help"]));
         Assert.Equal(0, application.Invoke(["decision", "create", "--help"]));
         Assert.Equal(0, application.Invoke(["decision", "resolve", "--help"]));
@@ -1601,7 +1878,8 @@ status: Draft
 
     private static Services CreateServices(
         IDesignProcessRunner? designRunner = null,
-        TaskTypeRegistry? taskTypes = null)
+        TaskTypeRegistry? taskTypes = null,
+        IEnumerable<ICisFeatureApprovalAuthority>? featureAuthorities = null)
     {
         var resolver = new CisRepositoryContextResolver();
         var reader = new DocumentationCatalogReader();
@@ -1616,8 +1894,9 @@ status: Draft
         var capabilityStore = new TaskTypeCapabilityStore(resolver,
             () => DateTimeOffset.Parse("2026-08-09T10:00:00Z"));
         var plans = new PlanningService(changes, impacts, decisions, resolver,
-            taskTypes: taskTypes, toolUsage: usage, capabilities: capabilityStore);
-        var designs = new DesignService(changes, new DesignTemplateCatalog(),
+            taskTypes: taskTypes, toolUsage: usage, capabilities: capabilityStore,
+            featureAuthorities: featureAuthorities);
+        var designs = new DesignService(changes, new DesignTemplateCatalog(), featureAuthorities ?? [],
             () => DateTimeOffset.Parse("2026-08-09T10:00:00Z"), designRunner);
         return new Services(changes, decisions, impacts, plans, designs, usage, graph, docsValidation);
     }
@@ -1692,6 +1971,15 @@ status: Draft
         public ChangeReadinessResult Evaluate(string repositoryPath)
             => new("technical-intent", Applicable: true, Ready: false,
                 ["An Active, current workspace technical intent is required."]);
+    }
+
+    private sealed class StaticFeatureApprovalAuthority(string featurePath) : ICisFeatureApprovalAuthority
+    {
+        public CisFeatureApproval Evaluate(string repositoryPath, string featureSpecificationPath)
+            => featureSpecificationPath.Equals(featurePath, StringComparison.OrdinalIgnoreCase)
+                ? new(true, true, "HLT-FR-001", featurePath, "Product owner", "Approved bounded behavior.",
+                    "sha256:approved-feature", [])
+                : new(false, false, null, null, null, null, null, []);
     }
 
     private sealed class TestTaskTypeProvider(

@@ -20,6 +20,7 @@ public sealed class TechnicalIntentModule : ICisModule
     public void RegisterServices(IServiceCollection services)
     {
         services.AddSingleton<TechnicalIntentService>();
+        services.AddSingleton<GovernanceRefreshService>();
         services.AddSingleton<IChangeReadinessCheck>(provider =>
             provider.GetRequiredService<TechnicalIntentService>());
     }
@@ -31,6 +32,7 @@ public sealed class TechnicalIntentModule : ICisModule
         command.Subcommands.Add(CreateSimple("init", "Initialize or reconcile the workspace technical-intent baseline.", service.Initialize));
         command.Subcommands.Add(CreateSimple("validate", "Validate technical-intent completeness, currency, and approval readiness.", service.Validate));
         command.Subcommands.Add(CreateSimple("status", "Report effective technical-intent lifecycle and drift status.", service.Status));
+        command.Subcommands.Add(CreateRefresh(services.GetRequiredService<GovernanceRefreshService>()));
         command.Subcommands.Add(CreateApprove(service));
         commands.Add(command);
     }
@@ -76,6 +78,24 @@ public sealed class TechnicalIntentModule : ICisModule
                 parseResult.GetValue(reviewer) ?? string.Empty,
                 parseResult.GetValue(reason) ?? string.Empty);
             Render(result, selected);
+            return result.ExitCode;
+        });
+        return command;
+    }
+
+    private static Command CreateRefresh(GovernanceRefreshService service)
+    {
+        var command = new Command("refresh", "Safely refresh BRD, technical-intent, and high-level-backlog baselines without duplicate approval when semantic authority is unchanged.");
+        var workspace = WorkspaceOption();
+        var format = FormatOption();
+        command.Options.Add(workspace);
+        command.Options.Add(format);
+        command.SetAction(parseResult =>
+        {
+            var selected = SelectFormat(parseResult.GetValue(format));
+            if (selected is null) return 2;
+            var result = service.Refresh(parseResult.GetValue(workspace) ?? Directory.GetCurrentDirectory());
+            RenderRefresh(result, selected);
             return result.ExitCode;
         });
         return command;
@@ -137,6 +157,27 @@ public sealed class TechnicalIntentModule : ICisModule
             Console.WriteLine($"Error: {error}");
         foreach (var warning in result.Validation?.Warnings ?? result.Warnings)
             Console.WriteLine($"Warning: {warning}");
+    }
+
+    private static void RenderRefresh(GovernanceRefreshResult result, string format)
+    {
+        if (format == "json")
+        {
+            Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+            return;
+        }
+        if (format == "agent")
+        {
+            Console.WriteLine($"status={Clean(result.Status)};exitCode={result.ExitCode};applied={result.Applied.ToString().ToLowerInvariant()};brd={Clean(result.Brd.Validation?.EffectiveStatus)};technicalIntent={Clean(result.TechnicalIntent?.Validation?.EffectiveStatus)};backlog={Clean(result.Backlog?.Validation?.EffectiveStatus)}");
+            foreach (var diagnostic in result.Diagnostics) Console.WriteLine($"diagnostic={Clean(diagnostic)}");
+            foreach (var warning in result.Brd.Validation?.Warnings ?? []) Console.WriteLine($"brdWarning={Clean(warning)}");
+            foreach (var warning in result.TechnicalIntent?.Validation?.Warnings ?? []) Console.WriteLine($"technicalIntentWarning={Clean(warning)}");
+            foreach (var warning in result.Backlog?.Validation?.Warnings ?? []) Console.WriteLine($"backlogWarning={Clean(warning)}");
+            return;
+        }
+        Console.WriteLine($"Governance refresh: {result.Status}");
+        Console.WriteLine($"BRD: {result.Brd.Validation?.EffectiveStatus ?? "not-run"}; technical intent: {result.TechnicalIntent?.Validation?.EffectiveStatus ?? "not-run"}; backlog: {result.Backlog?.Validation?.EffectiveStatus ?? "not-run"}");
+        foreach (var diagnostic in result.Diagnostics) Console.WriteLine(diagnostic);
     }
 
     private static string Clean(string? value)

@@ -2,10 +2,10 @@
 title: "Task Type: Visual and Interaction Design"
 type: task-type-definition
 status: Draft
-version: "0.1"
+version: "0.2"
 scope: "Product:ChangeImpactStudio"
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-13"
+last_reviewed: "2026-08-23"
 review_cadence: "on planning-model change"
 cis:
   stable_id: change-impact-studio:task-type:core.design.visual
@@ -20,13 +20,13 @@ cis:
 | Stable type key | `core.design.visual` |
 | Provider | CIS Plan core module |
 | Creation policy | Conditional; created whenever `core.design.wireframe` is instantiated |
-| Required predecessor | Approved `core.design.wireframe` artifact |
+| Required predecessor | Validated `core.design.wireframe` artifact |
 | Primary consumer | Frontend implementation task |
 | Canonical records | `design.md`, one self-contained JavaScript renderer, and generated PNG files |
 
 ## 2. Purpose and boundary
 
-The Visual and interaction design task converts the approved textual wireframe into
+The Visual and interaction design task converts the validated textual wireframe into
 a reviewable PNG screen pack. The renderer is the reproducible design source; PNGs
 are its generated visual artifacts; `design.md` records provenance, validation, and
 human approval.
@@ -43,7 +43,7 @@ classified screen manifests for reproducibility and one global human review barr
 
 ## 3. Inputs
 
-- Approved `wireframes.md` path, digest, and review record.
+- Validated `wireframes.md` path and digest, plus an optional earlier review record.
 - The task's frontend type and the matching classified screen IDs.
 - Feature specification, exclusions, and relevant decisions.
 - Approved repository design-guidelines path and SHA-256 digest.
@@ -103,7 +103,7 @@ are excluded from version control and removed or isolated from canonical artifac
 
 The designer or agent must:
 
-1. Verify the approved wireframe digest and enumerate every required screen/state.
+1. Verify the validated wireframe digest and enumerate every required screen/state.
 2. Load the approved design guidelines, record their digest, and map their tokens and
    fixed rules into renderer constants and components.
 3. Create the single self-contained renderer and screen manifest.
@@ -121,26 +121,32 @@ The designer or agent must:
 10. Record guideline path/digest, renderer command, dependency/runtime versions,
     hashes, dimensions, and
    validation results in `design.md`.
-11. Present the PNG pack for explicit human approval. For rejected revisions, retain
+11. Present a new or visually changed wireframe digest and PNG pack for one explicit
+    human approval. A provenance-only refresh may instead carry current feature
+    authority forward when an Approved plan pins the exact feature, the feature
+    authority remains current, and the regenerated PNG manifest is byte-for-byte
+    identical to the earlier approved manifest. For rejected revisions, retain
     the renderer revision or commit, PNG manifest hashes, reviewer, findings, and
     rationale; remove the rejected PNG files from the canonical asset pack.
 
 ## 7. Required outputs
 
 - One self-contained JavaScript renderer.
-- One PNG for every approved screen/state/viewport combination.
+- One PNG for every required screen/state/viewport combination.
 - Updated `design.md` artifact manifest and validation results.
 - Traceability from each PNG to Screen ID, state, viewport, wireframe digest, and
   renderer revision.
 - Traceability to the approved design-guideline path and digest, plus approved
   deviations.
-- Human approval decision naming the exact approved artifacts and revision.
+- Human approval decision naming the exact approved wireframe digest, artifacts, and
+  revision, or an explicit authority-carry-forward record naming the approved feature
+  and proving the PNG manifest is unchanged.
 
 ## 8. Dependencies and approval gate
 
-The task starts only after the textual wireframe is behaviorally approved. It does
-not run concurrently with implementation work: for UI-bearing features, the approved
-dependency order begins with Coordination, Wireframe, and Visual design.
+The task starts after the textual wireframe is structurally valid. It does not run
+concurrently with implementation work: for UI-bearing features, the dependency order
+begins with Coordination, Wireframe, and Visual design.
 
 When the renderer and PNG pack are ready, the task enters `ReadyForReview`. This is
 a global delivery pause. All agents and people stop non-review work for the change;
@@ -150,14 +156,19 @@ continue until the design review is resolved. Work already executing stops at th
 next safe boundary and records its state without beginning another change.
 
 While paused, the only permitted activities are inspecting design evidence,
-recording review feedback or the decision, and revising the wireframe, renderer, or
-PNG pack after rejection. Approval moves the design task to `Complete` and releases
-the downstream dependency gate. Rejection returns it to `InProgress`; the global
-pause remains until a revised pack is approved.
+recording review feedback or the decision, reconciling current approved feature
+authority across an unchanged manifest, and revising the wireframe, renderer, or PNG
+pack after rejection. Approval or valid authority carry-forward moves the design task
+to `Complete` and releases the downstream dependency gate. Rejection returns it to
+`InProgress`; the global pause remains until a revised pack is approved.
 
-Plan approval and wireframe approval do not imply visual approval. A later material
+Plan approval does not imply visual approval. By default visual approval also records
+human approval of the exact validated wireframe digest, renderer, and PNG manifest in
+one decision; a standalone earlier wireframe approval remains optional. A later material
 wireframe or design-guideline change invalidates approval for affected screens,
-re-enters the global pause, and requires rerendering and review.
+re-enters the global pause, and requires rerendering. It requires new review when the
+rendered manifest changes; otherwise `cis design reconcile` may reuse current feature
+authority after all fail-closed provenance checks pass.
 
 ## 9. Acceptance criteria
 
@@ -166,11 +177,11 @@ re-enters the global pause, and requires rerendering and review.
 - [ ] The renderer uses JavaScript-generated SVG converted to PNG by pinned Sharp.
 - [ ] The renderer runs non-interactively using the documented command.
 - [ ] It performs no network access and requires no manual design-tool export.
-- [ ] Every approved Screen ID, required state, and viewport has a manifest entry and
+- [ ] Every required Screen ID, state, and viewport has a manifest entry and
       nonblank PNG output.
 - [ ] PNG filenames, dimensions, format signatures, and paths match the manifest.
 - [ ] Visible actions, labels, availability, and navigation destinations match the
-      approved textual wireframe.
+      validated textual wireframe.
 - [ ] No excluded control, upload, destructive action, data exposure, or alternate
       workflow appears in the images.
 - [ ] Designs follow applicable repository patterns or explicitly document deviations.
@@ -181,7 +192,8 @@ re-enters the global pause, and requires rerendering and review.
       containing sensitive information.
 - [ ] Renderer command, runtime/dependencies, source digest, image digests, dimensions,
       and visual-inspection results are recorded.
-- [ ] A human approved the exact renderer revision and PNG set.
+- [ ] A human approved the exact renderer revision and PNG set, or CIS recorded valid
+      carry-forward from a current approved feature with an identical prior PNG manifest.
 - [ ] No downstream delivery work continued while the design was `ReadyForReview`
       or rejected.
 
@@ -196,7 +208,8 @@ The task must not:
 - require separate untracked HTML/CSS/template source;
 - treat successful rendering as visual approval;
 - overwrite a rejected revision without retaining its decision trail; or
-- authorize production frontend implementation without recorded human approval.
+- authorize production frontend implementation without recorded human approval or a
+  deterministic, auditable carry-forward of that authority under the unchanged-manifest rule.
 
 ## 11. Validation contract
 
@@ -227,7 +240,7 @@ behavior, accessibility intent, and fidelity to the wireframe.
 
 | Evidence | Required content |
 | --- | --- |
-| Wireframe input | Path, approved digest, reviewer, and decision |
+| Wireframe input | Path, validated digest, and combined reviewer/decision or optional earlier decision |
 | Design guidelines | Path, approved SHA-256 digest, mapped rules, and approved deviations |
 | Renderer | Path, SHA-256 digest, invocation, Node, Sharp, and libvips versions |
 | PNG manifest | Screen ID, state, viewport, path, dimensions, SHA-256 digest |
@@ -258,7 +271,7 @@ one unambiguous renderer owner per PNG.
 
 - Title: `Design: <feature title>`.
 - Labels: `cis`, `task-type:visual-design`, and affected platform labels.
-- Body: approved wireframe digest, required manifest, renderer/artifact paths,
+- Body: validated wireframe digest, required manifest, renderer/artifact paths,
   validation command, and human approval gate.
 - Attachments: PNG previews may be attached, but canonical identity remains the
   repository artifact path and digest.

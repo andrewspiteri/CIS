@@ -28,6 +28,7 @@ public sealed class TechnicalIntentWorkflowTests
         Assert.Equal(0, application.Invoke(["technical-intent", "init", "--help"]));
         Assert.Equal(0, application.Invoke(["technical-intent", "validate", "--help"]));
         Assert.Equal(0, application.Invoke(["technical-intent", "status", "--help"]));
+        Assert.Equal(0, application.Invoke(["technical-intent", "refresh", "--help"]));
         Assert.Equal(0, application.Invoke(["technical-intent", "approve", "--help"]));
     }
 
@@ -168,6 +169,37 @@ public sealed class TechnicalIntentWorkflowTests
             reconciledContent, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void GovernanceRefresh_PreservesAuthorityAcrossImplementationOnlyGraphDrift()
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true);
+        Assert.Equal(0, environment.Intent.Initialize(environment.Authority.Path).ExitCode);
+        CompleteTechnicalReview(environment.TechnicalIntentPath);
+        Assert.Equal(0, environment.Intent.Approve(environment.Authority.Path, "Architecture owner",
+            "The reviewed workspace technical direction is accepted.").ExitCode);
+        var backlog = environment.CreateBacklog();
+        Assert.Equal("built", backlog.Build(environment.Authority.Path).Status);
+        Assert.Equal("approved", backlog.Approve(environment.Authority.Path, "Product owner",
+            "The reviewed high-level outcomes are accepted.").Status);
+
+        environment.Participant.Write("src/Product/Product.cs", "public sealed class Product { public string Name => \"changed implementation\"; }");
+        environment.RebuildParticipantGraph();
+        Assert.Equal("Stale", environment.Brd.Status(environment.Authority.Path).Validation!.EffectiveStatus);
+        Assert.Equal("Stale", environment.Intent.Status(environment.Authority.Path).Validation!.EffectiveStatus);
+
+        var refreshed = new GovernanceRefreshService(environment.Brd, environment.Intent, backlog)
+            .Refresh(environment.Authority.Path);
+
+        Assert.Equal(0, refreshed.ExitCode);
+        Assert.Equal("refreshed", refreshed.Status);
+        Assert.Equal("Active", refreshed.Brd.Validation!.EffectiveStatus);
+        Assert.Equal("Active", refreshed.TechnicalIntent!.Validation!.EffectiveStatus);
+        Assert.Equal("Active", refreshed.Backlog!.Validation!.EffectiveStatus);
+        Assert.Contains("approved_by: \"Product owner\"",
+            File.ReadAllText(Path.Combine(environment.Authority.Path, "docs", "plans", "high-level-backlog.md")),
+            StringComparison.Ordinal);
+    }
+
     private static void CompleteTechnicalReview(string path)
     {
         var content = File.ReadAllText(path);
@@ -194,16 +226,25 @@ public sealed class TechnicalIntentWorkflowTests
     private sealed class WorkspaceEnvironment : IDisposable
     {
         private WorkspaceEnvironment(TemporaryRepository authority, TemporaryRepository participant,
-            TechnicalIntentService intent)
+            TechnicalIntentService intent, BrdService brd, WorkspaceRegistry registry,
+            CisRepositoryContextResolver resolver, DocumentationCatalogMerger merger)
         {
             Authority = authority;
             Participant = participant;
             Intent = intent;
+            Brd = brd;
+            Registry = registry;
+            Resolver = resolver;
+            Merger = merger;
         }
 
         public TemporaryRepository Authority { get; }
         public TemporaryRepository Participant { get; }
         public TechnicalIntentService Intent { get; }
+        public BrdService Brd { get; }
+        public WorkspaceRegistry Registry { get; }
+        public CisRepositoryContextResolver Resolver { get; }
+        public DocumentationCatalogMerger Merger { get; }
         public string TechnicalIntentPath => Path.Combine(Authority.Path, "docs", "specs", "technical-intent-spec.md");
 
         public static WorkspaceEnvironment Create(bool approveBrd)
@@ -235,13 +276,24 @@ public sealed class TechnicalIntentWorkflowTests
                 content = Regex.Replace(content, "(?m)^TODO: Complete .+$",
                     "Stakeholders recorded complete and testable requirements.",
                     RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+                content = Regex.Replace(content,
+                    "(?ms)^## Functional requirements\\s*$.*?(?=^## )",
+                    "## Functional requirements\n\n| ID | Requirement | Priority | Acceptance intent |\n| --- | --- | --- | --- |\n| BRD-FR-001 | A user shall view the product. | Must | The reviewed product view is available. |\n\n",
+                    RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
                 File.WriteAllText(brdPath, content);
                 Assert.Equal(0, brd.Approve(authority.Path, "Product owner", "Requirements accepted.").ExitCode);
             }
             var intent = new TechnicalIntentService(registry, resolver, graphReader, brd, merger,
                 () => new DateTimeOffset(2026, 8, 16, 11, 0, 0, TimeSpan.Zero));
-            return new WorkspaceEnvironment(authority, participant, intent);
+            return new WorkspaceEnvironment(authority, participant, intent, brd, registry, resolver, merger);
         }
+
+        public BrdBacklogService CreateBacklog()
+            => new(Brd, Registry, Resolver, Merger, [Intent],
+                () => new DateTimeOffset(2026, 8, 16, 12, 0, 0, TimeSpan.Zero));
+
+        public void RebuildParticipantGraph()
+            => Assert.Equal(0, CreateBuilder(Resolver).Build(Participant.Path).ExitCode);
 
         public void Dispose()
         {

@@ -38,17 +38,20 @@ Prove every requirement, acceptance criterion, prohibited behavior, compatibilit
 ## Required activities
 
 1. Build requirement-to-check coverage across unit, component, integration, contract, migration, UI journey, performance, security, and operational layers as applicable.
-2. Run the narrowest checks during work and the proportionate affected/regression suite at completion.
-3. Verify negative and denied behavior, not only happy paths.
-4. Preserve exact commands, versions, environments, inputs/baselines, results, and artifact digests.
-5. Record failures honestly and route unmet criteria to rework, deferral, or residual-risk decision.
-6. For public endpoints, prove cache-path use and headers, hit/miss/refresh/stale and
+2. Review the generated Markdown and CSV manual-test catalogues for complete, usable requirement coverage before execution.
+3. Put every stable `TC-*` identity in its corresponding automated test name, framework metadata, or adjacent traceability annotation, then refresh the derived catalogue through feature import.
+4. Run the narrowest checks during work and the proportionate affected/regression suite at completion.
+5. Verify negative and denied behavior, not only happy paths.
+6. Preserve exact commands, versions, environments, inputs/baselines, results, and artifact digests.
+7. Record failures honestly and route unmet criteria to rework, deferral, or residual-risk decision.
+8. For public endpoints, prove cache-path use and headers, hit/miss/refresh/stale and
    failure behavior, stampede protection, payload isolation, and the absence of a
    direct database/repository dependency from the endpoint boundary.
 
 ## Required outputs, dependencies, and authority
 
 - Canonical `verification.md` evidence ledger.
+- Human-readable `test-cases.md` and synchronized `test-cases.csv` import projection, with live automated-test references for every case.
 - Requirement/negative-criteria and planned-check coverage matrix.
 - Reproducible commands/results, failures, deferrals, and residual risk.
 
@@ -61,6 +64,7 @@ that authority.
 ## Acceptance criteria
 
 - [ ] Every acceptance and prohibited behavior has passing reproducible evidence or explicit approved residual risk.
+- [ ] Every stable manual case is reflected by a recognized automated test and the refreshed catalogue contains its exact repository/path/line reference.
 - [ ] The affected regression surface is justified and passes without hidden skipped/filtered failures.
 - [ ] Evidence can be independently rerun or inspected from the recorded baseline.
 - [ ] `PUBLIC-ENDPOINT-CACHE`: deterministic architecture and integration evidence

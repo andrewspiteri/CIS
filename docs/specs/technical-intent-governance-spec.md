@@ -3,7 +3,7 @@ title: "Workspace Technical Intent Governance"
 type: governance-specification
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-20"
+last_reviewed: "2026-08-23"
 review_cadence: "on technical-intent lifecycle change"
 cis:
   stable_id: change-impact-studio:spec:technical-intent-governance
@@ -49,7 +49,14 @@ status remains readable, while initialization and approval return the blocked ex
 
 ## Downstream gate
 
-`cis change create`, `cis plan build`, and `cis plan import-spec` evaluate registered
+`cis change create`, `cis plan build`, `cis plan import-spec`, and `cis plan derive` evaluate registered
 readiness checks. In a workspace authority, an Active/current technical intent is mandatory.
 Standalone and participant repositories without a local workspace authority marker remain
 outside this workspace gate.
+
+After delivery changes participant graph identities, `cis technical-intent refresh`
+reconciles the BRD, technical-intent baselines, and high-level backlog in order. Existing
+human authority carries forward only when canonical semantic content, source assessments,
+technical decisions, and backlog outcomes remain unchanged. Pure managed-baseline drift
+does not require duplicate approval. A material or unresolved change stops at its owning
+stage and requires review of that difference.

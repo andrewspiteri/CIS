@@ -14,6 +14,13 @@ cis:
 
 - A human owns scope, risk acceptance, canonical decisions, and release approval.
 - Agents may propose and implement bounded changes but must surface ambiguity, collisions, and unverified assumptions.
+- A current explicit feature approval may be reused by deterministic `cis plan derive`
+  for eligible impacts and the exact validated plan. This carry-forward preserves the
+  original reviewer, rationale, and digest and stops on uncertainty; it is not a new
+  agent approval.
+- UI work uses one default review of the exact wireframe digest and rendered design pack.
+  An earlier standalone wireframe checkpoint is optional; final acceptance remains an
+  explicit human action.
 
 ## Documentation obligations
 

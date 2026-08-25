@@ -44,7 +44,7 @@ public sealed partial class AgentService
         if(d.Count>0)return New(context,"blocked",null,ReadImports(context),d,false);
         var relative=Relative(context.RepositoryPath,task); var digest=Sha(text); var id=$"{context.RepositoryId}:{changeId}:{taskId}:{digest[..12]}";
         var artifacts=new List<string>{relative};
-        foreach(var candidate in new[]{"proposal.md","plan.md","decisions.md","verification.md"})
+        foreach(var candidate in new[]{"proposal.md","plan.md","decisions.md","test-cases.md","verification.md"})
         {var path=Path.Combine(context.DocumentationPath,"changes",changeId,candidate);if(File.Exists(path))artifacts.Add(Relative(context.RepositoryPath,path));}
         var envelope=new AgentTaskEnvelope(1,id,context.RepositoryId,changeId,taskId,provider,relative,digest,_clock().ToUniversalTime().ToString("O"),text,artifacts,
             ["Canonical Markdown remains authoritative.","Do not infer approvals or completion.","Return a structured result document; do not edit CIS lifecycle evidence directly."]);

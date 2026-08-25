@@ -3,7 +3,7 @@ title: "cis plan import-spec"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-20"
+last_reviewed: "2026-08-23"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-plan-import-spec
@@ -16,6 +16,12 @@ Active and current.
 
 Imports a canonical feature specification into an existing reviewed change and builds
 a PARR-style, complexity-bounded issue pack rather than only a summary table.
+
+For a current CIS-managed feature with explicit human approval, prefer
+`cis plan derive`. It atomically adopts eligible deterministic impacts, imports and
+validates this same task pack, and records the existing feature authority against the
+exact generated plan. Use `import-spec` directly when no compatible approval authority
+exists or when an exceptional finding needs separate human disposition.
 
 ```text
 cis plan import-spec <change-id> --file <repo-relative-spec.md> [--repo <path>] [--format <human|json|agent>]
@@ -51,10 +57,12 @@ API-contract evidence.
 
 The command requires planning-ready, human-reviewed impact findings. It writes the
 dependency ledger to `plan.md` and one durable Markdown task per workstream under
-`agent-tasks/`. Workstreams are created only when the specification requires them:
+`agent-tasks/`. It also generates `test-cases.md` for human review and
+`test-cases.csv` for import into TestRail or another test-management system.
+Workstreams are created only when the specification requires them:
 
 - parent coordination and scope guard;
-- wireframes followed by visual/interaction design and explicit approval;
+- wireframes followed by visual/interaction design and one exact combined review;
 - documentation, security/permissions, data, schema migration, and backfill;
 - API contracts, backend behavior, approved frontend implementation, and integrations;
 - infrastructure, observability, lifecycle, and rollout where signalled;
@@ -111,16 +119,37 @@ and explicit deferral/residual-risk section. Task documents are catalogued canon
 records. `design.md` records screen artifacts and human approval; `verification.md`
 aggregates exact commands, artifacts, results, blockers, and assurance evidence.
 
+Manual test cases are deterministic projections of the imported functional
+requirements. Each requirement receives one stable `TC-<requirement-id>-001` case with
+title, section, priority, type, preconditions, numbered steps, expected result,
+requirement reference, frontend type, and automation status. The Markdown file records
+the feature path/digest, case count, and exact CSV SHA-256. The CSV uses one row per
+case with portable, mappable headers and RFC-style quoting; formula-like leading
+characters are neutralized for spreadsheet-oriented importers. Re-import regenerates
+both files together. They define cases only—execution results remain in
+`verification.md`.
+
+During implementation, automated tests must contain the exact stable `TC-*` identity
+in the test name, framework metadata, or an adjacent traceability annotation. Import
+scans recognized test sources in every registered workspace repository, records exact
+`repository::path:line` references, and marks discovered cases `Automated`; undiscovered
+cases remain `Pending`. Vendor and generated trees such as `node_modules`, build output,
+coverage, and `.cis/local/` are excluded. Rerun the unchanged import after adding or
+moving tests to refresh traceability. This derived-only refresh preserves an existing
+plan approval when the canonical feature digest is unchanged.
+
 Each item records its stable task-type key/version and is classified `low`, `medium`,
 or `high`. A high item is stored only as a `decomposed` parent and must have at least
 two bounded low- or medium-complexity children before validation can pass.
 
-For frontend work, `coordination -> wireframe approval -> design approval -> every
-downstream task` is required. A rendered design sets a global pause: no implementation,
-verification, or delivery task may start until the exact renderer and PNG manifest are
-approved. Plan approval does not satisfy either design gate.
+For frontend work, `coordination -> validated wireframes -> rendered design approval ->
+every downstream task` is required. A rendered design sets a global pause: no
+implementation, verification, or delivery task may start until a human approves the
+exact wireframe digest, renderer, and PNG manifest together. Teams may use the separate
+wireframe approval command for an earlier review, but it is not a mandatory second stop.
 
 Repeating the command against unchanged source and impact state returns `unchanged`.
+This includes byte-identical manual-test Markdown and CSV projections.
 When a revised specification no longer selects a generated task, CIS moves the entire
 task document under `agent-tasks/retired/`, sets its document and task lifecycle to
 archived/retired, changes its catalog route to historical status, appends retirement
@@ -141,7 +170,9 @@ normalized criterion text is unchanged. Revised or removed criteria do not inher
 completion. An approved plan may be regenerated only from the exact same source path and
 digest without discarding task lifecycle, human evidence, or checklist state. A revised
 same-path digest is regenerated only as Draft; unchanged approved input remains Approved.
-Plan approval remains an explicit human action through `cis plan approve`.
+Plan approval remains explicit human authority. `cis plan approve` records new authority;
+`cis plan derive` reuses current feature authority with exact digest provenance and does
+not invent or infer approval.
 
 Exit `0` means the import and resulting plan are valid. Exit `5` means a plan was
 created but an approval gate remains. Exit `2` means the source, change, or request is

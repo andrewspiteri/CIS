@@ -601,13 +601,13 @@ managed_artifacts:
   path: .github/instructions/cis-business-requirements.instructions.md
   definition: guidance.instruction.business-requirements
   template_version: 1
-  applied_hash: sha256:02a7718ee5e956607307d7ee34c7995fe5ea81296939278e2c12a59ab27f2b76
+  applied_hash: sha256:e699bd2b25d123eed968e2c5c57750a20b9218d986713579a511c2928efa872d
   ownership: human
 - id: guidance.instruction.change-delivery
   path: .github/instructions/cis-change-delivery.instructions.md
   definition: guidance.instruction.change-delivery
   template_version: 1
-  applied_hash: sha256:5abbb1f8f5ef09f5bd6d92f43801d24aa9d0ec3138a02a032ccb50deb50a0ee6
+  applied_hash: sha256:744f5fa26a793f3faf915304c0beeb320f1616d57516d548e6e450d4caaf7fb9
   ownership: human
 - id: guidance.instruction.delivery-execution
   path: .github/instructions/cis-delivery-execution.instructions.md
@@ -625,7 +625,7 @@ managed_artifacts:
   path: .github/instructions/cis-feature-specifications.instructions.md
   definition: guidance.instruction.feature-specifications
   template_version: 1
-  applied_hash: sha256:b584407b14ac368e85bf7ae6eb84a8184e5892e87e32f4ea62377aa6d29a58a9
+  applied_hash: sha256:1da3942d88e676b256da818b16ed86996de69618f656ee25f538106685166248
   ownership: managed
 - id: guidance.instruction.feedback-loop
   path: .github/instructions/cis-feedback-loop.instructions.md
@@ -889,7 +889,7 @@ managed_artifacts:
   path: .github/instructions/cis-repository.instructions.md
   definition: guidance.instruction.repository
   template_version: 1
-  applied_hash: sha256:eade6b5cf62146d08baf3d55b8e0034656628f32f990784d1cc1b97a919c1804
+  applied_hash: sha256:85e1094e5da09e7a8652f6f78c81e6dd92d8f1c0342b329e57edca851a92b522
   ownership: human
 - id: guidance.instruction.standards-governance
   path: .github/instructions/cis-standards-governance.instructions.md
@@ -901,7 +901,7 @@ managed_artifacts:
   path: .github/instructions/cis-technical-intent.instructions.md
   definition: guidance.instruction.technical-intent
   template_version: 1
-  applied_hash: sha256:a61caef8624f11a307756ce87790a8fc5ed9cf202e670d11f8fe59365d72be11
+  applied_hash: sha256:fc383570f0662c543556490e389590fe0220553305878ce8b727e5a60cf8f0cf
   ownership: managed
 - id: guidance.skill.add-architecture-tests
   path: .github/skills/cis-add-architecture-tests/SKILL.md
@@ -937,7 +937,7 @@ managed_artifacts:
   path: .github/skills/cis-bounded-planning/SKILL.md
   definition: guidance.skill.bounded-planning
   template_version: 1
-  applied_hash: sha256:db7d30b037084686ba3a8e81af79643c474a233820034b63591f6d0093929555
+  applied_hash: sha256:59fe9ff1225bafeec7447cce063380dad824b96a1107d0fd64e4154416615185
   ownership: managed
 - id: guidance.skill.change-dossier
   path: .github/skills/cis-change-dossier/SKILL.md
@@ -973,7 +973,7 @@ managed_artifacts:
   path: .github/skills/cis-design-review/SKILL.md
   definition: guidance.skill.design-review
   template_version: 1
-  applied_hash: sha256:f932e1221b1ea665957d7a8d84ab8554dc55e4e54402ca73bcb1fe3e2d25c2a6
+  applied_hash: sha256:8f8a033adff98183ef42f181cf9f662e0c5e59d04d756e9f19a9928ac697475b
   ownership: human
 - id: guidance.skill.documentation
   path: .github/skills/cis-documentation/SKILL.md
@@ -1009,13 +1009,13 @@ managed_artifacts:
   path: .github/skills/cis-govern-business-requirements/SKILL.md
   definition: guidance.skill.govern-business-requirements
   template_version: 1
-  applied_hash: sha256:1945cf8b7e483b87831358b787177ec334a4e8562bddd5f0efafc68f602f3e1f
+  applied_hash: sha256:b537449dd8b6d82faed62e21420340d2b8bd1cb7a2278781341b150c70bc16e6
   ownership: managed
 - id: guidance.skill.govern-technical-intent
   path: .github/skills/cis-govern-technical-intent/SKILL.md
   definition: guidance.skill.govern-technical-intent
   template_version: 1
-  applied_hash: sha256:b2b97191f81ea2437d72d7cb60b9afa8a01ddfe0c290ba2250bacf47a555f8f9
+  applied_hash: sha256:bd7da8043ed11a9af8c4a3dded366908ad9b6f889591edfb60f7590cd48498ef
   ownership: managed
 - id: guidance.skill.graph-context
   path: .github/skills/cis-graph-context/SKILL.md
@@ -1183,13 +1183,13 @@ managed_artifacts:
   path: docs/specs/delivery-and-assurance-spec.md
   definition: specification.delivery-and-assurance
   template_version: 1
-  applied_hash: sha256:fc6f30c07f613cec7204e55ca720ce2103646550e1bc3194932799c5f2c514ab
+  applied_hash: sha256:27bd6870ef1f3c7f5685b4578285b389274db76630c8421466974413f2849275
   ownership: human
 - id: specification.design-guidelines
   path: docs/specs/design-guidelines.md
   definition: specification.design-guidelines
   template_version: 1
-  applied_hash: sha256:e374acb3e87962e013ace4c5fcc9d7491194269801c1f22bbc9f58aef79a6a01
+  applied_hash: sha256:972add8e8d0bec8cb1008c02f0b672f3b838d862c8e1e3f40563a6fbed450f1a
   ownership: managed
 - id: specification.external-tracker-synchronization
   path: docs/specs/external-tracker-synchronization-spec.md

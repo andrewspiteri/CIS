@@ -330,13 +330,16 @@ Disposable state is reproducible and excluded from Git. The documentation root r
 ├── decisions.md
 ├── plan.md
 ├── agent-tasks/
+├── test-cases.md
+├── test-cases.csv
 ├── verification.md
 └── events.jsonl
 ```
 
 Frontend-capable dossiers also include `design.md` as the durable artifact and human
-screen-approval record. `verification.md` aggregates exact execution evidence across
-the task pack.
+screen-approval record. Feature planning fills `test-cases.md` and its synchronized CSV
+test-management projection. `verification.md` aggregates exact execution evidence
+across the task pack.
 
 Markdown carries reviewable meaning. Structured front matter or sidecar data carries stable identity, workflow state, provenance, baselines, and relationships.
 

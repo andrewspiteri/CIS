@@ -131,13 +131,17 @@ The designer or agent must:
 
 ## 7. Required outputs
 
-- One self-contained JavaScript renderer.
-- One PNG for every required screen/state/viewport combination.
-- Updated `design.md` artifact manifest and validation results.
+- One self-contained JavaScript renderer for every visual gap not satisfied by exact
+  approved cross-feature reuse.
+- One rendered or reused PNG for every required screen/state/viewport combination.
+- Updated `design.md` local and reused artifact manifests and validation results.
 - Traceability from each PNG to Screen ID, state, viewport, wireframe digest, and
   renderer revision.
 - Traceability to the approved design-guideline path and digest, plus approved
   deviations.
+- For every reused PNG, traceability to its source change, source screen, exact source
+  wireframe/renderer/manifest approval digests, a current source-wireframe content
+  digest, current file hash, target screen, and explicit compatibility rationale.
 - Human approval decision naming the exact approved wireframe digest, artifacts, and
   revision, or an explicit authority-carry-forward record naming the approved feature
   and proving the PNG manifest is unchanged.
@@ -166,19 +170,24 @@ Plan approval does not imply visual approval. By default visual approval also re
 human approval of the exact validated wireframe digest, renderer, and PNG manifest in
 one decision; a standalone earlier wireframe approval remains optional. A later material
 wireframe or design-guideline change invalidates approval for affected screens,
-re-enters the global pause, and requires rerendering. It requires new review when the
-rendered manifest changes; otherwise `cis design reconcile` may reuse current feature
-authority after all fail-closed provenance checks pass.
+re-enters the global pause, and requires rerendering or renewed compatibility evidence.
+It requires new review when the combined reused-and-rendered manifest changes; otherwise
+`cis design reconcile` may reuse current feature authority after all fail-closed
+provenance checks pass.
 
 ## 9. Acceptance criteria
 
 - [ ] Exactly one canonical renderer contains the complete design source and embedded
-      assets for the task.
+      assets for all newly rendered screens; reused screens remain bound to their
+      approved source renderer and manifest.
 - [ ] The renderer uses JavaScript-generated SVG converted to PNG by pinned Sharp.
 - [ ] The renderer runs non-interactively using the documented command.
 - [ ] It performs no network access and requires no manual design-tool export.
-- [ ] Every required Screen ID, state, and viewport has a manifest entry and
-      nonblank PNG output.
+- [ ] Every required Screen ID, state, and viewport has a rendered or reused manifest
+      entry and nonblank PNG output.
+- [ ] Reused targets are absent from the new renderer, and every reuse mapping passes
+      source-authority, source-manifest, path, dimension, hash, classification, and
+      compatibility-rationale validation.
 - [ ] PNG filenames, dimensions, format signatures, and paths match the manifest.
 - [ ] Visible actions, labels, availability, and navigation destinations match the
       validated textual wireframe.
@@ -192,8 +201,9 @@ authority after all fail-closed provenance checks pass.
       containing sensitive information.
 - [ ] Renderer command, runtime/dependencies, source digest, image digests, dimensions,
       and visual-inspection results are recorded.
-- [ ] A human approved the exact renderer revision and PNG set, or CIS recorded valid
-      carry-forward from a current approved feature with an identical prior PNG manifest.
+- [ ] A human approved the exact renderer revision, reuse mappings, and combined PNG
+      set, or CIS recorded valid carry-forward from a current approved feature with an
+      identical prior combined PNG manifest.
 - [ ] No downstream delivery work continued while the design was `ReadyForReview`
       or rejected.
 

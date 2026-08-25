@@ -25,3 +25,8 @@ for a review/approved design.
 Before visual approval, validation binds the pack to the current valid wireframe digest.
 The digest is approved atomically with the rendered pack unless it already has a
 standalone wireframe approval.
+
+Validation resolves both locally rendered PNGs and `Reused approved PNGs`. Reuse fails
+closed when the source approval, wireframe, renderer, manifest, PNG bytes, dimensions,
+target classification, or repository path has drifted. Once review is active, every
+wireframe screen must be covered by at least one rendered or reused artifact.

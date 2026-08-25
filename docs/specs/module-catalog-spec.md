@@ -94,7 +94,7 @@ coupling.
 | `impact` | Impact discovery, findings, review dispositions, and completeness | `analyse`, `findings`, `accept`, `reject`, `defer`, `completeness` |
 | `decision` | Change-local decisions and promotion into durable records | `list`, `create`, `resolve`, `defer`, `promote` |
 | `plan` | Bounded work, provider capability selection, task-type migration, dependencies, approval gates, and plan validation | `build`, `import-spec`, `show`, `validate`, `approve`, `status`, `capability status`, `capability select`, `task transition`, `task migrate-type` |
-| `design` | Textual-wireframe review, reusable shell/component renderer scaffolding, deterministic PNG generation, validation, and global human approval | `templates`, `scaffold`, `wireframe-validate`, `wireframe-approve`, `wireframe-reject`, `render`, `validate`, `approve`, `reject`, `status` |
+| `design` | Textual-wireframe review, cross-feature approved-artifact reuse, reusable shell/component renderer scaffolding, deterministic PNG generation, validation, and global human approval | `templates`, `reuse`, `scaffold`, `wireframe-validate`, `wireframe-approve`, `wireframe-reject`, `render`, `validate`, `reconcile`, `approve`, `reject`, `status` |
 | `tracker` | Provider-neutral external issue projection, durable identity, three-way drift detection, and human conflict resolution | `plan`, `push`, `pull`, `status`, `resolve` |
 | `agent` | Provider-neutral task envelopes and result ingestion | `prepare`, `providers`, `import-result`, `status` |
 | `verify` | Baselines, planned-versus-actual comparison, evidence, and acceptance | `diff`, `compare`, `validate`, `evidence`, `accept` |

@@ -154,6 +154,7 @@ Each loaded module owns one top-level command group. The following leaf commands
 | [`cis plan task transition`](cis_plan_task_transition.md) | Move a generated task through its audited lifecycle while enforcing gates. |
 | [`cis plan task migrate-type`](cis_plan_task_migrate_type.md) | Migrate an extension task to the selected compatible provider while preserving human evidence. |
 | [`cis design templates`](cis_design_templates.md) | List reusable application-shell/component templates and possible token savings. |
+| [`cis design reuse`](cis_design_reuse.md) | Carry exact approved PNGs into a target screen with verified source provenance. |
 | [`cis design scaffold`](cis_design_scaffold.md) | Scaffold one self-contained renderer from validated textual wireframes. |
 | [`cis design wireframe-validate`](cis_design_wireframe_validate.md) | Validate classified screens, states, actions, paths, and coverage before human review. |
 | [`cis design wireframe-approve`](cis_design_wireframe_approve.md) | Approve the exact textual screen, action, state, and path contract. |

@@ -26,3 +26,8 @@ a Node project. It checks `CIS_SHARP_NODE_MODULES`, the renderer and authority
 ancestors, registered workspace participants, and finally `NODE_PATH`. This allows a
 workspace design renderer to reuse the governed frontend repository's pinned Sharp
 installation while keeping the renderer and PNG evidence in the authority repository.
+
+Only screens not already satisfied through `cis design reuse` are present in the
+renderer. The review manifest and its SHA-256 combine those new PNGs with all verified
+reused PNGs, so approval covers the complete screen set without regenerating unchanged
+visuals.

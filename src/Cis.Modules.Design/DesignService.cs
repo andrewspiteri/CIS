@@ -31,6 +31,90 @@ public sealed class DesignService
     public DesignResult Templates()
         => new("listed", null, null, null, null, _templates.List(), [], [], false);
 
+    public DesignResult Reuse(DesignReuseRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.SourceChangeId)
+            || string.IsNullOrWhiteSpace(request.SourceScreenId)
+            || string.IsNullOrWhiteSpace(request.TargetScreenId)
+            || string.IsNullOrWhiteSpace(request.Rationale))
+            return Error(request.ChangeId, "Source change, source screen, target screen, and reason are required.");
+        var change = _changes.Read(request.RepositoryPath, request.ChangeId);
+        if (change is null) return Error(request.ChangeId, $"Change dossier was not found: {request.ChangeId}");
+        if (change.Id.Equals(request.SourceChangeId, StringComparison.OrdinalIgnoreCase))
+            return Error(change.Id, "A design cannot reuse itself.");
+        var designPath = _changes.DossierFile(change, "design.md");
+        var design = File.ReadAllText(designPath);
+        if (!FrontMatter(design, "gate_status").Equals("Inactive", StringComparison.OrdinalIgnoreCase))
+            return Error(change.Id, "Design reuse can only change an Inactive pack before rendering and review.");
+
+        var targetScreens = ParseScreens(File.ReadAllText(_changes.DossierFile(change, "wireframes.md")));
+        var targetSlug = Slug(request.TargetScreenId);
+        var target = targetScreens.SingleOrDefault(screen => Slug(screen.Id).Equals(targetSlug, StringComparison.OrdinalIgnoreCase));
+        if (target is null) return Error(change.Id, $"Target screen is not present in wireframes.md: {request.TargetScreenId}");
+
+        var source = _changes.Read(request.RepositoryPath, request.SourceChangeId);
+        if (source is null) return Error(change.Id, $"Source change dossier was not found: {request.SourceChangeId}");
+        var sourceDesign = File.ReadAllText(_changes.DossierFile(source, "design.md"));
+        if (!FrontMatter(sourceDesign, "approval_status").Equals("Approved", StringComparison.OrdinalIgnoreCase)
+            || !FrontMatter(sourceDesign, "gate_status").Equals("Approved", StringComparison.OrdinalIgnoreCase))
+            return Error(change.Id, $"Source design {source.Id} must have current Approved design authority.");
+        var sourceDigests = ApprovedDesignDigests(source, sourceDesign);
+        if (sourceDigests is null) return Error(change.Id, $"Source design {source.Id} has no complete approved provenance row.");
+        var sourceRenderer = ResolveRenderer(source, sourceDesign);
+        if (sourceRenderer is null || !File.Exists(sourceRenderer)
+            || !Sha(File.ReadAllBytes(sourceRenderer)).Equals(sourceDigests.Value.Renderer, StringComparison.OrdinalIgnoreCase))
+            return Error(change.Id, $"Source design {source.Id} renderer no longer matches its approval digest.");
+        var sourceWireframes = File.ReadAllText(_changes.DossierFile(source, "wireframes.md"));
+        var sourceWireframeContentSha = WireframeBodySha(sourceWireframes);
+
+        var sourceSlug = Slug(request.SourceScreenId);
+        var sourceArtifacts = ReadArtifacts(source)
+            .Where(item => item.ScreenId.Equals(sourceSlug, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (sourceArtifacts.Length == 0)
+            return Error(change.Id, $"Source screen has no PNG manifest artifacts in {source.Id}: {request.SourceScreenId}");
+        if (!ManifestSha(ReadArtifacts(source)).Equals(sourceDigests.Value.Manifest, StringComparison.OrdinalIgnoreCase))
+            return Error(change.Id, $"Source design {source.Id} PNG manifest no longer matches its approval digest.");
+        foreach (var artifact in sourceArtifacts)
+        {
+            if (!SourceManifestContains(sourceDesign, artifact))
+                return Error(change.Id, $"Source artifact is not present in the approved PNG manifest: {artifact.Path}");
+        }
+
+        var records = ReadReuseRecords(design)
+            .Where(item => !(item.TargetScreenId.Equals(targetSlug, StringComparison.OrdinalIgnoreCase)
+                && item.SourceChangeId.Equals(source.Id, StringComparison.OrdinalIgnoreCase)
+                && item.SourceScreenId.Equals(sourceSlug, StringComparison.OrdinalIgnoreCase)))
+            .Concat(sourceArtifacts.Select(artifact => new DesignReuseRecord(
+                targetSlug, target.FrontendType, source.Id, sourceSlug, artifact.State, artifact.Viewport,
+                artifact.Path, artifact.Width, artifact.Height, artifact.Sha256,
+                sourceDigests.Value.Wireframe, sourceWireframeContentSha, sourceDigests.Value.Renderer, sourceDigests.Value.Manifest,
+                request.Rationale.Trim())))
+            .OrderBy(item => item.TargetScreenId, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.SourceChangeId, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.SourceScreenId, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.State, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.Viewport, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        design = ReplaceSection(design, "## Reused approved PNGs", ReuseSection(records));
+        design = FrontMatter(design, "status", "InProgress");
+        design = FrontMatter(design, "approval_status", "NotReviewed");
+        File.WriteAllText(designPath, design);
+        _changes.AppendEvent(change, "design-artifacts-reused", new Dictionary<string, string>
+        {
+            ["sourceChange"] = source.Id,
+            ["sourceScreen"] = sourceSlug,
+            ["targetScreen"] = targetSlug,
+            ["artifacts"] = sourceArtifacts.Length.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["sourceManifestSha256"] = sourceDigests.Value.Manifest,
+            ["sourceWireframeContentSha256"] = sourceWireframeContentSha,
+            ["reason"] = request.Rationale.Trim(),
+        });
+        var mapped = sourceArtifacts.Select(item => item with { ScreenId = targetSlug }).ToArray();
+        return new("reused", change.Id, "Inactive", "NotReviewed", null, [], mapped,
+            [$"INFO: {sourceArtifacts.Length} approved artifact(s) carried from {source.Id}/{sourceSlug} to {targetSlug}."], true);
+    }
+
     public DesignResult Scaffold(DesignScaffoldRequest request)
     {
         var change = _changes.Read(request.RepositoryPath, request.ChangeId);
@@ -42,12 +126,17 @@ public sealed class DesignService
         var wireframe = File.ReadAllText(wireframePath);
         var wireframeValidation = ValidateWireframes(request.RepositoryPath, request.ChangeId);
         if (wireframeValidation.ExitCode != 0) return wireframeValidation;
-        var screens = ParseScreens(wireframe);
-        if (screens.Count == 0)
+        var allScreens = ParseScreens(wireframe);
+        if (allScreens.Count == 0)
         {
             return Error(change.Id, "wireframes.md requires at least one non-placeholder Screen inventory row.");
         }
 
+        var designPath = _changes.DossierFile(change, "design.md");
+        var design = File.ReadAllText(designPath);
+        var reusedTargets = ReadReuseRecords(design).Select(item => item.TargetScreenId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var screens = allScreens.Where(screen => !reusedTargets.Contains(Slug(screen.Id))).ToArray();
         var guidelinePath = FindGuideline(change);
         if (guidelinePath is null) return Error(change.Id, "No governed design-guidelines document was found.");
         var relativeGuideline = Relative(change.RepositoryPath, guidelinePath);
@@ -70,8 +159,6 @@ public sealed class DesignService
             request.Feature, screens, request.Shell, selected, relativeGuideline, guidelineSha, wireframeSha));
 
         var rendererRelative = Relative(change.RepositoryPath, rendererPath);
-        var designPath = _changes.DossierFile(change, "design.md");
-        var design = File.ReadAllText(designPath);
         design = ReplaceSection(design, "## Inputs and renderer", $"""
 ## Inputs and renderer
 
@@ -91,10 +178,10 @@ public sealed class DesignService
 {templateRows}
 
 """);
-        var surfaceRows = string.Join(Environment.NewLine, screens
+        var surfaceRows = string.Join(Environment.NewLine, allScreens
             .GroupBy(screen => screen.FrontendType, StringComparer.OrdinalIgnoreCase)
             .OrderBy(group => FrontendTypeOrder(group.Key))
-            .Select(group => $"| `{group.Key}` | {string.Join(", ", group.Select(screen => $"`{screen.Id}`"))} | `{request.Shell}` | Classified |"));
+            .Select(group => $"| `{group.Key}` | {string.Join(", ", group.Select(screen => $"`{screen.Id}`"))} | `{request.Shell}` | {string.Join(", ", group.Select(screen => reusedTargets.Contains(Slug(screen.Id)) ? $"{screen.Id}:Reused" : $"{screen.Id}:Render required"))} |"));
         design = ReplaceSection(design, "## Frontend surface coverage", $"""
 ## Frontend surface coverage
 
@@ -112,10 +199,12 @@ public sealed class DesignService
             ["wireframeApproval"] = FrontMatter(wireframe, "approval_status"),
             ["guidelineSha256"] = guidelineSha,
             ["templates"] = string.Join(',', usedTemplates.Select(template => template.Id)),
+            ["renderScreens"] = string.Join(',', screens.Select(screen => Slug(screen.Id))),
+            ["reusedScreens"] = string.Join(',', reusedTargets),
         });
         var estimated = usedTemplates.Sum(template => template.EstimatedSavedTokens);
         return new("scaffolded", change.Id, "Inactive", "NotReviewed", rendererRelative,
-            usedTemplates, [], [$"INFO: estimated template token savings={estimated}"], true);
+            usedTemplates, [], [$"INFO: estimated template token savings={estimated}; render screens={screens.Length}; reused screens={reusedTargets.Count}"], true);
     }
 
     public DesignResult Validate(string repositoryPath, string changeId)
@@ -188,13 +277,23 @@ public sealed class DesignService
         }
 
         var artifacts = ReadArtifacts(change);
-        if (FrontMatter(design, "gate_status") is "PausedForReview" or "Approved" && artifacts.Count == 0)
+        var reused = ValidateReuseRecords(change, design, diagnostics);
+        var combinedArtifacts = artifacts.Concat(reused).OrderBy(item => item.Path, StringComparer.OrdinalIgnoreCase).ToArray();
+        var gateStatus = FrontMatter(design, "gate_status");
+        if (gateStatus is "PausedForReview" or "Approved" && combinedArtifacts.Length == 0)
         {
             diagnostics.Add("ERROR: Review or approval requires generated PNG artifacts.");
         }
+        if (gateStatus is "PausedForReview" or "Approved")
+        {
+            var covered = combinedArtifacts.Select(item => item.ScreenId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var missing = classifiedScreens.Select(screen => Slug(screen.Id)).Where(screen => !covered.Contains(screen)).ToArray();
+            if (missing.Length > 0)
+                diagnostics.Add($"ERROR: Review requires rendered or reused PNG coverage for every wireframe screen; missing: {string.Join(", ", missing)}.");
+        }
         return new(diagnostics.Any(item => item.StartsWith("ERROR:", StringComparison.Ordinal)) ? "invalid" : "valid",
             change.Id, FrontMatter(design, "gate_status"), FrontMatter(design, "approval_status"),
-            rendererPath is null ? null : Relative(change.RepositoryPath, rendererPath), [], artifacts, diagnostics, false);
+            rendererPath is null ? null : Relative(change.RepositoryPath, rendererPath), [], combinedArtifacts, diagnostics, false);
     }
 
     public DesignResult ValidateWireframes(string repositoryPath, string changeId)
@@ -318,7 +417,8 @@ public sealed class DesignService
     {
         var validation = Validate(repositoryPath, changeId);
         var preErrors = validation.Diagnostics.Where(item => item.StartsWith("ERROR:", StringComparison.Ordinal)
-            && !item.Contains("PNG artifacts", StringComparison.Ordinal)).ToArray();
+            && !item.Contains("PNG artifacts", StringComparison.Ordinal)
+            && !item.Contains("PNG coverage", StringComparison.Ordinal)).ToArray();
         if (preErrors.Length > 0) return validation with { Diagnostics = preErrors };
         var change = _changes.Read(repositoryPath, changeId)!;
         var rendererPath = Path.Combine(change.RepositoryPath, validation.RendererPath!.Replace('/', Path.DirectorySeparatorChar));
@@ -330,9 +430,14 @@ public sealed class DesignService
                 return Error(change.Id, $"Renderer failed with exit code {process.ExitCode}: {process.StandardError.Trim()}");
             }
             var artifacts = ReadArtifacts(change);
-            if (artifacts.Count == 0) return Error(change.Id, "Renderer completed without producing PNG artifacts.");
             var designPath = _changes.DossierFile(change, "design.md");
             var design = File.ReadAllText(designPath);
+            var reuseDiagnostics = new List<string>();
+            var reused = ValidateReuseRecords(change, design, reuseDiagnostics);
+            if (reuseDiagnostics.Any(item => item.StartsWith("ERROR:", StringComparison.Ordinal)))
+                return new("invalid", change.Id, null, null, null, [], [], reuseDiagnostics, false);
+            var combinedArtifacts = artifacts.Concat(reused).OrderBy(item => item.Path, StringComparer.OrdinalIgnoreCase).ToArray();
+            if (combinedArtifacts.Length == 0) return Error(change.Id, "Renderer completed without producing PNG artifacts or resolving approved reuse evidence.");
             var rendererSha = Sha(File.ReadAllBytes(rendererPath));
             design = Regex.Replace(design,
                 @"(?m)^(\| `[^`]+` \| `sha256:[^`]+` \| `[^`]+` \| `sha256:[^`]+` \| `[^`]+` \| )`sha256:[^`]+`( \|)",
@@ -364,11 +469,13 @@ public sealed class DesignService
             _changes.AppendEvent(change, "design-review-paused", new Dictionary<string, string>
             {
                 ["renderer"] = validation.RendererPath!,
-                ["artifacts"] = artifacts.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                ["manifestSha256"] = ManifestSha(artifacts),
+                ["renderedArtifacts"] = artifacts.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["reusedArtifacts"] = reused.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["artifacts"] = combinedArtifacts.Length.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["manifestSha256"] = ManifestSha(combinedArtifacts),
             });
             return new("ready-for-review", change.Id, "PausedForReview", "ReadyForReview",
-                validation.RendererPath, [], artifacts, [$"INFO: {process.StandardOutput.Trim()}"], true);
+                validation.RendererPath, [], combinedArtifacts, [$"INFO: {process.StandardOutput.Trim()}; rendered={artifacts.Count}; reused={reused.Count}"], true);
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
         {
@@ -535,8 +642,9 @@ public sealed class DesignService
         if (!FrontMatter(design, "gate_status").Equals("PausedForReview", StringComparison.OrdinalIgnoreCase))
             return Error(change.Id, "Design rejection requires a PausedForReview design pack.");
         var rendererPath = ResolveRenderer(change, design);
-        var artifacts = ReadArtifacts(change);
-        var hashes = string.Join(", ", artifacts.Select(item => item.Sha256));
+        var localArtifacts = ReadArtifacts(change);
+        var validation = Validate(request.RepositoryPath, request.ChangeId);
+        var hashes = string.Join(", ", validation.Artifacts.Select(item => item.Sha256));
         var existing = SectionBody(design, "## Rejected revisions");
         var row = $"| `{(rendererPath is null ? "missing" : Sha(File.ReadAllBytes(rendererPath)))}` | {Cell(hashes)} | {Cell(request.Reviewer)} | {_clock():yyyy-MM-ddTHH:mm:ssZ} | Rejected during human design review | {Cell(request.Rationale)} |";
         var replacement = existing.Contains("| Renderer revision/digest |", StringComparison.Ordinal)
@@ -553,7 +661,7 @@ Rejected PNG files are removed. Preserve their manifest hashes and review eviden
         design = FrontMatter(design, "approval_status", "Rejected");
         design = FrontMatter(design, "gate_status", "PausedForReview");
         File.WriteAllText(designPath, design);
-        foreach (var artifact in artifacts)
+        foreach (var artifact in localArtifacts)
         {
             var path = Path.GetFullPath(Path.Combine(change.RepositoryPath, artifact.Path.Replace('/', Path.DirectorySeparatorChar)));
             var assetRoot = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(designPath)!, "assets")) + Path.DirectorySeparatorChar;
@@ -574,8 +682,11 @@ Rejected PNG files are removed. Preserve their manifest hashes and review eviden
         if (change is null) return Error(changeId, $"Change dossier was not found: {changeId}");
         var design = File.ReadAllText(_changes.DossierFile(change, "design.md"));
         var renderer = ResolveRenderer(change, design);
+        var diagnostics = new List<string>();
+        var artifacts = ReadArtifacts(change).Concat(ValidateReuseRecords(change, design, diagnostics))
+            .OrderBy(item => item.Path, StringComparer.OrdinalIgnoreCase).ToArray();
         return new("shown", change.Id, FrontMatter(design, "gate_status"), FrontMatter(design, "approval_status"),
-            renderer is null ? null : Relative(change.RepositoryPath, renderer), [], ReadArtifacts(change), [], false);
+            renderer is null ? null : Relative(change.RepositoryPath, renderer), [], artifacts, diagnostics, false);
     }
 
     private static IReadOnlyList<WireframeScreen> ParseScreens(string content)
@@ -651,6 +762,170 @@ Rejected PNG files are removed. Preserve their manifest hashes and review eviden
         => Regex.IsMatch(value, @"(?<![A-Za-z0-9_-])(?:TODO|TBD)(?![A-Za-z0-9_-])|(?i:\bto be completed\b)",
             RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
     private static int FrontendTypeOrder(string value) => value switch { "public" => 0, "customer" => 1, "backoffice" => 2, _ => 3 };
+
+    private IReadOnlyList<DesignArtifact> ValidateReuseRecords(
+        ChangeDossier change,
+        string design,
+        ICollection<string> diagnostics)
+    {
+        var records = ReadReuseRecords(design);
+        var rawRows = MarkdownTable(SectionBody(design, "## Reused approved PNGs"));
+        var declaredRows = Math.Max(0, rawRows.Count - 2);
+        if (declaredRows != records.Count)
+            diagnostics.Add($"ERROR: Reused approved PNGs contains {declaredRows - records.Count} malformed row(s); repair or remove them before continuing.");
+        if (records.Count == 0) return [];
+        var targetScreens = ParseScreens(File.ReadAllText(_changes.DossierFile(change, "wireframes.md")))
+            .ToDictionary(screen => Slug(screen.Id), StringComparer.OrdinalIgnoreCase);
+        var duplicateRows = records.GroupBy(item => $"{item.TargetScreenId}|{item.Path}", StringComparer.OrdinalIgnoreCase)
+            .Where(group => group.Count() > 1).Select(group => group.Key).ToArray();
+        if (duplicateRows.Length > 0)
+            diagnostics.Add($"ERROR: Duplicate reused design artifact mappings: {string.Join(", ", duplicateRows)}.");
+        var result = new List<DesignArtifact>();
+        foreach (var record in records)
+        {
+            if (!targetScreens.TryGetValue(record.TargetScreenId, out var target))
+            {
+                diagnostics.Add($"ERROR: Reused artifact target is not a wireframe screen: {record.TargetScreenId}.");
+                continue;
+            }
+            if (!target.FrontendType.Equals(record.FrontendType, StringComparison.OrdinalIgnoreCase))
+                diagnostics.Add($"ERROR: Reused artifact frontend type for {record.TargetScreenId} is stale ({record.FrontendType} != {target.FrontendType}).");
+            var source = _changes.Read(change.RepositoryPath, record.SourceChangeId);
+            if (source is null)
+            {
+                diagnostics.Add($"ERROR: Reused artifact source change is missing: {record.SourceChangeId}.");
+                continue;
+            }
+            var sourceDesign = File.ReadAllText(_changes.DossierFile(source, "design.md"));
+            var digests = ApprovedDesignDigests(source, sourceDesign);
+            if (!FrontMatter(sourceDesign, "approval_status").Equals("Approved", StringComparison.OrdinalIgnoreCase)
+                || !FrontMatter(sourceDesign, "gate_status").Equals("Approved", StringComparison.OrdinalIgnoreCase)
+                || digests is null)
+            {
+                diagnostics.Add($"ERROR: Reused artifact source {source.Id} no longer has complete Approved authority.");
+                continue;
+            }
+            if (!record.SourceWireframeSha256.Equals(digests.Value.Wireframe, StringComparison.OrdinalIgnoreCase)
+                || !record.SourceRendererSha256.Equals(digests.Value.Renderer, StringComparison.OrdinalIgnoreCase)
+                || !record.SourceManifestSha256.Equals(digests.Value.Manifest, StringComparison.OrdinalIgnoreCase))
+                diagnostics.Add($"ERROR: Reused artifact provenance for {source.Id}/{record.SourceScreenId} is stale.");
+            var renderer = ResolveRenderer(source, sourceDesign);
+            if (renderer is null || !File.Exists(renderer)
+                || !Sha(File.ReadAllBytes(renderer)).Equals(digests.Value.Renderer, StringComparison.OrdinalIgnoreCase))
+                diagnostics.Add($"ERROR: Reused artifact source renderer is stale: {source.Id}.");
+            var sourceWireframes = File.ReadAllText(_changes.DossierFile(source, "wireframes.md"));
+            if (!WireframeBodySha(sourceWireframes).Equals(record.SourceWireframeContentSha256, StringComparison.OrdinalIgnoreCase))
+                diagnostics.Add($"ERROR: Reused artifact source wireframe content is stale: {source.Id}.");
+            var sourceArtifacts = ReadArtifacts(source);
+            if (!ManifestSha(sourceArtifacts).Equals(digests.Value.Manifest, StringComparison.OrdinalIgnoreCase))
+                diagnostics.Add($"ERROR: Reused artifact source PNG manifest is stale: {source.Id}.");
+
+            var path = Path.GetFullPath(Path.Combine(change.RepositoryPath, record.Path.Replace('/', Path.DirectorySeparatorChar)));
+            var root = Path.GetFullPath(change.RepositoryPath).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            if (!path.StartsWith(root, comparison) || !File.Exists(path))
+            {
+                diagnostics.Add($"ERROR: Reused PNG is missing or outside the repository: {record.Path}.");
+                continue;
+            }
+            var dimensions = PngDimensions(path);
+            var sha = Sha(File.ReadAllBytes(path));
+            if (dimensions.Width != record.Width || dimensions.Height != record.Height
+                || !sha.Equals(record.Sha256, StringComparison.OrdinalIgnoreCase))
+                diagnostics.Add($"ERROR: Reused PNG bytes or dimensions changed: {record.Path}.");
+            var sourceArtifact = new DesignArtifact(record.SourceScreenId, record.State, record.Viewport,
+                record.Path, record.Width, record.Height, record.Sha256, new FileInfo(path).Length);
+            if (!SourceManifestContains(sourceDesign, sourceArtifact))
+                diagnostics.Add($"ERROR: Reused PNG is no longer declared by source {source.Id}: {record.Path}.");
+            result.Add(sourceArtifact with { ScreenId = record.TargetScreenId });
+        }
+        if (!diagnostics.Any(item => item.StartsWith("ERROR:", StringComparison.Ordinal)))
+            diagnostics.Add($"INFO: reused artifacts={result.Count}; reused target screens={result.Select(item => item.ScreenId).Distinct(StringComparer.OrdinalIgnoreCase).Count()}.");
+        return result;
+    }
+
+    private (string Wireframe, string Renderer, string Manifest)? ApprovedDesignDigests(ChangeDossier source, string design)
+    {
+        var section = SectionBody(design, "## Approval decision");
+        var rows = MarkdownTable(section);
+        if (rows.Count < 2) return null;
+        var headers = rows[0];
+        var approved = rows.Skip(2).FirstOrDefault(row => row.Count == headers.Count
+            && (row[0].Equals("Approved", StringComparison.OrdinalIgnoreCase)
+                || row[0].Equals("Authority carried forward", StringComparison.OrdinalIgnoreCase)));
+        if (approved is null) return null;
+        string Value(string name)
+        {
+            var index = headers.FindIndex(item => item.Equals(name, StringComparison.OrdinalIgnoreCase));
+            return index >= 0 ? approved[index].Trim('`').ToLowerInvariant() : string.Empty;
+        }
+        var wireframe = Value("Wireframe SHA-256");
+        if (wireframe.Length == 0)
+        {
+            var content = File.ReadAllText(_changes.DossierFile(source, "wireframes.md"));
+            wireframe = ApprovedWireframeSha(content) ?? string.Empty;
+        }
+        var renderer = Value("Renderer SHA-256");
+        var manifest = Value("PNG manifest SHA-256");
+        return IsSha(wireframe) && IsSha(renderer) && IsSha(manifest)
+            ? (wireframe, renderer, manifest)
+            : null;
+    }
+
+    private static IReadOnlyList<DesignReuseRecord> ReadReuseRecords(string design)
+    {
+        var rows = MarkdownTable(SectionBody(design, "## Reused approved PNGs"));
+        if (rows.Count < 2) return [];
+        var result = new List<DesignReuseRecord>();
+        foreach (var cells in rows.Skip(2))
+        {
+            if (cells.Count != 15 || cells[0].Equals("Target screen ID", StringComparison.OrdinalIgnoreCase)) continue;
+            var dimensions = cells[8].Split('x', 2);
+            if (dimensions.Length != 2
+                || !int.TryParse(dimensions[0], out var width)
+                || !int.TryParse(dimensions[1], out var height)) continue;
+            result.Add(new DesignReuseRecord(
+                cells[0].Trim('`'), cells[1].Trim('`'), cells[2].Trim('`'), cells[3].Trim('`'),
+                cells[4].Trim('`'), cells[5].Trim('`'), cells[6].Trim('`'), width, height,
+                cells[9].Trim('`').ToLowerInvariant(), cells[10].Trim('`').ToLowerInvariant(),
+                cells[11].Trim('`').ToLowerInvariant(), cells[12].Trim('`').ToLowerInvariant(),
+                cells[13].Trim('`').ToLowerInvariant(), cells[14]));
+        }
+        return result;
+    }
+
+    private static string ReuseSection(IReadOnlyList<DesignReuseRecord> records)
+    {
+        var rows = string.Join(Environment.NewLine, records.Select(item =>
+            $"| `{item.TargetScreenId}` | `{item.FrontendType}` | `{item.SourceChangeId}` | `{item.SourceScreenId}` | `{item.State}` | `{item.Viewport}` | `{item.Path}` | Approved unchanged | {item.Width}x{item.Height} | `{item.Sha256}` | `{item.SourceWireframeSha256}` | `{item.SourceWireframeContentSha256}` | `{item.SourceRendererSha256}` | `{item.SourceManifestSha256}` | {Cell(item.Rationale)} |"));
+        return $"""
+## Reused approved PNGs
+
+These exact PNGs remain owned by their approved source change. CIS verifies the source
+approval digests and current file hashes before rendering or approving this pack.
+
+| Target screen ID | Frontend type | Source change | Source screen ID | State | Viewport | Path | Compatibility | Dimensions | SHA-256 | Source wireframe approval SHA-256 | Source wireframe content SHA-256 | Source renderer SHA-256 | Source manifest SHA-256 | Reason |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+{rows}
+
+""";
+    }
+
+    private static List<List<string>> MarkdownTable(string section)
+        => section.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n')
+            .Where(line => line.TrimStart().StartsWith('|'))
+            .Select(line => line.Trim().Trim('|').Split('|').Select(cell => cell.Trim()).ToList())
+            .ToList();
+
+    private static bool SourceManifestContains(string design, DesignArtifact artifact)
+        => SectionBody(design, "## PNG manifest").Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n')
+            .Any(line => line.StartsWith($"| `{artifact.ScreenId}` |", StringComparison.Ordinal)
+                && line.Contains($"| {artifact.State} | {artifact.Viewport} |", StringComparison.Ordinal)
+                && line.Contains($"`{artifact.Path}`", StringComparison.Ordinal)
+                && line.Contains($"`{artifact.Sha256}`", StringComparison.Ordinal));
+
+    private static bool IsSha(string value)
+        => Regex.IsMatch(value, "^sha256:[0-9a-f]{64}$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
 
     private static string? FindGuideline(ChangeDossier change)
     {

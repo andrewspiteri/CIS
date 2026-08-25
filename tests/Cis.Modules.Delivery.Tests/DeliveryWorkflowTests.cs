@@ -929,6 +929,66 @@ feature_spec_sha256: "{featureSha}"
     }
 
     [Fact]
+    public void DesignReuse_CarriesApprovedArtifacts_RendersOnlyGaps_AndDetectsSourceDrift()
+    {
+        using var repository = TemporaryRepository.Create();
+        var services = CreateServices(new FakeDesignProcessRunner());
+        var source = Assert.IsType<ChangeDossier>(services.Changes.Create(new ChangeCreateRequest(
+            repository.Path, "Source design", "The approved source state is available.",
+            [new ChangeRoot("todo-web", "component")])).Change);
+        WriteDesignWireframes(services.Changes.DossierFile(source, "wireframes.md"), source.Id,
+            ("CUS-SOURCE", "customer"));
+        Assert.Equal(0, services.Designs.Scaffold(new DesignScaffoldRequest(
+            repository.Path, source.Id, "source-design", "shell.minimal-app", ["component.alert"])).ExitCode);
+        Assert.Equal(0, services.Designs.Render(repository.Path, source.Id).ExitCode);
+        Assert.Equal(0, services.Designs.Approve(new DesignReviewRequest(
+            repository.Path, source.Id, "product-owner", "The source state is approved.")).ExitCode);
+
+        var target = Assert.IsType<ChangeDossier>(services.Changes.Create(new ChangeCreateRequest(
+            repository.Path, "Coverage design", "Existing visuals are reused and only the gap is rendered.",
+            [new ChangeRoot("todo-web", "component")])).Change);
+        WriteDesignWireframes(services.Changes.DossierFile(target, "wireframes.md"), target.Id,
+            ("CUS-REUSED", "customer"), ("PUB-NEW", "public"));
+        var reuseRequest = new DesignReuseRequest(repository.Path, target.Id, source.Id,
+            "CUS-SOURCE", "CUS-REUSED", "The target state is visually identical to the approved source state.");
+        Assert.Equal(0, services.Designs.Reuse(reuseRequest).ExitCode);
+        Assert.Equal(0, services.Designs.Reuse(reuseRequest).ExitCode);
+        var targetDesignPath = services.Changes.DossierFile(target, "design.md");
+        Assert.Single(File.ReadAllLines(targetDesignPath), line => line.Contains("`cus-reused`", StringComparison.Ordinal));
+
+        var scaffolded = services.Designs.Scaffold(new DesignScaffoldRequest(
+            repository.Path, target.Id, "coverage-design", "shell.minimal-app", ["component.alert"]));
+        Assert.Equal(0, scaffolded.ExitCode);
+        var renderer = File.ReadAllText(Path.Combine(repository.Path,
+            scaffolded.RendererPath!.Replace('/', Path.DirectorySeparatorChar)));
+        Assert.DoesNotContain("\"id\": \"cus-reused\"", renderer, StringComparison.Ordinal);
+        Assert.Contains("\"id\": \"pub-new\"", renderer, StringComparison.Ordinal);
+
+        var rendered = services.Designs.Render(repository.Path, target.Id);
+        Assert.Equal(0, rendered.ExitCode);
+        Assert.Equal(2, rendered.Artifacts.Count);
+        Assert.Contains(rendered.Artifacts, item => item.ScreenId == "cus-reused" && item.Path.Contains(source.Id, StringComparison.Ordinal));
+        Assert.Contains(rendered.Artifacts, item => item.ScreenId == "pub-new" && item.Path.Contains(target.Id, StringComparison.Ordinal));
+        Assert.Equal(0, services.Designs.Approve(new DesignReviewRequest(
+            repository.Path, target.Id, "product-owner", "The reused state and new state are approved together.")).ExitCode);
+
+        var approvedTargetDesign = File.ReadAllText(targetDesignPath);
+        File.WriteAllText(targetDesignPath, approvedTargetDesign.Replace(
+            "\n## PNG manifest", "\n| malformed |\n\n## PNG manifest", StringComparison.Ordinal));
+        var malformed = services.Designs.Validate(repository.Path, target.Id);
+        Assert.Equal(2, malformed.ExitCode);
+        Assert.Contains(malformed.Diagnostics, item => item.Contains("malformed row", StringComparison.Ordinal));
+        File.WriteAllText(targetDesignPath, approvedTargetDesign);
+
+        var sourcePng = services.Designs.Status(repository.Path, source.Id).Artifacts.Single().Path;
+        File.AppendAllText(Path.Combine(repository.Path, sourcePng.Replace('/', Path.DirectorySeparatorChar)), "drift");
+        var drifted = services.Designs.Validate(repository.Path, target.Id);
+        Assert.Equal(2, drifted.ExitCode);
+        Assert.Contains(drifted.Diagnostics, item => item.Contains("Reused PNG bytes", StringComparison.Ordinal)
+            || item.Contains("source PNG manifest is stale", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void NodeDesignProcessRunner_FindsSharpInRegisteredWorkspaceParticipant()
     {
         using var repository = TemporaryRepository.Create();
@@ -1745,6 +1805,7 @@ status: Draft
         Assert.Equal(0, application.Invoke(["design", "templates", "--help"]));
         Assert.Equal(0, application.Invoke(["design", "scaffold", "--help"]));
         Assert.Equal(0, application.Invoke(["design", "wireframe-validate", "--help"]));
+        Assert.Equal(0, application.Invoke(["design", "reuse", "--help"]));
         Assert.Equal(0, application.Invoke(["design", "render", "--help"]));
         Assert.Equal(0, application.Invoke(["design", "reconcile", "--help"]));
         Assert.Equal(0, application.Invoke(["design", "approve", "--help"]));
@@ -2020,6 +2081,63 @@ status: Draft
                 StringComparison.Ordinal));
     }
 
+    private static void WriteDesignWireframes(string path, string changeId, params (string Id, string Type)[] screens)
+    {
+        var inventory = string.Join(Environment.NewLine, screens.Select(screen =>
+            $"| {screen.Id} | {screen.Type} | {screen.Id} | /{screen.Id.ToLowerInvariant()} | Web | Actor | Direct route | Verify state coverage. |"));
+        var definitions = string.Join(Environment.NewLine + Environment.NewLine, screens.Select(screen => $"""
+### {screen.Id}: {screen.Id}
+
+#### Description
+
+The governed screen presents its documented state without disclosing private data.
+
+#### Actions and paths
+
+| Action ID | Label/control | Available when | User action | Result/side effect | Destination path | Destination screen | Failure/denied behavior |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| OPEN-{screen.Id} | Screen | Always | Open | No mutation | /{screen.Id.ToLowerInvariant()} | {screen.Id} | Show a recoverable unavailable state. |
+
+#### States
+
+- Primary, loading, empty, unavailable, responsive, and keyboard-focus states are covered.
+"""));
+        File.WriteAllText(path, $"""
+---
+title: Design reuse test wireframes
+type: textual-wireframes
+status: Draft
+change_id: {changeId}
+approval_status: NotReviewed
+authority: human-reviewed
+---
+
+# Textual wireframes
+
+## Screen inventory
+
+| Screen ID | Frontend type | Name | Route/path | Platform | Actors/access | Entry points | Purpose |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+{inventory}
+
+## Screen definitions
+
+{definitions}
+
+## Journey and requirement coverage
+
+| Requirement/exclusion | Screen IDs | Action IDs | States | Notes |
+| --- | --- | --- | --- | --- |
+| Governed coverage | {string.Join(", ", screens.Select(screen => screen.Id))} | {string.Join(", ", screens.Select(screen => $"OPEN-{screen.Id}"))} | All required states | Covered. |
+
+## Approval decision
+
+| Decision | Reviewer | Date | Wireframe SHA-256 | Rationale |
+| --- | --- | --- | --- | --- |
+| Not reviewed | Pending | Pending | Pending | Pending |
+""");
+    }
+
     private sealed record Services(
         ChangeDossierStore Changes,
         DecisionService Decisions,
@@ -2082,11 +2200,19 @@ status: Draft
             {
                 // The lifecycle test remains deterministic on hosts without Node; production render reports its absence.
             }
-            var png = new byte[24];
-            new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }.CopyTo(png, 0);
-            WriteBigEndian(png, 16, 1600);
-            WriteBigEndian(png, 20, 1000);
-            File.WriteAllBytes(Path.Combine(Path.GetDirectoryName(rendererPath)!, "orders-list--primary--desktop.png"), png);
+            var files = System.Text.RegularExpressions.Regex.Matches(
+                    File.ReadAllText(rendererPath), "\\\"file\\\":\\s*\\\"(?<file>[^\\\"]+\\.png)\\\"")
+                .Select(match => match.Groups["file"].Value)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            foreach (var file in files)
+            {
+                var png = new byte[24];
+                new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }.CopyTo(png, 0);
+                WriteBigEndian(png, 16, 1600);
+                WriteBigEndian(png, 20, 1000);
+                File.WriteAllBytes(Path.Combine(Path.GetDirectoryName(rendererPath)!, file), png);
+            }
             return new(0, "Runtime node=v22.0.0 sharp=0.34.0 libvips=8.16.0", string.Empty);
         }
 

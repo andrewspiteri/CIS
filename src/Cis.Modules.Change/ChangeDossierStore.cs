@@ -670,6 +670,14 @@ design revision.
 - [ ] Relevant workflow and lifecycle states
 - [ ] Accessibility intent
 
+## Reused approved PNGs
+
+These exact PNGs remain owned by their approved source change. CIS verifies the source
+approval digests and current file hashes before rendering or approving this pack.
+
+| Target screen ID | Frontend type | Source change | Source screen ID | State | Viewport | Path | Compatibility | Dimensions | SHA-256 | Source wireframe approval SHA-256 | Source wireframe content SHA-256 | Source renderer SHA-256 | Source manifest SHA-256 | Reason |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+
 ## PNG manifest
 
 | Screen ID | Frontend type | State | Viewport | Path | Dimensions | SHA-256 | Render validation | Status |

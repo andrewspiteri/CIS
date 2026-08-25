@@ -39,6 +39,14 @@ public sealed record DesignScaffoldRequest(
     IReadOnlyList<string> Components,
     bool Force = false);
 
+public sealed record DesignReuseRequest(
+    string RepositoryPath,
+    string ChangeId,
+    string SourceChangeId,
+    string SourceScreenId,
+    string TargetScreenId,
+    string Rationale);
+
 public sealed record DesignReviewRequest(
     string RepositoryPath,
     string ChangeId,
@@ -46,3 +54,20 @@ public sealed record DesignReviewRequest(
     string Rationale);
 
 internal sealed record WireframeAction(string Id, string DestinationPath, string DestinationScreen);
+
+internal sealed record DesignReuseRecord(
+    string TargetScreenId,
+    string FrontendType,
+    string SourceChangeId,
+    string SourceScreenId,
+    string State,
+    string Viewport,
+    string Path,
+    int Width,
+    int Height,
+    string Sha256,
+    string SourceWireframeSha256,
+    string SourceWireframeContentSha256,
+    string SourceRendererSha256,
+    string SourceManifestSha256,
+    string Rationale);

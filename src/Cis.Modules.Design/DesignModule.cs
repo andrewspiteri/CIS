@@ -28,6 +28,7 @@ public sealed class DesignModule : ICisModule
         var service = services.GetRequiredService<DesignService>();
         var design = new Command(Name, Description);
         design.Subcommands.Add(TemplatesCommand(service));
+        design.Subcommands.Add(ReuseCommand(service));
         design.Subcommands.Add(ScaffoldCommand(service));
         design.Subcommands.Add(Simple("wireframe-validate", "Validate textual screen behavior, classification, states, actions, paths, and coverage before human review.", service.ValidateWireframes));
         design.Subcommands.Add(Review("wireframe-approve", "Optionally approve textual screen behavior separately; the default design approval records both exact digests.", service.ApproveWireframes));
@@ -39,6 +40,38 @@ public sealed class DesignModule : ICisModule
         design.Subcommands.Add(Review("reject", "Reject the design, preserve hashes/rationale, remove rejected PNGs, and keep work paused.", service.Reject));
         design.Subcommands.Add(Simple("status", "Show the current design gate, approval, renderer, and artifact state.", service.Status));
         commands.Add(design);
+    }
+
+    private static Command ReuseCommand(DesignService service)
+    {
+        var command = new Command("reuse", "Carry exact PNGs from an approved design into a new target screen with verified provenance.");
+        var id = new Argument<string>("change-id");
+        var sourceChange = new Option<string>("--source-change") { Required = true, Description = "Approved source change ID." };
+        var sourceScreen = new Option<string>("--source-screen") { Required = true, Description = "Source PNG manifest screen ID." };
+        var targetScreen = new Option<string>("--target-screen") { Required = true, Description = "Target wireframe screen ID satisfied by the reused artifacts." };
+        var reason = new Option<string>("--reason") { Required = true, Description = "Why the approved visual remains compatible with the target screen." };
+        var repo = Repo();
+        var format = Format();
+        command.Arguments.Add(id);
+        command.Options.Add(sourceChange);
+        command.Options.Add(sourceScreen);
+        command.Options.Add(targetScreen);
+        command.Options.Add(reason);
+        command.Options.Add(repo);
+        command.Options.Add(format);
+        command.SetAction(parseResult =>
+        {
+            var result = service.Reuse(new DesignReuseRequest(
+                parseResult.GetValue(repo) ?? Directory.GetCurrentDirectory(),
+                parseResult.GetValue(id) ?? string.Empty,
+                parseResult.GetValue(sourceChange) ?? string.Empty,
+                parseResult.GetValue(sourceScreen) ?? string.Empty,
+                parseResult.GetValue(targetScreen) ?? string.Empty,
+                parseResult.GetValue(reason) ?? string.Empty));
+            Render(result, parseResult.GetValue(format) ?? "human");
+            return result.ExitCode;
+        });
+        return command;
     }
 
     private static Command TemplatesCommand(DesignService service)

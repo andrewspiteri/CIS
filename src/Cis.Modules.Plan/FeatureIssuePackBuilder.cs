@@ -774,15 +774,17 @@ internal static partial class FeatureIssuePackBuilder
             $"{requirement.Surface} {requirement.Text} {requirement.AcceptanceCriteria}")).ToLowerInvariant();
         var frontendSignal = requirements.Any(requirement => Surface(requirement.Surface, "frontend", "full-stack", "mobile", "native"))
             || targetRoles.Values.SelectMany(value => value).Any(IsFrontendRole);
-        var backend = requirements.Any(requirement => Surface(requirement.Surface, "backend", "full-stack", "api", "data", "security", "contract"))
+        var backend = requirements.Any(requirement => Surface(requirement.Surface, "backend", "full-stack", "api", "data", "contract"))
             || targetRoles.Values.SelectMany(value => value).Any(IsBackendRole);
         var data = requirements.Any(IsPositiveDataRequirement);
         var schemaMigration = requirements.Any(ContainsSchemaMigrationSignal);
-        var api = requirements.Any(requirement => Surface(requirement.Surface, "api", "contract")
-            || ContainsApiSignal($" {requirement.Text} {requirement.AcceptanceCriteria}".ToLowerInvariant()));
-        var integration = ContainsIntegrationSignal(requirementSignal);
+        var api = requirements.Any(requirement => Surface(requirement.Surface, "api", "contract", "full-stack")
+            || ContainsApiRequirementSignal(requirement));
+        var integration = requirements.Any(requirement => !Surface(requirement.Surface, "frontend")
+            && ContainsIntegrationSignal($" {requirement.Text} {requirement.AcceptanceCriteria}".ToLowerInvariant()));
         var search = ContainsAny(all, "search", "projection", "retrieval", "indexing", "document type");
-        var lifecycle = requirements.Any(ContainsLifecycleRequirementSignal)
+        var lifecycle = requirements.Any(requirement => !Surface(requirement.Surface, "frontend", "mobile", "native")
+                && ContainsLifecycleRequirementSignal(requirement))
             || HasActiveLifecycleSection(sections);
         var classified = requirements.Select(requirement => Classify(requirement, frontendSignal, backend, title, targets)).ToArray();
         var frontend = classified.Any(requirement => requirement.Frontend);
@@ -792,10 +794,7 @@ internal static partial class FeatureIssuePackBuilder
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(FrontendTypeOrder)
             .ToArray();
-        var publicEndpoints = requirements.Any(requirement =>
-                NormalizeFrontendType(requirement.FrontendType) == "public"
-                && (Surface(requirement.Surface, "backend", "api", "contract", "full-stack")
-                    || ContainsApiSignal($" {requirement.Text} {requirement.AcceptanceCriteria}".ToLowerInvariant())))
+        var publicEndpoints = requirements.Any(IsPublicEndpointRequirement)
             || ContainsAny(requirementSignal, "public application endpoint", "public endpoint", "public api",
                 "unauthenticated endpoint", "without requiring authentication", "without authentication");
         var exclusions = ParseListSection(sections, "non-goal", "out of scope", "exclusion");
@@ -875,15 +874,15 @@ internal static partial class FeatureIssuePackBuilder
         var frontend = Surface(requirement.Surface, "frontend", "full-stack", "mobile", "native")
             || IsFrontendTarget(requirement.Surface ?? string.Empty)
             || ContainsFrontendSignal(requirement.Text);
-        var backend = Surface(requirement.Surface, "backend", "full-stack", "api", "data", "security", "contract")
-            || ContainsAny(requirement.Text.ToLowerInvariant(), "model", "api", "persist", "service", "event", "permission", "search", "audit")
+        var backend = Surface(requirement.Surface, "backend", "full-stack", "api", "data", "contract")
+            || (!frontend && ContainsAny(requirement.Text.ToLowerInvariant(), "model", "api", "persist", "service", "event", "permission", "search", "audit"))
             || (!frontend && featureBackend);
         if (!frontend && !backend)
         {
             frontend = featureFrontend && ContainsAny(requirement.Text.ToLowerInvariant(), "display", "show", "action", "navigate");
         }
-        var contract = Surface(requirement.Surface, "api", "data", "security", "contract", "full-stack")
-            || ContainsAny(requirement.Text.ToLowerInvariant(), "api", "permission", "event", "state", "search", "projection", "data");
+        var contract = Surface(requirement.Surface, "api", "contract", "full-stack")
+            || ContainsApiRequirementSignal(requirement);
         var score = (frontend && backend ? 2 : 0)
             + (requirement.Text.Length > 180 ? 1 : 0)
             + (ContainsAny(requirement.Text.ToLowerInvariant(), "integration", "migration", "security", "permission", "search", "workflow") ? 2 : 0);
@@ -910,10 +909,12 @@ internal static partial class FeatureIssuePackBuilder
 
     private static bool IsPublicEndpointRequirement(FeatureRequirement requirement)
     {
-        var text = requirement.Text.ToLowerInvariant();
-        var explicitEndpoint = ContainsAny(text, "endpoint", " api", "http", "route handler");
+        var text = $" {requirement.Text} {requirement.AcceptanceCriteria}".ToLowerInvariant();
+        var explicitEndpoint = Regex.IsMatch(text,
+            @"(?i)\b(?:endpoints?|apis?|route\s+handlers?|http)\b|\b(?:get|post|put|patch|delete)\s+/",
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
         return requirement.FrontendType == "public"
-            && (requirement.HasContract || Surface(requirement.Surface, "api", "contract", "full-stack") || explicitEndpoint);
+            && (Surface(requirement.Surface, "backend", "api", "contract", "full-stack") || explicitEndpoint);
     }
 
     private static string? NormalizeFrontendType(string? value)
@@ -1038,7 +1039,7 @@ internal static partial class FeatureIssuePackBuilder
             "integration" => ContainsIntegrationSignal(text),
             "infrastructure" => Surface(requirement.Surface, "delivery") && ContainsAnyTerm(text,
                 "configuration", "deployment", "runtime", "compose", "environment"),
-            "observability" => ContainsAny(text, "logging", " log", "metric", "trace", "telemetry", "diagnostic", "alert", "dashboard", "runbook", "dependency health"),
+            "observability" => ContainsObservabilityRequirementSignal(requirement),
             "lifecycle" => !requirement.Frontend
                 && (string.IsNullOrWhiteSpace(requirement.Surface)
                     || Surface(requirement.Surface, "data", "backend", "full-stack"))
@@ -1059,17 +1060,45 @@ internal static partial class FeatureIssuePackBuilder
                || ContainsAny(withoutCredentialNames, " get /", " post /", " put /", " patch /", " delete /");
     }
 
+    private static bool ContainsApiRequirementSignal(FeatureRequirement requirement)
+    {
+        var text = $" {requirement.Text} {requirement.AcceptanceCriteria}".ToLowerInvariant();
+        if (!Surface(requirement.Surface, "frontend")) return ContainsApiSignal(text);
+        return Regex.IsMatch(text,
+            @"(?i)\b(?:endpoints?|apis?|openapi|route\s+handlers?|http)\b|\b(?:get|post|put|patch|delete)\s+/",
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+    }
+
     private static bool ContainsIntegrationSignal(string text)
         => Regex.IsMatch(text,
                @"(?i)\b(?:integrat(?:e|es|ed|ing|ion)|cross-module|handoff)\b",
                RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
            || ContainsAny(text, "external system", "supertokens", "managed core", "google");
 
+    private static bool ContainsObservabilityRequirementSignal(FeatureRequirement requirement)
+    {
+        if (Surface(requirement.Surface, "observability")) return true;
+        var text = $" {requirement.Text} {requirement.AcceptanceCriteria}".ToLowerInvariant();
+        text = Regex.Replace(text,
+            @"(?i)\b(?:never|not|without|exclude(?:s|d)?|omit(?:s|ted)?)\b[^.;]{0,100}\b(?:logs?|metrics?|traces?|telemetry|diagnostics?)\b",
+            string.Empty, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        if (Surface(requirement.Surface, "delivery")
+            && ContainsAnyTerm(text, "logging", "log", "logs", "metric", "metrics", "trace", "traces",
+                "telemetry", "diagnostic", "diagnostics", "alert", "alerts", "dashboard", "dashboards", "runbook", "runbooks"))
+            return true;
+        return Regex.IsMatch(text,
+            @"(?i)\b(?:emit|record|provide|instrument|monitor|measure|alert|log|trace|diagnose|project|aggregate)(?:s|ed|ing)?\b[^.;]{0,100}\b(?:logs?|metrics?|traces?|telemetry|diagnostics?|alerts?|dashboards?|runbooks?)\b|\b(?:logs?|metrics?|traces?|telemetry|diagnostics?|alerts?|dashboards?|runbooks?)\b[^.;]{0,100}\b(?:emit|record|provide|instrument|monitor|measure|alert|log|trace|diagnose|project|aggregate)(?:s|ed|ing)?\b",
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+    }
+
     private static bool IsPositiveDataRequirement(FeatureRequirement requirement)
     {
         if (Surface(requirement.Surface, "data")) return true;
         var text = $" {requirement.Text} {requirement.AcceptanceCriteria}".ToLowerInvariant();
         if (ContainsAny(text, "no repository", "no database", "never accesses a repository", "never accesses a database"))
+            return false;
+        if (Surface(requirement.Surface, "frontend")
+            && !ContainsAny(text, "database", "repository", "persist", "stored", "storage"))
             return false;
         return Regex.IsMatch(text,
             @"(?i)\b(?:persist|persists|persisted|store|stores|stored|write|writes|lookup|resolve|resolves)\b[^.]{0,100}\b(?:actor|session|record|model|database|repository|hash)\b|\b(?:actor|session|record|model|database|repository|hash)\b[^.]{0,100}\b(?:persist|persists|persisted|store|stores|stored|write|writes|lookup|resolve|resolves)\b",
@@ -1116,10 +1145,16 @@ internal static partial class FeatureIssuePackBuilder
             .Where(section => section.Key.Contains("lifecycle", StringComparison.OrdinalIgnoreCase)
                 || section.Key.Contains("carry-forward", StringComparison.OrdinalIgnoreCase)
                 || section.Key.Contains("conversion", StringComparison.OrdinalIgnoreCase))
-            .Select(section => section.Value.Trim())
+            .Select(section => Normalize(section.Value).Split('\n')
+                .Where(line => !ContainsAny(line.ToLowerInvariant(),
+                    "design", "wireframe", "renderer", "png", "manifest", "re-import", "regeneration",
+                    "approval evidence", "test-case", "test case", "automation mapping"))
+                .Aggregate(new StringBuilder(), (builder, line) => builder.AppendLine(line)).ToString().Trim())
             .Any(value => value.Length > 0
                 && !Regex.IsMatch(value, @"^(?:not applicable|n/?a|none)\b",
-                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)));
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
+                && ContainsLifecycleRequirementSignal(new FeatureRequirement(
+                    "SECTION", value, value, null, false, false, false, "medium", null)));
 
     private static IReadOnlyList<string> ResolveTargets(FeatureSpec spec, string category)
     {

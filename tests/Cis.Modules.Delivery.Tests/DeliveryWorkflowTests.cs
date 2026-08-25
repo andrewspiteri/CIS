@@ -664,6 +664,70 @@ unauthenticated join route belongs to another feature and is not included here.
     }
 
     [Fact]
+    public void PlanImportSpec_KeepsFrontendStateCoverageOutOfFullStackCapabilities()
+    {
+        using var repository = TemporaryRepository.Create();
+        var services = CreateServices();
+        var change = Assert.IsType<ChangeDossier>(services.Changes.Create(new ChangeCreateRequest(
+            repository.Path, "Application state coverage", "Public and customer UI states are consistent.",
+            [new ChangeRoot("orders-api", "component")])).Change);
+        var analysis = services.Impacts.Analyse(new ImpactAnalyseRequest(repository.Path, change.Id, [], 2, 200, false));
+        foreach (var finding in analysis.Findings)
+            services.Impacts.Disposition(repository.Path, change.Id, finding.Id, "accepted", "Reviewed web-only scope.");
+        DefineAcceptanceCriteria(services.Changes.DossierFile(change, "proposal.md"));
+        repository.Write("docs/cis/specs/application-state-coverage.md", """
+---
+title: Application state coverage
+type: feature-specification
+targets:
+  - todo-web
+---
+
+## Functional requirements
+
+| ID | Surface | Frontend type | Requirement | Acceptance criteria |
+|---|---|---|---|---|
+| STATE-001 | frontend | public | Public routes shall cover startup, entry, Google callback, validation, progress, unavailable, and not-found states. | No public state renders private data, and callback tokens never appear in telemetry. |
+| STATE-002 | frontend | customer | Customer routes shall cover session, list lifecycle, loading, empty, populated, forbidden, stale-write, and recovery states. | Refresh retains only actor-authorized content, and write progress cannot duplicate a mutation. |
+| STATE-003 | security | customer | Hidden resources shall use one non-disclosing unavailable presentation. | A visible resource may explain a disallowed action without exposing owner-only controls. |
+| STATE-004 | delivery | not-applicable | State coverage shall be traceable through manual cases and automated tests. | Public and customer browser journeys, compact layouts, and error privacy pass. |
+
+## Non-goals and explicit exclusions
+
+No new API, database migration, application service, infrastructure service, event,
+search index, or telemetry backend is expected.
+
+## Lifecycle, conversion, and carry-forward
+
+Existing approved state designs are carried forward by provenance. Re-import preserves
+approval evidence, rejected revision hashes and history, renderer hashes, test identities,
+and automation mappings.
+""");
+
+        var imported = services.Plans.ImportSpec(new FeatureSpecImportRequest(
+            repository.Path, change.Id, "docs/cis/specs/application-state-coverage.md"));
+
+        Assert.True(imported.ExitCode == 0, string.Join(Environment.NewLine, imported.Errors));
+        Assert.True(imported.Source!.FrontendChanges);
+        Assert.False(imported.Source.PublicEndpoints);
+        Assert.DoesNotContain(imported.WorkItems, item => item.Category is
+            "data" or "database-migration" or "contract" or "backend" or "integration" or
+            "infrastructure" or "observability" or "lifecycle" or "rollout");
+        Assert.Contains(imported.WorkItems, item => item.Category == "security");
+        foreach (var frontendType in new[] { "public", "customer" })
+        {
+            Assert.Single(imported.WorkItems, item => item.Category == "wireframe" && item.FrontendType == frontendType);
+            Assert.Single(imported.WorkItems, item => item.Category == "design" && item.FrontendType == frontendType);
+            Assert.Single(imported.WorkItems, item => item.Category == "frontend" && item.FrontendType == frontendType);
+        }
+        Assert.DoesNotContain(imported.WorkItems, item =>
+            item.AcceptanceCriteria.Contains("PUBLIC-ENDPOINT-CACHE", StringComparison.Ordinal));
+        var security = Assert.Single(imported.WorkItems, item => item.Category == "security");
+        Assert.Contains("STATE-003", security.RequirementIds);
+        Assert.True(imported.Validation!.Valid);
+    }
+
+    [Fact]
     public void DesignApproval_CombinesValidWireframesAndRenderedPackWhileReusingTemplates()
     {
         using var repository = TemporaryRepository.Create();

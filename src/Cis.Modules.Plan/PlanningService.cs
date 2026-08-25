@@ -102,10 +102,6 @@ public sealed class PlanningService
 
     public PlanResult ImportSpec(FeatureSpecImportRequest request)
     {
-        var readinessErrors = EvaluateReadiness(request.RepositoryPath);
-        if (readinessErrors.Count > 0)
-            return Error(request.ChangeId, readinessErrors.ToArray());
-
         var change = _changes.Read(request.RepositoryPath, request.ChangeId);
         if (change is null)
         {
@@ -114,6 +110,11 @@ public sealed class PlanningService
 
         var existing = ReadPlan(change);
         var approvedPlan = string.Equals(existing.Status, "Approved", StringComparison.OrdinalIgnoreCase);
+        var derivedOnlyRefresh = approvedPlan && IsExactImportedSource(request, existing.Source);
+        var readinessErrors = EvaluateReadiness(request.RepositoryPath,
+            derivedOnlyRefresh ? "technical-intent" : null);
+        if (readinessErrors.Count > 0)
+            return Error(request.ChangeId, readinessErrors.ToArray());
 
         var impact = _impacts.ReadImpact(change);
         var completeness = ImpactAnalysisService.CalculateCompleteness(impact.Findings, impact.Truncated);
@@ -2178,10 +2179,32 @@ public sealed class PlanningService
     private static string NormalizePath(string value)
         => value.Replace('\\', '/');
 
-    private IReadOnlyList<string> EvaluateReadiness(string repositoryPath)
+    private static bool IsExactImportedSource(FeatureSpecImportRequest request, PlanSource? source)
+    {
+        if (source is null || string.IsNullOrWhiteSpace(request.FeatureSpecPath)
+            || Path.IsPathRooted(request.FeatureSpecPath)) return false;
+
+        var repository = Path.GetFullPath(request.RepositoryPath);
+        var absolute = Path.GetFullPath(Path.Combine(repository,
+            request.FeatureSpecPath.Replace('/', Path.DirectorySeparatorChar)));
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        if (!absolute.StartsWith(repository + Path.DirectorySeparatorChar, comparison)
+            || !File.Exists(absolute)) return false;
+
+        var relative = Path.GetRelativePath(repository, absolute).Replace('\\', '/');
+        if (!string.Equals(relative, source.Path, comparison)) return false;
+        var content = File.ReadAllText(absolute);
+        var digest = "sha256:" + Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes(content))).ToLowerInvariant();
+        return string.Equals(digest, source.Sha256, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private IReadOnlyList<string> EvaluateReadiness(string repositoryPath, string? ignoredCheck = null)
         => _readinessChecks
             .Select(check => check.Evaluate(repositoryPath))
             .Where(result => result.Applicable && !result.Ready)
+            .Where(result => ignoredCheck is null
+                || !string.Equals(result.Check, ignoredCheck, StringComparison.OrdinalIgnoreCase))
             .SelectMany(result => result.Errors.Select(error => $"[{result.Check}] {error}"))
             .Distinct(StringComparer.Ordinal)
             .ToArray();

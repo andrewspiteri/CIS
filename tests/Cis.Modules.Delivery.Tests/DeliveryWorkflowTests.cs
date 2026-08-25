@@ -522,6 +522,54 @@ describe('order review', () => {
     }
 
     [Fact]
+    public void PlanImportSpec_AllowsApprovedDerivedAutomationRefreshWhenTechnicalIntentBecomesStale()
+    {
+        using var repository = TemporaryRepository.Create();
+        var readiness = new ToggleReadinessCheck();
+        var services = CreateServices(readinessChecks: [readiness]);
+        var change = Assert.IsType<ChangeDossier>(services.Changes.Create(new ChangeCreateRequest(
+            repository.Path, "Approved automation refresh", "The approved outcome gains traceable tests.",
+            [new ChangeRoot("orders-api", "component")])).Change);
+        var analysis = services.Impacts.Analyse(new ImpactAnalyseRequest(repository.Path, change.Id, [], 2, 200, false));
+        foreach (var finding in analysis.Findings)
+            services.Impacts.Disposition(repository.Path, change.Id, finding.Id, "accepted", "Reviewed scope.");
+        DefineAcceptanceCriteria(services.Changes.DossierFile(change, "proposal.md"));
+        const string featurePath = "docs/cis/specs/approved-refresh-feature-spec.md";
+        repository.Write(featurePath, """
+---
+title: Approved refresh
+type: feature-specification
+status: Draft
+---
+
+## Functional requirements
+
+| ID | Surface | Requirement | Acceptance criteria |
+| --- | --- | --- | --- |
+| REFRESH-001 | backend | An approved outcome has traceable automation. | The stable test identity resolves to an automated test source. |
+""");
+
+        var imported = services.Plans.ImportSpec(new FeatureSpecImportRequest(repository.Path, change.Id, featurePath));
+        Assert.Equal(0, imported.ExitCode);
+        Assert.Equal("approved", services.Plans.Approve(repository.Path, change.Id).Status);
+
+        readiness.Ready = false;
+        repository.Write("tests/approved-refresh.test.ts",
+            "test('TC-REFRESH-001-001 records the approved outcome', () => {});");
+        var refreshed = services.Plans.ImportSpec(new FeatureSpecImportRequest(repository.Path, change.Id, featurePath));
+
+        Assert.Equal(0, refreshed.ExitCode);
+        Assert.Equal("Approved", refreshed.PlanStatus);
+        Assert.Contains("automated_test_case_count: 1",
+            File.ReadAllText(services.Changes.DossierFile(change, "test-cases.md")), StringComparison.Ordinal);
+
+        repository.Write(featurePath, File.ReadAllText(Path.Combine(repository.Path, featurePath)) + "\nRevised scope.\n");
+        var revised = services.Plans.ImportSpec(new FeatureSpecImportRequest(repository.Path, change.Id, featurePath));
+        Assert.NotEqual(0, revised.ExitCode);
+        Assert.Contains(revised.Errors, error => error.Contains("technical-intent", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void PlanImportSpec_DecomposesUiWorkByPublicCustomerAndBackofficeFrontendType()
     {
         using var repository = TemporaryRepository.Create();
@@ -2004,7 +2052,8 @@ status: Draft
     private static Services CreateServices(
         IDesignProcessRunner? designRunner = null,
         TaskTypeRegistry? taskTypes = null,
-        IEnumerable<ICisFeatureApprovalAuthority>? featureAuthorities = null)
+        IEnumerable<ICisFeatureApprovalAuthority>? featureAuthorities = null,
+        IEnumerable<IChangeReadinessCheck>? readinessChecks = null)
     {
         var resolver = new CisRepositoryContextResolver();
         var reader = new DocumentationCatalogReader();
@@ -2020,7 +2069,7 @@ status: Draft
             () => DateTimeOffset.Parse("2026-08-09T10:00:00Z"));
         var plans = new PlanningService(changes, impacts, decisions, resolver,
             taskTypes: taskTypes, toolUsage: usage, capabilities: capabilityStore,
-            featureAuthorities: featureAuthorities);
+            featureAuthorities: featureAuthorities, readinessChecks: readinessChecks);
         var designs = new DesignService(changes, new DesignTemplateCatalog(), featureAuthorities ?? [],
             () => DateTimeOffset.Parse("2026-08-09T10:00:00Z"), designRunner);
         return new Services(changes, decisions, impacts, plans, designs, usage, graph, docsValidation);
@@ -2153,6 +2202,15 @@ authority: human-reviewed
         public ChangeReadinessResult Evaluate(string repositoryPath)
             => new("technical-intent", Applicable: true, Ready: false,
                 ["An Active, current workspace technical intent is required."]);
+    }
+
+    private sealed class ToggleReadinessCheck : IChangeReadinessCheck
+    {
+        public bool Ready { get; set; } = true;
+
+        public ChangeReadinessResult Evaluate(string repositoryPath)
+            => new("technical-intent", Applicable: true, Ready,
+                Ready ? [] : ["An Active, current workspace technical intent is required."]);
     }
 
     private sealed class StaticFeatureApprovalAuthority(string featurePath) : ICisFeatureApprovalAuthority

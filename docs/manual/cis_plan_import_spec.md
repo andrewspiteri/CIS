@@ -137,6 +137,10 @@ cases remain `Pending`. Vendor and generated trees such as `node_modules`, build
 coverage, and `.cis/local/` are excluded. Rerun the unchanged import after adding or
 moving tests to refresh traceability. This derived-only refresh preserves an existing
 plan approval when the canonical feature digest is unchanged.
+Because implementation normally makes the workspace baseline newer than its technical-intent
+snapshot, this exact approved same-path/same-digest refresh may update automation references
+while technical intent is stale. New, moved, or revised feature specifications remain blocked
+until technical intent is current.
 
 Each item records its stable task-type key/version and is classified `low`, `medium`,
 or `high`. A high item is stored only as a `decomposed` parent and must have at least

@@ -313,6 +313,19 @@ components:
   confidence: high
   evidence:
   - src/Cis.Modules.TechnicalIntent/Cis.Modules.TechnicalIntent.csproj
+- id: cis-modules-testing
+  root: src/Cis.Modules.Testing
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - shared-library
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - src/Cis.Modules.Testing/Cis.Modules.Testing.csproj
 - id: cis-modules-tracker
   root: src/Cis.Modules.Tracker
   languages:
@@ -560,6 +573,20 @@ components:
   evidence:
   - tests/Cis.Modules.TechnicalIntent.Tests/Cis.Modules.TechnicalIntent.Tests.csproj
   - .NET test SDK markers
+- id: cis-modules-testing-tests
+  root: tests/Cis.Modules.Testing.Tests
+  languages:
+  - csharp
+  frameworks:
+  - dotnet-test
+  roles:
+  - test-automation
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - tests/Cis.Modules.Testing.Tests/Cis.Modules.Testing.Tests.csproj
+  - .NET test SDK markers
 - id: cis-modules-tracker-tests
   root: tests/Cis.Modules.Tracker.Tests
   languages:
@@ -607,7 +634,7 @@ managed_artifacts:
   path: .github/instructions/cis-change-delivery.instructions.md
   definition: guidance.instruction.change-delivery
   template_version: 1
-  applied_hash: sha256:744f5fa26a793f3faf915304c0beeb320f1616d57516d548e6e450d4caaf7fb9
+  applied_hash: sha256:00d6cbb6f76f8f050030024a6e2e27e1fd26ff39b4242947f7a953889207d990
   ownership: human
 - id: guidance.instruction.delivery-execution
   path: .github/instructions/cis-delivery-execution.instructions.md
@@ -849,6 +876,18 @@ managed_artifacts:
   template_version: 1
   applied_hash: sha256:28a3b945bf6ce498c52ed7cbca8c30eaef024100a04a5de31619fd1135f478f0
   ownership: managed
+- id: guidance.instruction.csharp.cis-modules-testing
+  path: .github/instructions/cis-modules-testing-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:84e45b530957faee0cae87b88b9ad404ef23aa22e87746f4467a8982ad3c90d5
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-testing-tests
+  path: .github/instructions/cis-modules-testing-tests-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:2f8576bc0aca50dd01b363373c7a1b4dd54f2a6feb872b1673ee0318fb536158
+  ownership: managed
 - id: guidance.instruction.csharp.cis-modules-tracker
   path: .github/instructions/cis-modules-tracker-csharp.instructions.md
   definition: guidance.instruction.csharp
@@ -937,8 +976,8 @@ managed_artifacts:
   path: .github/skills/cis-bounded-planning/SKILL.md
   definition: guidance.skill.bounded-planning
   template_version: 1
-  applied_hash: sha256:59fe9ff1225bafeec7447cce063380dad824b96a1107d0fd64e4154416615185
-  ownership: managed
+  applied_hash: sha256:43dde2f6840fd08bed6cedc12aa44e8746fe2cc02afc034fc681ca9597d59085
+  ownership: human
 - id: guidance.skill.change-dossier
   path: .github/skills/cis-change-dossier/SKILL.md
   definition: guidance.skill.change-dossier
@@ -973,7 +1012,7 @@ managed_artifacts:
   path: .github/skills/cis-design-review/SKILL.md
   definition: guidance.skill.design-review
   template_version: 1
-  applied_hash: sha256:8f8a033adff98183ef42f181cf9f662e0c5e59d04d756e9f19a9928ac697475b
+  applied_hash: sha256:446d126ca12d268089ef882faa05908feedb3d111e975f5114b96cd5ab47da42
   ownership: human
 - id: guidance.skill.documentation
   path: .github/skills/cis-documentation/SKILL.md
@@ -993,6 +1032,12 @@ managed_artifacts:
   template_version: 1
   applied_hash: sha256:4757f78be485faf3bd67296ccb3a1fd00b4a97b65fe66e8363174304040a2c61
   ownership: human
+- id: guidance.skill.feature-specification-governance
+  path: .github/skills/cis-feature-specification-governance/SKILL.md
+  definition: guidance.skill.feature-specification-governance
+  template_version: 1
+  applied_hash: sha256:de4beae08ed13c846310206fe7b19fd40937855ba24252dad9eb8bedc3c440e4
+  ownership: managed
 - id: guidance.skill.feedback-loop
   path: .github/skills/cis-feedback-loop/SKILL.md
   definition: guidance.skill.feedback-loop
@@ -1081,8 +1126,8 @@ managed_artifacts:
   path: .github/skills/cis-verification/SKILL.md
   definition: guidance.skill.verification
   template_version: 1
-  applied_hash: sha256:a88e852e20310f29a376790fed5ae6ad54a79265b66355bd8cbde265349e610a
-  ownership: managed
+  applied_hash: sha256:61bdaa5bdbf08ca4860a11350192561d705e0f875a0066bd35ab85096f877f62
+  ownership: human
 - id: guidance.skill.write-adr
   path: .github/skills/cis-write-adr/SKILL.md
   definition: guidance.skill.write-adr
@@ -1161,6 +1206,12 @@ managed_artifacts:
   template_version: 1
   applied_hash: sha256:6bcf0e706909ea20ed92242fe28f606983c1401f9833e36006b634c4284e7248
   ownership: human
+- id: reference.test-suite-profile
+  path: docs/references/test-suite-profile.md
+  definition: reference.test-suite-profile
+  template_version: 1
+  applied_hash: sha256:54f96aaf0c63a9070975e3fdb54bd06f12c162a539fe28b368a6304d60d37f39
+  ownership: human
 - id: reference.traceability-matrix.reference
   path: docs/references/traceability-matrix.md
   definition: reference.traceability-matrix
@@ -1183,7 +1234,7 @@ managed_artifacts:
   path: docs/specs/delivery-and-assurance-spec.md
   definition: specification.delivery-and-assurance
   template_version: 1
-  applied_hash: sha256:27bd6870ef1f3c7f5685b4578285b389274db76630c8421466974413f2849275
+  applied_hash: sha256:e095125543bacb56d1f0855043a99a298166602c19602abec71357ae6699f33b
   ownership: human
 - id: specification.design-guidelines
   path: docs/specs/design-guidelines.md
@@ -1213,7 +1264,7 @@ managed_artifacts:
   path: docs/specs/product-intent-spec.md
   definition: specification.product-intent
   template_version: 1
-  applied_hash: sha256:5d824f944d8565a56daddb81e170856b2587bbffa3964f76058bd49826e6c21f
+  applied_hash: sha256:3e17e0ffe658eec960a7f4325700688515556f51edf260637cbc41e04503163c
   ownership: human
 - id: specification.public-endpoint-caching-policy
   path: docs/specs/public-endpoint-caching-policy-spec.md
@@ -1237,13 +1288,13 @@ managed_artifacts:
   path: docs/specs/system-context-spec.md
   definition: specification.system-context
   template_version: 1
-  applied_hash: sha256:529384ef458f15664295dac48dcaca6d45f166a067a59627e38288a6e640930c
+  applied_hash: sha256:397e9c68bc6332e5d404d6bd7155601d35cf933c0130b41b67db4227b363fd05
   ownership: human
 - id: specification.technical-intent
   path: docs/specs/technical-intent-spec.md
   definition: specification.technical-intent
   template_version: 1
-  applied_hash: sha256:7266c69c6595548a4066fe9c04bc5ae49bfad0d4b6b2daee0cc970f028382fec
+  applied_hash: sha256:7986d4775236595ecc54db9a63df47127512e9e8bee28c0bdcb7388a554deed7
   ownership: human
 - id: reference.traceability-matrix.spec
   path: docs/specs/traceability-matrix-spec.md
@@ -1303,5 +1354,5 @@ managed_artifacts:
   path: docs/workflows/standard-delivery.md
   definition: workflow.standard-delivery
   template_version: 1
-  applied_hash: sha256:86c2f527aa26e5d14f3dc88e36f4193eed1ac0af90371e0c0d2362b4367afc6b
+  applied_hash: sha256:1d9e4037fd8c7b9bade4de7a33df90592cd20b6a15d523c64d392b389dda96fe
   ownership: human

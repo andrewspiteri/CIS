@@ -29,6 +29,11 @@ jobs:
       - run: dotnet test ChangeImpactStudio.slnx -c Release --no-build --no-restore
       - run: node --check vscode-extension/extension.js
       - run: node --test vscode-extension/test/*.test.js
+      - shell: pwsh
+        run: |
+          dotnet run --project src/Cis.Host -- docs validate --repo . --strict --format agent
+          dotnet run --project src/Cis.Host -- skills validate --repo . --strict --format agent
+          dotnet run --project src/Cis.Host -- test validate --repo . --strict --format agent
 
   release-smoke:
     needs: verify
@@ -49,4 +54,3 @@ jobs:
         with:
           name: cis-release-smoke
           path: artifacts/release
-

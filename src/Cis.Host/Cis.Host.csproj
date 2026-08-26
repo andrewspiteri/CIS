@@ -38,6 +38,7 @@
     <ProjectReference Include="..\Cis.Modules.Skills\Cis.Modules.Skills.csproj" />
     <ProjectReference Include="..\Cis.Modules.Standards\Cis.Modules.Standards.csproj" />
     <ProjectReference Include="..\Cis.Modules.TechnicalIntent\Cis.Modules.TechnicalIntent.csproj" />
+    <ProjectReference Include="..\Cis.Modules.Testing\Cis.Modules.Testing.csproj" />
     <ProjectReference Include="..\Cis.Modules.Tracker\Cis.Modules.Tracker.csproj" />
     <ProjectReference Include="..\Cis.Modules.Workflow\Cis.Modules.Workflow.csproj" />
     <ProjectReference Include="..\Cis.Modules.Verify\Cis.Modules.Verify.csproj" />

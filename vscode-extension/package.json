@@ -2,7 +2,7 @@
   "name": "change-impact-studio",
   "displayName": "Change Impact Studio",
   "description": "Thin Visual Studio Code client for the CIS CLI and canonical Markdown records.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "andrewspiteri",
   "license": "MIT",
   "engines": { "vscode": "^1.95.0" },

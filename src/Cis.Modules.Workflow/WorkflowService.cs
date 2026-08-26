@@ -7,10 +7,13 @@ using Cis.Abstractions;
 namespace Cis.Modules.Workflow;
 
 public sealed record WorkflowStep(string Id, string Executable, IReadOnlyList<string> Arguments, IReadOnlyList<string> DependsOn,
-    bool ContinueOnFailure, int TimeoutSeconds);
+    bool ContinueOnFailure, int TimeoutSeconds, string WorkingDirectory = ".", IReadOnlyList<string>? TestSuites = null)
+{
+    public IReadOnlyList<string> Suites => TestSuites ?? [];
+}
 public sealed record WorkflowDefinition(string Id, string Path, string Digest, IReadOnlyList<WorkflowStep> Steps);
 public sealed record WorkflowStepState(string Id, string Status, int? ExitCode, string StartedAtUtc, string? CompletedAtUtc,
-    long DurationMilliseconds, string OutputPath, string? Error);
+    long DurationMilliseconds, string OutputPath, string? Error, int Attempt = 1, string FailureKind = "none");
 public sealed record WorkflowRunState(int SchemaVersion, string RunId, string WorkflowId, string WorkflowDigest, string Status,
     string CreatedAtUtc, string UpdatedAtUtc, IReadOnlyList<WorkflowStepState> Steps);
 public sealed record WorkflowResult(string Status, string? RepositoryPath, string? RunId, WorkflowDefinition? Workflow,
@@ -40,7 +43,7 @@ public sealed class WorkflowService
         if (d.Count > 0) return New(context, "invalid", runId, workflow, null, described.Workflows, d, false);
         var runDirectory = Path.Combine(context.RepositoryPath, RunsPath.Replace('/', Path.DirectorySeparatorChar), runId!); Directory.CreateDirectory(runDirectory);
         var statePath = Path.Combine(runDirectory, "state.json"); var now = _clock().ToUniversalTime().ToString("O");
-        var state = File.Exists(statePath) ? ReadState(statePath, d) : new WorkflowRunState(1, runId!, workflow.Id, workflow.Digest, "running", now, now, []);
+        var state = File.Exists(statePath) ? ReadState(statePath, d) : new WorkflowRunState(2, runId!, workflow.Id, workflow.Digest, "running", now, now, []);
         if (state is null || d.Count > 0) return New(context, "invalid-state", runId, workflow, state, described.Workflows, d, false);
         if (state.WorkflowDigest != workflow.Digest) return New(context, "definition-changed", runId, workflow, state, described.Workflows,
             ["ERROR: Workflow changed after this run began; start a new run ID."], false);
@@ -49,8 +52,9 @@ public sealed class WorkflowService
         {
             if (states.TryGetValue(step.Id, out var existing) && existing.Status == "succeeded") continue;
             if (step.DependsOn.Any(dep => !states.TryGetValue(dep, out var dependency) || dependency.Status != "succeeded"))
-            { states[step.Id] = new(step.Id, "blocked", null, now, now, 0, $"{step.Id}.log", "A dependency did not succeed."); continue; }
-            var stepState = Execute(context.RepositoryPath, runDirectory, step); states[step.Id] = stepState; applied = true;
+            { states[step.Id] = new(step.Id, "blocked", null, now, now, 0, $"{step.Id}.log", "A dependency did not succeed.", existing?.Attempt ?? 1, "product"); continue; }
+            var attempt = states.TryGetValue(step.Id, out existing) ? existing.Attempt + 1 : 1;
+            var stepState = Execute(context.RepositoryPath, runDirectory, step, attempt); states[step.Id] = stepState; applied = true;
             state = state with { Status = "running", UpdatedAtUtc = _clock().ToUniversalTime().ToString("O"), Steps = workflow.Steps.Where(x => states.ContainsKey(x.Id)).Select(x => states[x.Id]).ToArray() };
             WriteState(statePath, state);
             if (stepState.Status == "failed" && !step.ContinueOnFailure) break;
@@ -80,20 +84,29 @@ public sealed class WorkflowService
         return New(context, d.Count == 0 ? status : "invalid", runId, null, state, Discover(context, d), d, false);
     }
 
-    private WorkflowStepState Execute(string repository, string runDirectory, WorkflowStep step)
+    private WorkflowStepState Execute(string repository, string runDirectory, WorkflowStep step, int attempt)
     {
-        var started = _clock().ToUniversalTime(); var logName = step.Id + ".log"; var logPath = Path.Combine(runDirectory, logName);
+        var started = _clock().ToUniversalTime(); var logName = attempt == 1 ? step.Id + ".log" : $"{step.Id}.attempt-{attempt}.log"; var logPath = Path.Combine(runDirectory, logName);
         try
         {
-            using var process = new Process { StartInfo = new ProcessStartInfo(step.Executable) { WorkingDirectory = repository, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true } };
+            var workingDirectory = Path.GetFullPath(Path.Combine(repository, step.WorkingDirectory.Replace('/', Path.DirectorySeparatorChar)));
+            var repositoryRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(repository));
+            if (!workingDirectory.Equals(repositoryRoot, StringComparison.OrdinalIgnoreCase)
+                && !workingDirectory.StartsWith(repositoryRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                return State("failed", null, "Working directory escapes the repository.", "missing-prerequisite");
+            if (!Directory.Exists(workingDirectory))
+                return State("failed", null, "Working directory does not exist.", "missing-prerequisite");
+            using var process = new Process { StartInfo = new ProcessStartInfo(step.Executable) { WorkingDirectory = workingDirectory, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true } };
             foreach (var arg in step.Arguments) process.StartInfo.ArgumentList.Add(arg); process.Start();
             var stdout = process.StandardOutput.ReadToEndAsync(); var stderr = process.StandardError.ReadToEndAsync();
-            if (!process.WaitForExit(step.TimeoutSeconds * 1000)) { process.Kill(true); File.WriteAllText(logPath, "Workflow step timed out."); return State("failed", null, "Timed out."); }
-            Task.WaitAll(stdout, stderr); File.WriteAllText(logPath, stdout.Result + stderr.Result);
-            return State(process.ExitCode == 0 ? "succeeded" : "failed", process.ExitCode, process.ExitCode == 0 ? null : $"Exited with {process.ExitCode}.");
+            if (!process.WaitForExit(step.TimeoutSeconds * 1000)) { process.Kill(true); File.WriteAllText(logPath, "Workflow step timed out."); return State("failed", null, "Timed out.", "timeout"); }
+            Task.WaitAll(stdout, stderr); var output = stdout.Result + stderr.Result; File.WriteAllText(logPath, output);
+            return State(process.ExitCode == 0 ? "succeeded" : "failed", process.ExitCode,
+                process.ExitCode == 0 ? null : $"Exited with {process.ExitCode}.",
+                process.ExitCode == 0 ? "none" : ClassifyFailure(output));
         }
-        catch (Exception ex) when (ex is InvalidOperationException or IOException or System.ComponentModel.Win32Exception) { File.WriteAllText(logPath, ex.Message); return State("failed", null, ex.Message); }
-        WorkflowStepState State(string status, int? exit, string? error) { var completed = _clock().ToUniversalTime(); return new(step.Id, status, exit, started.ToString("O"), completed.ToString("O"), (long)(completed - started).TotalMilliseconds, logName, error); }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or System.ComponentModel.Win32Exception) { File.WriteAllText(logPath, ex.Message); return State("failed", null, ex.Message, ex is System.ComponentModel.Win32Exception ? "missing-prerequisite" : "infrastructure"); }
+        WorkflowStepState State(string status, int? exit, string? error, string failureKind) { var completed = _clock().ToUniversalTime(); return new(step.Id, status, exit, started.ToString("O"), completed.ToString("O"), (long)(completed - started).TotalMilliseconds, logName, error, attempt, failureKind); }
     }
 
     private static IReadOnlyList<WorkflowDefinition> Discover(CisRepositoryContext context, List<string> diagnostics)
@@ -105,19 +118,29 @@ public sealed class WorkflowService
     }
     private static WorkflowDefinition Parse(CisRepositoryContext context, string path)
     {
-        var text = File.ReadAllText(path); var steps = new List<WorkflowStep>();
+        var text = File.ReadAllText(path); var steps = new List<WorkflowStep>(); Dictionary<string, int>? columns = null;
         foreach (var line in text.Split('\n'))
         { if (!line.TrimStart().StartsWith('|')) continue; var c = line.Trim().Trim('|').Split('|').Select(x => x.Trim()).ToArray();
-          if (c.Length < 5 || c[0].Equals("Step", StringComparison.OrdinalIgnoreCase) || c.All(x => x.All(ch => ch is '-' or ':' or ' '))) continue;
-          var tokens = Tokenize(c[1]); if (tokens.Count == 0) throw new InvalidOperationException($"Step '{c[0]}' has no command.");
-          steps.Add(new(c[0], tokens[0], tokens.Skip(1).ToArray(), Split(c[2]), c[3].Equals("yes", StringComparison.OrdinalIgnoreCase), int.TryParse(c[4], out var timeout) ? Math.Clamp(timeout, 1, 3600) : 600)); }
+          if (c.Length < 5) continue;
+          if (c[0].Equals("Step", StringComparison.OrdinalIgnoreCase)) { columns = c.Select((value,index)=>(value,index)).ToDictionary(item=>item.value,item=>item.index,StringComparer.OrdinalIgnoreCase); continue; }
+          if (c.All(x => x.All(ch => ch is '-' or ':' or ' '))) continue;
+          columns ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase) { ["Step"]=0,["Command"]=1,["Depends on"]=2,["Continue on failure"]=3,["Timeout seconds"]=4 };
+          string Value(string name, string fallback="") => columns.TryGetValue(name, out var index) && index < c.Length ? c[index] : fallback;
+          var id=Value("Step"); var tokens = Tokenize(Value("Command")); if (tokens.Count == 0) throw new InvalidOperationException($"Step '{id}' has no command.");
+          steps.Add(new(id, tokens[0], tokens.Skip(1).ToArray(), Split(Value("Depends on")), Value("Continue on failure").Equals("yes", StringComparison.OrdinalIgnoreCase), int.TryParse(Value("Timeout seconds"), out var timeout) ? Math.Clamp(timeout, 1, 3600) : 600, Value("Working directory", "."), Split(Value("Test suites")))); }
         return new(Path.GetFileNameWithoutExtension(path), Path.GetRelativePath(context.RepositoryPath, path).Replace(Path.DirectorySeparatorChar, '/'), Sha(text), steps);
     }
     private static IReadOnlyList<string> Tokenize(string value)
     { var result = new List<string>(); var current = new StringBuilder(); var quoted = false; foreach (var ch in value) { if (ch == '"') { quoted = !quoted; continue; } if (char.IsWhiteSpace(ch) && !quoted) { if (current.Length > 0) { result.Add(current.ToString()); current.Clear(); } } else current.Append(ch); } if (quoted) throw new InvalidOperationException("Command contains an unclosed quote."); if (current.Length > 0) result.Add(current.ToString()); return result; }
     private static string[] Split(string value) => value is "" or "-" ? [] : value.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
     private static void Validate(WorkflowDefinition workflow, List<string> d)
-    { if (workflow.Steps.Count == 0) d.Add("ERROR: Workflow has no steps."); var ids = workflow.Steps.Select(x => x.Id).ToHashSet(StringComparer.OrdinalIgnoreCase); if (ids.Count != workflow.Steps.Count) d.Add("ERROR: Workflow step IDs must be unique."); foreach (var step in workflow.Steps) foreach (var dep in step.DependsOn) if (!ids.Contains(dep)) d.Add($"ERROR: Step '{step.Id}' has unknown dependency '{dep}'."); }
+    { if (workflow.Steps.Count == 0) d.Add("ERROR: Workflow has no steps."); var ids = workflow.Steps.Select(x => x.Id).ToHashSet(StringComparer.OrdinalIgnoreCase); if (ids.Count != workflow.Steps.Count) d.Add("ERROR: Workflow step IDs must be unique."); foreach (var step in workflow.Steps) { foreach (var dep in step.DependsOn) if (!ids.Contains(dep)) d.Add($"ERROR: Step '{step.Id}' has unknown dependency '{dep}'."); if (string.IsNullOrWhiteSpace(step.WorkingDirectory)) d.Add($"ERROR: Step '{step.Id}' has no working directory."); } }
+    private static string ClassifyFailure(string output)
+    {
+        if (new[] { "ENOSPC", "out of memory", "ENOMEM", "worker process", "process exited unexpectedly", "docker daemon", "cannot connect to the Docker", "resource temporarily unavailable" }.Any(marker => output.Contains(marker, StringComparison.OrdinalIgnoreCase))) return "infrastructure";
+        if (new[] { "command not found", "is not recognized", "No such file or directory", "SDK not found", "Cannot find module" }.Any(marker => output.Contains(marker, StringComparison.OrdinalIgnoreCase))) return "missing-prerequisite";
+        return "product";
+    }
     private static string? SafeId(string value, List<string> d) { if (string.IsNullOrWhiteSpace(value) || value.Any(ch => !(char.IsLetterOrDigit(ch) || ch is '-' or '_'))) { d.Add("ERROR: Run ID may contain only letters, digits, hyphen, and underscore."); return null; } return value; }
     private static WorkflowRunState? ReadState(string path, List<string> d) { try { return JsonSerializer.Deserialize<WorkflowRunState>(File.ReadAllText(path), JsonOptions) ?? throw new JsonException("empty"); } catch (JsonException ex) { d.Add($"ERROR: Workflow state is invalid: {ex.Message}"); return null; } }
     private static void WriteState(string path, WorkflowRunState state) { var tmp = path + ".tmp"; File.WriteAllText(tmp, JsonSerializer.Serialize(state, JsonOptions)); File.Move(tmp, path, true); }

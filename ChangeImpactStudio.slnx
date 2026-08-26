@@ -26,6 +26,7 @@
     <Project Path="src/Cis.Modules.Skills/Cis.Modules.Skills.csproj" />
     <Project Path="src/Cis.Modules.Standards/Cis.Modules.Standards.csproj" />
     <Project Path="src/Cis.Modules.TechnicalIntent/Cis.Modules.TechnicalIntent.csproj" />
+    <Project Path="src/Cis.Modules.Testing/Cis.Modules.Testing.csproj" />
     <Project Path="src/Cis.Modules.Tracker/Cis.Modules.Tracker.csproj" />
     <Project Path="src/Cis.Modules.Workflow/Cis.Modules.Workflow.csproj" />
     <Project Path="src/Cis.Modules.Verify/Cis.Modules.Verify.csproj" />
@@ -44,6 +45,7 @@
     <Project Path="tests/Cis.Modules.Skills.Tests/Cis.Modules.Skills.Tests.csproj" />
     <Project Path="tests/Cis.Modules.Standards.Tests/Cis.Modules.Standards.Tests.csproj" />
     <Project Path="tests/Cis.Modules.TechnicalIntent.Tests/Cis.Modules.TechnicalIntent.Tests.csproj" />
+    <Project Path="tests/Cis.Modules.Testing.Tests/Cis.Modules.Testing.Tests.csproj" />
     <Project Path="tests/Cis.Modules.Tracker.Tests/Cis.Modules.Tracker.Tests.csproj" />
   </Folder>
 </Solution>

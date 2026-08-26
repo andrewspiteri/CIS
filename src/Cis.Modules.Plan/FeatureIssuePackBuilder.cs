@@ -385,6 +385,19 @@ internal static partial class FeatureIssuePackBuilder
             builder.AppendLine($"- {output}");
         }
 
+        if (item.Category == "verification")
+        {
+            builder.AppendLine();
+            builder.AppendLine("## Structured test-obligation matrix");
+            builder.AppendLine();
+            builder.AppendLine("| Layer / gate | Applicability | Selection evidence | Required completion |");
+            builder.AppendLine("|---|---|---|---|");
+            foreach (var obligation in TestObligations(spec))
+                builder.AppendLine($"| {obligation.Layer} | {obligation.Applicable} | {MarkdownCell(obligation.Evidence)} | {obligation.Completion} |");
+            builder.AppendLine();
+            builder.AppendLine("Every applicable row must be passed, explicitly unavailable, or covered by a bounded human-approved exception. Unavailable is never passed implicitly.");
+        }
+
         builder.AppendLine();
         builder.AppendLine("## Constraints and exclusions");
         builder.AppendLine();
@@ -761,6 +774,29 @@ internal static partial class FeatureIssuePackBuilder
         "verification" => ["Focused and affected automated suites pass.", "Coverage and skipped or unrun checks are recorded."],
         _ => ["Final repository completion and planned-versus-actual checks are recorded."],
     };
+
+    private static IReadOnlyList<TestObligation> TestObligations(FeatureSpec spec)
+    {
+        var signal = spec.SignalText;
+        var security = spec.PublicEndpoints || ContainsAny(signal, "auth", "permission", "security", "owner", "member", "session", "token", "non-disclosure");
+        var integration = spec.Api || spec.Backend || spec.Data || spec.Integration || ContainsAny(signal, "sqlite", "database", "container", "provider");
+        var operational = ContainsAny(signal, "infrastructure", "compose", "terraform", "deployment", "recovery", "backup", "restore", "operational", "observability");
+        var mutation = spec.Api || spec.Backend || spec.Data || security;
+        return
+        [
+            new("unit", "required", "All functional requirements and deterministic decisions", "Reconciled passed execution plus coverage evidence"),
+            new("architecture", spec.Api || spec.Backend || spec.Frontend || security ? "required" : "not-applicable", "Affected component and security boundaries", "Compiler-backed boundary execution"),
+            new("component", spec.Api || spec.Backend ? "required" : "not-applicable", "Transport, middleware, serialization, and local component behavior", "Reconciled passed execution"),
+            new("integration", integration ? "required" : "not-applicable", "Persistence, API, provider, or cross-component boundary", "Real dependency or approved ephemeral-provider execution"),
+            new("business", "required", "Actor-visible requirements and state transitions", "Cucumber/Gherkin or equivalent passed execution"),
+            new("frontend-component", spec.Frontend ? "required" : "not-applicable", $"Frontend types: {string.Join(", ", spec.FrontendTypes.DefaultIfEmpty("none"))}", "Component and accessibility execution"),
+            new("browser", spec.Frontend ? "required" : "not-applicable", "Critical composed frontend journeys", "Zero-retry passed execution with failure artifacts configured"),
+            new("security", security ? "required" : "not-applicable", "Authorization, ownership, identity, cache, and non-disclosure signals", "Negative-principal and boundary execution"),
+            new("operational", operational ? "required" : "not-applicable", "Topology, recovery, deployment, or observability signals", "Named smoke, recovery, or operations execution"),
+            new("coverage", "required", "New or materially changed production code", "At least 95% line coverage or governed narrow exclusions"),
+            new("mutation", mutation ? "required" : "not-applicable", "High-risk lifecycle, security, API, data, actor, or concurrency logic", "No undisposed new survivors and active baseline met"),
+        ];
+    }
 
     private static FeatureParseResult Parse(string repositoryPath, string requestedPath)
     {
@@ -1302,7 +1338,7 @@ internal static partial class FeatureIssuePackBuilder
     private static bool IsPlaceholder(string value) => string.IsNullOrWhiteSpace(value)
         || Regex.IsMatch(value, @"\b(?:TODO|TBD)\b|(?i:\bTO BE COMPLETED\b)",
             RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
-        || value.Contains('<') && value.Contains('>');
+        || Regex.IsMatch(value, @"^\s*<[^<>]+>\s*$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
     private static string[] SplitRow(string line) => line.Trim().Trim('|').Split('|').Select(value => value.Trim()).ToArray();
     private static int Find(string[] values, params string[] expected) => Array.FindIndex(values, value => expected.Contains(value, StringComparer.OrdinalIgnoreCase));
     private static string Normalize(string value) => value.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
@@ -1350,6 +1386,7 @@ internal static partial class FeatureIssuePackBuilder
         string Complexity,
         string? FrontendType);
     private sealed record TaskInstance(Cis.Abstractions.CisTaskTypeDefinition Definition, string? FrontendType);
+    private sealed record TestObligation(string Layer, string Applicable, string Evidence, string Completion);
     private sealed record FeatureParseResult(FeatureSpec? Spec, IReadOnlyList<string> Errors);
     private sealed record ManualTestCase(
         string Id,

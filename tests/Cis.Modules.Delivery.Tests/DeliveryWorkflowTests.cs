@@ -1283,7 +1283,8 @@ status: Draft
             "docs/cis/specs/incomplete-feature-spec.md",
             "---\ntitle: Friends Todo storage\ntype: feature-specification\n---\n\n## Functional requirements\n\n" +
             "| ID | Requirement | Acceptance criteria |\n| --- | --- | --- |\n" +
-            "| FEAT-FR-001 | `todo-api` shall persist Friends Todo lists in SQLite. | Restart preserves Friends Todo records without PostgreSQL. |\n");
+            "| FEAT-FR-001 | `todo-api` shall persist Friends Todo lists in SQLite. | Restart preserves Friends Todo records without PostgreSQL. |\n" +
+            "| FEAT-FR-002 | `/join#token=<token>` shall open the request-access shell. | The token fragment is removed before authenticated submission. |\n");
 
         var todoProduct = services.Plans.ImportSpec(new FeatureSpecImportRequest(
             repository.Path,

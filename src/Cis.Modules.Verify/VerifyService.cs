@@ -6,6 +6,7 @@ using System.Text.RegularExpressions;
 using Cis.Abstractions;
 using Cis.Modules.Change;
 using Cis.Modules.Plan;
+using Cis.Modules.Testing;
 
 namespace Cis.Modules.Verify;
 
@@ -29,19 +30,21 @@ public sealed class VerifyService
     private readonly ChangeDossierStore _changes;
     private readonly ICisWorkspaceRegistry? _workspaceRegistry;
     private readonly PlanningService? _planning;
+    private readonly TestingService? _testing;
     private readonly IReadOnlyList<ICisFeatureApprovalAuthority> _featureAuthorities;
     private readonly Func<DateTimeOffset> _clock;
 
     public VerifyService(ICisRepositoryContextResolver resolver, ChangeDossierStore changes,
         IEnumerable<ICisFeatureApprovalAuthority> featureAuthorities,
         Func<DateTimeOffset>? clock = null, ICisWorkspaceRegistry? workspaceRegistry = null,
-        PlanningService? planning = null)
+        PlanningService? planning = null, TestingService? testing = null)
     {
         _resolver = resolver;
         _changes = changes;
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
         _workspaceRegistry = workspaceRegistry;
         _planning = planning;
+        _testing = testing;
         _featureAuthorities = featureAuthorities.ToArray();
     }
 
@@ -130,6 +133,8 @@ public sealed class VerifyService
         var verification = Path.Combine(dir, "verification.md");
         if (!File.Exists(verification) || !File.ReadLines(verification).Any(x => x.TrimStart().StartsWith('|') && x.Contains("Passed", StringComparison.OrdinalIgnoreCase)))
             findings.Add(new("error", "CIS-VERIFY-EVIDENCE", "No passing verification evidence is recorded.", Relative(context, verification)));
+        if (_testing is not null && Regex.IsMatch(planText, @"(?im)^feature_spec_path:\s*.+$"))
+            ValidateReconciledTesting(context, change, verification, findings);
         return New(context, change, snapshot, findings, ReadEvidence(verification), false,
             findings.Any(x => x.Severity == "error") ? "invalid" : "valid");
     }
@@ -441,6 +446,38 @@ public sealed class VerifyService
             ? string.Join(" ", applicable[0].Errors)
             : "The governed feature approval is not current enough for final verification.";
         findings.Add(new("error", "CIS-VERIFY-FEATURE-AUTHORITY", message, Relative(context, planPath)));
+    }
+    private void ValidateReconciledTesting(CisRepositoryContext context, string change, string verificationPath,
+        ICollection<VerifyFinding> findings)
+    {
+        var text = File.Exists(verificationPath) ? File.ReadAllText(verificationPath) : string.Empty;
+        var run = Regex.Match(text, @"(?im)^test_run_id:\s*(?<value>[^\r\n]+)$").Groups["value"].Value.Trim().Trim('"', '\'');
+        if (run.Length == 0)
+        {
+            findings.Add(new("error", "CIS-VERIFY-TEST-RUN", "Feature verification must name a reconciled `test_run_id`.", Relative(context, verificationPath)));
+            return;
+        }
+        var result = _testing!.Trace(context.RepositoryPath, change, run);
+        foreach (var diagnostic in result.Diagnostics.Where(item => item.StartsWith("ERROR:", StringComparison.Ordinal)))
+            findings.Add(new("error", "CIS-VERIFY-AUTOMATED-EXECUTION", diagnostic[6..].Trim(), Relative(context, verificationPath)));
+        if (result.Manifest is null) return;
+        var exceptions = Regex.Matches(text, @"(?im)^test_exception:\s*(?<suite>[^|\r\n]+)\|(?<reviewer>[^|\r\n]+)\|(?<reason>[^\r\n]+)$")
+            .Cast<Match>().Select(match => match.Groups["suite"].Value.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var suite in result.Manifest.Suites)
+        {
+            if (suite.Status is "failed" or "invalid-evidence" or "findings")
+                findings.Add(new("error", "CIS-VERIFY-TEST-SUITE", $"Suite '{suite.SuiteId}' is {suite.Status}.", suite.SuiteId));
+            else if (suite.Status == "unavailable" && !exceptions.Contains(suite.SuiteId))
+                findings.Add(new("error", "CIS-VERIFY-TEST-UNAVAILABLE", $"Suite '{suite.SuiteId}' is unavailable without a bounded human-approved exception.", suite.SuiteId));
+        }
+        var assuranceTasks = Path.Combine(context.DocumentationPath, "changes", change, "agent-tasks");
+        var claimsAssurance = Directory.Exists(assuranceTasks) && Directory.EnumerateFiles(assuranceTasks, "*.md")
+            .Any(path => File.ReadAllText(path).Contains("core.assurance.independent", StringComparison.OrdinalIgnoreCase));
+        if (claimsAssurance && (string.IsNullOrWhiteSpace(result.Manifest.AssuranceTechnique)
+            || result.Manifest.AssuranceTechnique.Equals("repeated-run", StringComparison.OrdinalIgnoreCase))
+            && (string.IsNullOrWhiteSpace(result.Manifest.Assurer)
+                || result.Manifest.Assurer.Equals(result.Manifest.Implementer, StringComparison.OrdinalIgnoreCase)))
+            findings.Add(new("error", "CIS-VERIFY-INDEPENDENCE", "Independent assurance requires a distinct assurer or a genuinely independent mechanical technique.", Relative(context, verificationPath)));
     }
     private static VerifyResult Invalid(VerifyResult result, string code, string message) => result with { Status = "invalid", Findings = result.Findings.Append(new VerifyFinding("error", code, message, null)).ToArray() };
     private static string Digest(IEnumerable<VerifyFileChange> files) => Sha(string.Join("\n", files.Select(x => $"{x.RepositoryId}\t{x.Status}\t{x.Path}\t{x.ContentDigest}")));

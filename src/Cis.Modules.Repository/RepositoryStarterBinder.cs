@@ -161,7 +161,7 @@ internal sealed class RepositoryStarterBinder
         AddTaskTypeCapabilitySelections(repositoryId, documentationRoot, selections, artifacts);
         AddApiGovernanceProfile(repositoryId, documentationRoot, selections, artifacts);
         AddExternalTrackerProfile(repositoryId, documentationRoot, selections, artifacts);
-        AddExecutionGovernanceProfiles(repositoryId, documentationRoot, selections, artifacts);
+        AddExecutionGovernanceProfiles(repositoryPath, repositoryId, documentationRoot, classification, selections, artifacts);
         AddSeedSpecifications(repositoryId, documentationRoot, classification, workspaceAuthority, selections, artifacts);
         AddStandardsGovernance(repositoryId, documentationRoot, classification, selections, artifacts);
         AddImplementationSkillPacks(repositoryId, documentationRoot, classification, selections, artifacts);
@@ -592,8 +592,10 @@ internal sealed class RepositoryStarterBinder
         """;
 
     private static void AddExecutionGovernanceProfiles(
+        string repositoryPath,
         string repositoryId,
         string documentationRoot,
+        RepositoryClassification classification,
         ICollection<RepositoryStarterSelection> selections,
         ICollection<RepositoryStarterArtifact> artifacts)
     {
@@ -647,26 +649,9 @@ internal sealed class RepositoryStarterBinder
         | application-log | text-log | .cis/local/diagnostics/input/application.log | no | no |
         | test-log | text-log | .cis/local/diagnostics/input/tests.log | no | no |
         """);
-        Add("workflow.standard-delivery", "workflows/standard-delivery.md", "workflow-definition", """
-        ---
-        title: "Standard Delivery Verification Workflow"
-        type: workflow-definition
-        status: Active
-        owner: "Repository maintainers"
-        last_reviewed: "2026-08-14"
-        review_cadence: "on build or test command change"
-        ---
-
-        # Standard delivery verification workflow
-
-        Review the commands for this repository before first use. CIS executes argument
-        lists without a shell and checkpoints each step under `.cis/local/`.
-
-        | Step | Command | Depends on | Continue on failure | Timeout seconds |
-        |---|---|---|---|---:|
-        | build | dotnet build --no-restore | - | no | 1200 |
-        | test | dotnet test --no-build | build | no | 1800 |
-        """);
+        var testing = RepositoryTestingStarter.Create(repositoryPath, documentationRoot, classification);
+        Add("workflow.standard-delivery", "workflows/standard-delivery.md", "workflow-definition", testing.Workflow);
+        Add("reference.test-suite-profile", "references/test-suite-profile.md", "test-suite-profile", testing.Profile);
         Add("reference.learning-history", "references/learning-history.md", "learning-history", """
         ---
         title: "Governed Learning History"
@@ -893,6 +878,12 @@ internal sealed class RepositoryStarterBinder
             "govern-technical-intent",
             "Derive, validate, and preserve human approval of workspace technical direction from the active BRD.",
             CreateGovernTechnicalIntentSkill(),
+            selections,
+            artifacts);
+        AddSkill(
+            "feature-specification-governance",
+            "Author, validate, review, and keep a classification-aware feature specification current before detailed planning.",
+            CreateFeatureSpecificationGovernanceSkill(),
             selections,
             artifacts);
         AddSkill(
@@ -2834,13 +2825,15 @@ internal sealed class RepositoryStarterBinder
 
         ## Workflow
 
-        1. Start with targeted build, test, lint, analysis, security, and packaging checks.
-        2. Run each evidence gate as an independently observed command, or use fail-fast orchestration that preserves every gate's exit status; never let a later successful command mask an earlier failure.
-        3. Expand to component or repository checks only when impact or failures justify it.
-        4. Record commands, outcomes, skipped checks, environmental limits, and residual risk.
-        5. Keep independent assurance separate from the implementing agent's self-assessment.
-        6. After all implementation and evidence are stable, run `cis verify diff` and confirm the snapshot names every planned repository, includes tracked and untracked changes, and is non-empty.
-        7. Run `cis verify validate`. If the human explicitly accepts the outcome, use `cis verify finalize --reviewer <human> --reason <rationale>` so lifecycle completion, closure, recapture, and acceptance remain coordinated.
+        1. Run `cis test inventory` and `cis test validate --strict`; reconcile the canonical suite profile before execution.
+        2. Start with targeted build, test, lint, analysis, security, and packaging checks through `cis workflow run standard-delivery --run-id <id>`.
+        3. Run each evidence gate as an independently observed command, or use fail-fast orchestration that preserves every gate's exit status; never let a later successful command mask an earlier failure. Canonical retries are zero.
+        4. If a result could be environmental, inspect the recorded failure classification. A diagnostic rerun uses the same run ID as a new attempt and never erases the first product, infrastructure, prerequisite, timeout, cancellation, or unknown result.
+        5. Run `cis test reconcile --run <id>` and `cis test trace <change-id> --run <id>`. A successful process without readable declared result evidence is `invalid-evidence`, not passed.
+        6. Expand to component or repository checks only when impact or failures justify it. Record unavailable credential-dependent checks and any bounded human-approved exception truthfully.
+        7. Record the run ID, profile digest, repository revision, artifact hashes, implementer, assurer, and assurance technique. Keep independent assurance separate from the implementing agent's self-assessment or use a genuinely independent mechanical technique.
+        8. After all implementation and evidence are stable, run `cis verify diff` and confirm the snapshot names every planned repository, includes tracked and untracked changes, and is non-empty.
+        9. Run `cis verify validate`. If the human explicitly accepts the outcome, use `cis verify finalize --reviewer <human> --reason <rationale>` so lifecycle completion, closure, recapture, and acceptance remain coordinated.
 
         ## Output Expectations
 
@@ -2853,6 +2846,26 @@ internal sealed class RepositoryStarterBinder
         ## Related Files
 
         Read the delivery-and-assurance specification and `.github/skills/cis-validate-completion/SKILL.md`.
+        """;
+
+    private static string CreateFeatureSpecificationGovernanceSkill() => """
+        ---
+        name: cis-feature-specification-governance
+        description: Author, validate, review, approve, and refresh classification-aware feature specifications before detailed CIS planning.
+        ---
+
+        # CIS feature specification governance
+
+        1. Read the active BRD, technical intent, approved high-level backlog item, repository profiles, standards, references, and applicable public/customer/backoffice frontend classification.
+        2. Start or locate the feature with `cis brd feature status <high-level-item>` and create the governed draft through `cis brd feature validate` workflow; do not invent a second source of truth.
+        3. Specify actors, outcomes, business rules, state transitions, contracts, authorization and non-disclosure, caching, persistence, migration/recovery, accessibility, observability, rollout, exclusions, and measurable acceptance criteria proportionate to the feature.
+        4. Route frontend scope as public, customer, or backoffice. Describe required user journeys and review points without selecting unapproved visual implementation details.
+        5. Define layered test obligations: unit, component, integration, business, architecture, frontend component, browser, security, operational, coverage, and mutation where applicable. Credential-dependent provider smoke may be explicitly unavailable; it is never silently passed.
+        6. Run `cis brd feature validate <high-level-item>`. Resolve structural, currency, traceability, and cross-document findings before requesting review.
+        7. Only after explicit human authorization run `cis brd feature approve <high-level-item> --reviewer <human> --reason <rationale>`.
+        8. A material BRD or technical-intent change makes the feature stale and requires reconciliation. Mechanical validation with no semantic change adds no approval gate.
+
+        Preserve stable identities, approval evidence, exclusions, and history. Never approve for the user, silently broaden MVP scope, treat a generated draft as current, or report an unexecuted test obligation as passed.
         """;
 
     private static string CreateMaintainContractsSkill(string documentationRoot) => $$"""

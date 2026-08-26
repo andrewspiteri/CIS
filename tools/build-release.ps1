@@ -5,6 +5,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$PSNativeCommandUseErrorActionPreference = $true
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $resolvedOutput = [IO.Path]::GetFullPath((Join-Path $repoRoot $Output))
 $allowedRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot "artifacts"))
@@ -55,7 +56,7 @@ try {
         $packagedCis = Join-Path $toolPath "cis"
         & $packagedCis --help | Out-Null
         $loadedModules = (& $packagedCis host modules --format agent) -join "`n"
-        foreach ($requiredModule in @("module=skills;", "module=standards;", "module=technical-intent;", "module=verify;")) {
+        foreach ($requiredModule in @("module=skills;", "module=standards;", "module=technical-intent;", "module=test;", "module=verify;")) {
             if (-not $loadedModules.Contains($requiredModule, [StringComparison]::Ordinal)) {
                 throw "Packaged CLI did not register required module marker '$requiredModule'."
             }
@@ -63,6 +64,7 @@ try {
         & $packagedCis skills --help | Out-Null
         & $packagedCis standards --help | Out-Null
         & $packagedCis technical-intent --help | Out-Null
+        & $packagedCis test --help | Out-Null
         & $packagedCis verify --help | Out-Null
     }
     finally {

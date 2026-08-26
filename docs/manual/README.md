@@ -39,6 +39,11 @@ Each loaded module owns one top-level command group. The following leaf commands
 | [`cis workflow status`](cis_workflow_status.md) | Deterministic workflow command. |
 | [`cis workflow log`](cis_workflow_log.md) | Deterministic workflow command. |
 | [`cis workflow summarise`](cis_workflow_summarise.md) | Deterministic workflow command. |
+| [`cis test inventory`](cis_test_inventory.md) | Persist the classification-selected test-suite inventory. |
+| [`cis test validate`](cis_test_validate.md) | Validate suite contracts, adapters, and local evidence paths. |
+| [`cis test reconcile`](cis_test_reconcile.md) | Reconcile native runner outputs into typed test evidence. |
+| [`cis test trace`](cis_test_trace.md) | Prove exact manual-case identities executed and passed. |
+| [`cis test status`](cis_test_status.md) | Report traceability for an exact or latest reconciled run. |
 | [`cis agent providers`](cis_agent_providers.md) | Portable agent-envelope command. |
 | [`cis agent prepare`](cis_agent_prepare.md) | Portable agent-envelope command. |
 | [`cis agent import-result`](cis_agent_import_result.md) | Portable agent-envelope command. |

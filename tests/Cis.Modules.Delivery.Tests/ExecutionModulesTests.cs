@@ -12,6 +12,7 @@ using Cis.Modules.Impact;
 using Cis.Modules.Learn;
 using Cis.Modules.Plan;
 using Cis.Modules.Repository;
+using Cis.Modules.Testing;
 using Cis.Modules.Verify;
 using Cis.Modules.Workflow;
 
@@ -486,9 +487,15 @@ status: Draft
 
 ### TC-EXAMPLE-001-001: Verify example
 
-- Automation status: Pending
-- Automated test references: None
+        - Automation status: Automated
+        - Automated test references: `tests/example.test.ts`
 """);
+        repository.Write("tests/example.test.ts", "test('TC-EXAMPLE-001-001 source-only reference', () => expect(true).toBe(true));\n");
+        repository.Write("docs/cis/references/test-suite-profile.md", """
+            | Suite ID | Component | Layer | Framework | Command | Working directory | Result format | Result path | Coverage path | Mutation path | Prerequisites | Applies when | CI tier | Artifacts |
+            |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+            | fixture-unit | repository | unit | fixture | test | . | junit | .cis/local/testing/results/unit.xml | - | - | - | always | pr | retain |
+            """);
         repository.Write("docs/cis/changes/CIS-0009/verification.md", "---\nstatus: Draft\n---\n| Task | Check | Artifact | Result | Notes |\n|---|---|---|---|---|\n| W | test | `x` | Passed | x |\n");
         repository.Write("docs/cis/changes/CIS-0009/agent-tasks/WORK-001.md", "---\ntask_status: Complete\n---\n");
         repository.Write("src/changed.cs", "namespace Example;\n");
@@ -499,13 +506,13 @@ status: Draft
             new ImpactAnalysisService(changes, new GraphQueryService(resolver)),
             new DecisionService(changes, resolver),
             resolver);
-        var service = new VerifyService(resolver, changes, [], Clock, planning: planning);
+        var testing = new TestingService(resolver, new WorkflowService(resolver), [new JUnitTestResultAdapter()]);
+        var service = new VerifyService(resolver, changes, [], Clock, planning: planning, testing: testing);
 
         Assert.Equal(0, service.Diff(repository.Path, "CIS-0009").ExitCode);
         var result = service.Validate(repository.Path, "CIS-0009");
 
-        Assert.Contains(result.Findings, item => item.Code == "CIS-VERIFY-AUTOMATION-COVERAGE"
-            && item.Message.Contains("TC-EXAMPLE-001-001", StringComparison.Ordinal));
+        Assert.Contains(result.Findings, item => item.Code == "CIS-VERIFY-TEST-RUN");
     }
 
     private static DateTimeOffset Clock() => DateTimeOffset.Parse("2026-08-14T12:00:00Z");

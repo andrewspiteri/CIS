@@ -1,6 +1,31 @@
 schema_version: 1
 repository: change-impact-studio
 documents:
+  - id: change-impact-studio:manual:cis-test-inventory
+    path: docs/manual/cis_test_inventory.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-test-validate
+    path: docs/manual/cis_test_validate.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-test-reconcile
+    path: docs/manual/cis_test_reconcile.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-test-trace
+    path: docs/manual/cis_test_trace.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-test-status
+    path: docs/manual/cis_test_status.md
+    type: command-reference
+    status: active
+    authority: canonical
   - id: change-impact-studio:analysis:parr-testing-delivery-gap-matrix
     path: docs/specs/parr-testing-delivery-gap-matrix.md
     type: gap-analysis
@@ -1552,5 +1577,11 @@ documents:
   - id: change-impact-studio:standard:versioning-release
     path: docs/standards/versioning-and-release.md
     type: standard
+    status: active
+    authority: canonical
+
+  - id: change-impact-studio:reference:test-suite-profile
+    path: docs/references/test-suite-profile.md
+    type: test-suite-profile
     status: active
     authority: canonical

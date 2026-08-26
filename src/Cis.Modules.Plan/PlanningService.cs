@@ -100,7 +100,7 @@ public sealed class PlanningService
         return new PlanResult(unchanged ? "unchanged" : "built", change.Id, "Draft", workItems, validation, [], !unchanged);
     }
 
-    public PlanResult ImportSpec(FeatureSpecImportRequest request)
+    public PlanResult ImportSpec(FeatureSpecImportRequest request, string? ignoredReadinessCheck = null)
     {
         var change = _changes.Read(request.RepositoryPath, request.ChangeId);
         if (change is null)
@@ -112,7 +112,7 @@ public sealed class PlanningService
         var approvedPlan = string.Equals(existing.Status, "Approved", StringComparison.OrdinalIgnoreCase);
         var derivedOnlyRefresh = approvedPlan && IsExactImportedSource(request, existing.Source);
         var readinessErrors = EvaluateReadiness(request.RepositoryPath,
-            derivedOnlyRefresh ? "technical-intent" : null);
+            derivedOnlyRefresh ? "technical-intent" : ignoredReadinessCheck);
         if (readinessErrors.Count > 0)
             return Error(request.ChangeId, readinessErrors.ToArray());
 
@@ -268,7 +268,7 @@ public sealed class PlanningService
                 return Rollback(Blocked(change.Id, parsedFeature.Errors.ToArray()));
             CarryForwardOutcomeAcceptance(change, parsedFeature.Spec);
 
-            var imported = ImportSpec(request);
+            var imported = ImportSpec(request, "technical-intent");
             if (imported.ExitCode != 0 || imported.Validation is not { Valid: true })
                 return Rollback(imported with { Status = "blocked" });
 
@@ -1414,7 +1414,7 @@ public sealed class PlanningService
         => string.IsNullOrWhiteSpace(value)
             || Regex.IsMatch(value, @"\b(?:TODO|TBD)\b|(?i:\bTO BE COMPLETED\b)",
                 RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
-            || value.Contains('<') && value.Contains('>');
+            || Regex.IsMatch(value, @"^\s*<[^<>]+>\s*$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
 
     private static string[] SplitTableRow(string line)
         => line.Trim().Trim('|').Split('|').Select(value => value.Trim()).ToArray();

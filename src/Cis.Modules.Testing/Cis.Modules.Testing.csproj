@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Test-suite discovery, result reconciliation, traceability, coverage, mutation, and assurance evidence.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Cis.Abstractions\Cis.Abstractions.csproj" />
+    <ProjectReference Include="..\Cis.Modules.Workflow\Cis.Modules.Workflow.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" />
+  </ItemGroup>
+</Project>

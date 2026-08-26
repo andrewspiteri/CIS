@@ -19,13 +19,14 @@ Gather affected components, contracts, risks, acceptance criteria, available too
 
 ## Workflow
 
-1. Start with targeted build, test, lint, analysis, security, and packaging checks.
-2. Run each evidence gate as an independently observed command, or use fail-fast orchestration that preserves every gate's exit status; never let a later successful command mask an earlier failure.
-3. Expand to component or repository checks only when impact or failures justify it.
-4. Record commands, outcomes, skipped checks, environmental limits, and residual risk.
-5. Keep independent assurance separate from the implementing agent's self-assessment.
-6. After all implementation and evidence are stable, run `cis verify diff` and confirm the snapshot names every planned repository, includes tracked and untracked changes, and is non-empty.
-7. Run `cis verify validate`. If the human explicitly accepts the outcome, use `cis verify finalize --reviewer <human> --reason <rationale>` so lifecycle completion, closure, recapture, and acceptance remain coordinated.
+1. Run `cis test inventory` and `cis test validate --strict`; reconcile the canonical suite profile before execution.
+2. Execute `cis workflow run standard-delivery --run-id <id>`. Canonical retries are zero and every attempt remains visible.
+3. Inspect failure classification before a diagnostic rerun. Infrastructure, prerequisite, timeout, cancellation, and unknown failures are not product passes.
+4. Run `cis test reconcile --run <id>` and `cis test trace <change-id> --run <id>`. Missing or unreadable expected evidence is `invalid-evidence` even after exit code zero.
+5. Record exact unavailable checks and bounded human-approved exceptions; never silently pass them.
+6. Keep independent assurance separate from the implementer or use a genuinely independent mechanical technique. Record actors, technique, run ID, profile digest, repository revision, and artifact hashes.
+7. After evidence stabilizes, run `cis verify diff`, then `cis verify validate`.
+8. Only on explicit human acceptance use `cis verify finalize --reviewer <human> --reason <rationale>`.
 
 ## Output Expectations
 

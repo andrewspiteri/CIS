@@ -1,202 +1,413 @@
 # Change Impact Studio
 
-Change Impact Studio is a local-first, repository-backed engineering workspace. Its engine is a modular C# command-line application:
+## 1. Introduction
+
+Change Impact Studio (CIS) is a local-first, repository-backed workspace for governing
+software change from intent through acceptance.
 
 ```text
 cis <module> <command> [arguments] [options]
 ```
 
-The Visual Studio Code extension is a thin client over the CLI and repository-owned Markdown.
+Software is becoming easier to generate than it is to understand. Important context is
+often scattered across requirements, source code, contracts, tests, workflows, Git
+history, tickets, and individual knowledge. A developer or coding agent can therefore
+produce a plausible implementation that is incomplete, inconsistent, or aimed at the
+wrong outcome.
 
-## Current slice
+CIS creates a controlled workflow around that problem:
 
-The repository currently implements:
-
-- the `ICisModule` assembly contract;
-- explicit module registration;
-- dependency-injection composition;
-- duplicate-module protection;
-- a command registry;
-- a built-in `host modules` diagnostic command;
-- the documented initial module catalog and dependency boundaries;
-- a built-in `repo init` module with safe repository-relative path validation;
-- idempotent multi-repository `repo import` and validated `.cis/workspace.yml` registry;
-- dry-run planning, collision detection, and confirmation for non-empty roots;
-- creation of the minimum documentation structure and `.cis/repository.yml`;
-- deterministic C#/.NET, Angular, Next.js/React/Vue, Swift, Kotlin/Android,
-  messaging, persistence, and Terraform classification;
-- always-seeded product-intent, technical-intent, system-context, delivery-and-assurance,
-  API design/governance, and public-endpoint caching specifications;
-- reusable feature-specification, ADR, design-guideline, and standards templates;
-- thirty curated PARR-informed, product-neutral workflow skills plus classification-selected implementation skill packs, including repository
-  bootstrap and init-failure doctor routing, plus repository-wide guidance;
-- classification-bound instructions and specification/reference families;
-- deterministic best-effort seeding for API, command, event, workflow-state, projection,
-  permission, configuration, package, route, problem, module, data, and traceability references;
-- modular `api discover`, `api inventory`, `api validate`, and `api diff` commands with
-  normalized `.cis/local/api/` state, PARR-derived rule enforcement, and OpenAPI compatibility findings;
-- provider-neutral `tracker plan`, `push`, `pull`, `status`, and `resolve` commands with
-  durable task links, three-way drift detection, conflict persistence, and human authority boundaries;
-- separately loaded GitHub Issues and Jira Cloud tracker transports with environment-only credentials;
-- governed AI routes, sanitized usage, disposable caching, and explicit remote authorization;
-- deterministic repository-template discovery, validation, rendering, and content-hash evidence;
-- shell-free checkpointed workflows with dependency validation, resumable runs, logs, and summaries;
-- digest-bound portable agent task envelopes and stale-safe structured result ingestion;
-- planned-versus-actual verification, exact evidence rows, gate validation, and human acceptance;
-- bounded non-sensitive runtime diagnostics and human-reviewed learning proposals/history;
-- a thin Visual Studio Code tree, Markdown preview, CLI status, and visible task client;
-- manifest-backed incremental initialization when repository projects change;
-- preservation of human-edited generated files, explicit reviewed `--accept-current`
-  ownership reconciliation, and additive catalog reconciliation;
-- read-only `repo doctor` readiness checks with modular diagnostics, suggested fixes,
-  and automatic local Ollama detection;
-- provider-neutral AI status with local-only automatic selection and explicitly authorized
-  OpenAI-compatible remote routing;
-- incremental per-file routing cards under `.cis/local/index-cards/`, with content-hash
-  reuse, bounded model calls, sensitive-file suppression, freshness, and local search;
-- consistent exclusion of dependency, build, and release-artifact directories from
-  repository classification, context graphs, and routing-card discovery;
-- automatic sanitized tool-usage records under `.cis/local/feedback/`, command-owned
-  possible token-saving estimates, aggregate summaries, and deterministic opportunities;
-- shared, validated repository-context resolution for command modules;
-- deterministic `docs inventory` with catalog, front-matter, and inferred provenance;
-- `docs validate` catalog integrity checks and optional strict warning enforcement;
-- canonical standards with stable rule IDs, target/stack applicability routing, safe local/ZIP/GitHub
-  import, local-first duplicate/conflict auditing, reversible quarantine, strict validation,
-  rule-level conformance mappings, and explicit advisory-model limits;
-- classification-selected, PARR-derived default standards for agent documentation, testing,
-  secure delivery, APIs, persistence, eventing, frontend interaction, accessibility,
-  observability, and edge headers without PARR-specific product assumptions;
-- a versioned known-standard-pattern catalogue with provider and repository Markdown extensions,
-  deterministic compiler-graph matching, explicit missing-capability reporting, preserved
-  counterexamples, and non-canonical inferred-standard candidates;
-- deterministic, versioned SQLite `graph build` with transactional content-hash updates for repository, document, component, governed reference,
-  source-file, symbol, test, workflow-job, and dependency nodes with typed,
-  evidence-backed relationships;
-- workspace-wide graph build and validation with independent per-repository status,
-  identity, diagnostics, and derived storage;
-- indexed read-only `graph find` filtering and cycle-safe, state-aware `graph related`
-  traversal with manifest/hash freshness reporting and no repository-wide JSON load;
-- independent `graph validate` integrity, evidence, endpoint, freshness, sensitive
-  property, and Git-tracking checks with optional strict warning enforcement;
-- deterministic shortest-path `graph trace` with direction, relationship-state,
-  confidence, evidence, depth, path-count, and proposal controls;
-- safe idempotent `graph export` to Markdown, JSON, JSONL, and Graphviz DOT;
-- focused `context contract`, `context symbol`, and `context tests-for` commands that
-  preserve graph evidence and never infer verification from naming;
-- registered-ID context-pack federation across imported repositories;
-- authority-aware workspace initialization and BRD discovery, reconciliation,
-  validation, human approval, and participant-baseline drift detection;
-- human, JSON, and agent-oriented output;
-- catalogued change dossiers against exact Git or graph-build baselines;
-- deterministic impact proposals with stable IDs, evidence, confidence, bounded roots,
-  human accept/reject/defer disposition, and completeness reporting;
-- change-local blocking and advisory decisions with recorded options, evidence,
-  human resolution/deferral, plan gates, and idempotent ADR promotion;
-- bounded dependency-aware planning from accepted impacts, with acceptance criteria,
-  validation, open-decision gates, structural validation, and human-only approval;
-- host composition and command-dispatch tests.
-
-The ten-stage local delivery lifecycle is implemented end to end. See
-`docs/specs/implementation-roadmap.md` for the authoritative stage record.
-
-## Build and run
-
-The repository requires the .NET SDK `10.0.400` feature band. `global.json` uses
-`latestPatch`, so builds may use a later installed `10.0.4xx` patch, but do not
-silently cross into another .NET 10 feature band. Preview SDKs are excluded. The
-target framework remains `net10.0`, independently of the selected SDK patch.
-
-NuGet dependency versions are pinned centrally in `Directory.Packages.props`.
-The .NET tool version is currently maintained explicitly in
-`src/Cis.Host/Cis.Host.csproj`; `tools/build-release.ps1` builds and packs that
-declared version but does not calculate or increment it.
-
-```bash
-dotnet build ChangeImpactStudio.slnx
-dotnet test ChangeImpactStudio.slnx
-dotnet run --project src/Cis.Host -- host modules
-dotnet run --project src/Cis.Host -- host modules --format json
-dotnet run --project src/Cis.Host -- repo init --root docs/cis --dry-run
-dotnet run --project src/Cis.Host -- workspace init --root docs --dry-run
-dotnet run --project src/Cis.Host -- repo import --workspace C:\work\workspace --source C:\work\api C:\work\web --root docs/cis --dry-run
-dotnet run --project src/Cis.Host -- repo doctor
-dotnet run --project src/Cis.Host -- feedback summary --since 7d
-dotnet run --project src/Cis.Host -- feedback opportunities --format agent
-dotnet run --project src/Cis.Host -- docs inventory --format json
-dotnet run --project src/Cis.Host -- docs validate --strict
-dotnet run --project src/Cis.Host -- standards applicable --target backend --stack csharp --format agent
-dotnet run --project src/Cis.Host -- standards validate --strict
-dotnet run --project src/Cis.Host -- standards import --source C:\work\standards --dry-run
-dotnet run --project src/Cis.Host -- standards audit --format agent
-dotnet run --project src/Cis.Host -- graph build --format agent
-dotnet run --project src/Cis.Host -- graph build --workspace C:\work\workspace --format agent
-dotnet run --project src/Cis.Host -- graph validate --strict
-dotnet run --project src/Cis.Host -- brd discover --workspace C:\work\workspace --format agent
-dotnet run --project src/Cis.Host -- brd init --workspace C:\work\workspace --title "Business Requirements"
-dotnet run --project src/Cis.Host -- brd reconcile --workspace C:\work\workspace
-dotnet run --project src/Cis.Host -- brd validate --workspace C:\work\workspace
-dotnet run --project src/Cis.Host -- graph find --kind symbol --text GraphQuery
-dotnet run --project src/Cis.Host -- graph related --id <node-id> --depth 2
-dotnet run --project src/Cis.Host -- graph trace --from <node-id> --to <node-id>
-dotnet run --project src/Cis.Host -- graph export --type markdown
-dotnet run --project src/Cis.Host -- context tests-for --id <node-id>
-dotnet run --project src/Cis.Host -- change create --title "Change outcome" --outcome "Observable result" --root <node-id>#<kind>
-dotnet run --project src/Cis.Host -- change rebaseline CIS-0001 --actor "reviewer" --reason "Adopt reviewed pre-impact source additions"
-dotnet run --project src/Cis.Host -- impact analyse CIS-0001
-dotnet run --project src/Cis.Host -- impact completeness CIS-0001
-dotnet run --project src/Cis.Host -- decision create CIS-0001 --question "Compatibility strategy?" --category contract --option "preserve" --option "version" --evidence "consumer inventory"
-dotnet run --project src/Cis.Host -- decision resolve CIS-0001 DEC-001 --option "version" --rationale "Preserve existing consumers"
-dotnet run --project src/Cis.Host -- plan build CIS-0001
-dotnet run --project src/Cis.Host -- plan validate CIS-0001
-dotnet run --project src/Cis.Host -- tracker plan CIS-0001 --provider github
-dotnet run --project src/Cis.Host -- workflow run standard-delivery --run-id local-check
-dotnet run --project src/Cis.Host -- agent prepare CIS-0001 WORK-001
-dotnet run --project src/Cis.Host -- verify validate CIS-0001
-dotnet run --project src/Cis.Host -- diagnostics analyse
-dotnet run --project src/Cis.Host -- learn collect
+```text
+Establish intent
+    → build repository context
+    → review likely impact
+    → resolve decisions
+    → approve bounded work
+    → prepare human or agent execution
+    → compare actual change with approved scope
+    → accept completion
+    → improve repository knowledge
 ```
 
-Create a release package with `tools/build-release.ps1`. The CLI is emitted as the
-`AndrewSpiteri.ChangeImpactStudio` .NET tool package. The editor client is in
-`vscode-extension/`; run `node --check vscode-extension/extension.js` for its dependency-free
-syntax gate.
+Canonical meaning remains in repository-owned Markdown and structured files. Local
+indexes, graphs, workflow state, caches, model output, and diagnostic analysis remain
+derived and rebuildable.
 
-## Repository structure
+> AI and coding agents may discover, propose, analyse, draft, and implement. Humans
+> confirm meaning, resolve material decisions, accept risk, and accept completion.
+
+CIS complements Git, GitHub, Jira, editors, coding agents, and CI/CD. It does not
+replace them or silently perform commits, pushes, merges, releases, or approvals.
+
+## 2. Quick start
+
+### 2.1. Installing CIS
+
+CIS is distributed as the `AndrewSpiteri.ChangeImpactStudio` .NET tool in each GitHub
+release bundle. It currently installs from the downloaded release folder rather than
+from a public NuGet feed.
+
+Prerequisites:
+
+- Git.
+- The .NET 10 runtime or SDK.
+- PowerShell for the examples below.
+
+Download a release bundle, verify its `SHA256SUMS`, and place the extracted files in a
+local directory such as `C:\tools\cis-release`. The directory should contain the
+`AndrewSpiteri.ChangeImpactStudio.<version>.nupkg` file.
+
+```powershell
+Set-Location C:\tools\cis-release
+Get-FileHash .\* -Algorithm SHA256
+
+$cisVersion = "<release-version>"
+dotnet tool install AndrewSpiteri.ChangeImpactStudio `
+  --global `
+  --version $cisVersion `
+  --add-source C:\tools\cis-release
+
+cis --help
+cis host modules
+```
+
+Replace `<release-version>` with the release version, without the leading `v`. Keep the
+downloaded `SHA256SUMS` beside the release files so the calculated hashes can be
+compared with the published values before installation.
+
+To install into a project-local tool directory instead of globally:
+
+```powershell
+dotnet tool install AndrewSpiteri.ChangeImpactStudio `
+  --tool-path .\.tools\cis `
+  --version $cisVersion `
+  --add-source C:\tools\cis-release
+
+.\.tools\cis\cis --help
+```
+
+To build and install the package from source, follow [section 4](#4-cloning-and-building).
+
+### 2.2. Starting a new repository
+
+Use this path when creating a new Git repository whose product knowledge will be
+governed by CIS from the beginning.
+
+```powershell
+New-Item -ItemType Directory C:\work\new-product
+Set-Location C:\work\new-product
+git init
+
+cis repo init --root docs\cis --dry-run --format agent
+cis repo init --root docs\cis --yes
+
+cis docs validate --strict
+cis skills validate --strict
+cis standards validate --strict
+cis graph build --format agent
+cis graph validate --strict
+```
+
+The dry run shows every planned directory, file, standard, skill, instruction, warning,
+and collision without changing the repository. Review it before passing `--yes`.
+
+As source projects are added, rerun initialization. CIS will reconcile newly detected
+languages, frameworks, roles, and capabilities without silently overwriting reviewed
+content.
+
+### 2.3. Onboarding a single existing repository
+
+Use this path for an existing application or library that will own its product and
+engineering documentation locally.
+
+```powershell
+Set-Location C:\work\orders
+
+cis repo init --root docs\cis --dry-run --format agent
+cis repo init --root docs\cis --yes
+
+cis docs inventory
+cis docs validate --strict
+cis skills validate --strict
+cis standards validate --strict
+cis graph build --format agent
+cis graph validate --strict
+```
+
+Initialization classifies repository evidence and proposes the applicable documentation,
+standards, references, skills, and instructions. Deterministically discovered material
+starts with a truthful review state; discovery is evidence, not proof that the generated
+meaning is complete or approved.
+
+If initialization reports an error or collision, do not repeatedly force it. Inspect
+the repository with the same documentation root:
+
+```powershell
+cis repo doctor --root docs\cis --format agent
+```
+
+See the [`cis repo init` manual](docs/manual/cis_repo_init.md) for confirmation,
+ownership, collision, and recoverable-quarantine behavior.
+
+### 2.4. Initializing a multi-repository workspace
+
+Use one documentation repository as the workspace authority when business requirements,
+technical direction, and cross-repository changes span several repositories. Product
+repositories are imported as participants and retain ownership of their local facts.
+
+Initialize the authority repository first:
+
+```powershell
+Set-Location C:\work\commerce-docs
+
+cis workspace init --root docs --dry-run --format agent
+cis workspace init --root docs --yes
+```
+
+Then import the participant repositories. Import records their locations and initializes
+their selected documentation roots; it does not copy, clone, move, or execute their source.
+
+```powershell
+cis repo import `
+  --workspace C:\work\commerce-docs `
+  --source C:\work\orders-api C:\work\orders-web C:\work\orders-infra `
+  --root docs\cis `
+  --dry-run --format agent
+
+cis repo import `
+  --workspace C:\work\commerce-docs `
+  --source C:\work\orders-api C:\work\orders-web C:\work\orders-infra `
+  --root docs\cis `
+  --yes
+
+cis repo list --workspace C:\work\commerce-docs
+cis graph build --workspace C:\work\commerce-docs --format agent
+cis graph validate --workspace C:\work\commerce-docs --strict
+```
+
+The authority repository owns the workspace-scoped business requirements and technical
+intent. Those documents must be current and approved before governed workspace changes
+can be planned.
+
+Continue with the [workspace initialization](docs/manual/cis_workspace_init.md),
+[repository import](docs/manual/cis_repo_import.md), and
+[business requirements governance](docs/specs/business-requirements-governance-spec.md)
+documentation.
+
+## 3. What CIS generates inside a repository
+
+The exact files vary with repository classification. A typical initialized repository
+contains:
+
+```text
+<repository>/
+├── .cis/
+│   ├── repository.yml
+│   ├── workspace.yml                 # workspace authority or participant registry, when used
+│   ├── starter-manifest.yml
+│   ├── .gitignore
+│   └── local/                        # derived, disposable state
+│       ├── api/
+│       ├── feedback/
+│       ├── graph/
+│       ├── index-cards/
+│       └── runs/
+├── .github/
+│   ├── instructions/                # repository and classification-specific guidance
+│   └── skills/                      # CIS workflow and implementation skills
+└── <documentation-root>/            # for example docs/cis
+    ├── README.md
+    ├── catalog.yml
+    ├── architecture/
+    │   └── decisions/
+    ├── changes/                     # baseline-bound change dossiers
+    ├── references/                  # inventories, profiles, dictionaries, and matrices
+    ├── specs/                       # product and technical contracts
+    ├── standards/                   # normative rules with stable rule IDs
+    ├── templates/                   # feature, ADR, standard, and design templates
+    └── workflows/                   # shell-free workflow definitions
+```
+
+The important boundary is:
+
+- Canonical documentation, configuration, decisions, plans, and acceptance evidence are
+  reviewable repository files.
+- `.cis/local/` contains rebuildable indexes, graphs, caches, runs, feedback, envelopes,
+  and analysis. Deleting it must not remove durable product meaning.
+- Generated or discovered documents remain in their declared lifecycle state until a
+  human reviews them.
+- Initialization is idempotent and collision-aware. It preserves divergent human edits
+  rather than silently replacing them.
+
+`catalog.yml` gives every governed document a stable identity, type, lifecycle, path,
+and authority. Use `cis docs inventory` to inspect the result and
+`cis docs validate --strict` to detect missing, malformed, duplicate, or uncatalogued
+documentation.
+
+## 4. Cloning and building
+
+### 4.1. Building from source
+
+The CIS source repository requires the .NET SDK `10.0.400` feature band. `global.json`
+accepts later `10.0.4xx` patches but does not cross into another feature band or use
+preview SDKs. Node.js 22 is required for the Visual Studio Code extension and complete
+release build.
+
+```powershell
+git clone https://github.com/AndrewSpiteri/change-impact-studio.git
+Set-Location change-impact-studio
+
+dotnet --version
+dotnet restore ChangeImpactStudio.slnx
+dotnet build ChangeImpactStudio.slnx --no-restore
+dotnet test ChangeImpactStudio.slnx --no-build --no-restore
+
+dotnet run --project src\Cis.Host -- --help
+dotnet run --project src\Cis.Host -- host modules
+```
+
+While developing from source, replace `cis` in an example with:
+
+```text
+dotnet run --project <cis-repository>/src/Cis.Host --
+```
+
+For example:
+
+```powershell
+dotnet run --project C:\work\change-impact-studio\src\Cis.Host -- `
+  repo doctor --repo C:\work\orders --root docs\cis
+```
+
+Build the complete release bundle and install its local tool package:
+
+```powershell
+.\tools\build-release.ps1
+
+$cisVersion = ([xml](Get-Content Version.props -Raw)).Project.PropertyGroup.VersionPrefix
+dotnet tool install AndrewSpiteri.ChangeImpactStudio `
+  --tool-path .\.artifacts\cis `
+  --version $cisVersion `
+  --add-source .\artifacts\release
+
+.\.artifacts\cis\cis host modules
+```
+
+The release script builds and tests the solution, validates the editor client, creates
+the .NET tool and VS Code packages, smoke-tests the packaged CLI, archives tracked
+source, and writes SHA-256 checksums beneath `artifacts/release`.
+
+### 4.2. Source repository structure
 
 ```text
 src/
-|-- Cis.Abstractions/          Module and registry contracts
-|-- Cis.Host/                  Executable composition root
-|-- Cis.Modules.Context/       Focused bounded engineering-context queries
-|-- Cis.Modules.Agent/         Portable agent task envelopes and result ingestion
-|-- Cis.Modules.Api/           API discovery, governance, and compatibility
-|-- Cis.Modules.Diagnostics/   Bounded runtime evidence and analysis
-|-- Cis.Modules.Generate/      Deterministic repository template rendering
-|-- Cis.Modules.Learn/         Reviewed improvement proposals and history
-|-- Cis.Modules.Tracker/       External issue projection and conflict-safe reconciliation
-|-- Cis.Modules.Verify/        Delivery comparison, evidence, gates, and acceptance
-|-- Cis.Modules.Workflow/      Shell-free resumable workflow execution
-|-- Cis.Providers.Tracker.GitHub/ GitHub Issues transport
-|-- Cis.Providers.Tracker.Jira/   Jira Cloud transport
-|-- Cis.Modules.Change/        Repository-owned change dossier lifecycle
-|-- Cis.Modules.Decision/      Change-local decisions and ADR promotion
-|-- Cis.Modules.Docs/          Documentation inventory and validation
-|-- Cis.Modules.Feedback/      Tool usage, token estimates, and feedback opportunities
-|-- Cis.Modules.Graph/         Derived context graph construction and queries
-|-- Cis.Modules.Host/          Built-in host diagnostics
-|-- Cis.Modules.Impact/        Deterministic findings and human disposition
-|-- Cis.Modules.Plan/          Bounded work, validation, and approval gates
-|-- Cis.Modules.Standards/     Standards routing, validation, and conformance
-`-- Cis.Modules.Repository/    Repository initialization and configuration
-vscode-extension/              Thin editor client over CLI and Markdown
-tests/
-|-- Cis.Host.Tests/
-|-- Cis.Modules.Docs.Tests/
-|-- Cis.Modules.Api.Tests/
-|-- Cis.Modules.Feedback.Tests/
-|-- Cis.Modules.Graph.Tests/
-|-- Cis.Modules.Standards.Tests/
-|-- Cis.Modules.Delivery.Tests/
-`-- Cis.Modules.Repository.Tests/
+├── Cis.Abstractions/                 public module contracts
+├── Cis.Host/                         executable composition root
+├── Cis.Modules.*/                    product capability modules
+└── Cis.Providers.Tracker.*/          separately loaded tracker transports
+tests/                                focused module and cross-module verification
+docs/specs/                           canonical product and technical contracts
+docs/standards/                       normative engineering expectations
+docs/references/                      inventories, profiles, and conformance evidence
+docs/manual/                          command reference
+docs/articles/                        explanatory articles and editorial navigation
+docs/changes/                         governed change dossiers
+docs/architecture/                    durable architecture decisions
+vscode-extension/                     thin client over the CLI and Markdown
+tools/                                build, validation, packaging, and release scripts
+.cis/                                 CIS repository configuration and local-state routing
 ```
+
+`Cis.Host` is the only composition root. Public contracts live in `Cis.Abstractions`,
+and each module owns one top-level `cis <module>` command. The Visual Studio Code
+extension remains a thin client and contains no product-domain authority.
+
+The current component responsibilities are documented in the
+[module catalogue](docs/specs/module-catalog-spec.md).
+
+## 5. Additional notes
+
+### Documentation and articles
+
+Use these entry points rather than browsing every Markdown file:
+
+| Need | Start here |
+|---|---|
+| Product purpose and boundaries | [Product intent](docs/specs/product-intent-spec.md) and [system context](docs/specs/system-context-spec.md) |
+| Architecture and implementation principles | [Technical intent](docs/specs/technical-intent-spec.md) |
+| Command syntax and behavior | [Command manual](docs/manual/README.md) |
+| Normative engineering rules | [`docs/standards/`](docs/standards/) and the [conformance matrix](docs/references/standards-conformance-matrix.md) |
+| Current inventories and profiles | [References index](docs/references/README.md) |
+| Product completion state | [Implementation roadmap](docs/specs/implementation-roadmap.md) |
+| Governance and CIS articles | [Articles index](docs/articles/README.md) |
+
+The articles index lists both planned and created articles. Planned titles remain plain
+text until a real draft exists. Created articles are catalogued and can be found with:
+
+```powershell
+git ls-files "docs/articles/*.md"
+rg -n -i "governance|impact|verification" docs\articles
+cis docs inventory
+cis graph find --kind document --text "governance"
+```
+
+Articles explain CIS but do not override canonical specifications, standards,
+decisions, references, manuals, or implemented behavior.
+
+### Starting a governed change
+
+Once repository context and required intent are current:
+
+```powershell
+cis graph find --text "concept or component"
+cis graph related --id <node-id> --depth 2
+
+cis change create `
+  --title "Observable change outcome" `
+  --outcome "Result a reviewer can verify" `
+  --root <node-id>#<kind>
+
+cis impact analyse CIS-0001
+cis impact findings CIS-0001
+cis impact completeness CIS-0001
+cis plan build CIS-0001
+cis plan validate CIS-0001
+```
+
+Impact findings begin as proposals. Human reviewers disposition impact and resolve
+blocking decisions before plan approval. Executors produce candidate changes; CIS then
+compares independently observed Git and validation evidence with the approved scope.
+
+See [Change impact and bounded planning](docs/specs/change-impact-and-planning-spec.md)
+for the complete lifecycle.
+
+### Useful diagnostics
+
+```powershell
+cis host modules --format agent
+cis repo doctor --format agent
+cis docs validate --strict
+cis skills audit --format agent
+cis standards conformance --gaps-only
+cis graph validate --strict
+cis ai status
+cis feedback summary --since 7d
+cis feedback opportunities --format agent
+```
+
+Structured commands support human, JSON, and agent-oriented output where applicable.
+Standard output remains parseable and diagnostics are written to standard error.
+
+### Versioning, releases, and validation
+
+The authoritative product version is declared in [`Version.props`](Version.props) and
+must match [`vscode-extension/package.json`](vscode-extension/package.json). NuGet
+dependency versions are pinned in
+[`Directory.Packages.props`](Directory.Packages.props). The release policy is defined
+in [Versioning and release](docs/standards/versioning-and-release.md).
+
+The [delivery and assurance specification](docs/specs/delivery-and-assurance-spec.md)
+defines proportionate focused and wider validation. Repository-specific agent guidance
+is in [`AGENTS.md`](AGENTS.md).
+
+Change Impact Studio is licensed under the [MIT License](LICENSE.md).

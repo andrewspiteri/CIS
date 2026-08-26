@@ -1,6 +1,16 @@
 schema_version: 1
 repository: change-impact-studio
 documents:
+  - id: change-impact-studio:analysis:parr-testing-delivery-gap-matrix
+    path: docs/specs/parr-testing-delivery-gap-matrix.md
+    type: gap-analysis
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:plan:parr-testing-delivery-assurance
+    path: docs/specs/parr-testing-delivery-implementation-plan.md
+    type: implementation-plan
+    status: draft
+    authority: canonical
   - id: change-impact-studio:spec:manual-test-case-artifacts
     path: docs/specs/manual-test-case-artifacts-spec.md
     type: specification
@@ -276,6 +286,401 @@ documents:
     type: navigation
     status: active
     authority: routing
+  - id: change-impact-studio:docs:articles
+    path: docs/articles/README.md
+    type: navigation
+    status: active
+    authority: routing
+  - id: change-impact-studio:article:authorship-is-not-control
+    path: docs/articles/01-authorship-is-not-control.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:governance-should-live-with-the-code
+    path: docs/articles/02-governance-should-live-with-the-code.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:start-with-intent-not-implementation
+    path: docs/articles/03-start-with-intent-not-implementation.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:context-should-be-routed-not-dumped
+    path: docs/articles/04-context-should-be-routed-not-dumped.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:review-impact-before-planning
+    path: docs/articles/05-review-impact-before-you-plan-the-work.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:bound-work-before-agent-execution
+    path: docs/articles/06-bound-the-work-before-you-give-it-to-an-agent.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:evidence-earns-acceptance
+    path: docs/articles/07-completion-is-a-claim-evidence-earns-acceptance.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:govern-the-learning-loop
+    path: docs/articles/08-govern-the-learning-loop.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:cis-in-practice
+    path: docs/articles/09-change-impact-studio-in-practice.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:repository-knowledge-beyond-source
+    path: docs/articles/10-repository-knowledge-is-more-than-source-code.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:canonical-versus-derived-knowledge
+    path: docs/articles/11-canonical-knowledge-versus-derived-knowledge.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:building-typed-engineering-graph
+    path: docs/articles/12-building-a-typed-engineering-graph.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:context-packs-enough-not-everything
+    path: docs/articles/13-context-packs-enough-but-not-everything.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:provenance-confidence-relationship-state
+    path: docs/articles/14-provenance-confidence-and-relationship-state.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:change-across-multiple-repositories
+    path: docs/articles/15-understanding-change-across-multiple-repositories.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:graph-cannot-prove-completeness
+    path: docs/articles/16-why-a-knowledge-graph-cannot-prove-completeness.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:index-search-load
+    path: docs/articles/17-index-first-search-second-load-last.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:what-is-a-change-dossier
+    path: docs/articles/18-what-is-a-change-dossier.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:change-analysis-exact-baseline
+    path: docs/articles/19-binding-change-analysis-to-an-exact-baseline.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:proposed-impact-approved-scope
+    path: docs/articles/20-from-proposed-impact-to-approved-scope.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:decisions-part-of-plan
+    path: docs/articles/21-decisions-are-part-of-the-plan.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:decompose-high-complexity-tasks
+    path: docs/articles/22-why-high-complexity-tasks-must-be-decomposed.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:planning-across-engineering-surfaces
+    path: docs/articles/23-planning-across-engineering-surfaces.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:approved-feature-to-bounded-work
+    path: docs/articles/24-from-approved-feature-to-bounded-work.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:plan-frontend-types-separately
+    path: docs/articles/25-plan-public-customer-and-backoffice-separately.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:agent-should-not-own-plan
+    path: docs/articles/26-the-coding-agent-should-not-own-the-plan.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:provider-neutral-agent-task
+    path: docs/articles/27-designing-a-provider-neutral-agent-task.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:human-agent-same-contract
+    path: docs/articles/28-human-and-agent-execution-from-the-same-contract.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:stale-safe-task-envelopes
+    path: docs/articles/29-stale-safe-task-envelopes.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:deterministic-tools-replace-model-calls
+    path: docs/articles/30-when-deterministic-tools-should-replace-model-calls.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:governing-ai-routes
+    path: docs/articles/31-governing-local-and-remote-ai-routes.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:resumable-workflows-without-shell
+    path: docs/articles/32-resumable-workflows-without-shell-execution.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:external-trackers-are-projections
+    path: docs/articles/33-external-trackers-are-projections.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:agent-changed-files-not-evidence
+    path: docs/articles/34-agent-reported-changed-files-are-not-evidence.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:approved-impact-actual-diff
+    path: docs/articles/35-approved-impact-versus-actual-git-diff.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:expected-missing-unexpected-change
+    path: docs/articles/36-expected-missing-and-unexpected-change.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:testing-verification-acceptance
+    path: docs/articles/37-testing-verification-and-acceptance.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:proportionate-assurance-risk
+    path: docs/articles/38-proportionate-assurance-for-risk.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:completion-evidence-survives-conversation
+    path: docs/articles/39-completion-evidence-that-survives-the-conversation.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:passing-workflow-not-completion
+    path: docs/articles/40-a-passing-workflow-cannot-approve-completion.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:independent-assurance-ai-development
+    path: docs/articles/41-independent-assurance-for-ai-assisted-development.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:guidance-into-governed-standards
+    path: docs/articles/42-turning-guidance-into-governed-standards.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:stable-rule-ids
+    path: docs/articles/43-stable-rule-ids-and-why-they-matter.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:standards-by-technology-surface
+    path: docs/articles/44-resolving-standards-by-technology-and-surface.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:conformance-not-compliance
+    path: docs/articles/45-conformance-is-not-compliance.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:enforcement-evidence-types
+    path: docs/articles/46-deterministic-manual-and-advisory-enforcement.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:exceptions-compensating-controls
+    path: docs/articles/47-governing-exceptions-and-compensating-controls.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:import-standards-preserve-authority
+    path: docs/articles/48-importing-standards-without-overwriting-authority.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:public-endpoint-cache-boundary
+    path: docs/articles/49-public-endpoint-cache-boundary.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:api-compatibility-governance
+    path: docs/articles/50-api-compatibility-as-governance.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:why-cis-modular-cli
+    path: docs/articles/51-why-cis-is-a-modular-cli.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:one-module-one-command
+    path: docs/articles/52-one-module-one-top-level-command.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:host-composition-root
+    path: docs/articles/53-keeping-the-host-as-composition-root.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:vscode-thin-client
+    path: docs/articles/54-why-the-vscode-extension-is-a-thin-client.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:repository-state-versus-sqlite
+    path: docs/articles/55-repository-state-versus-local-sqlite.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:human-json-agent-output
+    path: docs/articles/56-designing-human-json-and-agent-output.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:safe-paths-atomic-mutation
+    path: docs/articles/57-safe-paths-and-atomic-repository-mutation.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:provider-contracts-explicit-loading
+    path: docs/articles/58-provider-contracts-and-explicit-assembly-loading.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:testing-governance-tool
+    path: docs/articles/59-testing-an-engineering-governance-tool.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:packaging-cis
+    path: docs/articles/60-packaging-cis-as-tool-and-extension.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:initialize-new-repository
+    path: docs/articles/61-initializing-a-new-repository.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:onboard-existing-dotnet
+    path: docs/articles/62-onboarding-an-existing-dotnet-application.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:govern-multi-repository-product
+    path: docs/articles/63-governing-a-multi-repository-product.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:friends-todo-golden-path
+    path: docs/articles/64-the-friends-todo-golden-path.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:cross-surface-authentication-change
+    path: docs/articles/65-planning-a-cross-surface-authentication-change.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:govern-public-cached-endpoint
+    path: docs/articles/66-governing-a-public-cached-endpoint.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:detect-breaking-api-change
+    path: docs/articles/67-detecting-a-breaking-api-change.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:one-task-different-agents
+    path: docs/articles/68-one-task-different-coding-agents.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:unexpected-work-verification
+    path: docs/articles/69-finding-unexpected-work-during-verification.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:golden-path-failure-product-learning
+    path: docs/articles/70-from-golden-path-failure-to-product-learning.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:golden-path-lessons
+    path: docs/articles/71-what-the-golden-path-taught-us.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:human-judgment-boundaries
+    path: docs/articles/72-where-cis-still-requires-human-judgment.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:feedback-without-source-prompts
+    path: docs/articles/73-designing-feedback-without-source-or-prompts.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:cis-cannot-self-approve
+    path: docs/articles/74-why-cis-cannot-self-approve-improvements.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:diagnostics-to-learning-proposal
+    path: docs/articles/75-from-diagnostic-evidence-to-learning-proposal.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:release-notes-engineering-context
+    path: docs/articles/76-release-notes-with-engineering-context.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:decisions-behind-release
+    path: docs/articles/77-architectural-decisions-behind-a-cis-release.md
+    type: article
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:article:what-changed-and-why
+    path: docs/articles/78-what-changed-in-cis-and-why.md
+    type: article
+    status: draft
+    authority: canonical
   - id: change-impact-studio:docs:architecture-decisions
     path: docs/architecture/decisions/README.md
     type: navigation
@@ -900,6 +1305,11 @@ documents:
     authority: canonical
   - id: change-impact-studio:manual:cis-design-templates
     path: docs/manual/cis_design_templates.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-design-reuse
+    path: docs/manual/cis_design_reuse.md
     type: command-reference
     status: active
     authority: canonical

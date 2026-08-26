@@ -176,6 +176,7 @@ internal static partial class FeatureIssuePackBuilder
         if (definition.Category == "backend") return spec.Backend;
         if (definition.Category == "integration") return spec.Integration;
         if (definition.Category == "lifecycle") return spec.Lifecycle;
+        if (definition.Category == "infrastructure" && ExplicitNoInfrastructureChange(spec)) return false;
         if (definition.Category is "infrastructure" or "observability")
             return spec.Requirements.Any(requirement => MatchesCategory(
                 requirement, definition.Category, definition.TriggerTerms));
@@ -188,6 +189,50 @@ internal static partial class FeatureIssuePackBuilder
         }
         return definition.TriggerTerms.Any(term => spec.SignalText.Contains(term, StringComparison.OrdinalIgnoreCase));
     }
+
+    private static bool ExplicitNoFrontendChange(IReadOnlyDictionary<string, string> sections)
+    {
+        var text = SectionText(sections, "non-goal", "exclusion", "ux", "screen", "accessibility");
+        return ContainsAny(text,
+            "no material ui",
+            "no user-visible change",
+            "no product screen",
+            "no wireframe or visual design",
+            "no wireframe or visual-design",
+            "no screen, wireframe, or visual design",
+            "no screen, wireframe, or visual-design");
+    }
+
+    private static bool ExplicitNoDataChange(IReadOnlyDictionary<string, string> sections)
+    {
+        var text = SectionText(sections, "non-goal", "exclusion", "domain model", "data", "migration");
+        return ContainsAny(text,
+            "no product entity",
+            "no product-domain entity",
+            "no data model change",
+            "no persistence change");
+    }
+
+    private static bool ExplicitNoInfrastructureChange(FeatureSpec spec)
+    {
+        var text = Regex.Replace(spec.SignalText, @"\s+", " ",
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        return ContainsAny(text,
+            "no infrastructure change",
+            "no infrastructure topology change",
+            "no topology change",
+            "no new runtime container")
+            || Regex.IsMatch(text,
+                @"\bno\b[^.\r\n]{0,220}\b(?:infrastructure topology change|new runtime container)\b[^.\r\n]{0,40}\b(?:planned|required|introduced)\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+                TimeSpan.FromSeconds(1));
+    }
+
+    private static string SectionText(IReadOnlyDictionary<string, string> sections, params string[] headings)
+        => string.Join(' ', sections
+            .Where(section => headings.Any(heading => section.Key.Contains(heading, StringComparison.OrdinalIgnoreCase)))
+            .Select(section => section.Value))
+            .ToLowerInvariant();
 
     private static bool PublicEndpointPolicyCategory(string category)
         => category is "security" or "contract" or "backend" or "observability" or "verification" or "assurance";
@@ -772,11 +817,15 @@ internal static partial class FeatureIssuePackBuilder
         var targetRoles = ReadTargetRoles(repository, targets);
         var requirementSignal = string.Join(' ', requirements.Select(requirement =>
             $"{requirement.Surface} {requirement.Text} {requirement.AcceptanceCriteria}")).ToLowerInvariant();
-        var frontendSignal = requirements.Any(requirement => Surface(requirement.Surface, "frontend", "full-stack", "mobile", "native"))
-            || targetRoles.Values.SelectMany(value => value).Any(IsFrontendRole);
+        var explicitNoFrontendChange = ExplicitNoFrontendChange(sections);
+        var frontendSignal = !explicitNoFrontendChange && (requirements.Any(requirement => Surface(requirement.Surface, "frontend", "full-stack", "mobile", "native"))
+            || targetRoles.Values.SelectMany(value => value).Any(IsFrontendRole));
         var backend = requirements.Any(requirement => Surface(requirement.Surface, "backend", "full-stack", "api", "data", "contract"))
             || targetRoles.Values.SelectMany(value => value).Any(IsBackendRole);
         var data = requirements.Any(IsPositiveDataRequirement);
+        if (data && !requirements.Any(requirement => Surface(requirement.Surface, "data"))
+            && ExplicitNoDataChange(sections))
+            data = false;
         var schemaMigration = requirements.Any(ContainsSchemaMigrationSignal);
         var api = requirements.Any(requirement => Surface(requirement.Surface, "api", "contract", "full-stack")
             || ContainsApiRequirementSignal(requirement));
@@ -786,7 +835,10 @@ internal static partial class FeatureIssuePackBuilder
         var lifecycle = requirements.Any(requirement => !Surface(requirement.Surface, "frontend", "mobile", "native")
                 && ContainsLifecycleRequirementSignal(requirement))
             || HasActiveLifecycleSection(sections);
-        var classified = requirements.Select(requirement => Classify(requirement, frontendSignal, backend, title, targets)).ToArray();
+        var classified = requirements
+            .Select(requirement => Classify(requirement, frontendSignal, backend, title, targets))
+            .Select(requirement => explicitNoFrontendChange ? requirement with { Frontend = false } : requirement)
+            .ToArray();
         var frontend = classified.Any(requirement => requirement.Frontend);
         backend |= classified.Any(requirement => requirement.Backend);
         var frontendTypes = classified.Where(requirement => requirement.Frontend)

@@ -1,64 +1,120 @@
 ---
-title: "change-impact-studio Delivery and Assurance"
+title: "Change Impact Studio Delivery and Assurance"
 type: specification
 status: Draft
-owner: Repository maintainer
+scope: Repository
+owner: "Andrew Spiteri"
+last_reviewed: "2026-08-25"
 review_cadence: on delivery-policy change
 cis:
   stable_id: change-impact-studio:spec:delivery-and-assurance
 ---
 
-# change-impact-studio Delivery and Assurance
+# Change Impact Studio delivery and assurance
+
+## Purpose
+
+This specification defines the minimum control and evidence expected when changing
+CIS itself. Detailed task obligations belong in an approved change dossier; the
+[repository delivery policy](repository-delivery-policy-spec.md) governs branch,
+commit, push, pull-request, merge, release, and other remote actions.
 
 ## Human control
 
-- A human owns scope, risk acceptance, canonical decisions, and release approval.
-- Agents may propose and implement bounded changes but must surface ambiguity, collisions, and unverified assumptions.
-- A current explicit feature approval may be reused by deterministic `cis plan derive`
-  for eligible impacts and the exact validated plan. This carry-forward preserves the
-  original reviewer, rationale, and digest and stops on uncertainty; it is not a new
-  agent approval.
-- UI work uses one default review of the exact wireframe digest and rendered design pack.
-  An earlier standalone wireframe checkpoint is optional; final acceptance remains an
-  explicit human action.
+- A human owns product scope, canonical intent, material decisions, exceptions, risk
+  acceptance, plan or design approval, verification acceptance, and release approval.
+- Agents and deterministic tools may discover, propose, implement, validate, and
+  preserve evidence, but must surface ambiguity, collisions, changed scope, and
+  unverified assumptions.
+- Exact current feature approval may be reused only through deterministic authority
+  carry-forward that preserves reviewer, rationale, source path, digest, and scope.
+  Stale, ambiguous, expanded, low-confidence, or exceptional work returns to review.
+- The executor's completion claim, changed-file list, test report, or external tracker
+  status is never authoritative by itself.
 
-## Documentation obligations
+## Change obligations
 
-- Update affected specifications and living references in the same change as behavior.
-- Preserve stable IDs and catalog entries. Do not silently delete or replace canonical records.
+Every governed change should:
 
-## Deterministic verification
+1. identify the intended outcome and exact repository or graph baseline;
+2. update affected product intent, specifications, manuals, standards, references,
+   examples, and agent guidance in the same change as behavior;
+3. preserve stable IDs, lifecycle history, catalog entries, source digests, and human rationale;
+4. cover every accepted impact with bounded work, acceptance criteria, and validation;
+5. record decisions before the gate they block;
+6. compare actual Git changes with planned targets and retain unexpected or missing work as findings;
+7. record exact commands, artifacts, results, skipped checks, residual risks, and deferrals; and
+8. leave release, merge, and remote mutation to explicit policy and human authorization.
 
-- `cis-abstractions` (`src/Cis.Abstractions`): validate the affected csharp, dotnet surface.
-- `cis-host` (`src/Cis.Host`): validate the affected csharp, dotnet surface.
-- `cis-modules-ai` (`src/Cis.Modules.Ai`): validate the affected csharp, dotnet surface.
-- `cis-modules-brd` (`src/Cis.Modules.Brd`): validate the affected csharp, dotnet surface.
-- `cis-modules-change` (`src/Cis.Modules.Change`): validate the affected csharp, dotnet surface.
-- `cis-modules-context` (`src/Cis.Modules.Context`): validate the affected csharp, dotnet surface.
-- `cis-modules-decision` (`src/Cis.Modules.Decision`): validate the affected csharp, dotnet surface.
-- `cis-modules-design` (`src/Cis.Modules.Design`): validate the affected csharp, dotnet surface.
-- `cis-modules-docs` (`src/Cis.Modules.Docs`): validate the affected csharp, dotnet surface.
-- `cis-modules-feedback` (`src/Cis.Modules.Feedback`): validate the affected csharp, dotnet surface.
-- `cis-modules-graph` (`src/Cis.Modules.Graph`): validate the affected csharp, dotnet surface.
-- `cis-modules-host` (`src/Cis.Modules.Host`): validate the affected csharp, dotnet surface.
-- `cis-modules-impact` (`src/Cis.Modules.Impact`): validate the affected csharp, dotnet surface.
-- `cis-modules-index` (`src/Cis.Modules.Index`): validate the affected csharp, dotnet surface.
-- `cis-modules-plan` (`src/Cis.Modules.Plan`): validate the affected csharp, dotnet surface.
-- `cis-modules-repository` (`src/Cis.Modules.Repository`): validate the affected csharp, dotnet surface.
-- `cis-host-tests` (`tests/Cis.Host.Tests`): validate the affected csharp, dotnet-test surface.
-- `cis-modules-brd-tests` (`tests/Cis.Modules.Brd.Tests`): validate the affected csharp, dotnet-test surface.
-- `cis-modules-context-tests` (`tests/Cis.Modules.Context.Tests`): validate the affected csharp, dotnet-test surface.
-- `cis-modules-delivery-tests` (`tests/Cis.Modules.Delivery.Tests`): validate the affected csharp, dotnet-test surface.
-- `cis-modules-docs-tests` (`tests/Cis.Modules.Docs.Tests`): validate the affected csharp, dotnet-test surface.
-- `cis-modules-feedback-tests` (`tests/Cis.Modules.Feedback.Tests`): validate the affected csharp, dotnet-test surface.
-- `cis-modules-graph-tests` (`tests/Cis.Modules.Graph.Tests`): validate the affected csharp, dotnet-test surface.
-- `cis-modules-index-tests` (`tests/Cis.Modules.Index.Tests`): validate the affected csharp, dotnet-test surface.
-- `cis-modules-repository-tests` (`tests/Cis.Modules.Repository.Tests`): validate the affected csharp, dotnet-test surface.
+## Validation strategy
+
+Run the smallest deterministic check that can fail for the relevant reason, then
+expand according to impact and risk.
+
+| Change surface | Minimum focused evidence | Wider evidence when affected |
+|---|---|---|
+| Documentation, catalog, standards, or skills | `cis docs validate --strict`; relevant standards/skills validation | Documentation, standards, graph, and repository test projects |
+| One C# module | Owning module test project | Referencing modules and `Cis.Modules.Delivery.Tests` |
+| Host composition or public contracts | `Cis.Host.Tests` and affected module tests | Full solution build and test |
+| Graph, context, index, or API evidence | Owning focused tests plus strict graph/API validation on a representative repository | Delivery tests and golden-path repositories |
+| Change, impact, decision, design, plan, agent, or verification lifecycle | Focused owning tests | `Cis.Modules.Delivery.Tests` and a complete governed change replay |
+| Tracker or provider transport | Provider/contract focused tests with no live credential requirement | Explicitly authorized integration checks |
+| Visual Studio Code client | `node --check vscode-extension/extension.js` and `node --test vscode-extension/test/*.test.js` | VSIX packaging and manual client smoke test |
+| Packaging, versioning, or release | `tools/build-release.ps1` | Install packaged tool in an isolated path and verify required modules and checksums |
+| Cross-cutting or high-risk change | Affected focused checks | `dotnet build ChangeImpactStudio.slnx` and `dotnet test ChangeImpactStudio.slnx` |
+
+Ordinary full-repository verification commands are:
+
+```powershell
+dotnet restore ChangeImpactStudio.slnx
+dotnet build ChangeImpactStudio.slnx --no-restore
+dotnet test ChangeImpactStudio.slnx --no-build --no-restore
+node --check vscode-extension/extension.js
+node --test vscode-extension/test/*.test.js
+```
 
 ## Independent assurance
 
-- TODO: Define the required reviewer, automated gate, or independent check for each risk class.
+Independent assurance should be proportionate to the consequence of failure:
+
+| Risk class | Required assurance |
+|---|---|
+| Low | Focused deterministic validation with recorded output |
+| Medium | Focused validation plus a reviewer who did not rely solely on executor claims |
+| High | Full affected-system validation, explicit independent assurance task, human review of scope and evidence, and recorded residual risk |
+| Security, privacy, data migration, public contract, authority, or release boundary | Treat as at least Medium; require the relevant specialist or named authority when impact is material |
+
+Independent assurance uses canonical task scope and independently gathered repository,
+contract, test, and Git evidence. A model may identify candidates but cannot prove
+compliance, dismiss a failure, accept an exception, or grant completion.
 
 ## Completion evidence
 
-- Record commands, results, residual risks, and any checks that could not be run.
+Completion evidence must identify:
+
+- the task, baseline, and approved scope being verified;
+- the exact command or artifact and its result;
+- expected changes that occurred and expected changes that are missing;
+- unexpected changes and their reviewed disposition;
+- validation failures, unavailable checks, deferrals, and follow-up owners;
+- documentation, catalog, graph, and generated-artifact freshness;
+- independent assurance performed for the risk class; and
+- reviewer identity, rationale, timestamp, and residual risk for final acceptance.
+
+Evidence is recorded in the change dossier and `verification.md`. Local logs, caches,
+workflow state, and tool-usage ledgers may support that record but remain disposable.
+
+## Release boundary
+
+A verified CIS change is a release candidate, not a release. Packaging, checksums,
+publishing, push, pull-request, merge, tag, and deployment remain separate actions
+governed by the repository delivery policy and explicit authorization.
+
+## Related documents
+
+- [Product intent](product-intent-spec.md)
+- [Technical intent](technical-intent-spec.md)
+- [Change impact and bounded planning](change-impact-and-planning-spec.md)
+- [Execution, assurance, diagnostics, and learning](execution-assurance-and-learning-spec.md)
+- [Repository delivery policy](repository-delivery-policy-spec.md)
+- [Standard delivery workflow](../workflows/standard-delivery.md)

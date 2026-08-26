@@ -1340,6 +1340,64 @@ status: Draft
     }
 
     [Fact]
+    public void PlanImportSpec_DoesNotTreatPublicWebCacheGovernanceAsVisualDataOrInfrastructureWork()
+    {
+        using var repository = TemporaryRepository.Create();
+        var services = CreateServices();
+        var change = Assert.IsType<ChangeDossier>(services.Changes.Create(new ChangeCreateRequest(
+            repository.Path, "Public cache governance", "Public reads use governed caching.",
+            [new ChangeRoot("orders-api", "component")])).Change);
+        var analysis = services.Impacts.Analyse(new ImpactAnalyseRequest(repository.Path, change.Id, [], 1, 100, false));
+        foreach (var finding in analysis.Findings)
+            services.Impacts.Disposition(repository.Path, change.Id, finding.Id, "accepted", "Reviewed scope.");
+        DefineAcceptanceCriteria(services.Changes.DossierFile(change, "proposal.md"));
+        repository.Write("docs/cis/specs/public-cache.md", """
+            ---
+            title: Public endpoint cache governance
+            type: feature-specification
+            targets:
+              - todo-api
+              - todo-web
+            ---
+
+            ## Functional requirements
+
+            | ID | Surface | Frontend type | Requirement | Acceptance criteria |
+            | --- | --- | --- | --- | --- |
+            | CACHE-001 | frontend | public | Public web representations shall be static or explicitly cache-governed. | Public shells contain no per-user state. |
+            | CACHE-002 | api | public | Public API reads shall use a cache-backed application abstraction. | Route handlers never access a repository or database directly. |
+            | CACHE-003 | security | not-applicable | Identity commands shall be non-cacheable. | Responses use no-store. |
+            | CACHE-004 | backend | not-applicable | Cache telemetry shall be privacy-safe. | Hit and miss events contain no sensitive values. |
+
+            ## Non-goals and explicit exclusions
+
+            No Redis, distributed cache, CDN, schema migration, or infrastructure topology
+            change is planned, and no new runtime container is required.
+
+            ## Domain model, data, audit, and migrations
+
+            No product-domain entity, table, migration, backfill, or audit store is introduced.
+
+            ## UX, screens, and accessibility
+
+            No wireframe or visual design change is required. Existing public states remain unchanged.
+            """);
+
+        var result = services.Plans.ImportSpec(new FeatureSpecImportRequest(
+            repository.Path, change.Id, "docs/cis/specs/public-cache.md"));
+
+        Assert.True(result.ExitCode == 0, string.Join(Environment.NewLine, result.Errors));
+        Assert.False(result.Source!.FrontendChanges);
+        Assert.True(result.Source.PublicEndpoints);
+        Assert.DoesNotContain(result.WorkItems, item => item.Category is "wireframe" or "design" or "frontend");
+        Assert.DoesNotContain(result.WorkItems, item => item.Category is "data" or "database-migration" or "data-backfill" or "infrastructure");
+        Assert.Contains(result.WorkItems, item => item.Category == "contract");
+        Assert.Contains(result.WorkItems, item => item.Category == "backend");
+        Assert.Contains(result.WorkItems, item => item.Category == "security");
+        Assert.Contains(result.WorkItems, item => item.Category == "observability");
+    }
+
+    [Fact]
     public void PlanImportSpec_DistinguishesSchemaMigrationAndProductLifecycleFromRestoreEvidence()
     {
         using var repository = TemporaryRepository.Create();

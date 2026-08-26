@@ -3,7 +3,10 @@ title: "Change Impact Studio Documentation"
 type: navigation
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-09"
+last_reviewed: "2026-08-25"
+review_cadence: on documentation structure change
+cis:
+  stable_id: change-impact-studio:docs:root
 ---
 
 # Change Impact Studio documentation
@@ -16,6 +19,16 @@ This repository uses `docs` as its documentation root while developing CIS itsel
 - `references/` — current inventories and contracts
 - `changes/` — change dossiers
 - `manual/` — command syntax, options, effects, outputs, and exit codes
+- `articles/` — explanatory articles and editorial series navigation; not product authority
+
+Reader entry points:
+
+- [`../README.md`](../README.md) — build, run, initialize, and find the right documentation
+- [`articles/README.md`](articles/README.md) — published and planned articles about CIS and engineering governance
+- [`manual/README.md`](manual/README.md) — command reference organized by module
+- [`specs/product-intent-spec.md`](specs/product-intent-spec.md) — current product purpose, scope, principles, requirements, and success measures
+- [`specs/system-context-spec.md`](specs/system-context-spec.md) — product boundary, actors, external systems, and authority flow
+- [`specs/technical-intent-spec.md`](specs/technical-intent-spec.md) — implementation principles, trust boundaries, and quality attributes
 
 Canonical starting points:
 
@@ -46,6 +59,8 @@ Canonical starting points:
 - `specs/wireframe-task-type.md` — textual screen, state, action, and navigation-path contract
 - `specs/visual-design-task-type.md` — self-contained JavaScript renderer, PNG screen-pack, validation, and approval contract
 - `specs/task-planning-implementation-readiness.md` — PARR comparison, remaining specification gaps, and implementation sequence
+- `specs/parr-testing-delivery-gap-matrix.md` — scored whole-process and test-suite comparison against the reusable PARR assurance model
+- `specs/parr-testing-delivery-implementation-plan.md` — ordered CIS tooling and Friends Todo migration plan for closing the assurance gaps
 - `templates/design-guidelines-template.md` — governed visual-language and design-token template for target repositories
 - `templates/default-design-guidelines.md` — populated default palette, typography, layout, component, and visual-language rules
 

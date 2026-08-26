@@ -9,7 +9,7 @@ using Cis.Modules.Plan;
 
 namespace Cis.Modules.Verify;
 
-public sealed record VerifyFileChange(string Status, string Path, string RepositoryId = "");
+public sealed record VerifyFileChange(string Status, string Path, string RepositoryId = "", string ContentDigest = "");
 public sealed record VerifyRepositoryBaseline(string RepositoryId, string BaselineKind, string Baseline, bool Exact);
 public sealed record VerifyFinding(string Severity, string Code, string Message, string? Path);
 public sealed record VerifySnapshot(int SchemaVersion, string ChangeId, string Baseline, string CapturedAtUtc,
@@ -87,8 +87,8 @@ public sealed class VerifyService
         var snapshot = compared.Snapshot;
         if (snapshot is not null)
         {
-            if (snapshot.SchemaVersion < 2)
-                findings.Add(new("error", "CIS-VERIFY-SNAPSHOT-VERSION", "Run `cis verify diff` again to create a workspace-aware snapshot.", null));
+            if (snapshot.SchemaVersion < 3)
+                findings.Add(new("error", "CIS-VERIFY-SNAPSHOT-VERSION", "Run `cis verify diff` again to create a content-aware workspace snapshot.", null));
             if (snapshot.Files.Count == 0)
                 findings.Add(new("error", "CIS-VERIFY-EMPTY", "An empty snapshot cannot satisfy final verification.", null));
             if (snapshot.Digest != Digest(snapshot.Files))
@@ -166,7 +166,7 @@ public sealed class VerifyService
         if (valid.ExitCode != 0) return valid;
         if (string.IsNullOrWhiteSpace(reviewer) || string.IsNullOrWhiteSpace(reason))
             return Invalid(valid, "CIS-VERIFY-AUTHORITY", "Reviewer and reason are required.");
-        if (valid.Snapshot is null || valid.Snapshot.Files.Count == 0 || valid.Snapshot.SchemaVersion < 2)
+        if (valid.Snapshot is null || valid.Snapshot.Files.Count == 0 || valid.Snapshot.SchemaVersion < 3)
             return Invalid(valid, "CIS-VERIFY-SNAPSHOT-REQUIRED", "Acceptance requires a current non-empty workspace-aware snapshot.");
         var context = _resolver.Resolve(valid.RepositoryPath!).Context!;
         var path = Path.Combine(context.DocumentationPath, "changes", change, "verification.md");
@@ -238,7 +238,13 @@ public sealed class VerifyService
         var captured = Diff(repo, change);
         if (captured.ExitCode != 0) return Rollback(captured);
         var accepted = Accept(repo, change, reviewer, reason);
-        return accepted.ExitCode == 0 ? accepted with { Status = "finalized" } : Rollback(accepted);
+        if (accepted.ExitCode != 0) return Rollback(accepted);
+        var finalCapture = Diff(repo, change);
+        if (finalCapture.ExitCode != 0) return Rollback(finalCapture);
+        var finalValidation = Validate(repo, change);
+        return finalValidation.ExitCode == 0
+            ? finalValidation with { Status = "finalized", Applied = true }
+            : Rollback(finalValidation);
     }
 
     private VerifySnapshot? Capture(CisRepositoryContext context, ChangeDossier dossier, List<VerifyFinding> findings)
@@ -260,12 +266,13 @@ public sealed class VerifyService
                 continue;
             }
             baselines.Add(new(repository.Id, kind, baseline, exact));
-            files.AddRange(GitDiff(repository.RepositoryPath, repository.Id, baseline, findings));
+            files.AddRange(GitDiff(repository.RepositoryPath, repository.Id, baseline,
+                exact ? stored!.WorkingTree : null, findings));
         }
         if (findings.Any(x => x.Severity == "error")) return null;
         var ordered = files.DistinctBy(x => $"{x.RepositoryId}\u001f{x.Status}\u001f{x.Path}", StringComparer.OrdinalIgnoreCase)
             .OrderBy(x => x.RepositoryId, StringComparer.Ordinal).ThenBy(x => x.Path, StringComparer.Ordinal).ToArray();
-        return new(2, dossier.Id, dossier.Baseline, _clock().ToUniversalTime().ToString("O"), ordered, Digest(ordered), baselines);
+        return new(3, dossier.Id, dossier.Baseline, _clock().ToUniversalTime().ToString("O"), ordered, Digest(ordered), baselines);
     }
 
     private IReadOnlyList<CisWorkspaceRepository> Repositories(CisRepositoryContext context, List<VerifyFinding> findings)
@@ -290,16 +297,54 @@ public sealed class VerifyService
         return context is not null && dossier is not null && findings.Count == 0;
     }
 
-    private static IReadOnlyList<VerifyFileChange> GitDiff(string repo, string id, string baseline, List<VerifyFinding> findings)
+    private static IReadOnlyList<VerifyFileChange> GitDiff(
+        string repo,
+        string id,
+        string baseline,
+        IReadOnlyList<ChangeRepositoryWorkingFile>? initialWorkingTree,
+        List<VerifyFinding> findings)
     {
         var tracked = Git(repo, id, findings, "diff", "--name-status", "--find-renames", baseline)
             .Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(x => x.TrimEnd('\r').Split('\t'))
-            .Where(x => x.Length >= 2).Select(x => new VerifyFileChange(x[0], x[^1].Replace('\\', '/'), id));
+            .Where(x => x.Length >= 2).Select(x => WorkingState(repo, x[0], x[^1]));
         var untracked = Git(repo, id, findings, "ls-files", "--others", "--exclude-standard")
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(x => new VerifyFileChange("??", x.TrimEnd('\r').Replace('\\', '/'), id));
-        return tracked.Concat(untracked)
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(x => WorkingState(repo, "??", x.TrimEnd('\r')));
+        var current = tracked.Concat(untracked)
             .Where(x => !x.Path.StartsWith(".cis/local/", StringComparison.OrdinalIgnoreCase))
+            .DistinctBy(x => x.Path, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(x => x.Path, StringComparer.OrdinalIgnoreCase);
+        if (initialWorkingTree is null)
+            return current.Values.Select(x => new VerifyFileChange(x.Status, x.Path, id, x.Digest)).ToArray();
+
+        var initial = initialWorkingTree
+            .Where(x => !x.Path.StartsWith(".cis/local/", StringComparison.OrdinalIgnoreCase))
+            .DistinctBy(x => x.Path, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(x => x.Path, StringComparer.OrdinalIgnoreCase);
+        return current.Keys.Union(initial.Keys, StringComparer.OrdinalIgnoreCase)
+            .Where(path => !current.TryGetValue(path, out var currentFile)
+                || !initial.TryGetValue(path, out var initialFile)
+                || !currentFile.Status.Equals(initialFile.Status, StringComparison.Ordinal)
+                || !currentFile.Digest.Equals(initialFile.Digest, StringComparison.Ordinal))
+            .Select(path => current.TryGetValue(path, out var file)
+                ? new VerifyFileChange(file.Status, file.Path, id, file.Digest)
+                : new VerifyFileChange("D", path, id, FileDigest(repo, path)))
             .ToArray();
+    }
+
+    private static ChangeRepositoryWorkingFile WorkingState(string repositoryPath, string status, string path)
+    {
+        var normalized = path.Replace('\\', '/');
+        var absolute = Path.Combine(repositoryPath, normalized.Replace('/', Path.DirectorySeparatorChar));
+        var digest = FileDigest(repositoryPath, normalized);
+        return new(status, normalized, digest);
+    }
+
+    private static string FileDigest(string repositoryPath, string normalizedPath)
+    {
+        var absolute = Path.Combine(repositoryPath, normalizedPath.Replace('/', Path.DirectorySeparatorChar));
+        return File.Exists(absolute)
+            ? Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(absolute))).ToLowerInvariant()
+            : "missing";
     }
 
     private static string Git(string repo, string id, List<VerifyFinding> findings, params string[] args)
@@ -398,7 +443,7 @@ public sealed class VerifyService
         findings.Add(new("error", "CIS-VERIFY-FEATURE-AUTHORITY", message, Relative(context, planPath)));
     }
     private static VerifyResult Invalid(VerifyResult result, string code, string message) => result with { Status = "invalid", Findings = result.Findings.Append(new VerifyFinding("error", code, message, null)).ToArray() };
-    private static string Digest(IEnumerable<VerifyFileChange> files) => Sha(string.Join("\n", files.Select(x => $"{x.RepositoryId}\t{x.Status}\t{x.Path}")));
+    private static string Digest(IEnumerable<VerifyFileChange> files) => Sha(string.Join("\n", files.Select(x => $"{x.RepositoryId}\t{x.Status}\t{x.Path}\t{x.ContentDigest}")));
     private static IReadOnlyList<string> ReadEvidence(string path) => File.Exists(path) ? File.ReadLines(path).Where(x => x.TrimStart().StartsWith('|') && !x.Contains("---")).ToArray() : [];
     private static string SnapshotPath(CisRepositoryContext c, string id) => Path.Combine(c.RepositoryPath, RootPath.Replace('/', Path.DirectorySeparatorChar), id, "snapshot.json");
     private static string Relative(CisRepositoryContext c, string path) => Path.GetRelativePath(c.RepositoryPath, path).Replace(Path.DirectorySeparatorChar, '/');

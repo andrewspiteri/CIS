@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -425,7 +426,11 @@ public sealed partial class ChangeDossierStore
             var head = ReadGitHead(repository.RepositoryPath);
             if (head is not null)
             {
-                baselines.Add(new ChangeRepositoryBaseline(repository.Id, "git", head));
+                baselines.Add(new ChangeRepositoryBaseline(
+                    repository.Id,
+                    "git",
+                    head,
+                    CaptureWorkingTree(repository.RepositoryPath, head)));
                 continue;
             }
 
@@ -434,6 +439,72 @@ public sealed partial class ChangeDossierStore
         }
 
         return baselines;
+    }
+
+    private static IReadOnlyList<ChangeRepositoryWorkingFile>? CaptureWorkingTree(string repositoryPath, string baseline)
+    {
+        if (!TryGit(repositoryPath, ["diff", "--name-status", "--find-renames", baseline], out var tracked)
+            || !TryGit(repositoryPath, ["ls-files", "--others", "--exclude-standard"], out var untracked))
+            return null;
+
+        var files = tracked.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.TrimEnd('\r').Split('\t'))
+            .Where(parts => parts.Length >= 2)
+            .Select(parts => WorkingFile(repositoryPath, parts[0], parts[^1]))
+            .Concat(untracked.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Select(path => WorkingFile(repositoryPath, "??", path.TrimEnd('\r'))))
+            .Where(file => !file.Path.StartsWith(".cis/local/", StringComparison.OrdinalIgnoreCase))
+            .DistinctBy(file => file.Path, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(file => file.Path, StringComparer.Ordinal)
+            .ToArray();
+        return files;
+    }
+
+    private static ChangeRepositoryWorkingFile WorkingFile(string repositoryPath, string status, string path)
+    {
+        var normalized = path.Replace('\\', '/');
+        var absolute = Path.Combine(repositoryPath, normalized.Replace('/', Path.DirectorySeparatorChar));
+        var digest = File.Exists(absolute)
+            ? Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(absolute))).ToLowerInvariant()
+            : "missing";
+        return new(status, normalized, digest);
+    }
+
+    private static bool TryGit(string repositoryPath, IReadOnlyList<string> arguments, out string output)
+    {
+        output = string.Empty;
+        try
+        {
+            using var process = new Process
+            {
+                StartInfo = new ProcessStartInfo("git")
+                {
+                    WorkingDirectory = repositoryPath,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                },
+            };
+            foreach (var argument in arguments) process.StartInfo.ArgumentList.Add(argument);
+            process.Start();
+            var outputTask = process.StandardOutput.ReadToEndAsync();
+            var errorTask = process.StandardError.ReadToEndAsync();
+            if (!process.WaitForExit(30_000))
+            {
+                process.Kill(entireProcessTree: true);
+                process.WaitForExit();
+                return false;
+            }
+
+            output = outputTask.GetAwaiter().GetResult();
+            _ = errorTask.GetAwaiter().GetResult();
+            return process.ExitCode == 0;
+        }
+        catch (Exception exception) when (exception is IOException or System.ComponentModel.Win32Exception)
+        {
+            return false;
+        }
     }
 
     private static string? ReadGitHead(string repositoryPath)

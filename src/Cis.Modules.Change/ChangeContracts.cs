@@ -18,7 +18,13 @@ public sealed record ChangeRebaselineRequest(
 public sealed record ChangeRepositoryBaseline(
     string RepositoryId,
     string BaselineKind,
-    string Baseline);
+    string Baseline,
+    IReadOnlyList<ChangeRepositoryWorkingFile>? WorkingTree = null);
+
+public sealed record ChangeRepositoryWorkingFile(
+    string Status,
+    string Path,
+    string Digest);
 
 public sealed record ChangeDossier(
     string Id,

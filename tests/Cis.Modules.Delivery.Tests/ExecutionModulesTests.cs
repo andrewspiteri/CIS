@@ -297,11 +297,17 @@ public sealed class ExecutionModulesTests
         repository.Write("docs/cis/changes/CIS-0003/agent-tasks/WORK-020.md", "---\r\ntask_status: Approved\r\ncategory: design\r\n---\r\n# Design\r\n");
         repository.Write("docs/cis/changes/CIS-0003/agent-tasks/WORK-160.md", "---\r\ntask_status: Complete\r\ncategory: verification\r\n---\r\n# Verification\r\n");
         repository.Write("docs/cis/changes/CIS-0003/agent-tasks/WORK-180.md", "---\r\ntask_status: InProgress\r\ntask_type: core.delivery.final-sweep\r\ncategory: delivery\r\n---\r\n# Final sweep\r\n- [x] Reconciled.\r\n| Check | Result |\r\n|---|---|\r\n| completion | Passed |\r\n");
+        repository.Write("src/example.txt", "changed before capture\n");
         var changes = new ChangeDossierStore(new CisRepositoryContextResolver(), Clock);
         var service = new VerifyService(new CisRepositoryContextResolver(), changes, [], Clock);
 
         Assert.Equal("captured", service.Diff(repository.Path, "CIS-0003").Status);
         Assert.Equal(0, service.Validate(repository.Path, "CIS-0003").ExitCode);
+
+        repository.Write("src/example.txt", "changed after capture\n");
+        Assert.Contains(service.Validate(repository.Path, "CIS-0003").Findings,
+            item => item.Code == "CIS-VERIFY-SNAPSHOT-STALE");
+        Assert.Equal("captured", service.Diff(repository.Path, "CIS-0003").Status);
 
         repository.Write("docs/cis/changes/CIS-0003/agent-tasks/WORK-180.md", "---\ntask_status: InProgress\ntask_type: core.delivery.final-sweep\ncategory: delivery\n---\n# Final sweep\n- [ ] Reconcile.\n| Check | Result |\n|---|---|\n| completion | Passed |\n");
         Assert.Contains(service.Validate(repository.Path, "CIS-0003").Findings, item => item.Code == "CIS-VERIFY-TASK" && item.Path!.EndsWith("WORK-180.md", StringComparison.Ordinal));
@@ -361,6 +367,60 @@ public sealed class ExecutionModulesTests
         Assert.Equal(2, result.Snapshot!.Repositories!.Count);
         Assert.Contains(result.Snapshot.Files, item => item.RepositoryId == "participant" && item.Status == "??" && item.Path == "src/untracked.cs");
         Assert.DoesNotContain(result.Findings, item => item.Code == "CIS-VERIFY-BASELINE-FALLBACK");
+    }
+
+    [Fact]
+    public void Verify_ExcludesPreexistingDirtyWorkspaceFilesButDetectsLaterEdits()
+    {
+        using var authority = ExecutionRepository.Create(git: true, id: "authority");
+        using var participant = ExecutionRepository.Create(git: true, id: "participant");
+        authority.Write(".cis/workspace.yml", $"""
+            schema_version: 1
+            repositories:
+            - id: authority
+              path: .
+              documentation_root: docs/cis
+              role: authority
+            - id: participant
+              path: "{participant.Path.Replace('\\', '/')}"
+              documentation_root: docs/cis
+              role: participant
+            """);
+        participant.Write("src/preexisting.txt", "present before the change\n");
+        authority.Write(".cis/local/graph/manifest.json", JsonSerializer.Serialize(new CisGraphManifest(
+            1,
+            "sha256:fixture",
+            "authority",
+            "docs/cis",
+            authority.Head(),
+            true,
+            [],
+            [])));
+
+        var resolver = new CisRepositoryContextResolver();
+        var registry = new WorkspaceRegistry(resolver);
+        var changes = new ChangeDossierStore(resolver, Clock, workspaceRegistry: registry);
+        var change = Assert.IsType<ChangeDossier>(changes.Create(new ChangeCreateRequest(
+            authority.Path,
+            "Dirty baseline fixture",
+            "Only work performed after change creation is reported.",
+            [])).Change);
+        var participantBaseline = Assert.Single(change.RepositoryBaselines!, item => item.RepositoryId == "participant");
+        Assert.Contains(participantBaseline.WorkingTree!, item => item.Path == "src/preexisting.txt" && item.Status == "??");
+
+        authority.Write("docs/cis/changes/CIS-0001/plan.md", "---\nstatus: Approved\nfeature_spec_frontend: false\n---\n# Plan\n");
+        authority.Write("docs/cis/changes/CIS-0001/verification.md", "---\nstatus: Draft\n---\n| Task | Check | Artifact | Result | Notes |\n|---|---|---|---|---|\n| WORK-001 | tests | `test` | Passed | exact |\n");
+        authority.Write("docs/cis/changes/CIS-0001/agent-tasks/WORK-001.md", "---\ntask_status: Complete\ntargets: [\"authority\"]\n---\n# Task\n");
+        var service = new VerifyService(resolver, changes, [], Clock, registry);
+
+        var unchanged = service.Diff(authority.Path, change.Id);
+        Assert.DoesNotContain(unchanged.Snapshot!.Files,
+            item => item.RepositoryId == "participant" && item.Path == "src/preexisting.txt");
+
+        participant.Write("src/preexisting.txt", "changed during the change\n");
+        var changed = service.Diff(authority.Path, change.Id);
+        Assert.Contains(changed.Snapshot!.Files,
+            item => item.RepositoryId == "participant" && item.Path == "src/preexisting.txt");
     }
 
     [Fact]

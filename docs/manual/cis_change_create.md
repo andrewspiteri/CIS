@@ -11,8 +11,8 @@ cis:
 
 # `cis change create`
 
-Creates a catalogued `changes/CIS-NNNN/` dossier against the current exact Git commit
-or graph-build baseline.
+Creates a catalogued `changes/CIS-NNNN/` dossier against the current exact Git commit,
+dirty working-tree state, or graph-build baseline.
 
 ```text
 cis change create --title <text> --outcome <text>
@@ -36,3 +36,8 @@ The initial proposal contains an outcome-acceptance placeholder. A human may rep
 for an ad-hoc change. For a current approved feature, `cis plan derive` replaces only that
 placeholder with the feature's exact approved requirement criteria and preserves any
 existing human-managed proposal criteria.
+
+For every Git-backed workspace repository, the proposal records the starting commit and
+content digests for tracked changes and untracked files already present at creation.
+This does not copy source content into the dossier. It gives `cis verify diff` an exact
+change-start boundary even when one or more repositories are intentionally dirty.

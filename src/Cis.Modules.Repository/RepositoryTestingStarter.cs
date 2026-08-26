@@ -107,11 +107,13 @@ internal static class RepositoryTestingStarter
             if (browser is not null && packages.Contains("@playwright/test"))
             {
                 var id = SafeId(component.Id + "-browser");
+                var prerequisiteId = SafeId(component.Id + "-browser-prerequisite");
                 var result = $".cis/local/testing/results/{id}.json";
                 var command = $"{prefix} run {browser}";
                 suites.Add(new(id, component.Id, "browser", "playwright", command, component.Root, "playwright-json", result,
                     "-", "-", "Node.js, installed browsers, application runtime, and JSON reporter output", "critical frontend journeys", "release", "retain-on-failure"));
-                steps.Add(new(id, command, component.Root, id, "-", "no", 2400));
+                steps.Add(new(prerequisiteId, $"{prefix} exec playwright install chromium", component.Root, "-", "-", "no", 1200));
+                steps.Add(new(id, command, component.Root, id, prerequisiteId, "no", 2400));
             }
 
             if (scripts.ContainsKey("build")) steps.Add(new(SafeId(component.Id + "-build"), $"{prefix} run build", component.Root, "-", "-", "no", 1200));

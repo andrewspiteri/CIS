@@ -138,7 +138,12 @@ public sealed class WorkflowService
     private static string ClassifyFailure(string output)
     {
         if (new[] { "ENOSPC", "out of memory", "ENOMEM", "worker process", "process exited unexpectedly", "docker daemon", "cannot connect to the Docker", "resource temporarily unavailable" }.Any(marker => output.Contains(marker, StringComparison.OrdinalIgnoreCase))) return "infrastructure";
-        if (new[] { "command not found", "is not recognized", "No such file or directory", "SDK not found", "Cannot find module" }.Any(marker => output.Contains(marker, StringComparison.OrdinalIgnoreCase))) return "missing-prerequisite";
+        if (new[]
+            {
+                "command not found", "is not recognized", "No such file or directory", "SDK not found",
+                "Cannot find module", "Executable doesn't exist", "application to execute does not exist",
+                "playwright install"
+            }.Any(marker => output.Contains(marker, StringComparison.OrdinalIgnoreCase))) return "missing-prerequisite";
         return "product";
     }
     private static string? SafeId(string value, List<string> d) { if (string.IsNullOrWhiteSpace(value) || value.Any(ch => !(char.IsLetterOrDigit(ch) || ch is '-' or '_'))) { d.Add("ERROR: Run ID may contain only letters, digits, hyphen, and underscore."); return null; } return value; }

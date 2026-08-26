@@ -83,6 +83,23 @@ public sealed class ExecutionModulesTests
     }
 
     [Fact]
+    public void WorkflowRun_ClassifiesMissingExecutableEvidenceAsMissingPrerequisite()
+    {
+        using var repository = ExecutionRepository.Create();
+        repository.Write("docs/cis/workflows/check.md", """
+            | Step | Command | Depends on | Continue on failure | Timeout seconds |
+            |---|---|---|---|---:|
+            | browser | dotnet exec missing-playwright-runtime.dll | - | no | 30 |
+            """);
+        var service = new WorkflowService(new CisRepositoryContextResolver(), Clock);
+
+        var result = service.Run(repository.Path, "check", "RUN-MISSING-PREREQUISITE");
+
+        Assert.Equal("failed", result.Status);
+        Assert.Equal("missing-prerequisite", Assert.Single(result.Run!.Steps).FailureKind);
+    }
+
+    [Fact]
     public void AgentImport_IsDigestBoundAndAddsEvidenceWithoutCompletion()
     {
         using var repository = ExecutionRepository.Create();

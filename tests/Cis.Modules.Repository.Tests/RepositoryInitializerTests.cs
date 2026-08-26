@@ -1164,6 +1164,29 @@ public sealed class RepositoryInitializerTests
     }
 
     [Fact]
+    public void Initialize_PlaywrightWorkflowInstallsChromiumBeforeBrowserSuite()
+    {
+        using var repository = TemporaryRepository.Create();
+        repository.Write(
+            "package.json",
+            "{\"name\":\"web\",\"scripts\":{\"test:browser\":\"playwright test\"},\"dependencies\":{\"next\":\"16.0.0\",\"react\":\"19.0.0\"},\"devDependencies\":{\"@playwright/test\":\"1.55.0\"}}");
+        repository.Write("tsconfig.json", "{\"compilerOptions\":{}}");
+        repository.Write("app/page.tsx", "export default function Page() { return null; }");
+
+        var result = new RepositoryInitializer().Initialize(new RepositoryInitRequest(
+            repository.Path,
+            "docs/cis",
+            DryRun: false,
+            Confirmed: true));
+
+        Assert.Equal(0, result.ExitCode);
+        var workflow = File.ReadAllText(Path.Combine(repository.Path, "docs", "cis", "workflows", "standard-delivery.md"));
+        Assert.Contains("playwright install chromium", workflow, StringComparison.Ordinal);
+        Assert.Contains("web-browser-prerequisite", workflow, StringComparison.Ordinal);
+        Assert.Contains("| web-browser |", workflow, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Initialize_TypeScriptApiSelectsPortableTestingAndRealDependencySkills()
     {
         using var repository = TemporaryRepository.Create();

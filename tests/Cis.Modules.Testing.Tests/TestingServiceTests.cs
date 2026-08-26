@@ -65,6 +65,21 @@ public sealed class TestingServiceTests
     }
 
     [Fact]
+    public void SkippedOnlyJUnitResult_IsExplicitRatherThanPassed()
+    {
+        using var repository = TestRepository.Create();
+        repository.Write(".cis/local/results/provider.xml", "<testsuite><testcase classname=\"provider\" name=\"managed provider smoke\"><skipped message=\"credentials unavailable\" /></testcase></testsuite>");
+        var path = Path.Combine(repository.Path, ".cis", "local", "results", "provider.xml");
+
+        var execution = new JUnitTestResultAdapter().Read(new(repository.Path,
+            Suite("api-provider", "integration", "junit", ".cis/local/results/provider.xml"), path, null, null));
+
+        Assert.Equal("skipped", execution.Status);
+        Assert.Equal(1, execution.Skipped);
+        Assert.Equal("skipped", Assert.Single(execution.Cases).Status);
+    }
+
+    [Fact]
     public void Trace_RejectsSourceOnlyReferencesWithoutPassedExecutionEvidence()
     {
         using var repository = TestRepository.Create();

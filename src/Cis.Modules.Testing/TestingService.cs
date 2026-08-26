@@ -150,7 +150,7 @@ public sealed partial class TestingService
             .OrderBy(item => item.Path, StringComparer.OrdinalIgnoreCase)
             .ToArray();
         var status = executions.Any(item => item.Status is "failed" or "invalid-evidence") ? "failed"
-            : executions.Any(item => item.Status is "unavailable") ? "incomplete"
+            : executions.Any(item => item.Status is "unavailable" or "skipped") ? "incomplete"
             : executions.Any(item => item.Status is "findings") ? "passed-with-findings" : "passed";
         var manifest = new TestRunManifest(1, runId, workflow.Run.WorkflowId, workflow.Run.WorkflowDigest,
             context.RepositoryId, Revision(context.RepositoryPath), ProfileDigest(context),

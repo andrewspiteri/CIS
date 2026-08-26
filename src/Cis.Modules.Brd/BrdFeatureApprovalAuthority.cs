@@ -11,14 +11,18 @@ public sealed class BrdFeatureApprovalAuthority(BrdBacklogService backlog) : ICi
         var absolute = Path.GetFullPath(Path.Combine(repository,
             featureSpecificationPath.Replace('/', Path.DirectorySeparatorChar)));
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-        if (!absolute.StartsWith(repository.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, comparison)
-            || !File.Exists(absolute))
-            return new(false, false, null, null, null, null, null, []);
+        if (!absolute.StartsWith(repository.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, comparison))
+            return new(false, false, null, null, null, null, null,
+                [$"Feature specification path '{featureSpecificationPath}' escapes repository '{repository}'."]);
+        if (!File.Exists(absolute))
+            return new(false, false, null, null, null, null, null,
+                [$"Feature specification '{absolute}' does not exist."]);
 
         var content = File.ReadAllText(absolute);
         var itemId = Value(content, "high_level_item");
         if (string.IsNullOrWhiteSpace(itemId) || !Regex.IsMatch(itemId, "^HLT-[A-Z0-9-]+$", RegexOptions.CultureInvariant))
-            return new(false, false, null, null, null, null, null, []);
+            return new(false, false, null, null, null, null, null,
+                [$"Feature specification '{absolute}' has no valid high_level_item metadata."]);
 
         var status = backlog.FeatureStatus(repositoryPath, itemId);
         var relative = Path.GetRelativePath(repository, absolute).Replace('\\', '/');

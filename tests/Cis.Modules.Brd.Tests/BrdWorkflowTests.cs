@@ -433,7 +433,7 @@ public sealed class BrdWorkflowTests
         Assert.Equal("unchanged", backlog.ApproveFeature(environment.Authority.Path, "HLT-FR-001", "Product owner", "Feature scope accepted").Status);
         var carriedAuthority = new BrdFeatureApprovalAuthority(backlog).Evaluate(
             environment.Authority.Path, started.RelativePath!);
-        Assert.True(carriedAuthority.Applicable);
+        Assert.True(carriedAuthority.Applicable, string.Join(Environment.NewLine, carriedAuthority.Errors));
         Assert.True(carriedAuthority.Ready, string.Join(Environment.NewLine, carriedAuthority.Errors));
         Assert.Equal("Product owner", carriedAuthority.Reviewer);
         Assert.Equal("HLT-FR-001", carriedAuthority.ItemId);

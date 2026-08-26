@@ -1,11 +1,11 @@
 ---
 title: "PARR Testing and Delivery Assurance Implementation Plan"
 type: implementation-plan
-status: Draft
-version: "0.1"
+status: Active
+version: "1.0"
 scope: "Product:ChangeImpactStudio"
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-26"
+last_reviewed: "2026-08-27"
 review_cadence: "on milestone completion or gap-matrix change"
 cis:
   stable_id: change-impact-studio:plan:parr-testing-delivery-assurance
@@ -328,3 +328,16 @@ This plan is complete only when:
 10. final human acceptance is requested once for the completed assurance-hardening
     outcome, not once per mechanical test layer.
 
+## 8. Execution result
+
+Milestones 0 through 8 are implemented and verified. The canonical Friends Todo run is
+`gap-closure-accepted-20260826`; all 112 generated cases reconcile to exact passed
+executions. CIS 0.3.0 passed hosted Windows and Ubuntu verification and a clean Linux
+release build under `/data`, producing a NuGet tool package, source archive, VSIX, and
+SHA-256 manifest.
+
+The managed Google provider smoke remains intentionally credential-dependent and is
+reported as unavailable in the canonical run. The only external activation still
+required is explicit authorization to make the CIS GitHub repository public, which is
+necessary for the public documentation repository to download the checksum-verified
+0.3.0 release without a private-repository credential.

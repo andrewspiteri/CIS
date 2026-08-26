@@ -1,11 +1,11 @@
 ---
 title: "PARR Testing and Delivery Gap Matrix"
 type: gap-analysis
-status: Draft
-version: "0.1"
+status: Active
+version: "1.0"
 scope: "Product:ChangeImpactStudio"
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-26"
+last_reviewed: "2026-08-27"
 review_cadence: "on assurance-hardening milestone completion"
 cis:
   stable_id: change-impact-studio:analysis:parr-testing-delivery-gap-matrix
@@ -37,9 +37,8 @@ The review used:
 - the complete Friends Todo BRD-to-delivery golden path and its recorded observations;
 - the Friends Todo API, web, infrastructure, documentation, coverage, integration,
   Playwright, manual-test, verification, and assurance artifacts; and
-- the latest recorded CIS-0010 deterministic verification: 146 API fast tests, 3
-  SuperTokens Core integration tests, 105 web fast/component tests, and 2 Playwright
-  browser scenarios.
+- the reconciled `gap-closure-accepted-20260826` multi-repository run, the clean
+  `/data` CIS 0.3.0 release build, and repository-owned GitHub Actions evidence.
 
 ## 3. Maturity scale
 
@@ -65,50 +64,54 @@ four or five.
 | GAP-PROC-003 | Task decomposition and provider policy | 4 | 4 | Nineteen core types, complexity decomposition, ordering, extension conflicts, selection, migration, and evidence carry-forward are implemented. | - | Covered |
 | GAP-PROC-004 | Wireframe, visual design, and review barrier | 5 | 4 | Textual wireframes, reusable shell/components, deterministic Sharp/SVG rendering, PNG manifests, rejection history, and global design pause are implemented. | - | Covered |
 | GAP-PROC-005 | Proportionate semantic approvals | 4 | 4 | Evidence-only reconciliation preserves valid authority and design reuse avoids duplicate approval. Final human acceptance remains correctly distinct from verification. | - | Covered |
-| GAP-PROC-006 | Feature-specification authoring guidance | 2 | 4 | Lifecycle commands exist, but initialization does not seed a dedicated classification-aware feature-specification skill. This is Friends Todo observation `GP-099`. | P1 | Open |
-| GAP-PROC-007 | Repository-specific workflow profiles | 1 | 4 | The Friends Todo authority repository received `dotnet build` and `dotnet test` despite governing TypeScript, Next.js, and Compose repositories. Workflow generation is not classification-bound. | P0 | Open |
-| GAP-PROC-008 | Pull-request and release CI | 1 | 5 | Friends Todo has no repository-owned GitHub Actions workflows. Checks are executed manually or through an agent on the SSH build server and therefore do not continuously block regressions. | P0 | Open |
-| GAP-PROC-009 | Verification failure classification | 2 | 4 | Tool usage records failures, but runner resource crashes can be counted like product failures. `GP-096` remains open for bounded rerun and infrastructure classification. | P1 | Open |
-| GAP-PROC-010 | Release validation and artifact promotion | 2 | 5 | Build, runtime smoke, recovery, browser, and assurance evidence exist, but there is no ordered release gate, freshness re-check, artifact promotion dependency, or mutation threshold. | P1 | Open |
+| GAP-PROC-006 | Feature-specification authoring guidance | 4 | 4 | Initialization seeds the classification-aware `GP-099` feature-specification governance skill and linked agent instructions. | P1 | Closed |
+| GAP-PROC-007 | Repository-specific workflow profiles | 4 | 4 | Classification-selected profiles detect .NET, Node/Vitest/Cucumber/Playwright, Next.js, Compose, Terraform, and documentation repositories while preserving reviewed commands on reinitialization. | P0 | Closed |
+| GAP-PROC-008 | Pull-request and release CI | 5 | 5 | API, web, and infrastructure use repository-specific `/data` runners; docs uses GitHub-hosted Ubuntu. Strict required checks are enabled after green baselines. Public docs installation awaits the separately authorized CIS repository visibility change. | P0 | Implemented; external visibility pending |
+| GAP-PROC-009 | Verification failure classification | 4 | 4 | `GP-096` is implemented with immutable attempt numbers and product, infrastructure, prerequisite, timeout, cancellation, and unknown classifications. A live missing-Playwright failure exposed and proved the prerequisite path. | P1 | Closed |
+| GAP-PROC-010 | Release validation and artifact promotion | 5 | 5 | Ordered release workflows gate freshness, coverage, mutation, browser, security, integration, and operations evidence before bounded artifact upload. CIS 0.3.0 is packaged as NuGet tool, source archive, VSIX, and checksums. | P1 | Closed |
 
 ## 5. Test-suite matrix
 
 | ID | Test or assurance layer | Current | Target | Gap and evidence | Priority | State |
 | --- | --- | ---: | ---: | --- | --- | --- |
-| GAP-TEST-001 | Canonical suite inventory and layer classification | 1 | 4 | No suite profile states which command, framework, layer, boundary, environment, and risk each test owns. Folder names are treated as truth even when behavior crosses layers. | P0 | Open |
-| GAP-TEST-002 | Pure unit tests and unit coverage | 3 | 4 | Focused deterministic tests are extensive, but API `test/unit` also opens HTTP listeners and real SQLite files. The reported coverage cannot be identified as pure unit coverage. | P0 | Open |
-| GAP-TEST-003 | Component and API integration | 2 | 4 | In-process HTTP behavior exists but is labelled unit. The explicit integration suite contains only three SuperTokens Core cases. API, serialization, security, and persistence integration need separate reporting. | P1 | Open |
-| GAP-TEST-004 | Persistence and migration integration | 3 | 4 | Real SQLite migration, constraint, backup, and restore behavior is tested, but it is hidden in the unit suite and not a separately executable integration gate. | P1 | Open |
-| GAP-TEST-005 | Business acceptance tests | 0 | 4 | No distinct business-readable suite proves owner/member, access approval, list/todo lifecycle, and session outcomes. Smoke and browser journeys do not replace this layer. | P1 | Open |
-| GAP-TEST-006 | Architecture and policy tests | 2 | 4 | Public-route persistence isolation and route inventory checks exist. General source dependency direction, layer ownership, forbidden imports, and security architecture are not systematically enforced. | P1 | Open |
-| GAP-TEST-007 | Frontend component and accessibility tests | 3 | 4 | React interaction and axe evidence is substantial, but it is not described by a canonical suite profile or tied to an always-on CI gate. | P1 | Open |
-| GAP-TEST-008 | Browser regression | 2 | 4 | One Playwright file has two scenarios, including one long anonymous journey. Feature-scoped cloud, sharing, membership, concurrency, recovery, and session journeys are not independently isolated. | P1 | Open |
-| GAP-TEST-009 | Browser failure artifacts | 1 | 4 | Playwright uses a line reporter with no trace, screenshot, video, or durable diagnostic artifact policy. | P1 | Open |
-| GAP-TEST-010 | Mutation testing and score ratchet | 0 | 5 | No JavaScript mutation runner, configuration, score, survivor disposition, feature baseline, or enforcing release threshold exists. | P1 | Open |
-| GAP-TEST-011 | Changed-code coverage | 2 | 4 | API and web have global V8 thresholds, but no changed-scope calculation, exclusion policy enforcement, or human-approved bounded exception. | P1 | Open |
-| GAP-TEST-012 | Defect regression preservation | 3 | 4 | Several golden-path defects gained focused regression tests, but CIS does not inventory reproduced defects or prove that each applicable regression ran in the completion build. | P1 | Open |
-| GAP-TEST-013 | Manual test catalogue coverage | 2 | 4 | CIS-0007 through CIS-0010 have 48 Markdown/CSV cases with zero pending mappings. CIS-0001 through CIS-0006 have no generated catalogue, and existing catalogues remain Draft. | P2 | Open |
-| GAP-TEST-014 | Executed-test traceability | 2 | 4 | CIS validates stable `TC-*` source references, but a source match is not proof that the named test was discovered, executed, and passed in the recorded run. | P0 | Open |
-| GAP-TEST-015 | Security assurance | 3 | 4 | Negative authorization tests, dependency audits, bounded secret scans, and non-disclosure browser assertions exist. SAST, dependency policy, and optional dynamic security scans are not represented as classified gates. | P2 | Open |
-| GAP-TEST-016 | Provider and deployment-mode matrix | 2 | 4 | Anonymous mode has the broadest runtime journey. Cloud mode has adapter and ephemeral Core coverage but no managed-provider or real Google opt-in smoke profile. | P2 | Open |
-| GAP-TEST-017 | Independent assurance separation | 2 | 4 | Mechanized checks provide separate failure surfaces, but the implementation and assurance reports may be produced by the same agent identity. Assignment and independence evidence are not enforced. | P2 | Open |
-| GAP-TEST-018 | Cross-platform and remote execution | 3 | 4 | Windows/Linux, Docker, SSH-server, and Chromium evidence exists, but environment selection and results are manually assembled rather than emitted from a canonical workflow run. | P1 | Open |
-| GAP-TEST-019 | Flaky/infrastructure failure handling | 1 | 4 | There is no retry classification, quarantine policy, flake history, or rule separating diagnostic reruns from canonical successful evidence. | P1 | Open |
+| GAP-TEST-001 | Canonical suite inventory and layer classification | 4 | 4 | Canonical suite profiles bind stable IDs, layers, frameworks, commands, working directories, result formats, prerequisites, applicability, CI tiers, and artifacts. | P0 | Closed |
+| GAP-TEST-002 | Pure unit tests and unit coverage | 4 | 4 | API pure-unit execution excludes listeners, SQLite test fixtures, containers, browsers, and operational scripts and reports a separate 78.58% line-coverage baseline. | P0 | Closed |
+| GAP-TEST-003 | Component and API integration | 4 | 4 | In-process HTTP component behavior and provider integration are independently executable and reconciled: 51 component cases and 4 ephemeral-Core cases. | P1 | Closed |
+| GAP-TEST-004 | Persistence and migration integration | 4 | 4 | The SQLite suite independently proves 35 migration, constraint, transaction, idempotency, backup, restore, and recovery cases. | P1 | Closed |
+| GAP-TEST-005 | Business acceptance tests | 4 | 4 | Cucumber 13.2.1 provides six business-readable scenarios covering the approved identity, lifecycle, sharing, membership, authorization, and termination outcomes. | P1 | Closed |
+| GAP-TEST-006 | Architecture and policy tests | 4 | 4 | Compiler-backed API and web checks enforce dependency direction, public-cache isolation, frontend classification, and security boundaries. | P1 | Closed |
+| GAP-TEST-007 | Frontend component and accessibility tests | 4 | 4 | Fifty-eight React component/accessibility cases are separately profiled, reported, and continuously gated. | P1 | Closed |
+| GAP-TEST-008 | Browser regression | 4 | 4 | Six zero-retry Playwright scenarios cover authentication/session, list/todo, sharing/membership, unavailable/recovery, termination, and one thin golden journey. | P1 | Closed |
+| GAP-TEST-009 | Browser failure artifacts | 4 | 4 | Playwright retains traces and screenshots on failure, optional failure video, error context, console/network diagnostics, and the managed harness log. | P1 | Closed |
+| GAP-TEST-010 | Mutation testing and score ratchet | 5 | 5 | Stryker 10.0.0 with the Vitest runner enforces `high 85`, `low 80`, `break 80`; the selected 307-mutant scope scores 83.33% and a durable 25-finding no-new-survivor baseline. | P1 | Closed |
+| GAP-TEST-011 | Changed-code coverage | 4 | 4 | API and web enforce 95% line coverage for changed production code, global baseline non-regression, and owner/reason metadata for narrow exclusions. | P1 | Closed |
+| GAP-TEST-012 | Defect regression preservation | 4 | 4 | Stable defect and feature identities are reconciled from the exact canonical run; source-only references cannot satisfy verification. | P1 | Closed |
+| GAP-TEST-013 | Manual test catalogue coverage | 4 | 4 | All ten changes have Markdown and CSV catalogues: 112 cases, 112 automated mappings, current source digests and CSV hashes, and passed exact-run trace evidence. | P2 | Closed |
+| GAP-TEST-014 | Executed-test traceability | 4 | 4 | `cis test trace` requires each exact `TC-*` identity in a passed reconciled execution; all 112 Friends Todo cases pass against `gap-closure-accepted-20260826`. | P0 | Closed |
+| GAP-TEST-015 | Security assurance | 4 | 4 | API/web CodeQL, dependency audits, bounded secret scanning, Terraform configuration scanning, negative-principal behavior, and non-disclosure checks are classified gates. | P2 | Closed |
+| GAP-TEST-016 | Provider and deployment-mode matrix | 4 | 4 | Anonymous composed behavior, ephemeral SuperTokens Core, cloud adapter behavior, and an opt-in managed Google smoke are explicit. Missing credentials produce `unavailable`, never a pass. | P2 | Closed with optional provider unavailable |
+| GAP-TEST-017 | Independent assurance separation | 4 | 4 | Reconciled manifests bind implementer, assurer, technique, profile digest, revision, run ID, and artifact hashes; repeated implementer evidence is rejected without a distinct reviewer or independent technique. | P2 | Closed |
+| GAP-TEST-018 | Cross-platform and remote execution | 4 | 4 | CIS passes Windows and Ubuntu CI plus a clean Linux 0.3.0 release build on `/data`; Friends Todo emits canonical manifests from repository-specific `/data` runners. | P1 | Closed |
+| GAP-TEST-019 | Flaky/infrastructure failure handling | 4 | 4 | Canonical retries remain zero, attempts are immutable, diagnostic reruns are distinct, and product, runner, prerequisite, timeout, cancellation, and unknown failures are classified. | P1 | Closed |
 
 ## 6. Current measured Friends Todo baseline
 
 | Surface | Files/scenarios | Latest result | Coverage or boundary |
 | --- | ---: | --- | --- |
-| API mixed fast suite | 23 test files; 146 tests | Passed | 90.17% lines; 86.24% statements; 97.32% functions; 82.55% branches |
-| API explicit integration | 1 test file; 3 tests | Passed | Ephemeral SuperTokens Core through Testcontainers |
-| Web mixed fast/component suite | 19 test files; 105 tests | Passed | 90.23% lines; 83.76% statements; 86.39% functions; 76.36% branches |
-| Browser regression | 1 file; 2 scenarios | Passed | Chromium, anonymous composed journey, compact unknown-route behavior, and axe checks |
-| Infrastructure | 4 executable validation scripts | Passed in recorded feature evidence | Compose topology, anonymous smoke, recovery drill, and operations report |
-| Manual test catalogues | 4 changes; 48 cases | All mapped to source references | HLT-FR-006 through HLT-FR-009 only |
+| API pure unit | 99 cases | Passed | 78.58% lines; no listeners, SQLite fixtures, containers, browsers, or operations |
+| API component | 51 cases | Passed | In-process HTTP, middleware, serialization, status, headers, and Problem Details |
+| API SQLite integration | 35 cases | Passed | Migrations, constraints, transactions, idempotency, backup, restore, and recovery |
+| API provider integration | 4 ephemeral-Core cases; 1 managed smoke | Core passed; managed smoke unavailable | Testcontainers Core is deterministic; managed Google remains credential-dependent |
+| API business / architecture / security | 6 / 5 / 21 cases | Passed | Cucumber outcomes, compiler boundaries, and negative security behavior |
+| API aggregate coverage / mutation | 194 cases / 307 mutants | Passed / passed with findings | 89.65% aggregate lines; 95% changed-code gate; 83.33% mutation score |
+| Web unit / component / architecture / security | 42 / 58 / 1 / 27 cases | Passed | Utilities, React/accessibility, compiler boundaries, and client security |
+| Web browser | 6 scenarios | Passed | Feature-scoped Chromium scenarios plus one thin golden journey; zero retries |
+| Infrastructure | 4 suites | Passed | Topology, anonymous runtime smoke, recovery drill, and operations evidence |
+| Documentation and manual catalogues | 305 Markdown documents; 112 cases | Passed | Ten Markdown/CSV catalogues with 112 exact passed automation mappings |
 
-These percentages are repository fast-suite coverage. They are not pure unit coverage and
-do not calculate the 95-percent new or materially changed production-code expectation
-defined by the CIS and PARR standards.
+The aggregate coverage figures and pure-unit figure are intentionally distinct. The
+95-percent policy applies to new or materially changed production files; established
+whole-repository and mutation baselines are separately ratcheted.
 
 ## 7. Closure rules
 
@@ -131,4 +134,3 @@ new approval after every test layer or command.
 
 The ordered closure plan is defined in
 [PARR testing and delivery assurance implementation plan](parr-testing-delivery-implementation-plan.md).
-

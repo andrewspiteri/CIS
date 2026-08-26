@@ -26,7 +26,7 @@ Push-Location $repoRoot
 try {
     if (-not $SkipRestore) { dotnet restore ChangeImpactStudio.slnx }
     dotnet build ChangeImpactStudio.slnx -c $Configuration --no-restore
-    dotnet test ChangeImpactStudio.slnx -c $Configuration --no-build --no-restore
+    dotnet test ChangeImpactStudio.slnx -c $Configuration --no-build --no-restore --maxcpucount:1
     node --check vscode-extension/extension.js
     node --test vscode-extension/test/*.test.js
     dotnet pack src/Cis.Host/Cis.Host.csproj -c $Configuration --no-build --no-restore -o $resolvedOutput

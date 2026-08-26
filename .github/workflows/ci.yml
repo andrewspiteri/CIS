@@ -26,7 +26,9 @@ jobs:
           node-version: 22
       - run: dotnet restore ChangeImpactStudio.slnx
       - run: dotnet build ChangeImpactStudio.slnx -c Release --no-restore
-      - run: dotnet test ChangeImpactStudio.slnx -c Release --no-build --no-restore
+      # Test projects create isolated filesystem fixtures. A single MSBuild worker
+      # prevents hosted Windows resource contention without retrying failed tests.
+      - run: dotnet test ChangeImpactStudio.slnx -c Release --no-build --no-restore --maxcpucount:1
       - run: node --check vscode-extension/extension.js
       - run: node --test vscode-extension/test/*.test.js
       - shell: pwsh

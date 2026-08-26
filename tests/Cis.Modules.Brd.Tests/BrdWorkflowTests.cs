@@ -427,6 +427,10 @@ public sealed class BrdWorkflowTests
         Assert.False(upstreamStale.Validation.Current);
         File.WriteAllText(backlogPath, approvedBacklog);
 
+        // Approval metadata must remain portable when a Windows checkout writes CRLF.
+        var windowsFeature = File.ReadAllText(path).Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace("\n", "\r\n", StringComparison.Ordinal);
+        File.WriteAllText(path, windowsFeature);
         var approved = backlog.ApproveFeature(environment.Authority.Path, "HLT-FR-001", "Product owner", "Feature scope accepted");
         Assert.Equal("approved", approved.Status);
         Assert.Equal("Active", approved.Validation!.EffectiveStatus);

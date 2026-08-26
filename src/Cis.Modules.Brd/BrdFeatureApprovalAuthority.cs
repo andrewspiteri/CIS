@@ -44,7 +44,7 @@ public sealed class BrdFeatureApprovalAuthority(BrdBacklogService backlog) : ICi
 
     private static string? Value(string content, string key)
     {
-        var match = Regex.Match(content, $@"(?m)^\s*{Regex.Escape(key)}:\s*(?<value>[^\r\n]+)$",
+        var match = Regex.Match(content, $@"(?m)^\s*{Regex.Escape(key)}:\s*(?<value>[^\r\n]+)\r?$",
             RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
         if (!match.Success) return null;
         return match.Groups["value"].Value.Trim().Trim('"', '\'');

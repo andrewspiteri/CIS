@@ -37,7 +37,7 @@ The review used:
 - the complete Friends Todo BRD-to-delivery golden path and its recorded observations;
 - the Friends Todo API, web, infrastructure, documentation, coverage, integration,
   Playwright, manual-test, verification, and assurance artifacts; and
-- the reconciled `gap-closure-accepted-20260826` multi-repository run, the clean
+- the reconciled `gap-closure-release-20260827` multi-repository run, the clean
   `/data` CIS 0.3.0 release build, and repository-owned GitHub Actions evidence.
 
 ## 3. Maturity scale
@@ -87,7 +87,7 @@ four or five.
 | GAP-TEST-011 | Changed-code coverage | 4 | 4 | API and web enforce 95% line coverage for changed production code, global baseline non-regression, and owner/reason metadata for narrow exclusions. | P1 | Closed |
 | GAP-TEST-012 | Defect regression preservation | 4 | 4 | Stable defect and feature identities are reconciled from the exact canonical run; source-only references cannot satisfy verification. | P1 | Closed |
 | GAP-TEST-013 | Manual test catalogue coverage | 4 | 4 | All ten changes have Markdown and CSV catalogues: 112 cases, 112 automated mappings, current source digests and CSV hashes, and passed exact-run trace evidence. | P2 | Closed |
-| GAP-TEST-014 | Executed-test traceability | 4 | 4 | `cis test trace` requires each exact `TC-*` identity in a passed reconciled execution; all 112 Friends Todo cases pass against `gap-closure-accepted-20260826`. | P0 | Closed |
+| GAP-TEST-014 | Executed-test traceability | 4 | 4 | `cis test trace` requires each exact `TC-*` identity in a passed reconciled execution; all 112 Friends Todo cases pass against `gap-closure-release-20260827`. | P0 | Closed |
 | GAP-TEST-015 | Security assurance | 4 | 4 | API/web CodeQL, dependency audits, bounded secret scanning, Terraform configuration scanning, negative-principal behavior, and non-disclosure checks are classified gates. | P2 | Closed |
 | GAP-TEST-016 | Provider and deployment-mode matrix | 4 | 4 | Anonymous composed behavior, ephemeral SuperTokens Core, cloud adapter behavior, and an opt-in managed Google smoke are explicit. Missing credentials produce `unavailable`, never a pass. | P2 | Closed with optional provider unavailable |
 | GAP-TEST-017 | Independent assurance separation | 4 | 4 | Reconciled manifests bind implementer, assurer, technique, profile digest, revision, run ID, and artifact hashes; repeated implementer evidence is rejected without a distinct reviewer or independent technique. | P2 | Closed |

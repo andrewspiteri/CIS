@@ -331,7 +331,7 @@ This plan is complete only when:
 ## 8. Execution result
 
 Milestones 0 through 8 are implemented and verified. The canonical Friends Todo run is
-`gap-closure-accepted-20260826`; all 112 generated cases reconcile to exact passed
+`gap-closure-release-20260827`; all 112 generated cases reconcile to exact passed
 executions. CIS 0.3.0 passed hosted Windows and Ubuntu verification and a clean Linux
 release build under `/data`, producing a NuGet tool package, source archive, VSIX, and
 SHA-256 manifest.

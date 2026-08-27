@@ -4,5 +4,5 @@ title = "Change Impact Studio secret-scanning policy"
 description = "Context redaction regression history contains a synthetic AWS-shaped value that is never a credential."
 regexTarget = "match"
 regexes = [
-  '''AKIA1234567890ABCDEF'''
+  '''AKIA[1]234567890ABCDEF'''
 ]

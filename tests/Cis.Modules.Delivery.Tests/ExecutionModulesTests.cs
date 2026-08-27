@@ -100,6 +100,52 @@ public sealed class ExecutionModulesTests
     }
 
     [Fact]
+    public async Task WorkflowRun_StreamsRedactedOutputAndPreservesItOnTimeout()
+    {
+        using var repository = ExecutionRepository.Create();
+        var command = OperatingSystem.IsWindows()
+            ? "cmd.exe /d /s /c \"echo token=diagnostic-secret & ping 127.0.0.1 -n 4 >nul\""
+            : "/bin/sh -c \"echo token=diagnostic-secret; sleep 3\"";
+        repository.Write("docs/cis/workflows/check.md", $"""
+            | Step | Command | Depends on | Continue on failure | Timeout seconds |
+            |---|---|---|---|---:|
+            | slow | {command} | - | no | 1 |
+            """);
+        var service = new WorkflowService(new CisRepositoryContextResolver(), Clock);
+        var running = Task.Run(() => service.Run(repository.Path, "check", "RUN-LIVE-LOG"));
+        var logPath = Path.Combine(repository.Path, ".cis", "local", "workflows", "RUN-LIVE-LOG", "slow.log");
+        string? ReadLiveLog()
+        {
+            try
+            {
+                using var stream = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                using var reader = new StreamReader(stream);
+                return reader.ReadToEnd();
+            }
+            catch (IOException) { return null; }
+        }
+
+        var deadline = DateTime.UtcNow.AddSeconds(2);
+        while ((!File.Exists(logPath) || !(ReadLiveLog()?.Contains("token=[REDACTED]", StringComparison.Ordinal) ?? false))
+               && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(25, TestContext.Current.CancellationToken);
+        }
+
+        Assert.False(running.IsCompleted);
+        var liveLog = ReadLiveLog();
+        Assert.NotNull(liveLog);
+        Assert.Contains("token=[REDACTED]", liveLog, StringComparison.Ordinal);
+        Assert.DoesNotContain("diagnostic-secret", liveLog, StringComparison.Ordinal);
+        var result = await running;
+        var state = Assert.Single(result.Run!.Steps);
+        Assert.Equal("timeout", state.FailureKind);
+        Assert.True(state.OutputBytes > 0);
+        Assert.False(state.OutputTruncated);
+        Assert.Contains("partial output was preserved", File.ReadAllText(logPath), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AgentImport_IsDigestBoundAndAddsEvidenceWithoutCompletion()
     {
         using var repository = ExecutionRepository.Create();

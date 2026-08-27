@@ -6,7 +6,7 @@ targets:
   - testing
   - verification
 owner: Repository maintainer
-last_reviewed: 2026-08-15
+last_reviewed: 2026-08-27
 review_cadence: on change
 source_of_truth: This file
 provenance:
@@ -87,6 +87,7 @@ Documentation, contract, schema, generated-artifact, and policy drift checks acc
 - **TEST-010** High-value domain, authorization, lifecycle, calculation, migration, or historically fragile logic SHOULD receive mutation testing or another recorded independent assurance technique beyond line coverage.
 - **TEST-011** Testable new or materially changed production behavior SHOULD maintain at least 95 percent line coverage unless the repository defines a stronger threshold or records a bounded human-approved exception; coverage MUST NOT replace behavior assertions.
 - **TEST-012** CI and completion evidence MUST distinguish every applicable layer that passed, failed, was skipped, or could not run, including Docker, browser, credential, and environment limitations.
+- **TEST-013** Test execution MUST preserve a bounded, redacted, attempt-specific live log, including partial output on timeout or cancellation. Runtime harnesses SHOULD add sanitized suite diagnostics beneath `.cis/local/testing/diagnostics/<suite-id>/`; reconciliation MUST hash and correlate retained evidence to its run, attempt, suite, component, repository revision, and test identities.
 
 ## Verification
 
@@ -102,6 +103,7 @@ Documentation, contract, schema, generated-artifact, and policy drift checks acc
 - `TEST-010`: Review bounded mutation, security, architecture, property, or independent-review evidence and disposition surviving risks.
 - `TEST-011`: Review changed-scope coverage, exclusions, meaningful assertions, and any approved exception.
 - `TEST-012`: Inspect exact commands, results, artifacts, unrun checks, environmental limits, and residual risks.
+- `TEST-013`: Inspect the first failing attempt log before any rerun; confirm secrets are redacted, partial timeout output survives, artifact limits are enforced, and reconciled hashes retain run and suite correlation.
 
 Run `cis standards validate --strict` after changing this standard or its conformance mappings.
 

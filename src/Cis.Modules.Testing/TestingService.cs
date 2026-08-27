@@ -29,6 +29,8 @@ public sealed record TestingResult(
 public sealed partial class TestingService
 {
     public const string LocalRoot = ".cis/local/testing";
+    private const long MaximumDiagnosticArtifactBytes = 10L * 1024 * 1024;
+    private const int MaximumDiagnosticArtifactsPerSuite = 200;
     private static readonly HashSet<string> Layers = new(StringComparer.OrdinalIgnoreCase)
     {
         "unit", "architecture", "component", "integration", "business", "frontend-component",
@@ -145,15 +147,36 @@ public sealed partial class TestingService
             }
         }
 
+        var revision = Revision(context.RepositoryPath);
+        var runStartedAt = DateTimeOffset.TryParse(workflow.Run.CreatedAtUtc, out var parsedRunStartedAt)
+            ? parsedRunStartedAt : DateTimeOffset.MinValue;
+        executions = executions.Select(execution =>
+        {
+            var suite = validation.Suites.Single(item => item.Id.Equals(execution.SuiteId, StringComparison.OrdinalIgnoreCase));
+            var steps = definition.Steps.Where(step => step.Suites.Contains(suite.Id, StringComparer.OrdinalIgnoreCase)).ToArray();
+            var states = workflow.Run.Steps.Where(state => steps.Any(step => step.Id.Equals(state.Id, StringComparison.OrdinalIgnoreCase))).ToArray();
+            var caseIds = execution.Cases.Select(item => item.Id).Where(item => !string.IsNullOrWhiteSpace(item))
+                .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(item => item, StringComparer.OrdinalIgnoreCase).ToArray();
+            var artifacts = execution.Artifacts
+                .Select(artifact => Correlate(artifact, runId, null, suite, revision, caseIds))
+                .Concat(WorkflowLogArtifacts(context.RepositoryPath, runId, suite, states, revision, caseIds, diagnostics))
+                .Concat(SuiteDiagnosticArtifacts(context.RepositoryPath, runId, suite, revision, caseIds, runStartedAt, diagnostics))
+                .DistinctBy(item => (item.Path, item.Digest, item.SuiteId, item.Attempt))
+                .OrderBy(item => item.Path, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(item => item.Attempt)
+                .ToArray();
+            return execution with { Artifacts = artifacts };
+        }).ToList();
+
         var allArtifacts = executions.SelectMany(item => item.Artifacts)
-            .DistinctBy(item => (item.Path, item.Digest))
+            .DistinctBy(item => (item.Path, item.Digest, item.SuiteId, item.Attempt))
             .OrderBy(item => item.Path, StringComparer.OrdinalIgnoreCase)
             .ToArray();
         var status = executions.Any(item => item.Status is "failed" or "invalid-evidence") ? "failed"
             : executions.Any(item => item.Status is "unavailable" or "skipped") ? "incomplete"
             : executions.Any(item => item.Status is "findings") ? "passed-with-findings" : "passed";
         var manifest = new TestRunManifest(1, runId, workflow.Run.WorkflowId, workflow.Run.WorkflowDigest,
-            context.RepositoryId, Revision(context.RepositoryPath), ProfileDigest(context),
+            context.RepositoryId, revision, ProfileDigest(context),
             $"{RuntimeInformation.OSDescription}; {RuntimeInformation.ProcessArchitecture}",
             workflow.Run.CreatedAtUtc, workflow.Run.UpdatedAtUtc, status, executions, allArtifacts,
             Environment.GetEnvironmentVariable("CIS_IMPLEMENTER"),
@@ -166,6 +189,85 @@ public sealed partial class TestingService
         Write(Path.Combine(runRoot, "artifacts.json"), JsonSerializer.Serialize(allArtifacts, JsonOptions));
         return Result(context, null, runId, validation.Suites, manifest, [], diagnostics, true, "reconciled");
     }
+
+    private static TestArtifact Correlate(TestArtifact artifact, string runId, int? attempt, TestSuiteProfile suite,
+        string revision, IReadOnlyList<string> caseIds)
+        => artifact with
+        {
+            RunId = runId,
+            Attempt = attempt,
+            SuiteId = suite.Id,
+            Component = suite.Component,
+            RepositoryRevision = revision,
+            TestCaseIds = caseIds,
+        };
+
+    private static IReadOnlyList<TestArtifact> WorkflowLogArtifacts(string repository, string runId, TestSuiteProfile suite,
+        IReadOnlyList<WorkflowStepState> states, string revision, IReadOnlyList<string> caseIds, ICollection<string> diagnostics)
+    {
+        var runRoot = Path.Combine(repository, WorkflowService.RunsPath.Replace('/', Path.DirectorySeparatorChar), runId);
+        if (!Directory.Exists(runRoot)) return [];
+        var artifacts = new List<TestArtifact>();
+        foreach (var state in states)
+        {
+            foreach (var path in Directory.EnumerateFiles(runRoot, "*.log", SearchOption.TopDirectoryOnly)
+                         .Where(path => IsAttemptLog(Path.GetFileName(path), state.Id))
+                         .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+            {
+                if (!ValidateDiagnosticArtifact(path, suite.Id, diagnostics)) continue;
+                var attempt = Attempt(Path.GetFileName(path), state.Id) ?? state.Attempt;
+                artifacts.Add(Correlate(TestResultEvidence.Artifact(repository, "workflow-log", path), runId,
+                    attempt, suite, revision, caseIds));
+            }
+        }
+        return artifacts;
+    }
+
+    private static IReadOnlyList<TestArtifact> SuiteDiagnosticArtifacts(string repository, string runId,
+        TestSuiteProfile suite, string revision, IReadOnlyList<string> caseIds, DateTimeOffset runStartedAt,
+        ICollection<string> diagnostics)
+    {
+        var root = Path.Combine(repository, LocalRoot.Replace('/', Path.DirectorySeparatorChar), "diagnostics", suite.Id);
+        if (!Directory.Exists(root)) return [];
+        var paths = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase).ToArray();
+        if (paths.Length > MaximumDiagnosticArtifactsPerSuite)
+        {
+            diagnostics.Add($"ERROR: Test suite '{suite.Id}' produced {paths.Length} diagnostic artifacts; the limit is {MaximumDiagnosticArtifactsPerSuite}.");
+            paths = paths.Take(MaximumDiagnosticArtifactsPerSuite).ToArray();
+        }
+        return paths.Where(path => IsCurrentDiagnosticArtifact(path, suite.Id, runStartedAt, diagnostics))
+            .Where(path => ValidateDiagnosticArtifact(path, suite.Id, diagnostics))
+            .Select(path => Correlate(TestResultEvidence.Artifact(repository, "test-diagnostic", path), runId,
+                null, suite, revision, caseIds)).ToArray();
+    }
+
+    private static bool IsCurrentDiagnosticArtifact(string path, string suiteId, DateTimeOffset runStartedAt,
+        ICollection<string> diagnostics)
+    {
+        if (runStartedAt == DateTimeOffset.MinValue
+            || new DateTimeOffset(File.GetLastWriteTimeUtc(path), TimeSpan.Zero) >= runStartedAt.AddSeconds(-2)) return true;
+        diagnostics.Add($"WARNING: Ignored stale diagnostic artifact for test suite '{suiteId}': {path}");
+        return false;
+    }
+
+    private static bool ValidateDiagnosticArtifact(string path, string suiteId, ICollection<string> diagnostics)
+    {
+        var length = new FileInfo(path).Length;
+        if (length <= MaximumDiagnosticArtifactBytes) return true;
+        diagnostics.Add($"ERROR: Test suite '{suiteId}' diagnostic artifact exceeds the 10 MiB limit: {path}");
+        return false;
+    }
+
+    private static bool IsAttemptLog(string fileName, string stepId)
+        => fileName.Equals(stepId + ".log", StringComparison.OrdinalIgnoreCase)
+           || (fileName.StartsWith(stepId + ".attempt-", StringComparison.OrdinalIgnoreCase)
+               && fileName.EndsWith(".log", StringComparison.OrdinalIgnoreCase)
+               && int.TryParse(fileName[(stepId.Length + ".attempt-".Length)..^4], out _));
+
+    private static int? Attempt(string fileName, string stepId)
+        => fileName.Equals(stepId + ".log", StringComparison.OrdinalIgnoreCase) ? 1
+            : int.TryParse(fileName[(stepId.Length + ".attempt-".Length)..^4], out var attempt) ? attempt : null;
 
     public TestingResult Trace(string repositoryPath, string changeId, string runId)
     {
@@ -196,7 +298,8 @@ public sealed partial class TestingService
         var combined = manifests.Count == 0 ? null : manifests[0] with
         {
             Suites = manifests.SelectMany(item => item.Suites).ToArray(),
-            Artifacts = manifests.SelectMany(item => item.Artifacts).DistinctBy(item => (item.Path, item.Digest)).ToArray(),
+            Artifacts = manifests.SelectMany(item => item.Artifacts)
+                .DistinctBy(item => (item.Path, item.Digest, item.SuiteId, item.Attempt)).ToArray(),
             Status = manifests.Any(item => item.Status is "failed" or "invalid-evidence") ? "failed"
                 : manifests.Any(item => item.Status == "incomplete") ? "incomplete" : "passed",
         };

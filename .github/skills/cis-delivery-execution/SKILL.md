@@ -11,6 +11,10 @@ description: Execute governed CIS delivery through AI routes, deterministic temp
 3. Never pass `--allow-remote` without explicit authorization for the exact content.
 4. Use `cis agent prepare` for one ready task. An imported result is evidence, not completion.
 5. Record exact checks with `cis verify evidence`; validate before human acceptance.
-6. Read only enabled, non-sensitive diagnostic sources.
-7. Learning proposals require human review before canonical promotion.
-8. After repository/configuration failures, run `cis repo doctor` and follow its evidence.
+6. Read only enabled, non-sensitive diagnostic sources. Test harnesses write bounded,
+   redacted evidence beneath `.cis/local/testing/diagnostics/<suite-id>/`; inspect the
+   exact workflow attempt log before a diagnostic rerun.
+7. Reconcile test results so log and diagnostic hashes bind to the run, attempt, suite,
+   component, revision, and executed `TC-*` identities.
+8. Learning proposals require human review before canonical promotion.
+9. After repository/configuration failures, run `cis repo doctor` and follow its evidence.

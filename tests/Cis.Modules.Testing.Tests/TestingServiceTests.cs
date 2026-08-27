@@ -166,6 +166,46 @@ public sealed class TestingServiceTests
             Path.Combine(repository.Path, ".cis/local/results/vitest.json"), null, null)));
     }
 
+    [Fact]
+    public void Reconcile_HashesAndCorrelatesWorkflowAndSuiteDiagnostics()
+    {
+        using var repository = TestRepository.Create();
+        repository.Write("docs/cis/references/test-suite-profile.md", Profile("unit", "junit", ".cis/local/results/unit.xml"));
+        repository.Write("docs/cis/workflows/verify.md", """
+            | Step | Command | Depends on | Working directory | Test suites | Continue on failure | Timeout seconds |
+            |---|---|---|---|---|---|---:|
+            | unit | dotnet --version | - | . | api-unit | no | 30 |
+            """);
+        repository.Write(".cis/local/results/unit.xml", "<testsuite><testcase classname=\"unit\" name=\"TC-AUTH-001 establishes identity\" time=\"0.2\" /></testsuite>");
+        repository.Write(".cis/local/workflows/RUN-LOG/unit.log", "[stdout] test output\n");
+        repository.Write(".cis/local/testing/diagnostics/api-unit/runtime.log", "sanitized runtime evidence\n");
+        var resolver = new CisRepositoryContextResolver();
+        var workflows = new WorkflowService(resolver);
+        var definition = workflows.Describe(repository.Path, "verify").Workflow!;
+        var runStartedAt = DateTimeOffset.UtcNow.AddMinutes(-1);
+        var state = new WorkflowRunState(2, "RUN-LOG", definition.Id, definition.Digest, "succeeded",
+            runStartedAt.ToString("O"), runStartedAt.AddMinutes(1).ToString("O"),
+            [new WorkflowStepState("unit", "succeeded", 0, runStartedAt.ToString("O"), runStartedAt.AddMinutes(1).ToString("O"), 60_000, "unit.log", null)]);
+        repository.Write(".cis/local/workflows/RUN-LOG/state.json",
+            JsonSerializer.Serialize(state, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+
+        var result = Service().Reconcile(repository.Path, "RUN-LOG");
+
+        Assert.Equal("reconciled", result.Status);
+        var execution = Assert.Single(result.Manifest!.Suites);
+        Assert.Contains(execution.Artifacts, item => item.Kind == "test-result");
+        Assert.Contains(execution.Artifacts, item => item.Kind == "workflow-log" && item.Attempt == 1);
+        Assert.Contains(execution.Artifacts, item => item.Kind == "test-diagnostic");
+        Assert.All(execution.Artifacts, item =>
+        {
+            Assert.Equal("RUN-LOG", item.RunId);
+            Assert.Equal("api-unit", item.SuiteId);
+            Assert.Equal("api", item.Component);
+            Assert.Equal(64, item.Digest.Length);
+            Assert.Contains("TC-AUTH-001", item.TestCaseIds!);
+        });
+    }
+
     private static TestingService Service()
     {
         var resolver = new CisRepositoryContextResolver();

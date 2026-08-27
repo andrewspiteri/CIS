@@ -59,7 +59,13 @@ public sealed record TestArtifact(
     string Kind,
     string Path,
     string Digest,
-    long Bytes);
+    long Bytes,
+    string? RunId = null,
+    int? Attempt = null,
+    string? SuiteId = null,
+    string? Component = null,
+    string? RepositoryRevision = null,
+    IReadOnlyList<string>? TestCaseIds = null);
 
 public sealed record TestSuiteExecution(
     string SuiteId,

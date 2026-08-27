@@ -323,14 +323,17 @@ This plan is complete only when:
 5. required test identities are proven executed and passed;
 6. mutation survivors and score movement have durable dispositions;
 7. pull-request and release gates are repository-owned and reproducible;
-8. browser and infrastructure failures retain bounded diagnostics;
+8. browser, container, and infrastructure failures retain bounded, redacted diagnostics captured before cleanup, while workflow attempts stream live logs and preserve partial timeout output;
 9. no product behavior or approval is silently changed during test migration; and
 10. final human acceptance is requested once for the completed assurance-hardening
     outcome, not once per mechanical test layer.
 
 ## 8. Execution result
 
-Milestones 0 through 8 are implemented and verified. The canonical Friends Todo run is
+Milestones 0 through 8 are implemented and verified. Test execution additionally streams
+bounded, redacted attempt logs while commands run and reconciles pre-cleanup browser,
+container, and Compose diagnostics with immutable run, suite, revision, and test-case
+correlation. The canonical Friends Todo run is
 `gap-closure-release-20260827`; all 112 generated cases reconcile to exact passed
 executions. CIS 0.3.0 passed hosted Windows and Ubuntu verification and a clean Linux
 release build under `/data`, producing a NuGet tool package, source archive, VSIX, and

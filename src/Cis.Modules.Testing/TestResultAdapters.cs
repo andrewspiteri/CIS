@@ -35,9 +35,9 @@ internal static partial class TestResultEvidence
 
     public static TestArtifact Artifact(string repository, string kind, string path)
     {
-        var bytes = File.ReadAllBytes(path);
+        using var stream = File.OpenRead(path);
         return new TestArtifact(kind, Relative(repository, path),
-            Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(), bytes.LongLength);
+            Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant(), stream.Length);
     }
 
     public static string CaseId(string value)

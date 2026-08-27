@@ -3,7 +3,7 @@ title: "Execution, Assurance, Diagnostics, and Learning"
 type: specification
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-14"
+last_reviewed: "2026-08-27"
 review_cadence: "on execution or authority change"
 cis:
   stable_id: change-impact-studio:spec:execution-assurance-learning
@@ -36,7 +36,9 @@ atomically, and records content hashes.
 Workflow Markdown contains ordered step IDs, executable plus argument list, dependencies,
 continue-on-failure choice, and timeout. CIS never evaluates a shell command. It checkpoints
 after every step, resumes succeeded steps only against the same definition digest, and
-retains bounded output logs.
+streams redacted, timestamped, channel-labelled output into bounded attempt-specific
+logs. Timeout and diagnostic rerun paths preserve partial and earlier output rather than
+overwriting it.
 
 Agent preparation binds one task's canonical path and digest into a portable envelope.
 Result ingestion validates envelope identity, current task digest, structured fields, and
@@ -55,6 +57,13 @@ requires a clean validation plus a human reviewer and rationale.
 The diagnostics profile lists repository-relative sources and explicit enabled/sensitive
 flags. CIS refuses sensitive sources, bounds every read, performs defense-in-depth
 redaction, and persists only normalized derived analysis.
+
+Test runners place suite-specific runtime evidence beneath
+`.cis/local/testing/diagnostics/<suite-id>/`. Reconciliation hashes workflow logs and
+suite diagnostics and correlates them to the run, attempt, suite, component, repository
+revision, and exact executed test identities. Browser, Compose, and container harnesses
+capture bounded failure evidence before cleanup; collection failure cannot be reported as
+a passing test artifact.
 
 Learning collection aggregates sanitized feedback and diagnostic counts. Proposals remain
 derived until human approval. Application promotes only the reviewed recommendation,

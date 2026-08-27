@@ -15,6 +15,7 @@ public sealed partial class RepositoryClassifier
         ".nuxt",
         ".output",
         ".svelte-kit",
+        ".stryker-tmp",
         ".vs",
         "artifacts",
         "bin",
@@ -408,7 +409,7 @@ public sealed partial class RepositoryClassifier
             }
 
             var componentRoot = Path.GetDirectoryName(packagePath)!;
-            var source = ReadSourceText(componentRoot, warnings, ".ts", ".tsx", ".js", ".jsx");
+            var source = ReadProductionSourceText(componentRoot, warnings, ".ts", ".tsx", ".js", ".jsx");
             var hasTypeScript = File.Exists(Path.Combine(componentRoot, "tsconfig.json"))
                 || EnumerateRepositoryFiles(componentRoot, warnings).Any(path =>
                     path.EndsWith(".ts", StringComparison.OrdinalIgnoreCase)
@@ -1018,6 +1019,19 @@ public sealed partial class RepositoryClassifier
         string directory,
         ICollection<string> warnings,
         params string[] extensions)
+        => ReadSourceText(directory, warnings, excludeTestSources: false, extensions);
+
+    private static string ReadProductionSourceText(
+        string directory,
+        ICollection<string> warnings,
+        params string[] extensions)
+        => ReadSourceText(directory, warnings, excludeTestSources: true, extensions);
+
+    private static string ReadSourceText(
+        string directory,
+        ICollection<string> warnings,
+        bool excludeTestSources,
+        params string[] extensions)
     {
         if (!Directory.Exists(directory))
         {
@@ -1028,6 +1042,7 @@ public sealed partial class RepositoryClassifier
         foreach (var path in EnumerateRepositoryFiles(directory, warnings)
                      .Where(path => extensions.Any(extension =>
                          path.EndsWith(extension, StringComparison.OrdinalIgnoreCase)))
+                     .Where(path => !excludeTestSources || !IsTestSourcePath(directory, path))
                      .Take(2_000))
         {
             try
@@ -1041,6 +1056,14 @@ public sealed partial class RepositoryClassifier
         }
 
         return string.Join(Environment.NewLine, content);
+    }
+
+    private static bool IsTestSourcePath(string root, string path)
+    {
+        var relative = Path.GetRelativePath(root, path).Replace('\\', '/');
+        return relative.Split('/').Any(segment => segment is "test" or "tests" or "__tests__")
+               || relative.Contains(".test.", StringComparison.OrdinalIgnoreCase)
+               || relative.Contains(".spec.", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool ContainsAny(string value, params string[] markers)

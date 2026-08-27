@@ -175,6 +175,7 @@ internal static class RepositoryTestingStarter
         # Test suite profile
 
         Result, coverage, mutation, and retained artifact paths are derived state under `.cis/local/`.
+        Suite-specific sanitized runtime evidence belongs under `.cis/local/testing/diagnostics/<suite-id>/` and is hash-correlated during `cis test reconcile`.
 
         | Suite ID | Component | Layer | Framework | Command | Working directory | Result format | Result path | Coverage path | Mutation path | Prerequisites | Applies when | CI tier | Artifacts |
         |---|---|---|---|---|---|---|---|---|---|---|---|---|---|

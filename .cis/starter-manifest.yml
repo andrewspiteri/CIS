@@ -640,7 +640,7 @@ managed_artifacts:
   path: .github/instructions/cis-delivery-execution.instructions.md
   definition: guidance.instruction.delivery-execution
   template_version: 1
-  applied_hash: sha256:2a9eed3f9e2c87111c8066da9363c95e3ba14e7c9f2763a296c4d6bdbafdb495
+  applied_hash: sha256:dfc5084642d3a191a91c89485c507d21cec989de8e7412a124fffdbb533d6fe3
   ownership: human
 - id: guidance.instruction.external-tracker
   path: .github/instructions/cis-external-tracker.instructions.md
@@ -1000,7 +1000,7 @@ managed_artifacts:
   path: .github/skills/cis-delivery-execution/SKILL.md
   definition: guidance.skill.delivery-execution
   template_version: 1
-  applied_hash: sha256:55a43d8f91350e8660b9d2fe559a7b52203bf76cfae5fa43f2dd9405ee565090
+  applied_hash: sha256:316d2d5ec1b886c1e6e6ff6fb83da8b72e7f0802c38c5fc3b1d89918b43c9d84
   ownership: human
 - id: guidance.skill.dependency-upgrades
   path: .github/skills/cis-dependency-upgrades/SKILL.md
@@ -1198,7 +1198,7 @@ managed_artifacts:
   path: docs/references/standards-conformance-matrix.md
   definition: reference.standards-conformance-matrix
   template_version: 1
-  applied_hash: sha256:4effff16650854d6392fea13f5d1100cff3e14f3899e6a2bb667fd1672f84527
+  applied_hash: sha256:1b4ad367861e886df19063c3690d69d529e776940d4b0c6c7552fdf36b1f920c
   ownership: human
 - id: reference.task-type-capability-selections
   path: docs/references/task-type-capability-selections.md
@@ -1210,7 +1210,7 @@ managed_artifacts:
   path: docs/references/test-suite-profile.md
   definition: reference.test-suite-profile
   template_version: 1
-  applied_hash: sha256:54f96aaf0c63a9070975e3fdb54bd06f12c162a539fe28b368a6304d60d37f39
+  applied_hash: sha256:5b1100cf5f04ef9da11b791e99b86b74f0c5aeef9d09fad8694a59933a0b9c22
   ownership: human
 - id: reference.traceability-matrix.reference
   path: docs/references/traceability-matrix.md
@@ -1318,8 +1318,8 @@ managed_artifacts:
   path: docs/standards/testing-standard.md
   definition: standard.default.testing
   template_version: 1
-  applied_hash: sha256:54e734fb09d1a05d6f52f740e0db7bc14dd8fb6bc912a338013330bdc67d19f7
-  ownership: managed
+  applied_hash: sha256:16fc345cabd42ea5fa0b501439c63ad1cc9b32a64ce25265bed207c1490507db
+  ownership: human
 - id: template.adr
   path: docs/templates/adr-template.md
   definition: template.adr

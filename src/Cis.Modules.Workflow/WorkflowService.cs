@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Cis.Abstractions;
 
 namespace Cis.Modules.Workflow;
@@ -13,7 +14,8 @@ public sealed record WorkflowStep(string Id, string Executable, IReadOnlyList<st
 }
 public sealed record WorkflowDefinition(string Id, string Path, string Digest, IReadOnlyList<WorkflowStep> Steps);
 public sealed record WorkflowStepState(string Id, string Status, int? ExitCode, string StartedAtUtc, string? CompletedAtUtc,
-    long DurationMilliseconds, string OutputPath, string? Error, int Attempt = 1, string FailureKind = "none");
+    long DurationMilliseconds, string OutputPath, string? Error, int Attempt = 1, string FailureKind = "none",
+    long OutputBytes = 0, bool OutputTruncated = false);
 public sealed record WorkflowRunState(int SchemaVersion, string RunId, string WorkflowId, string WorkflowDigest, string Status,
     string CreatedAtUtc, string UpdatedAtUtc, IReadOnlyList<WorkflowStepState> Steps);
 public sealed record WorkflowResult(string Status, string? RepositoryPath, string? RunId, WorkflowDefinition? Workflow,
@@ -87,26 +89,57 @@ public sealed class WorkflowService
     private WorkflowStepState Execute(string repository, string runDirectory, WorkflowStep step, int attempt)
     {
         var started = _clock().ToUniversalTime(); var logName = attempt == 1 ? step.Id + ".log" : $"{step.Id}.attempt-{attempt}.log"; var logPath = Path.Combine(runDirectory, logName);
+        using var log = new BoundedProcessLog(logPath, _clock, Path.GetFileName(runDirectory), step.Id, attempt);
         try
         {
             var workingDirectory = Path.GetFullPath(Path.Combine(repository, step.WorkingDirectory.Replace('/', Path.DirectorySeparatorChar)));
             var repositoryRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(repository));
             if (!workingDirectory.Equals(repositoryRoot, StringComparison.OrdinalIgnoreCase)
                 && !workingDirectory.StartsWith(repositoryRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            {
+                log.Write("cis", "Working directory escapes the repository.");
                 return State("failed", null, "Working directory escapes the repository.", "missing-prerequisite");
+            }
             if (!Directory.Exists(workingDirectory))
+            {
+                log.Write("cis", "Working directory does not exist.");
                 return State("failed", null, "Working directory does not exist.", "missing-prerequisite");
+            }
             using var process = new Process { StartInfo = new ProcessStartInfo(step.Executable) { WorkingDirectory = workingDirectory, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true } };
-            foreach (var arg in step.Arguments) process.StartInfo.ArgumentList.Add(arg); process.Start();
-            var stdout = process.StandardOutput.ReadToEndAsync(); var stderr = process.StandardError.ReadToEndAsync();
-            if (!process.WaitForExit(step.TimeoutSeconds * 1000)) { process.Kill(true); File.WriteAllText(logPath, "Workflow step timed out."); return State("failed", null, "Timed out.", "timeout"); }
-            Task.WaitAll(stdout, stderr); var output = stdout.Result + stderr.Result; File.WriteAllText(logPath, output);
+            foreach (var arg in step.Arguments) process.StartInfo.ArgumentList.Add(arg);
+            process.StartInfo.Environment["CIS_WORKFLOW_RUN_ID"] = Path.GetFileName(runDirectory);
+            process.StartInfo.Environment["CIS_WORKFLOW_STEP_ID"] = step.Id;
+            process.StartInfo.Environment["CIS_WORKFLOW_ATTEMPT"] = attempt.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            process.OutputDataReceived += (_, args) => { if (args.Data is not null) log.Write("stdout", args.Data); };
+            process.ErrorDataReceived += (_, args) => { if (args.Data is not null) log.Write("stderr", args.Data); };
+            process.Start();
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+            if (!process.WaitForExit(step.TimeoutSeconds * 1000))
+            {
+                try { process.Kill(true); } catch (InvalidOperationException) { }
+                process.WaitForExit(5_000);
+                log.Write("cis", $"Workflow step timed out after {step.TimeoutSeconds} seconds; partial output was preserved.");
+                return State("failed", null, "Timed out.", "timeout");
+            }
+            process.WaitForExit();
+            var output = log.DiagnosticText;
             return State(process.ExitCode == 0 ? "succeeded" : "failed", process.ExitCode,
                 process.ExitCode == 0 ? null : $"Exited with {process.ExitCode}.",
                 process.ExitCode == 0 ? "none" : ClassifyFailure(output));
         }
-        catch (Exception ex) when (ex is InvalidOperationException or IOException or System.ComponentModel.Win32Exception) { File.WriteAllText(logPath, ex.Message); return State("failed", null, ex.Message, ex is System.ComponentModel.Win32Exception ? "missing-prerequisite" : "infrastructure"); }
-        WorkflowStepState State(string status, int? exit, string? error, string failureKind) { var completed = _clock().ToUniversalTime(); return new(step.Id, status, exit, started.ToString("O"), completed.ToString("O"), (long)(completed - started).TotalMilliseconds, logName, error, attempt, failureKind); }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or System.ComponentModel.Win32Exception)
+        {
+            log.Write("cis", ex.Message);
+            return State("failed", null, ex.Message, ex is System.ComponentModel.Win32Exception ? "missing-prerequisite" : "infrastructure");
+        }
+        WorkflowStepState State(string status, int? exit, string? error, string failureKind)
+        {
+            var completed = _clock().ToUniversalTime();
+            return new(step.Id, status, exit, started.ToString("O"), completed.ToString("O"),
+                (long)(completed - started).TotalMilliseconds, logName, error, attempt, failureKind,
+                log.BytesWritten, log.Truncated);
+        }
     }
 
     private static IReadOnlyList<WorkflowDefinition> Discover(CisRepositoryContext context, List<string> diagnostics)
@@ -152,4 +185,79 @@ public sealed class WorkflowService
     private CisRepositoryContext? Resolve(string path, out List<string> d) { var r = _resolver.Resolve(path); d = r.Errors.Select(x => "ERROR: " + x).ToList(); return r.Context; }
     private static string Sha(string text) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
     private static WorkflowResult New(CisRepositoryContext? c, string s, string? id, WorkflowDefinition? w, WorkflowRunState? r, IReadOnlyList<WorkflowDefinition> all, IReadOnlyList<string> d, bool a) => new(s, c?.RepositoryPath, id, w, r, all, d, a);
+}
+
+internal sealed class BoundedProcessLog : IDisposable
+{
+    internal const long MaximumBytes = 10L * 1024 * 1024 - 1024;
+    private const int MaximumDiagnosticCharacters = 1024 * 1024;
+    private readonly object _sync = new();
+    private readonly StreamWriter _writer;
+    private readonly Func<DateTimeOffset> _clock;
+    private readonly StringBuilder _diagnostic = new();
+    private bool _truncationMarkerWritten;
+
+    public BoundedProcessLog(string path, Func<DateTimeOffset> clock, string runId, string stepId, int attempt)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read);
+        _writer = new StreamWriter(stream, new UTF8Encoding(false)) { AutoFlush = true };
+        _clock = clock;
+        Write("cis", $"workflow-log schema=1 run={runId} step={stepId} attempt={attempt}");
+    }
+
+    public long BytesWritten { get; private set; }
+    public bool Truncated { get; private set; }
+    public string DiagnosticText { get { lock (_sync) return _diagnostic.ToString(); } }
+
+    public void Write(string channel, string value)
+    {
+        var safe = Redact(value);
+        var line = $"[{_clock().ToUniversalTime():O}] [{channel}] {safe}";
+        lock (_sync)
+        {
+            AppendDiagnostic(line);
+            if (Truncated) return;
+            var bytes = Encoding.UTF8.GetByteCount(line + Environment.NewLine);
+            if (BytesWritten + bytes > MaximumBytes)
+            {
+                Truncated = true;
+                WriteTruncationMarker();
+                return;
+            }
+            _writer.WriteLine(line);
+            BytesWritten += bytes;
+        }
+    }
+
+    private void AppendDiagnostic(string line)
+    {
+        if (_diagnostic.Length >= MaximumDiagnosticCharacters) return;
+        var available = MaximumDiagnosticCharacters - _diagnostic.Length;
+        _diagnostic.AppendLine(line.Length <= available ? line : line[..available]);
+    }
+
+    private void WriteTruncationMarker()
+    {
+        if (_truncationMarkerWritten) return;
+        const string marker = "[cis] Log limit reached; further output was discarded.";
+        _writer.WriteLine(marker);
+        BytesWritten += Encoding.UTF8.GetByteCount(marker + Environment.NewLine);
+        _truncationMarkerWritten = true;
+    }
+
+    internal static string Redact(string value)
+    {
+        var redacted = Regex.Replace(value,
+            @"(?i)\b(password|secret|token|api[_-]?key|authorization|cookie|set-cookie)\b(\s*[:=]\s*)([^\s,;]+)",
+            "$1$2[REDACTED]", RegexOptions.CultureInvariant);
+        redacted = Regex.Replace(redacted, @"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+", "Bearer [REDACTED]", RegexOptions.CultureInvariant);
+        redacted = Regex.Replace(redacted, @"(?i)([?&](?:token|code|key|secret)=)[^&#\s]+", "$1[REDACTED]", RegexOptions.CultureInvariant);
+        return redacted;
+    }
+
+    public void Dispose()
+    {
+        lock (_sync) _writer.Dispose();
+    }
 }

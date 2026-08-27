@@ -809,6 +809,23 @@ public sealed class RepositoryInitializerTests
     }
 
     [Fact]
+    public void Classifier_DoesNotInferProductionPersistenceFromFrontendArchitectureAssertions()
+    {
+        using var repository = TemporaryRepository.Create();
+        repository.Write(
+            "package.json",
+            "{\"name\":\"customer-portal\",\"dependencies\":{\"next\":\"16.0.0\",\"react\":\"19.0.0\"}}");
+        repository.Write("tsconfig.json", "{\"compilerOptions\":{}}");
+        repository.Write("src/app/page.tsx", "export default function Page() { return <main />; }");
+        repository.Write("test/architecture/frontend-boundaries.test.ts", "expect(imports).not.toContain('node:sqlite');");
+
+        var component = Assert.Single(new RepositoryClassifier().Classify(repository.Path).Components);
+
+        Assert.DoesNotContain("database", component.Roles);
+        Assert.DoesNotContain("persistence", component.Capabilities);
+    }
+
+    [Fact]
     public void ClassifierAndReferences_IgnoreGeneratedNextStandaloneOutput()
     {
         using var repository = TemporaryRepository.Create();
@@ -833,6 +850,21 @@ public sealed class RepositoryInitializerTests
         var packages = File.ReadAllText(Path.Combine(repository.Path, "docs", "cis", "references", "package-catalogue.md"));
         Assert.DoesNotContain("generated-output", packages, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("@mui/material", packages, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Classifier_IgnoresStrykerMutationSandboxes()
+    {
+        using var repository = TemporaryRepository.Create();
+        repository.Write("package.json", "{\"name\":\"api\",\"dependencies\":{\"express\":\"5.2.1\"}}");
+        repository.Write("src/index.ts", "import express from 'express'; export const app = express();");
+        repository.Write(".stryker-tmp/sandbox/package.json", "{\"name\":\"mutation-copy\",\"dependencies\":{\"next\":\"16.0.0\"}}");
+        repository.Write(".stryker-tmp/sandbox/src/page.tsx", "export default function Page() { return <main />; }");
+
+        var component = Assert.Single(new RepositoryClassifier().Classify(repository.Path).Components);
+
+        Assert.Equal("api", component.Id);
+        Assert.Contains("express", component.Frameworks);
     }
 
     [Fact]

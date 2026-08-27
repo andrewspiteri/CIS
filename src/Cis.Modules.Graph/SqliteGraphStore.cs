@@ -240,6 +240,8 @@ public sealed class SqliteGraphStore
             }
             typeClause = " AND e.type IN (" + string.Join(',', names) + ")";
         }
+        // Every SQL fragment is selected from a closed switch or generated parameter name.
+        // nosemgrep: csharp.lang.security.sqli.csharp-sqli.csharp-sqli
         command.CommandText = $"SELECT e.key FROM edges e WHERE {directionClause} AND e.state IN {states}{typeClause} ORDER BY e.key;";
         var keys = new List<string>();
         using (var reader = command.ExecuteReader()) while (reader.Read()) keys.Add(reader.GetString(0));
@@ -367,6 +369,7 @@ public sealed class SqliteGraphStore
         IReadOnlyList<CisGraphEvidence> items,
         IDictionary<string, long> evidenceIds)
     {
+        ValidateSqlIdentifiers(table, ownerColumn);
         for (var index = 0; index < items.Count; index++)
         {
             var item = items[index];
@@ -385,6 +388,8 @@ public sealed class SqliteGraphStore
                 evidenceId = (long)id.ExecuteScalar()!;
                 evidenceIds[identity] = evidenceId;
             }
+            // Identifiers are constrained by ValidateSqlIdentifiers.
+            // nosemgrep: csharp.lang.security.sqli.csharp-sqli.csharp-sqli
             Execute(connection, transaction, $"INSERT INTO {table}({ownerColumn},ordinal,evidence_id) VALUES($owner,$ordinal,$evidence);",
                 ("$owner", ownerKey), ("$ordinal", index), ("$evidence", evidenceId));
         }
@@ -392,8 +397,11 @@ public sealed class SqliteGraphStore
 
     private static Dictionary<string, string> ReadHashes(SqliteConnection connection, SqliteTransaction transaction, string table)
     {
+        ValidateSqlIdentifiers(table);
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
+        // The table identifier is constrained by ValidateSqlIdentifiers.
+        // nosemgrep: csharp.lang.security.sqli.csharp-sqli.csharp-sqli
         command.CommandText = $"SELECT key,content_hash FROM {table};";
         var result = new Dictionary<string, string>(StringComparer.Ordinal);
         using var reader = command.ExecuteReader();
@@ -506,7 +514,10 @@ public sealed class SqliteGraphStore
     private static Dictionary<string, IReadOnlyList<string>> ReadStringChildren(
         SqliteConnection connection, string table, string ownerColumn, string valueColumn, IReadOnlyList<string>? keys)
     {
+        ValidateSqlIdentifiers(table, ownerColumn, valueColumn);
         using var command = connection.CreateCommand();
+        // Identifiers are constrained by ValidateSqlIdentifiers.
+        // nosemgrep: csharp.lang.security.sqli.csharp-sqli.csharp-sqli
         command.CommandText = $"SELECT {ownerColumn},{valueColumn} FROM {table}" + WhereKeys(command, ownerColumn, keys) + $" ORDER BY {ownerColumn},ordinal;";
         var grouped = new Dictionary<string, List<string>>(StringComparer.Ordinal);
         using var reader = command.ExecuteReader();
@@ -529,7 +540,10 @@ public sealed class SqliteGraphStore
         SqliteConnection connection, string table, string ownerColumn, IReadOnlyList<string>? keys,
         IReadOnlyDictionary<long, CisGraphEvidence> evidence)
     {
+        ValidateSqlIdentifiers(table, ownerColumn);
         using var command = connection.CreateCommand();
+        // Identifiers are constrained by ValidateSqlIdentifiers.
+        // nosemgrep: csharp.lang.security.sqli.csharp-sqli.csharp-sqli
         command.CommandText = $"SELECT {ownerColumn},evidence_id FROM {table}" + WhereKeys(command, ownerColumn, keys) + $" ORDER BY {ownerColumn},ordinal;";
         var grouped = new Dictionary<string, List<CisGraphEvidence>>(StringComparer.Ordinal);
         using var reader = command.ExecuteReader();
@@ -574,6 +588,7 @@ public sealed class SqliteGraphStore
 
     private static string WhereKeys(SqliteCommand command, string column, IReadOnlyList<string>? keys)
     {
+        ValidateSqlIdentifiers(column);
         if (keys is null) return string.Empty;
         if (keys.Count == 0) return " WHERE 0";
         var parameters = new List<string>();
@@ -583,7 +598,17 @@ public sealed class SqliteGraphStore
             parameters.Add(name);
             command.Parameters.AddWithValue(name, keys[index]);
         }
+        // The column is constrained and values remain bound parameters.
+        // nosemgrep: csharp.lang.security.sqli.csharp-sqli.csharp-sqli
         return $" WHERE {column} IN ({string.Join(',', parameters)})";
+    }
+
+    private static void ValidateSqlIdentifiers(params string[] identifiers)
+    {
+        string[] allowed = ["nodes", "edges", "node_evidence", "edge_evidence", "node_facets", "node_key", "edge_key", "facet", "key"];
+        foreach (var identifier in identifiers)
+            if (!allowed.Contains(identifier, StringComparer.Ordinal))
+                throw new InvalidOperationException($"Unsupported graph-store SQL identifier '{identifier}'.");
     }
 
     private static void AddExact(List<string> clauses, SqliteCommand command, string column, string parameter, string? value)

@@ -20,7 +20,7 @@ CIS executes these arguments without a shell and checkpoints each step under
 | dotnet-tests | dotnet test ChangeImpactStudio.slnx --no-build --no-restore --logger trx;LogFileName=dotnet-tests.trx --results-directory .cis/local/testing/results | . | dotnet-tests | build | no | 3600 |
 | extension-syntax | node --check vscode-extension/extension.js | . | - | build | no | 300 |
 | extension-tests | node --test vscode-extension/test/*.test.js | . | - | extension-syntax | no | 600 |
-| cis-sast | semgrep scan --config auto --json --output .cis/local/security/results/semgrep.json . | . | cis-sast | build | no | 1800 |
-| cis-secrets | gitleaks detect --source . --redact --report-format json --report-path .cis/local/security/results/gitleaks.json --exit-code 0 | . | cis-secrets | build | no | 900 |
-| cis-filesystem | trivy fs --format json --output .cis/local/security/results/trivy-fs.json --scanners vuln . | . | cis-filesystem | build | no | 1800 |
+| cis-sast | node tools/run-security-scan.mjs sast | . | cis-sast | build | no | 1800 |
+| cis-secrets | node tools/run-security-scan.mjs secrets | . | cis-secrets | build | no | 900 |
+| cis-filesystem | node tools/run-security-scan.mjs filesystem | . | cis-filesystem | build | no | 1800 |
 | docs | cis docs validate --root docs --strict | . | - | dotnet-tests,cis-sast,cis-secrets,cis-filesystem | no | 600 |

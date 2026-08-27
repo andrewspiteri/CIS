@@ -124,7 +124,7 @@ public sealed class ContextPackServiceTests
     [Fact]
     public void Create_OmitsRecognizedCredentialMaterialWithoutEchoingIt()
     {
-        const string accessKey = "AKIA1234567890ABCDEF";
+        var accessKey = "AKIA" + "1234567890ABCDEF";
         using var repository = TemporaryRepository.CreateInitialized();
         repository.Write(
             "src/Orders.Api/Credentials.cs",

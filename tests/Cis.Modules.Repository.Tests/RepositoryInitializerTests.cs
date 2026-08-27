@@ -2265,7 +2265,7 @@ public sealed class RepositoryInitializerTests
         new RepositoryInitializer().Initialize(new RepositoryInitRequest(repository.Path, "docs/cis", DryRun: false, Confirmed: true));
         repository.Write(".github/workflows/ci.yml", "steps:\n  - uses: actions/checkout@v4\n");
         repository.Write(".github/workflows/security.yml", "steps:\n  - run: docker run --rm ghcr.io/gitleaks/gitleaks:v8.28.0 detect\n");
-        repository.Write("scripts/run-security-scan.mjs", "const scanner = 'aquasec/trivy:0.72.0';\n");
+        repository.Write("tools/run-security-scan.mjs", "const scanner = 'aquasec/trivy:0.72.0';\n");
         repository.Write("Dockerfile", "FROM node:24-alpine\n");
         var context = new CisRepositoryContextResolver().Resolve(repository.Path).Context!;
 
@@ -2289,6 +2289,26 @@ public sealed class RepositoryInitializerTests
         var findings = new SecuritySuiteProfileDoctorCheck().Inspect(context);
 
         Assert.DoesNotContain(findings, finding => finding.Code is "CIS-SEC-DOCTOR-008" or "CIS-SEC-DOCTOR-009");
+    }
+
+    [Fact]
+    public void SecurityDoctor_AcceptsGovernedScannerWrapperModes()
+    {
+        using var repository = TemporaryRepository.Create();
+        repository.Write("src/app.ts", "export const ready = true;");
+        new RepositoryInitializer().Initialize(new RepositoryInitRequest(repository.Path, "docs/cis", DryRun: false, Confirmed: true));
+        repository.Write(
+            "docs/cis/references/security-suite-profile.md",
+            "| Suite ID | Tool | Command | Working directory | Result format | Result path |\n" +
+            "|---|---|---|---|---|---|\n" +
+            "| sast | semgrep | node tools/run-security-scan.mjs sast | . | semgrep-json | .cis/local/security/results/semgrep.json |\n" +
+            "| secrets | gitleaks | node tools/run-security-scan.mjs secrets | . | gitleaks-json | .cis/local/security/results/gitleaks.json |\n" +
+            "| filesystem | trivy | node tools/run-security-scan.mjs filesystem | . | trivy-json | .cis/local/security/results/trivy.json |\n");
+        var context = new CisRepositoryContextResolver().Resolve(repository.Path).Context!;
+
+        var findings = new SecuritySuiteProfileDoctorCheck().Inspect(context);
+
+        Assert.DoesNotContain(findings, finding => finding.Code == "CIS-SEC-DOCTOR-007");
     }
 
     private sealed class TemporaryRepository : IDisposable

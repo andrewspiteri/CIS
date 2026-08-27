@@ -13,6 +13,6 @@ cis:
 
 | Step | Command | Working directory | Test suites | Depends on | Continue on failure | Timeout seconds |
 |---|---|---|---|---|---|---:|
-| sast-scan | semgrep scan --config auto --json --output .cis/local/security/results/semgrep.json . | . | cis-sast | - | no | 1800 |
-| secret-scan | gitleaks detect --source . --redact --report-format json --report-path .cis/local/security/results/gitleaks.json --exit-code 0 | . | cis-secrets | - | no | 900 |
-| filesystem-scan | trivy fs --format json --output .cis/local/security/results/trivy-fs.json --scanners vuln . | . | cis-filesystem | - | no | 1800 |
+| sast-scan | node tools/run-security-scan.mjs sast | . | cis-sast | - | no | 1800 |
+| secret-scan | node tools/run-security-scan.mjs secrets | . | cis-secrets | - | no | 900 |
+| filesystem-scan | node tools/run-security-scan.mjs filesystem | . | cis-filesystem | - | no | 1800 |

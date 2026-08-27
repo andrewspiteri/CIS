@@ -90,6 +90,10 @@ public sealed partial class SecurityService
 
     public SecurityResult Reconcile(string repositoryPath, string runId)
     {
+        if (!SafeId().IsMatch(runId))
+            return Result(null, runId, [], null, [], null,
+                ["ERROR: Security run ID must be a single portable path segment."], false, "invalid-run");
+        runId = Path.GetFileName(runId);
         var validation = Validate(repositoryPath, true);
         if (validation.RepositoryPath is null || validation.Diagnostics.Any(IsError)) return validation with { RunId = runId };
         var context = _resolver.Resolve(validation.RepositoryPath).Context!;
@@ -180,6 +184,13 @@ public sealed partial class SecurityService
             diagnostics.Add("ERROR: No reconciled security run is available.");
             return Result(context, null, ReadProfile(context, diagnostics), null, ReadAcceptances(context, diagnostics, false), null, diagnostics, false, "missing-run");
         }
+        if (!SafeId().IsMatch(runId))
+        {
+            diagnostics.Add("ERROR: Security run ID must be a single portable path segment.");
+            return Result(context, runId, ReadProfile(context, diagnostics), null, ReadAcceptances(context, diagnostics, false), null,
+                diagnostics, false, "invalid-run");
+        }
+        runId = Path.GetFileName(runId);
         var path = Path.Combine(LocalPath(context.RepositoryPath), "runs", runId, "manifest.json");
         if (!File.Exists(path)) diagnostics.Add($"ERROR: No security manifest was found for run '{runId}'.");
         SecurityRunManifest? manifest = null;
@@ -196,6 +207,7 @@ public sealed partial class SecurityService
     {
         var status = Status(repositoryPath, runId);
         if (status.RepositoryPath is null || status.Manifest is null || status.Diagnostics.Any(IsError)) return status;
+        runId = Path.GetFileName(runId);
         var diagnostics = status.Diagnostics.ToList();
         var deterministic = DeterministicSummary(status.Manifest);
         var output = deterministic;

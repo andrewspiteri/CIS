@@ -159,6 +159,20 @@ public sealed class SecurityServiceTests
         Assert.Contains("deterministicVerdictPreserved", File.ReadAllText(Path.Combine(repository.Path, ".cis/local/security/runs/RUN-AI/summary-metadata.json")), StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("../outside")]
+    [InlineData("nested/run")]
+    [InlineData("C:\\outside")]
+    public void Status_RejectsRunIdsThatAreNotPortablePathSegments(string runId)
+    {
+        using var repository = TestRepository.Create();
+
+        var result = Service().Status(repository.Path, runId);
+
+        Assert.Equal("invalid-run", result.Status);
+        Assert.Contains(result.Diagnostics, item => item.Contains("single portable path segment", StringComparison.Ordinal));
+    }
+
     private static SecurityService Service(ICisTextGenerationService? ai = null)
     {
         var resolver = new CisRepositoryContextResolver();

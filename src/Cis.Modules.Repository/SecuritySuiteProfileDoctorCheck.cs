@@ -66,11 +66,14 @@ public sealed class SecuritySuiteProfileDoctorCheck : ICisRepositoryDoctorCheck
 
     private static IReadOnlyList<CisRepositoryDoctorFinding> InspectContainerImagePins(CisRepositoryContext context)
     {
-        var script = Path.Combine(context.RepositoryPath, "scripts", "run-security-scan.mjs");
         var mutable = new List<string>();
-        if (File.Exists(script))
+        foreach (var script in new[]
+                 {
+                     Path.Combine(context.RepositoryPath, "scripts", "run-security-scan.mjs"),
+                     Path.Combine(context.RepositoryPath, "tools", "run-security-scan.mjs"),
+                 }.Where(File.Exists))
             mutable.AddRange(Regex.Matches(File.ReadAllText(script), "(?:semgrep/semgrep|gitleaks/gitleaks|aquasec/trivy|aquasecurity/trivy|zaproxy/zap-[\\w-]+):[^\\s\\\"']+")
-                .Select(match => match.Value));
+                .Select(match => $"{Relative(context, script)} {match.Value}"));
         var workflowRoot = Path.Combine(context.RepositoryPath, ".github", "workflows");
         if (Directory.Exists(workflowRoot))
             foreach (var path in Directory.EnumerateFiles(workflowRoot, "*.y*ml", SearchOption.TopDirectoryOnly))
@@ -109,15 +112,23 @@ public sealed class SecuritySuiteProfileDoctorCheck : ICisRepositoryDoctorCheck
         if (command.Contains(tool, StringComparison.OrdinalIgnoreCase)) return true;
         return tool.ToLowerInvariant() switch
         {
-            "semgrep" => command.Contains("security:sast", StringComparison.OrdinalIgnoreCase),
-            "gitleaks" => command.Contains("security:secrets", StringComparison.OrdinalIgnoreCase),
+            "semgrep" => command.Contains("security:sast", StringComparison.OrdinalIgnoreCase)
+                || WrapperMode(command, "sast"),
+            "gitleaks" => command.Contains("security:secrets", StringComparison.OrdinalIgnoreCase)
+                || WrapperMode(command, "secrets"),
             "trivy" => command.Contains("security:filesystem", StringComparison.OrdinalIgnoreCase)
                 || command.Contains("security:configuration", StringComparison.OrdinalIgnoreCase)
-                || command.Contains("security:image", StringComparison.OrdinalIgnoreCase),
+                || command.Contains("security:image", StringComparison.OrdinalIgnoreCase)
+                || WrapperMode(command, "filesystem")
+                || WrapperMode(command, "configuration")
+                || WrapperMode(command, "image"),
             "zap" => command.Contains("security:dast", StringComparison.OrdinalIgnoreCase),
             _ => true,
         };
     }
+
+    private static bool WrapperMode(string command, string mode)
+        => Regex.IsMatch(command, $@"run-security-scan\.mjs\s+{Regex.Escape(mode)}(?:\s|$)", RegexOptions.IgnoreCase);
 
     private static List<Row> ReadRows(string path)
     {

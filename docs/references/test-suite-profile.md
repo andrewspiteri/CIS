@@ -11,7 +11,7 @@ review_cadence: "on test framework, command, classification, or CI-tier change"
 
 Result, coverage, mutation, and retained artifact paths are derived state under `.cis/local/`.
 Suite-specific sanitized runtime evidence uses
-`.cis/local/testing/diagnostics/<suite-id>/`; CIS hashes and correlates those files during
+`.cis/local/testing/diagnostics/<suite-id>/<run-id>/attempt-<number>/`; CIS hashes and correlates those files during
 `cis test reconcile`.
 
 | Suite ID | Component | Layer | Framework | Command | Working directory | Result format | Result path | Coverage path | Mutation path | Prerequisites | Applies when | CI tier | Artifacts |

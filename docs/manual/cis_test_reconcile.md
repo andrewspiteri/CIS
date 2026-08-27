@@ -20,7 +20,7 @@ cis test reconcile --run <workflow-run-id> [--repo <path>] [--format <human|json
 The command records profile digest, repository revision, cases, coverage, mutation, and artifact hashes. A successful process with missing or unreadable declared output is `invalid-evidence`.
 
 Reconciliation also hashes every bounded workflow-attempt log and every file beneath
-`.cis/local/testing/diagnostics/<suite-id>/`. Artifact records bind the run ID, attempt
+`.cis/local/testing/diagnostics/<suite-id>/<run-id>/attempt-<number>/`. Artifact records bind the run ID, attempt
 when applicable, suite, component, repository revision, and executed `TC-*` identities.
 An individual diagnostic artifact may not exceed 10 MiB and a suite may contribute at
 most 200 diagnostic files; exceeding either limit is invalid evidence.

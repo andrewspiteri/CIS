@@ -12,7 +12,7 @@ description: Execute governed CIS delivery through AI routes, deterministic temp
 4. Use `cis agent prepare` for one ready task. An imported result is evidence, not completion.
 5. Record exact checks with `cis verify evidence`; validate before human acceptance.
 6. Read only enabled, non-sensitive diagnostic sources. Test harnesses write bounded,
-   redacted evidence beneath `.cis/local/testing/diagnostics/<suite-id>/`; inspect the
+   redacted evidence beneath `.cis/local/testing/diagnostics/<suite-id>/<run-id>/attempt-<number>/`; inspect the
    exact workflow attempt log before a diagnostic rerun.
 7. Reconcile test results so log and diagnostic hashes bind to the run, attempt, suite,
    component, revision, and executed `TC-*` identities.

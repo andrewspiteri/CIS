@@ -2397,7 +2397,7 @@ internal sealed class RepositoryStarterBinder
     3. Use `cis ai evaluate` through a reviewed capability route. Never pass `--allow-remote` without explicit authorization for the exact content.
     4. Use `cis agent prepare` for one ready task. An imported agent result is evidence, not completion or approval.
     5. Record exact checks with `cis verify evidence`; run diff, compare, and validate before requesting human acceptance.
-    6. Read only enabled, non-sensitive diagnostic sources. Test harnesses write bounded, redacted evidence beneath `.cis/local/testing/diagnostics/<suite-id>/`; inspect the exact workflow attempt log before a diagnostic rerun.
+    6. Read only enabled, non-sensitive diagnostic sources. Test harnesses write bounded, redacted evidence beneath `.cis/local/testing/diagnostics/<suite-id>/<run-id>/attempt-<number>/`; inspect the exact workflow attempt log before a diagnostic rerun.
     7. Reconcile test results so log and diagnostic hashes bind to the run, attempt, suite, component, revision, and executed `TC-*` identities.
     8. Run `cis learn collect` and `cis learn propose`; only a human may review, and only approved proposals may be promoted to canonical history.
     9. If repository initialization or command discovery fails, run `cis repo doctor` and follow evidence-backed fixes.
@@ -2417,7 +2417,7 @@ internal sealed class RepositoryStarterBinder
     - Workflow definitions are repository-owned; CIS executes argument lists without a shell and resumes only an unchanged definition.
     - Verification acceptance requires an explicit human reviewer and rationale after deterministic validation passes.
     - Diagnostics may read only enabled, repository-relative, non-sensitive evidence sources.
-    - Preserve the first failing workflow attempt. Inspect its live bounded log before a diagnostic rerun, and place sanitized suite evidence beneath `.cis/local/testing/diagnostics/<suite-id>/` for reconciliation.
+    - Preserve the first failing workflow attempt. Inspect its live bounded log before a diagnostic rerun, and place sanitized suite evidence beneath `.cis/local/testing/diagnostics/<suite-id>/<run-id>/attempt-<number>/` for reconciliation.
     - Learning proposals cannot self-apply. Human review precedes promotion into canonical learning history.
     - After command failure, inspect the result and run `cis repo doctor` when repository health or configuration may be involved.
     """;

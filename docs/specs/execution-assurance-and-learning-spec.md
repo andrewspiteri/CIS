@@ -59,7 +59,7 @@ flags. CIS refuses sensitive sources, bounds every read, performs defense-in-dep
 redaction, and persists only normalized derived analysis.
 
 Test runners place suite-specific runtime evidence beneath
-`.cis/local/testing/diagnostics/<suite-id>/`. Reconciliation hashes workflow logs and
+`.cis/local/testing/diagnostics/<suite-id>/<run-id>/attempt-<number>/`. Reconciliation hashes workflow logs and
 suite diagnostics and correlates them to the run, attempt, suite, component, repository
 revision, and exact executed test identities. Browser, Compose, and container harnesses
 capture bounded failure evidence before cleanup; collection failure cannot be reported as

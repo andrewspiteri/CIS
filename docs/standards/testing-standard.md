@@ -87,7 +87,7 @@ Documentation, contract, schema, generated-artifact, and policy drift checks acc
 - **TEST-010** High-value domain, authorization, lifecycle, calculation, migration, or historically fragile logic SHOULD receive mutation testing or another recorded independent assurance technique beyond line coverage.
 - **TEST-011** Testable new or materially changed production behavior SHOULD maintain at least 95 percent line coverage unless the repository defines a stronger threshold or records a bounded human-approved exception; coverage MUST NOT replace behavior assertions.
 - **TEST-012** CI and completion evidence MUST distinguish every applicable layer that passed, failed, was skipped, or could not run, including Docker, browser, credential, and environment limitations.
-- **TEST-013** Test execution MUST preserve a bounded, redacted, attempt-specific live log, including partial output on timeout or cancellation. Runtime harnesses SHOULD add sanitized suite diagnostics beneath `.cis/local/testing/diagnostics/<suite-id>/`; reconciliation MUST hash and correlate retained evidence to its run, attempt, suite, component, repository revision, and test identities.
+- **TEST-013** Test execution MUST preserve a bounded, redacted, attempt-specific live log, including partial output on timeout or cancellation. Runtime harnesses SHOULD add sanitized suite diagnostics beneath `.cis/local/testing/diagnostics/<suite-id>/<run-id>/attempt-<number>/`; reconciliation MUST hash and correlate retained evidence to its run, attempt, suite, component, repository revision, and test identities without erasing earlier attempts.
 
 ## Verification
 

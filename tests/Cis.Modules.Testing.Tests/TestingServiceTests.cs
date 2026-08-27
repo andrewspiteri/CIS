@@ -178,7 +178,8 @@ public sealed class TestingServiceTests
             """);
         repository.Write(".cis/local/results/unit.xml", "<testsuite><testcase classname=\"unit\" name=\"TC-AUTH-001 establishes identity\" time=\"0.2\" /></testsuite>");
         repository.Write(".cis/local/workflows/RUN-LOG/unit.log", "[stdout] test output\n");
-        repository.Write(".cis/local/testing/diagnostics/api-unit/runtime.log", "sanitized runtime evidence\n");
+        repository.Write(".cis/local/testing/diagnostics/api-unit/RUN-LOG/attempt-1/runtime.log", "sanitized runtime evidence\n");
+        repository.Write(".cis/local/testing/diagnostics/api-unit/RUN-LOG/attempt-2/runtime.log", "sanitized rerun evidence\n");
         var resolver = new CisRepositoryContextResolver();
         var workflows = new WorkflowService(resolver);
         var definition = workflows.Describe(repository.Path, "verify").Workflow!;
@@ -195,7 +196,8 @@ public sealed class TestingServiceTests
         var execution = Assert.Single(result.Manifest!.Suites);
         Assert.Contains(execution.Artifacts, item => item.Kind == "test-result");
         Assert.Contains(execution.Artifacts, item => item.Kind == "workflow-log" && item.Attempt == 1);
-        Assert.Contains(execution.Artifacts, item => item.Kind == "test-diagnostic");
+        Assert.Contains(execution.Artifacts, item => item.Kind == "test-diagnostic" && item.Attempt == 1);
+        Assert.Contains(execution.Artifacts, item => item.Kind == "test-diagnostic" && item.Attempt == 2);
         Assert.All(execution.Artifacts, item =>
         {
             Assert.Equal("RUN-LOG", item.RunId);

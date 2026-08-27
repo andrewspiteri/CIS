@@ -640,7 +640,7 @@ managed_artifacts:
   path: .github/instructions/cis-delivery-execution.instructions.md
   definition: guidance.instruction.delivery-execution
   template_version: 1
-  applied_hash: sha256:dfc5084642d3a191a91c89485c507d21cec989de8e7412a124fffdbb533d6fe3
+  applied_hash: sha256:26e9178ac7d446bd50fb8ba3b0120e2870a40cdd9f588ba39aa9bcc9efabace9
   ownership: human
 - id: guidance.instruction.external-tracker
   path: .github/instructions/cis-external-tracker.instructions.md
@@ -1000,7 +1000,7 @@ managed_artifacts:
   path: .github/skills/cis-delivery-execution/SKILL.md
   definition: guidance.skill.delivery-execution
   template_version: 1
-  applied_hash: sha256:316d2d5ec1b886c1e6e6ff6fb83da8b72e7f0802c38c5fc3b1d89918b43c9d84
+  applied_hash: sha256:9b92bc455c7721f551a3686c47e24ccd5506c9dc09ae548f6c88169c0bf8cb8b
   ownership: human
 - id: guidance.skill.dependency-upgrades
   path: .github/skills/cis-dependency-upgrades/SKILL.md
@@ -1210,7 +1210,7 @@ managed_artifacts:
   path: docs/references/test-suite-profile.md
   definition: reference.test-suite-profile
   template_version: 1
-  applied_hash: sha256:5b1100cf5f04ef9da11b791e99b86b74f0c5aeef9d09fad8694a59933a0b9c22
+  applied_hash: sha256:45e41ab85bb50d558cef3a8b2ec6c30503dceea6a2e31a9f617ce6f4e7858631
   ownership: human
 - id: reference.traceability-matrix.reference
   path: docs/references/traceability-matrix.md
@@ -1318,7 +1318,7 @@ managed_artifacts:
   path: docs/standards/testing-standard.md
   definition: standard.default.testing
   template_version: 1
-  applied_hash: sha256:16fc345cabd42ea5fa0b501439c63ad1cc9b32a64ce25265bed207c1490507db
+  applied_hash: sha256:04af5eed3886219c2ff7ece4c761c580a8abdaa8e77f5234c007bac6e945b5c9
   ownership: human
 - id: template.adr
   path: docs/templates/adr-template.md

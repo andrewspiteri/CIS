@@ -13,6 +13,6 @@ applyTo: "**"
 - Diagnostics may read only enabled, repository-relative, non-sensitive evidence.
 - Preserve the first failing workflow attempt. Inspect its live bounded log before a
   diagnostic rerun, and place sanitized suite evidence beneath
-  `.cis/local/testing/diagnostics/<suite-id>/` for reconciliation.
+  `.cis/local/testing/diagnostics/<suite-id>/<run-id>/attempt-<number>/` for reconciliation.
 - Learning proposals cannot self-apply.
 - Run `cis repo doctor` when initialization or repository configuration fails.

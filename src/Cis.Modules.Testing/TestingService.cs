@@ -227,19 +227,32 @@ public sealed partial class TestingService
         TestSuiteProfile suite, string revision, IReadOnlyList<string> caseIds, DateTimeOffset runStartedAt,
         ICollection<string> diagnostics)
     {
-        var root = Path.Combine(repository, LocalRoot.Replace('/', Path.DirectorySeparatorChar), "diagnostics", suite.Id);
-        if (!Directory.Exists(root)) return [];
+        var suiteRoot = Path.Combine(repository, LocalRoot.Replace('/', Path.DirectorySeparatorChar), "diagnostics", suite.Id);
+        if (!Directory.Exists(suiteRoot)) return [];
+        var runRoot = Regex.IsMatch(runId, @"\A[A-Za-z0-9._-]{1,128}\z", RegexOptions.CultureInvariant)
+            ? Path.Combine(suiteRoot, runId) : Path.Combine(suiteRoot, "__invalid-run-id__");
+        var root = Directory.Exists(runRoot) ? runRoot : suiteRoot;
         var paths = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
+            .Where(path => IsCurrentDiagnosticArtifact(path, suite.Id, runStartedAt, diagnostics))
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase).ToArray();
         if (paths.Length > MaximumDiagnosticArtifactsPerSuite)
         {
             diagnostics.Add($"ERROR: Test suite '{suite.Id}' produced {paths.Length} diagnostic artifacts; the limit is {MaximumDiagnosticArtifactsPerSuite}.");
             paths = paths.Take(MaximumDiagnosticArtifactsPerSuite).ToArray();
         }
-        return paths.Where(path => IsCurrentDiagnosticArtifact(path, suite.Id, runStartedAt, diagnostics))
-            .Where(path => ValidateDiagnosticArtifact(path, suite.Id, diagnostics))
+        return paths.Where(path => ValidateDiagnosticArtifact(path, suite.Id, diagnostics))
             .Select(path => Correlate(TestResultEvidence.Artifact(repository, "test-diagnostic", path), runId,
-                null, suite, revision, caseIds)).ToArray();
+                DiagnosticAttempt(root, path), suite, revision, caseIds)).ToArray();
+    }
+
+    private static int? DiagnosticAttempt(string root, string path)
+    {
+        foreach (var segment in Path.GetRelativePath(root, path).Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+        {
+            if (segment.StartsWith("attempt-", StringComparison.OrdinalIgnoreCase)
+                && int.TryParse(segment["attempt-".Length..], out var attempt)) return attempt;
+        }
+        return null;
     }
 
     private static bool IsCurrentDiagnosticArtifact(string path, string suiteId, DateTimeOffset runStartedAt,

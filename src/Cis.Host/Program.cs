@@ -18,6 +18,7 @@ using Cis.Modules.Index;
 using Cis.Modules.Learn;
 using Cis.Modules.Plan;
 using Cis.Modules.Repository;
+using Cis.Modules.Security;
 using Cis.Modules.Skills;
 using Cis.Modules.Standards;
 using Cis.Modules.TechnicalIntent;
@@ -55,6 +56,7 @@ using var application = new CisHostBuilder()
     .AddModule(new TrackerModule())
     .AddModule(new WorkflowModule())
     .AddModule(new TestingModule())
+    .AddModule(new SecurityModule())
     .AddModule(new VerifyModule())
     .AddModule(new GitHubTrackerProviderModule())
     .AddModule(new JiraTrackerProviderModule())

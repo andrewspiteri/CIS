@@ -651,7 +651,10 @@ internal sealed class RepositoryStarterBinder
         """);
         var testing = RepositoryTestingStarter.Create(repositoryPath, documentationRoot, classification);
         Add("workflow.standard-delivery", "workflows/standard-delivery.md", "workflow-definition", testing.Workflow);
+        Add("workflow.security-verification", "workflows/security-verification.md", "workflow-definition", testing.SecurityWorkflow);
         Add("reference.test-suite-profile", "references/test-suite-profile.md", "test-suite-profile", testing.Profile);
+        Add("reference.security-suite-profile", "references/security-suite-profile.md", "security-suite-profile", testing.SecurityProfile);
+        Add("reference.accepted-security-findings", "references/accepted-security-findings.md", "accepted-security-findings", testing.AcceptedSecurityFindings);
         Add("reference.learning-history", "references/learning-history.md", "learning-history", """
         ---
         title: "Governed Learning History"
@@ -905,6 +908,12 @@ internal sealed class RepositoryStarterBinder
             selections,
             artifacts);
         AddSkill(
+            "security-testing",
+            "Run portable security scanners, reconcile redacted evidence, and preserve deterministic gates with optional local-only AI triage.",
+            CreateSecurityTestingSkill(documentationRoot),
+            selections,
+            artifacts);
+        AddSkill(
             "maintain-contracts",
             "Keep API, data, configuration, package, and permission references aligned with implementation changes.",
             CreateMaintainContractsSkill(documentationRoot),
@@ -1023,6 +1032,18 @@ internal sealed class RepositoryStarterBinder
             standardsInstructionDefinition,
             ".github/instructions/cis-standards-governance.instructions.md",
             CreateStandardsGovernanceInstruction(documentationRoot),
+            null));
+
+        const string securityInstructionDefinition = "guidance.instruction.security-testing";
+        selections.Add(new RepositoryStarterSelection(
+            securityInstructionDefinition,
+            "Every initialized repository receives scanner, redaction, exception, evidence, and local-AI security rules.",
+            ["cis security module"]));
+        artifacts.Add(new RepositoryStarterArtifact(
+            securityInstructionDefinition,
+            securityInstructionDefinition,
+            ".github/instructions/cis-security-testing.instructions.md",
+            CreateSecurityTestingInstruction(documentationRoot),
             null));
 
         const string deliveryInstructionDefinition = "guidance.instruction.change-delivery";
@@ -3135,6 +3156,41 @@ internal sealed class RepositoryStarterBinder
         See `{{documentationRoot}}/templates/adr-template.md` and `{{documentationRoot}}/specs/technical-intent-spec.md`.
         """;
 
+    private static string CreateSecurityTestingSkill(string documentationRoot) => $$"""
+        ---
+        name: cis-security-testing
+        description: Run and reconcile portable security scanners, inspect redacted evidence, optionally obtain local-only AI triage, and preserve deterministic release gates.
+        ---
+
+        # CIS Security Testing
+
+        1. Read `{{documentationRoot}}/standards/security-testing-standard.md` and `{{documentationRoot}}/references/security-suite-profile.md`.
+        2. Run `cis security validate --strict` and `cis security exceptions validate --strict`.
+        3. Execute the repository workflow once and retain first-failure logs.
+        4. Run `cis security reconcile --run <workflow-run-id>` and inspect unresolved exact findings.
+        5. Run `cis security summarise --run <workflow-run-id>` for advisory local triage, or add `--no-llm`.
+        6. Fix findings and use a distinct run; never overwrite prior evidence.
+        7. Before release, prove revision freshness and exact scanned image identity.
+
+        Scanner evidence and governed exceptions decide the verdict. Never reveal secret values, send findings to a remote model, or create wildcard, indefinite, self-approved, or model-approved exceptions.
+        """;
+
+    private static string CreateSecurityTestingInstruction(string documentationRoot) => $$"""
+        ---
+        applyTo: "**"
+        ---
+
+        # CIS security testing
+
+        - Read `{{documentationRoot}}/standards/security-testing-standard.md` before security-significant work.
+        - Keep scanner results and summaries beneath `.cis/local/security/`; canonical profiles and exceptions remain Markdown.
+        - Treat missing declared output as invalid evidence even when the scanner process exits successfully.
+        - Never preserve raw secret material in reports, logs, model prompts, snapshots, or committed fixtures.
+        - Local AI security summaries are advisory only and cannot change scanner severity, exceptions, or verdicts.
+        - Exceptions require exact scanner and fingerprint, reason, expiry, owner, explicit human approver, and approval reference.
+        - Scan the exact releaseable image identity before promotion and do not rebuild it afterward.
+        """;
+
     private static string CreateRepositoryInstruction(string documentationRoot) =>
         "---\napplyTo: \"**\"\n---\n\n" +
         "# CIS repository guidance\n\n" +
@@ -3152,6 +3208,7 @@ internal sealed class RepositoryStarterBinder
         "- Use `.github/skills/cis-skill-governance/SKILL.md` after initialization, classification changes, imports, or skill edits; audit is local-first with configured remote fallback, and only explicit `--fix` authorizes reversible quarantine.\n" +
         "- Use `.github/skills/cis-file-index/SKILL.md` and `cis index find` before broad source searches; cards are non-authoritative and disposable.\n" +
         "- Use `.github/skills/cis-feedback-loop/SKILL.md` to review automatic local usage, possible token savings, repeated failures, and compact-output opportunities.\n" +
+        "- Use `.github/skills/cis-security-testing/SKILL.md` for portable SAST, secret, filesystem, configuration, image, and DAST evidence; model summaries are local-only and advisory.\n" +
         "- Use `.github/skills/cis-graph-context/SKILL.md` before broad repository searches or impact analysis; never edit `.cis/local/` derived state.\n" +
         "- Use `.github/skills/cis-change-dossier/SKILL.md`, `cis-impact-review`, `cis-decision-review`, and `cis-bounded-planning` for reviewed change delivery.\n" +
         "- Treat `impact accept|reject|defer`, `decision resolve|defer|promote`, `plan approve`, and `change close` as explicit human-authority commands. `cis plan derive` may reuse a tool-confirmed current feature approval for eligible deterministic impacts and the exact plan; it does not create new human authority.\n" +

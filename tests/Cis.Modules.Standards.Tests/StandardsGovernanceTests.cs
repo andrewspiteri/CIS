@@ -214,9 +214,9 @@ public sealed class StandardsGovernanceTests
 
             Assert.Equal(0, initialized.ExitCode);
             Assert.Equal(0, validated.ExitCode);
-            Assert.Equal(7, validated.Standards);
-            Assert.Equal(52, validated.Rules);
-            Assert.Equal(52, validated.ConformanceEntries);
+            Assert.Equal(8, validated.Standards);
+            Assert.Equal(62, validated.Rules);
+            Assert.Equal(62, validated.ConformanceEntries);
             Assert.True(File.Exists(System.IO.Path.Combine(root, "docs", "cis", "standards", "api-controller-standard.md")));
             Assert.False(File.Exists(System.IO.Path.Combine(root, "docs", "cis", "standards", "frontend-interaction-standard.md")));
             Assert.Contains(

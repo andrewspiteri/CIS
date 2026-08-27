@@ -23,6 +23,7 @@
     <Project Path="src/Cis.Modules.Learn/Cis.Modules.Learn.csproj" />
     <Project Path="src/Cis.Modules.Plan/Cis.Modules.Plan.csproj" />
     <Project Path="src/Cis.Modules.Repository/Cis.Modules.Repository.csproj" />
+    <Project Path="src/Cis.Modules.Security/Cis.Modules.Security.csproj" />
     <Project Path="src/Cis.Modules.Skills/Cis.Modules.Skills.csproj" />
     <Project Path="src/Cis.Modules.Standards/Cis.Modules.Standards.csproj" />
     <Project Path="src/Cis.Modules.TechnicalIntent/Cis.Modules.TechnicalIntent.csproj" />
@@ -42,6 +43,7 @@
     <Project Path="tests/Cis.Modules.Graph.Tests/Cis.Modules.Graph.Tests.csproj" />
     <Project Path="tests/Cis.Host.Tests/Cis.Host.Tests.csproj" />
     <Project Path="tests/Cis.Modules.Repository.Tests/Cis.Modules.Repository.Tests.csproj" />
+    <Project Path="tests/Cis.Modules.Security.Tests/Cis.Modules.Security.Tests.csproj" />
     <Project Path="tests/Cis.Modules.Skills.Tests/Cis.Modules.Skills.Tests.csproj" />
     <Project Path="tests/Cis.Modules.Standards.Tests/Cis.Modules.Standards.Tests.csproj" />
     <Project Path="tests/Cis.Modules.TechnicalIntent.Tests/Cis.Modules.TechnicalIntent.Tests.csproj" />

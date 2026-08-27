@@ -44,6 +44,12 @@ Each loaded module owns one top-level command group. The following leaf commands
 | [`cis test reconcile`](cis_test_reconcile.md) | Reconcile native runner outputs into typed test evidence. |
 | [`cis test trace`](cis_test_trace.md) | Prove exact manual-case identities executed and passed. |
 | [`cis test status`](cis_test_status.md) | Report traceability for an exact or latest reconciled run. |
+| [`cis security inventory`](cis_security_inventory.md) | Persist the classification-selected security-suite inventory. |
+| [`cis security validate`](cis_security_validate.md) | Validate scanners, adapters, commands, and derived evidence paths. |
+| [`cis security reconcile`](cis_security_reconcile.md) | Normalize scanner outputs into redacted, revision-bound evidence. |
+| [`cis security status`](cis_security_status.md) | Report an exact or latest reconciled security run. |
+| [`cis security summarise`](cis_security_summarise.md) | Produce deterministic and optional local-only AI triage. |
+| [`cis security exceptions validate`](cis_security_exceptions_validate.md) | Validate exact, expiring, human-approved finding exceptions. |
 | [`cis agent providers`](cis_agent_providers.md) | Portable agent-envelope command. |
 | [`cis agent prepare`](cis_agent_prepare.md) | Portable agent-envelope command. |
 | [`cis agent import-result`](cis_agent_import_result.md) | Portable agent-envelope command. |

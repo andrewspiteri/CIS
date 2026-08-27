@@ -2,7 +2,12 @@ using System.Text.Json;
 
 namespace Cis.Modules.Repository;
 
-internal sealed record RepositoryTestingStarterContent(string Workflow, string Profile);
+internal sealed record RepositoryTestingStarterContent(
+    string Workflow,
+    string SecurityWorkflow,
+    string Profile,
+    string SecurityProfile,
+    string AcceptedSecurityFindings);
 
 internal static class RepositoryTestingStarter
 {
@@ -16,6 +21,9 @@ internal static class RepositoryTestingStarter
         AddDotNet(repositoryPath, classification, suites, steps);
         AddNode(repositoryPath, classification, suites, steps);
         AddInfrastructure(repositoryPath, classification, steps);
+        var security = RepositorySecurityStarter.Create(repositoryPath, classification);
+        foreach (var step in security.Steps)
+            steps.Add(new(step.Id, step.Command, step.WorkingDirectory, step.SuiteId, step.DependsOn, "no", step.TimeoutSeconds));
 
         if (suites.Count == 0)
         {
@@ -25,7 +33,12 @@ internal static class RepositoryTestingStarter
         }
 
         steps.Add(new("docs", $"cis docs validate --root {documentationRoot} --strict", ".", "-", "-", "no", 600));
-        return new(CreateWorkflow(steps), CreateProfile(suites));
+        return new(
+            CreateWorkflow(steps),
+            CreateSecurityWorkflow(security.Steps),
+            CreateProfile(suites),
+            security.Profile,
+            RepositorySecurityStarter.AcceptedFindings());
     }
 
     private static void AddDotNet(string repositoryPath, RepositoryClassification classification,
@@ -151,6 +164,30 @@ internal static class RepositoryTestingStarter
         # Standard delivery verification workflow
 
         Commands are selected from repository classification and declared package scripts. Reinitialization preserves reviewed commands.
+
+        | Step | Command | Working directory | Test suites | Depends on | Continue on failure | Timeout seconds |
+        |---|---|---|---|---|---|---:|
+        {{body}}
+        """;
+    }
+
+    private static string CreateSecurityWorkflow(IEnumerable<RepositorySecurityStep> steps)
+    {
+        var body = string.Join(Environment.NewLine, steps.DistinctBy(item => item.Id).Select(item =>
+            $"| {item.Id} | {item.Command} | {item.WorkingDirectory} | {item.SuiteId} | {item.DependsOn} | no | {item.TimeoutSeconds} |"));
+        return $$"""
+        ---
+        title: "Security Verification Workflow"
+        type: workflow-definition
+        status: Active
+        owner: "Repository maintainers"
+        last_reviewed: "2026-08-27"
+        review_cadence: "on scanner, target, policy, or evidence change"
+        ---
+
+        # Security verification workflow
+
+        This focused workflow executes applicable governed scanners without rerunning unrelated delivery suites.
 
         | Step | Command | Working directory | Test suites | Depends on | Continue on failure | Timeout seconds |
         |---|---|---|---|---|---|---:|

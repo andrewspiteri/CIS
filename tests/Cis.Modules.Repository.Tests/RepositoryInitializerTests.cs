@@ -1444,14 +1444,22 @@ public sealed class RepositoryInitializerTests
         Assert.True(File.Exists(Path.Combine(repository.Path, "docs", "cis", "references", "repository-profile.md")));
         Assert.True(File.Exists(Path.Combine(repository.Path, ".github", "skills", "cis-change-impact", "SKILL.md")));
         Assert.True(File.Exists(Path.Combine(repository.Path, ".github", "skills", "cis-delivery-execution", "SKILL.md")));
+        Assert.True(File.Exists(Path.Combine(repository.Path, ".github", "skills", "cis-security-testing", "SKILL.md")));
         Assert.True(File.Exists(Path.Combine(repository.Path, ".github", "instructions", "cis-delivery-execution.instructions.md")));
+        Assert.True(File.Exists(Path.Combine(repository.Path, ".github", "instructions", "cis-security-testing.instructions.md")));
         Assert.True(File.Exists(Path.Combine(repository.Path, "docs", "cis", "references", "ai-routing-profile.md")));
         Assert.True(File.Exists(Path.Combine(repository.Path, "docs", "cis", "references", "diagnostics-profile.md")));
         Assert.True(File.Exists(Path.Combine(repository.Path, "docs", "cis", "references", "learning-history.md")));
         Assert.True(File.Exists(Path.Combine(repository.Path, "docs", "cis", "workflows", "standard-delivery.md")));
+        Assert.True(File.Exists(Path.Combine(repository.Path, "docs", "cis", "references", "security-suite-profile.md")));
+        Assert.True(File.Exists(Path.Combine(repository.Path, "docs", "cis", "references", "accepted-security-findings.md")));
         Assert.True(File.Exists(Path.Combine(repository.Path, "docs", "cis", "standards", "api-controller-standard.md")));
+        Assert.True(File.Exists(Path.Combine(repository.Path, "docs", "cis", "standards", "security-testing-standard.md")));
         Assert.Contains(
             "API-BOUNDARY-001",
+            File.ReadAllText(Path.Combine(repository.Path, "docs", "cis", "references", "standards-conformance-matrix.md")));
+        Assert.Contains(
+            "SEC-TEST-010",
             File.ReadAllText(Path.Combine(repository.Path, "docs", "cis", "references", "standards-conformance-matrix.md")));
     }
 
@@ -2247,6 +2255,40 @@ public sealed class RepositoryInitializerTests
         var component = Assert.Single(new RepositoryClassifier().Classify(repository.Path).Components);
 
         Assert.Equal("src/Actual", component.Root);
+    }
+
+    [Fact]
+    public void SecurityDoctor_RejectsMutableWorkflowActionsAndScannerImages()
+    {
+        using var repository = TemporaryRepository.Create();
+        repository.Write("src/app.ts", "export const ready = true;");
+        new RepositoryInitializer().Initialize(new RepositoryInitRequest(repository.Path, "docs/cis", DryRun: false, Confirmed: true));
+        repository.Write(".github/workflows/ci.yml", "steps:\n  - uses: actions/checkout@v4\n");
+        repository.Write(".github/workflows/security.yml", "steps:\n  - run: docker run --rm ghcr.io/gitleaks/gitleaks:v8.28.0 detect\n");
+        repository.Write("scripts/run-security-scan.mjs", "const scanner = 'aquasec/trivy:0.72.0';\n");
+        repository.Write("Dockerfile", "FROM node:24-alpine\n");
+        var context = new CisRepositoryContextResolver().Resolve(repository.Path).Context!;
+
+        var findings = new SecuritySuiteProfileDoctorCheck().Inspect(context);
+
+        Assert.Contains(findings, finding => finding.Code == "CIS-SEC-DOCTOR-008" && finding.Severity == "error");
+        Assert.Contains(findings, finding => finding.Code == "CIS-SEC-DOCTOR-009" && finding.Severity == "error");
+    }
+
+    [Fact]
+    public void SecurityDoctor_AcceptsImmutableWorkflowActionsAndScannerImages()
+    {
+        using var repository = TemporaryRepository.Create();
+        repository.Write("src/app.ts", "export const ready = true;");
+        new RepositoryInitializer().Initialize(new RepositoryInitRequest(repository.Path, "docs/cis", DryRun: false, Confirmed: true));
+        repository.Write(".github/workflows/ci.yml", "steps:\n  - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4\n");
+        repository.Write("scripts/run-security-scan.mjs", "const scanner = 'aquasec/trivy@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f';\n");
+        repository.Write("Dockerfile", "FROM node:24-alpine@sha256:595398b0081eacda8e1c4c5b97b76cd1020e4d58a8ebcb4843b9bca1e79e7436\n");
+        var context = new CisRepositoryContextResolver().Resolve(repository.Path).Context!;
+
+        var findings = new SecuritySuiteProfileDoctorCheck().Inspect(context);
+
+        Assert.DoesNotContain(findings, finding => finding.Code is "CIS-SEC-DOCTOR-008" or "CIS-SEC-DOCTOR-009");
     }
 
     private sealed class TemporaryRepository : IDisposable

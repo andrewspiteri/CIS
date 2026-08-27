@@ -373,6 +373,8 @@ public sealed class GraphBuilderTests
         repository.Write("src/client.ts", "export const client = true;");
         repository.Write("node_modules/vendor/index.js", "export const vendor = true;");
         repository.Write("apps/web/node_modules/nested/package.json", "{\"name\":\"nested\"}");
+        repository.Write(".stryker-tmp/sandbox/Dockerfile", "FROM node:24-alpine");
+        repository.Write(".stryker-tmp/sandbox/src/copied.ts", "export const mutant = true;");
         repository.Write("artifacts/release/copied.cs", "public sealed class Copied { }");
         repository.Write(".artifacts/staging/copied.ts", "export const copied = true;");
         repository.Write("_old/Legacy.cs", "public sealed class Legacy { }");
@@ -389,6 +391,8 @@ public sealed class GraphBuilderTests
             && NodeValue(node, "localId") == "src/client.ts");
         Assert.DoesNotContain(nodes, node =>
             NodeValue(node, "localId").Contains("node_modules", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(nodes, node =>
+            NodeValue(node, "localId").Contains(".stryker-tmp", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(nodes, node =>
             NodeValue(node, "localId").Contains("artifacts", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(nodes, node =>

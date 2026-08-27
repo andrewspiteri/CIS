@@ -18,6 +18,7 @@
     <ProjectReference Include="..\..\src\Cis.Modules.Impact\Cis.Modules.Impact.csproj" />
     <ProjectReference Include="..\..\src\Cis.Modules.Plan\Cis.Modules.Plan.csproj" />
     <ProjectReference Include="..\..\src\Cis.Modules.Repository\Cis.Modules.Repository.csproj" />
+    <ProjectReference Include="..\..\src\Cis.Modules.Security\Cis.Modules.Security.csproj" />
     <ProjectReference Include="..\..\src\Cis.Modules.Testing\Cis.Modules.Testing.csproj" />
   </ItemGroup>
   <ItemGroup>

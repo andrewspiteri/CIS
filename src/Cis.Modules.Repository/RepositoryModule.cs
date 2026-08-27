@@ -24,6 +24,7 @@ public sealed class RepositoryModule : ICisModule
         services.AddSingleton<IOllamaProbe, OllamaProbe>();
         services.AddSingleton<ICisRepositoryDoctorCheck, JavaScriptToolingDoctorCheck>();
         services.AddSingleton<ICisRepositoryDoctorCheck, TestSuiteProfileDoctorCheck>();
+        services.AddSingleton<ICisRepositoryDoctorCheck, SecuritySuiteProfileDoctorCheck>();
         services.AddSingleton<RepositoryDoctor>();
     }
 

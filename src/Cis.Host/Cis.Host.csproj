@@ -35,6 +35,7 @@
     <ProjectReference Include="..\Cis.Modules.Learn\Cis.Modules.Learn.csproj" />
     <ProjectReference Include="..\Cis.Modules.Plan\Cis.Modules.Plan.csproj" />
     <ProjectReference Include="..\Cis.Modules.Repository\Cis.Modules.Repository.csproj" />
+    <ProjectReference Include="..\Cis.Modules.Security\Cis.Modules.Security.csproj" />
     <ProjectReference Include="..\Cis.Modules.Skills\Cis.Modules.Skills.csproj" />
     <ProjectReference Include="..\Cis.Modules.Standards\Cis.Modules.Standards.csproj" />
     <ProjectReference Include="..\Cis.Modules.TechnicalIntent\Cis.Modules.TechnicalIntent.csproj" />

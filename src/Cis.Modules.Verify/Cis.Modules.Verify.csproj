@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
  <PropertyGroup><Description>Change verification, planned-versus-actual comparison, evidence, and human acceptance.</Description></PropertyGroup>
- <ItemGroup><ProjectReference Include="..\Cis.Abstractions\Cis.Abstractions.csproj"/><ProjectReference Include="..\Cis.Modules.Change\Cis.Modules.Change.csproj"/><ProjectReference Include="..\Cis.Modules.Plan\Cis.Modules.Plan.csproj"/><ProjectReference Include="..\Cis.Modules.Testing\Cis.Modules.Testing.csproj"/></ItemGroup>
+ <ItemGroup><ProjectReference Include="..\Cis.Abstractions\Cis.Abstractions.csproj"/><ProjectReference Include="..\Cis.Modules.Change\Cis.Modules.Change.csproj"/><ProjectReference Include="..\Cis.Modules.Plan\Cis.Modules.Plan.csproj"/><ProjectReference Include="..\Cis.Modules.Testing\Cis.Modules.Testing.csproj"/><ProjectReference Include="..\Cis.Modules.Security\Cis.Modules.Security.csproj"/></ItemGroup>
  <ItemGroup><PackageReference Include="System.CommandLine"/></ItemGroup>
 </Project>

@@ -274,6 +274,19 @@ components:
   confidence: high
   evidence:
   - src/Cis.Modules.Repository/Cis.Modules.Repository.csproj
+- id: cis-modules-security
+  root: src/Cis.Modules.Security
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - shared-library
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - src/Cis.Modules.Security/Cis.Modules.Security.csproj
 - id: cis-modules-skills
   root: src/Cis.Modules.Skills
   languages:
@@ -530,6 +543,20 @@ components:
   confidence: high
   evidence:
   - tests/Cis.Modules.Repository.Tests/Cis.Modules.Repository.Tests.csproj
+  - .NET test SDK markers
+- id: cis-modules-security-tests
+  root: tests/Cis.Modules.Security.Tests
+  languages:
+  - csharp
+  frameworks:
+  - dotnet-test
+  roles:
+  - test-automation
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - tests/Cis.Modules.Security.Tests/Cis.Modules.Security.Tests.csproj
   - .NET test SDK markers
 - id: cis-modules-skills-tests
   root: tests/Cis.Modules.Skills.Tests
@@ -840,6 +867,18 @@ managed_artifacts:
   template_version: 1
   applied_hash: sha256:ad8430fbcff0c725614480ea5465f53cb0c53bc64e7d47c7d92e8f1592004d54
   ownership: managed
+- id: guidance.instruction.csharp.cis-modules-security
+  path: .github/instructions/cis-modules-security-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:8a12a00d0685e9538a037d2f75b1a5a7c5ad0064d8b34fb42518f2d4009f8fe8
+  ownership: managed
+- id: guidance.instruction.csharp.cis-modules-security-tests
+  path: .github/instructions/cis-modules-security-tests-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:b8e3a4e80b0bf35eb08d31e459e1528eda1e4271a172d48789f8d723b0ff9bc3
+  ownership: managed
 - id: guidance.instruction.csharp.cis-modules-skills
   path: .github/instructions/cis-modules-skills-csharp.instructions.md
   definition: guidance.instruction.csharp
@@ -929,6 +968,12 @@ managed_artifacts:
   definition: guidance.instruction.repository
   template_version: 1
   applied_hash: sha256:85e1094e5da09e7a8652f6f78c81e6dd92d8f1c0342b329e57edca851a92b522
+  ownership: human
+- id: guidance.instruction.security-testing
+  path: .github/instructions/cis-security-testing.instructions.md
+  definition: guidance.instruction.security-testing
+  template_version: 1
+  applied_hash: sha256:dc84219784c82f91360c36fd09b83d8c7bf1312477320fd17219d7e64cf26cfd
   ownership: human
 - id: guidance.instruction.standards-governance
   path: .github/instructions/cis-standards-governance.instructions.md
@@ -1104,6 +1149,12 @@ managed_artifacts:
   template_version: 1
   applied_hash: sha256:39f9f6d1d36a8e77fd009fd1f3bf9f262ce35bc765d7f08bcd52d535c8455e42
   ownership: human
+- id: guidance.skill.security-testing
+  path: .github/skills/cis-security-testing/SKILL.md
+  definition: guidance.skill.security-testing
+  template_version: 1
+  applied_hash: sha256:7c34cf82706406c500a94d999641612dfe9653b2a9c2493d3f2501395ce3b299
+  ownership: human
 - id: guidance.skill.skill-governance
   path: .github/skills/cis-skill-governance/SKILL.md
   definition: guidance.skill.skill-governance
@@ -1134,6 +1185,12 @@ managed_artifacts:
   template_version: 1
   applied_hash: sha256:5ceac30ff61412dd1688eccbea23185cd15768a0f581d9767e57b1a4d48af38c
   ownership: managed
+- id: reference.accepted-security-findings
+  path: docs/references/accepted-security-findings.md
+  definition: reference.accepted-security-findings
+  template_version: 1
+  applied_hash: sha256:9ae7a53a97566b58273d1cfbeaa8a9a382c615ae57f1d7f0d50c8a270861f0d9
+  ownership: human
 - id: reference.ai-routing-profile
   path: docs/references/ai-routing-profile.md
   definition: reference.ai-routing-profile
@@ -1194,11 +1251,17 @@ managed_artifacts:
   template_version: 1
   applied_hash: sha256:b86624a2408383ec1c3218c3075b5cbe9971c8f52e59751ffab4154087b2f202
   ownership: human
+- id: reference.security-suite-profile
+  path: docs/references/security-suite-profile.md
+  definition: reference.security-suite-profile
+  template_version: 1
+  applied_hash: sha256:c063bdfbc6aa17d231836692d49544b4be37ebb5cce605b0baf241cb6773ae44
+  ownership: human
 - id: reference.standards-conformance-matrix
   path: docs/references/standards-conformance-matrix.md
   definition: reference.standards-conformance-matrix
   template_version: 1
-  applied_hash: sha256:1b4ad367861e886df19063c3690d69d529e776940d4b0c6c7552fdf36b1f920c
+  applied_hash: sha256:295267ea36f4aca1a204067b35e75681f6aa1d875e39f8eece6473e2e9dc3259
   ownership: human
 - id: reference.task-type-capability-selections
   path: docs/references/task-type-capability-selections.md
@@ -1314,6 +1377,12 @@ managed_artifacts:
   template_version: 1
   applied_hash: sha256:1c3292e3bcd4352da69f24d6be16f2fae64a84959d755cab79d30fd5921ebfa6
   ownership: managed
+- id: standard.default.security-testing
+  path: docs/standards/security-testing-standard.md
+  definition: standard.default.security-testing
+  template_version: 1
+  applied_hash: sha256:edb83dba0b70f2f4b419c4f2089f19cbfef9affc0a2b8a2145d048db8c2173c6
+  ownership: human
 - id: standard.default.testing
   path: docs/standards/testing-standard.md
   definition: standard.default.testing
@@ -1350,9 +1419,15 @@ managed_artifacts:
   template_version: 1
   applied_hash: sha256:fa29d66719eb436d2f27b7e1861e588bc77464cd1d1c95734542aebee11ead8f
   ownership: managed
+- id: workflow.security-verification
+  path: docs/workflows/security-verification.md
+  definition: workflow.security-verification
+  template_version: 1
+  applied_hash: sha256:ff54795a925828855e742ed4af323f0720fae6b1aa34e88205521f55cede1098
+  ownership: human
 - id: workflow.standard-delivery
   path: docs/workflows/standard-delivery.md
   definition: workflow.standard-delivery
   template_version: 1
-  applied_hash: sha256:1d9e4037fd8c7b9bade4de7a33df90592cd20b6a15d523c64d392b389dda96fe
+  applied_hash: sha256:164ea1e9853662b321060ce713a39d158942341a424af532783f6ba5f93b029c
   ownership: human

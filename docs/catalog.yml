@@ -116,6 +116,11 @@ documents:
     type: workflow-definition
     status: active
     authority: canonical
+  - id: change-impact-studio:workflow:security-verification
+    path: docs/workflows/security-verification.md
+    type: workflow-definition
+    status: active
+    authority: canonical
   - id: change-impact-studio:spec:execution-assurance-learning
     path: docs/specs/execution-assurance-and-learning-spec.md
     type: specification
@@ -1583,5 +1588,55 @@ documents:
   - id: change-impact-studio:reference:test-suite-profile
     path: docs/references/test-suite-profile.md
     type: test-suite-profile
+    status: active
+    authority: canonical
+  - id: change-impact-studio:spec:security-testing-evidence
+    path: docs/specs/security-testing-and-evidence-spec.md
+    type: technical-specification
+    status: active
+    authority: canonical
+  - id: change-impact-studio:standard:security-testing
+    path: docs/standards/security-testing-standard.md
+    type: standard
+    status: active
+    authority: canonical
+  - id: change-impact-studio:reference:security-suite-profile
+    path: docs/references/security-suite-profile.md
+    type: security-suite-profile
+    status: active
+    authority: canonical
+  - id: change-impact-studio:reference:accepted-security-findings
+    path: docs/references/accepted-security-findings.md
+    type: accepted-security-findings
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-security-inventory
+    path: docs/manual/cis_security_inventory.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-security-validate
+    path: docs/manual/cis_security_validate.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-security-reconcile
+    path: docs/manual/cis_security_reconcile.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-security-status
+    path: docs/manual/cis_security_status.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-security-summarise
+    path: docs/manual/cis_security_summarise.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-security-exceptions-validate
+    path: docs/manual/cis_security_exceptions_validate.md
+    type: command-reference
     status: active
     authority: canonical

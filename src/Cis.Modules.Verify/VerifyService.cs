@@ -7,6 +7,7 @@ using Cis.Abstractions;
 using Cis.Modules.Change;
 using Cis.Modules.Plan;
 using Cis.Modules.Testing;
+using Cis.Modules.Security;
 
 namespace Cis.Modules.Verify;
 
@@ -31,13 +32,14 @@ public sealed class VerifyService
     private readonly ICisWorkspaceRegistry? _workspaceRegistry;
     private readonly PlanningService? _planning;
     private readonly TestingService? _testing;
+    private readonly SecurityService? _security;
     private readonly IReadOnlyList<ICisFeatureApprovalAuthority> _featureAuthorities;
     private readonly Func<DateTimeOffset> _clock;
 
     public VerifyService(ICisRepositoryContextResolver resolver, ChangeDossierStore changes,
         IEnumerable<ICisFeatureApprovalAuthority> featureAuthorities,
         Func<DateTimeOffset>? clock = null, ICisWorkspaceRegistry? workspaceRegistry = null,
-        PlanningService? planning = null, TestingService? testing = null)
+        PlanningService? planning = null, TestingService? testing = null, SecurityService? security = null)
     {
         _resolver = resolver;
         _changes = changes;
@@ -45,6 +47,7 @@ public sealed class VerifyService
         _workspaceRegistry = workspaceRegistry;
         _planning = planning;
         _testing = testing;
+        _security = security;
         _featureAuthorities = featureAuthorities.ToArray();
     }
 
@@ -135,8 +138,37 @@ public sealed class VerifyService
             findings.Add(new("error", "CIS-VERIFY-EVIDENCE", "No passing verification evidence is recorded.", Relative(context, verification)));
         if (_testing is not null && Regex.IsMatch(planText, @"(?im)^feature_spec_path:\s*.+$"))
             ValidateReconciledTesting(context, change, verification, findings);
+        if (_security is not null && File.Exists(Path.Combine(context.DocumentationPath, "references", "security-suite-profile.md")))
+            ValidateReconciledSecurity(context, findings);
         return New(context, change, snapshot, findings, ReadEvidence(verification), false,
             findings.Any(x => x.Severity == "error") ? "invalid" : "valid");
+    }
+
+    private void ValidateReconciledSecurity(CisRepositoryContext context, ICollection<VerifyFinding> findings)
+    {
+        var result = _security!.Status(context.RepositoryPath, null);
+        if (result.Manifest is null)
+        {
+            findings.Add(new("error", "CIS-VERIFY-SECURITY-EVIDENCE", "No reconciled security run is available for the repository.", ".cis/local/security"));
+            return;
+        }
+        if (result.Manifest.Status is not ("passed" or "passed-with-findings"))
+            findings.Add(new("error", "CIS-VERIFY-SECURITY-STATUS", $"Security run '{result.Manifest.RunId}' is {result.Manifest.Status}.", $".cis/local/security/runs/{result.Manifest.RunId}/manifest.json"));
+        var revision = GitRevision(context.RepositoryPath);
+        if (revision != "unavailable" && !result.Manifest.RepositoryRevision.Equals(revision, StringComparison.OrdinalIgnoreCase))
+            findings.Add(new("error", "CIS-VERIFY-SECURITY-STALE", "Security evidence was reconciled against a different repository revision.", $".cis/local/security/runs/{result.Manifest.RunId}/manifest.json"));
+    }
+
+    private static string GitRevision(string repository)
+    {
+        try
+        {
+            using var process = new Process { StartInfo = new("git") { WorkingDirectory = repository, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true } };
+            process.StartInfo.ArgumentList.Add("rev-parse"); process.StartInfo.ArgumentList.Add("HEAD");
+            process.Start(); var output = process.StandardOutput.ReadToEnd(); process.WaitForExit(GitCommandTimeoutMilliseconds);
+            return process.ExitCode == 0 ? output.Trim() : "unavailable";
+        }
+        catch { return "unavailable"; }
     }
 
     public VerifyResult Evidence(string repo, string change, string task, string check, string artifact, string result, string notes)

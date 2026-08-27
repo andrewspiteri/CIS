@@ -38,6 +38,7 @@ internal static partial class ImplementationGraphExtractor
         "bin",
         "obj",
         "node_modules",
+        ".stryker-tmp",
         ".vs",
         ".idea",
         ".next",

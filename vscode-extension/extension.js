@@ -5,6 +5,13 @@ const fs = require('fs');
 const path = require('path');
 const childProcess = require('child_process');
 
+function resolveWithin(root, relative) {
+  if (typeof relative !== 'string' || !relative.trim() || path.isAbsolute(relative)) return undefined;
+  const canonicalRoot = path.resolve(root);
+  const candidate = path.resolve(canonicalRoot, relative); // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- containment is checked below
+  return candidate === canonicalRoot || candidate.startsWith(canonicalRoot + path.sep) ? candidate : undefined;
+}
+
 class CisCli {
   constructor(output) { this.output = output; }
   executable() { return vscode.workspace.getConfiguration('cis').get('executablePath', 'cis'); }
@@ -53,9 +60,9 @@ class CisWorkspaceTree {
     const metadata = path.join(root, '.cis', 'repository.yml');
     if (fs.existsSync(metadata)) {
       const match = /^documentation_root:\s*(.+)$/m.exec(fs.readFileSync(metadata, 'utf8'));
-      if (match) return path.join(root, match[1].trim().replace(/^['"]|['"]$/g, ''));
+      if (match) return resolveWithin(root, match[1].trim().replace(/^['"]|['"]$/g, '')) || path.join(root, 'docs/cis');
     }
-    return path.join(root, vscode.workspace.getConfiguration('cis').get('documentationRoot', 'docs/cis'));
+    return resolveWithin(root, vscode.workspace.getConfiguration('cis').get('documentationRoot', 'docs/cis')) || path.join(root, 'docs/cis');
   }
   getTreeItem(item) { return item; }
   getChildren(item) {
@@ -76,7 +83,8 @@ function markdownFiles(folder, recursive) {
   if (!fs.existsSync(folder)) return [];
   const files = [];
   for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
-    const full = path.join(folder, entry.name);
+    const full = resolveWithin(folder, entry.name);
+    if (!full) continue;
     if (entry.isFile() && entry.name.toLowerCase().endsWith('.md')) files.push(full);
     if (recursive && entry.isDirectory()) {
       const proposal = path.join(full, 'proposal.md'); if (fs.existsSync(proposal)) files.push(proposal);
@@ -109,4 +117,4 @@ function activate(context) {
 async function showQuery(output, cli, args) { const value = await cli.query(args); output.appendLine(JSON.stringify(value, null, 2)); output.show(true); }
 
 function deactivate() {}
-module.exports = { activate, deactivate, CisCli, CisWorkspaceTree, markdownFiles };
+module.exports = { activate, deactivate, CisCli, CisWorkspaceTree, markdownFiles, resolveWithin };

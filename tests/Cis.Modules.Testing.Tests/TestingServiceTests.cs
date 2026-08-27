@@ -98,6 +98,17 @@ public sealed class TestingServiceTests
     }
 
     [Fact]
+    public void Trace_RejectsChangeIdPathTraversal()
+    {
+        using var repository = TestRepository.Create();
+
+        var result = Service().Trace(repository.Path, "../outside", "RUN-1");
+
+        Assert.Equal("invalid-change", result.Status);
+        Assert.Contains(result.Diagnostics, item => item.Contains("single portable path segment", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void VitestAdapter_ParsesPassedSkippedAndFailedCasesWithCoverage()
     {
         using var repository = TestRepository.Create();

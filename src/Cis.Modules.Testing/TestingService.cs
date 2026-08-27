@@ -286,6 +286,12 @@ public sealed partial class TestingService
     {
         var context = Resolve(repositoryPath, out var diagnostics);
         if (context is null) return Result(null, changeId, runId, [], null, [], diagnostics, false, "invalid-repository");
+        if (!SafeIdPattern().IsMatch(changeId))
+        {
+            diagnostics.Add("ERROR: Change ID must be a single portable path segment.");
+            return Result(context, changeId, runId, [], null, [], diagnostics, false, "invalid-change");
+        }
+        changeId = Path.GetFileName(changeId);
         var testCases = Path.Combine(context.DocumentationPath, "changes", changeId, "test-cases.md");
         if (!File.Exists(testCases))
         {

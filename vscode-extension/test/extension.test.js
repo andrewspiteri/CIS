@@ -21,7 +21,7 @@ const vscode = {
 Module._load = function (request, parent, isMain) {
   return request === 'vscode' ? vscode : originalLoad.call(this, request, parent, isMain);
 };
-const { CisCli, CisWorkspaceTree, markdownFiles } = require('../extension');
+const { CisCli, CisWorkspaceTree, markdownFiles, resolveWithin } = require('../extension');
 Module._load = originalLoad;
 
 test('CisCli rejects queries without an open repository', async () => {
@@ -36,6 +36,17 @@ test('tree honors the initialized documentation root', () => {
     fs.writeFileSync(path.join(root, '.cis', 'repository.yml'), 'documentation_root: custom-docs\n');
     vscode.workspace.workspaceFolders = [{ uri: { fsPath: root } }];
     assert.equal(new CisWorkspaceTree().docsRoot(), path.join(root, 'custom-docs'));
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('tree rejects a documentation root that escapes the workspace', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cis-vscode-'));
+  try {
+    fs.mkdirSync(path.join(root, '.cis'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.cis', 'repository.yml'), 'documentation_root: ../../outside\n');
+    vscode.workspace.workspaceFolders = [{ uri: { fsPath: root } }];
+    assert.equal(new CisWorkspaceTree().docsRoot(), path.join(root, 'docs/cis'));
+    assert.equal(resolveWithin(root, '../../outside'), undefined);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 

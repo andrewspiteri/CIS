@@ -189,7 +189,7 @@ public sealed class SqliteGraphStore
             }
         }
         command.Parameters.AddWithValue("$limit", limit);
-        command.CommandText = "SELECT n.key FROM nodes n"
+        command.CommandText = "SELECT n.key FROM nodes n" // nosemgrep: csharp.lang.security.sqli.csharp-sqli.csharp-sqli -- clauses are fixed SQL with bound values
             + (clauses.Count == 0 ? string.Empty : " WHERE " + string.Join(" AND ", clauses))
             + " ORDER BY n.key LIMIT $limit;";
         var keys = new List<string>();
@@ -631,7 +631,7 @@ public sealed class SqliteGraphStore
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = sql;
+        command.CommandText = sql; // nosemgrep: csharp.lang.security.sqli.csharp-sqli.csharp-sqli -- private callers provide reviewed SQL and bind all values
         foreach (var (name, value) in parameters) command.Parameters.AddWithValue(name, value ?? DBNull.Value);
         command.ExecuteNonQuery();
     }

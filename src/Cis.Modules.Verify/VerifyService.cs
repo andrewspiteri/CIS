@@ -55,6 +55,7 @@ public sealed class VerifyService
     {
         if (!Setup(repo, change, out var context, out var dossier, out var findings))
             return New(context, change, null, findings, [], false, "invalid");
+        change = Path.GetFileName(dossier!.Id);
         var snapshot = Capture(context!, dossier!, findings);
         if (snapshot is null) return New(context, change, null, findings, [], false, "invalid");
         Write(SnapshotPath(context!, change), JsonSerializer.Serialize(snapshot, JsonOptions));
@@ -63,8 +64,9 @@ public sealed class VerifyService
 
     public VerifyResult Compare(string repo, string change)
     {
-        if (!Setup(repo, change, out var context, out _, out var findings))
+        if (!Setup(repo, change, out var context, out var dossier, out var findings))
             return New(context, change, null, findings, [], false, "invalid");
+        change = Path.GetFileName(dossier!.Id);
         var snapshot = ReadSnapshot(context!, change, findings);
         if (snapshot is null) return New(context, change, null, findings, [], false, "missing-baseline");
 
@@ -88,6 +90,7 @@ public sealed class VerifyService
         var compared = Compare(repo, change);
         if (compared.RepositoryPath is null) return compared;
         var context = _resolver.Resolve(compared.RepositoryPath).Context!;
+        change = Path.GetFileName(compared.ChangeId!);
         var dossier = _changes.Read(context.RepositoryPath, change)!;
         var findings = compared.Findings.ToList();
         var snapshot = compared.Snapshot;
@@ -173,8 +176,9 @@ public sealed class VerifyService
 
     public VerifyResult Evidence(string repo, string change, string task, string check, string artifact, string result, string notes)
     {
-        if (!Setup(repo, change, out var context, out _, out var findings))
+        if (!Setup(repo, change, out var context, out var dossier, out var findings))
             return New(context, change, null, findings, [], false, "invalid");
+        change = Path.GetFileName(dossier!.Id);
         if (new[] { task, check, artifact, result }.Any(string.IsNullOrWhiteSpace))
             findings.Add(new("error", "CIS-VERIFY-EVIDENCE-INPUT", "Task, check, artifact, and result are required.", null));
         if (findings.Any(x => x.Severity == "error")) return New(context, change, null, findings, [], false, "invalid");
@@ -201,6 +205,7 @@ public sealed class VerifyService
     {
         var valid = Validate(repo, change);
         if (valid.ExitCode != 0) return valid;
+        change = Path.GetFileName(valid.ChangeId!);
         if (string.IsNullOrWhiteSpace(reviewer) || string.IsNullOrWhiteSpace(reason))
             return Invalid(valid, "CIS-VERIFY-AUTHORITY", "Reviewer and reason are required.");
         if (valid.Snapshot is null || valid.Snapshot.Files.Count == 0 || valid.Snapshot.SchemaVersion < 3)
@@ -217,6 +222,7 @@ public sealed class VerifyService
     {
         var valid = Validate(repo, change);
         if (valid.ExitCode != 0) return valid;
+        change = Path.GetFileName(valid.ChangeId!);
         if (string.IsNullOrWhiteSpace(reviewer) || string.IsNullOrWhiteSpace(reason))
             return Invalid(valid, "CIS-VERIFY-AUTHORITY", "Reviewer and reason are required.");
         if (_planning is null)

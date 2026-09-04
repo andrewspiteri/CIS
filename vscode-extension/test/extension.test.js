@@ -1021,6 +1021,45 @@ test('product validation refreshes graph and approval preserves explicit human a
   } finally { configuration.actorIdentity = ''; vscode.window = originalWindow; }
 });
 
+test('approved feature continuation reconciles product traceability and derives one delivery change', async () => {
+  const foreground = []; const opened = []; let refreshes = 0; let created = false;
+  const cli = {
+    runForeground: async (title, args, options) => {
+      foreground.push({ title, args, options });
+      if (args[0] === 'change' && args[1] === 'create') created = true;
+    },
+    query: async args => {
+      const key = args.join(' ');
+      if (key.startsWith('definition status --workspace '))
+        return { status: 'status', sessionId: 'DEF-1', active: false, readyToActivate: false };
+      if (key.startsWith('brd feature status --item HLT-FR-001 --workspace '))
+        return { status: 'status', authorityRepositoryId: 'workspace', relativePath: 'docs/cis/specs/features/hlt-fr-001/feature-specification.md',
+          validation: { valid: true, current: true, effectiveStatus: 'Active', documentStatus: 'Active', errors: [], warnings: [] } };
+      if (key.startsWith('brd backlog status --workspace '))
+        return { status: 'status', items: [{ id: 'HLT-FR-001', outcome: 'Customer risk assessment' }] };
+      if (key === 'change list') return { status: 'listed', changes: created
+        ? [{ id: 'CIS-0001', title: 'HLT-FR-001: Customer risk assessment', status: 'Planning' }] : [] };
+      throw new Error(`Unexpected approved-feature continuation query: ${key}`);
+    },
+  };
+  const vscodeApi = { commands: { executeCommand: async (...args) => opened.push(args) } };
+
+  const change = await extension.continueApprovedFeatureDelivery(
+    vscodeApi, cli, async () => { refreshes += 1; }, 'C:\\workspace', 'HLT-FR-001');
+
+  assert.equal(change.id, 'CIS-0001');
+  assert.deepEqual(foreground.map(call => call.args), [
+    ['brd', 'reconcile', '--workspace', 'C:\\workspace'],
+    ['technical-intent', 'refresh', '--workspace', 'C:\\workspace'],
+    ['graph', 'build', '--workspace', 'C:\\workspace'],
+    ['change', 'create', '--title', 'HLT-FR-001: Customer risk assessment', '--outcome', 'Customer risk assessment', '--root', 'workspace:feature:hlt-fr-001'],
+    ['impact', 'analyse', 'CIS-0001', '--root', 'workspace:feature:hlt-fr-001'],
+    ['plan', 'derive', 'CIS-0001', '--file', 'docs/cis/specs/features/hlt-fr-001/feature-specification.md'],
+  ]);
+  assert.equal(refreshes, 1);
+  assert.deepEqual(opened, [['cis.openChange', change]]);
+});
+
 test('validation presentation omits verbose generated collections', () => {
   const compact = extension.compactValidationResult({
     status: 'validated', items: [{ id: 'HLT-FR-001' }, { id: 'HLT-FR-002' }],
@@ -1845,6 +1884,7 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
   let reviewApproved = false;
   let technicalQuestionsInitialized = false;
   let definitionSession = false;
+  let featureApproved = false;
   let aiMode = 'local';
   let openDialogOptions;
   const promptValue = prompt => {
@@ -1992,7 +2032,10 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
           { id: 'HLT-FR-001', outcome: 'First governed feature', dependsOn: [], featureSpecification: 'not-created' },
         ] };
         if (key.startsWith('brd feature status --item HLT-FR-001 --workspace '))
-          return { status: 'ReviewRequired', relativePath: 'docs/specs/features/HLT-FR-001.md' };
+          return featureApproved
+            ? { status: 'status', relativePath: 'docs/specs/features/HLT-FR-001.md',
+              validation: { valid: true, current: true, effectiveStatus: 'Active', documentStatus: 'Active', errors: [], warnings: [] } }
+            : { status: 'ReviewRequired', relativePath: 'docs/specs/features/HLT-FR-001.md' };
         if (key.startsWith('brd questions list --workspace ')) return {
           questions: [{ id: 'BRD-Q-001', status: brdQuestionAnswered ? 'Answered' : 'Unanswered' }],
           answerDigest: brdQuestionAnswered ? 'sha256:answered' : undefined,
@@ -2075,6 +2118,7 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
         if (args[0] === 'brd' && args[1] === 'review' && args[2] === 'decide') reviewDecision = 'accepted';
         if (args[0] === 'brd' && args[1] === 'review' && args[2] === 'accept-all') reviewDecision = 'accepted';
         if (args[0] === 'brd' && args[1] === 'review' && args[2] === 'approve') reviewApproved = true;
+        if (args[0] === 'brd' && args[1] === 'feature' && args[2] === 'approve') featureApproved = true;
         if (args[0] === 'technical-intent' && args[1] === 'questions' && args[2] === 'init') technicalQuestionsInitialized = true;
         return { state: 'success', exitCode: 0 };
       },

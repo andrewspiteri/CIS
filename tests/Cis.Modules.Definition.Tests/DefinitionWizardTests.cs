@@ -107,6 +107,18 @@ public sealed class DefinitionWizardTests
             | HLT-FR-001 | BR-FR-001 | Outcome | Must | sample | customer | None | not-created | None |
             <!-- cis:brd-backlog-items:end -->
             """);
+        var technicalIntent = Path.Combine(documentation, "specs", "technical-intent-spec.md");
+        var technicalContent = File.ReadAllText(technicalIntent);
+        if (!technicalContent.Contains("<!-- cis:technical-intent-baseline:start -->", StringComparison.Ordinal))
+        {
+            technicalContent += """
+
+                <!-- cis:technical-intent-baseline:start -->
+                | initial | baseline |
+                <!-- cis:technical-intent-baseline:end -->
+                """;
+            File.WriteAllText(technicalIntent, technicalContent);
+        }
         var baseline = ProductDefinitionAuthority.ComputeBaselineHash(documentation, out var missing);
         Assert.Empty(missing);
         File.WriteAllText(backlog, File.ReadAllText(backlog)
@@ -114,6 +126,27 @@ public sealed class DefinitionWizardTests
             .Replace("not-created", "docs/cis/specs/features/hlt-fr-001/feature-specification.md", StringComparison.Ordinal));
         var afterFeatureStart = ProductDefinitionAuthority.ComputeBaselineHash(documentation, out _);
         Assert.Equal(baseline, afterFeatureStart);
+        var brd = Path.Combine(documentation, "specs", "business-requirements.md");
+        var brdContent = File.ReadAllText(brd).Replace(
+            "<!-- cis:sources:end -->",
+            "| BRD-SRC-feature | feature-specification | Adopted |\n<!-- cis:sources:end -->",
+            StringComparison.Ordinal);
+        brdContent += """
+
+            <!-- cis:feature-traceability:start -->
+            - BRD-SRC-feature: approved downstream feature scope.
+            <!-- cis:feature-traceability:end -->
+            """;
+        File.WriteAllText(brd, brdContent);
+        var afterFeatureReconciliation = ProductDefinitionAuthority.ComputeBaselineHash(documentation, out _);
+        Assert.Equal(baseline, afterFeatureReconciliation);
+        technicalContent = File.ReadAllText(technicalIntent);
+        File.WriteAllText(technicalIntent, technicalContent.Replace(
+            "| initial | baseline |",
+            "| feature-traceability | refreshed |",
+            StringComparison.Ordinal));
+        var afterTechnicalEvidenceRefresh = ProductDefinitionAuthority.ComputeBaselineHash(documentation, out _);
+        Assert.Equal(baseline, afterTechnicalEvidenceRefresh);
         var session = Path.Combine(repository.Path, ".cis", "local", "definition-wizard", "session.json");
         File.WriteAllText(session, $$"""
             {
@@ -123,13 +156,14 @@ public sealed class DefinitionWizardTests
               "startedAtUtc": "2026-09-04T09:00:00Z",
               "activatedAtUtc": "2026-09-04T10:00:00Z",
               "active": false,
-              "baselineHash": "{{baseline}}"
+              "baselineHash": "sha256:legacy-activation-identity",
+              "semanticBaselineHash": "{{baseline}}"
             }
             """);
 
         var activated = authority.Evaluate(repository.Path);
         Assert.True(activated.Active, string.Join(Environment.NewLine, activated.Errors));
-        Assert.Equal(baseline, activated.BaselineHash);
+        Assert.Equal("sha256:legacy-activation-identity", activated.BaselineHash);
 
         File.AppendAllText(Path.Combine(documentation, "design", "ui-direction.md"), "\nChanged after activation.\n");
         var stale = authority.Evaluate(repository.Path);

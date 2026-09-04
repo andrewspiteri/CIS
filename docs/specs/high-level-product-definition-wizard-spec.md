@@ -76,6 +76,9 @@ component, dictionary inventory, experience, preview, and semantic backlog artif
 feature-specification links and their approval-hash refresh do not change that digest; an agent run's
 scope digest separately binds the exact dictionary versions made available to it. Once a wizard session exists,
 feature start and authoring require this activation; feature validation requires the exact digest.
+Managed BRD source-assessment and feature-traceability blocks are likewise provenance rather than
+new product intent. Reconciling an approved downstream feature into those blocks must not revoke the
+activation; edits to human-authored business requirements still do.
 Individual document approvals therefore cannot accidentally bypass the final product-definition review.
 After activation, any material edit follows the ordinary owning artifact's drift and renewed-review
 rules. The user may reopen the wizard to begin or resume a revision.

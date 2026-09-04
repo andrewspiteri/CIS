@@ -195,10 +195,12 @@ public sealed class DefinitionWizardService
                 throw new InvalidOperationException("Product-definition activation artifacts are missing: " + string.Join(", ", missing));
             var session = ReadSession(state)! with
             {
+                SchemaVersion = 2,
                 Active = false,
                 CurrentPage = "review",
                 ActivatedAtUtc = _clock().ToUniversalTime().ToString("O"),
                 BaselineHash = baselineHash,
+                SemanticBaselineHash = baselineHash,
             };
             WriteAtomic(state.SessionPath!, JsonSerializer.Serialize(session, JsonOptions));
             var graph = _graph.Build(state.AuthorityRepositoryPath!);
@@ -231,7 +233,8 @@ public sealed class DefinitionWizardService
         var dictionaries = ReadDictionaries(state);
         var diagrams = ReadDiagrams(state, solution);
         var preview = ReadPreview(state, uiQuestions);
-        var session = ReadSession(state);
+        var session = MigrateSemanticBaseline(state, ReadSession(state), brd, technicalQuestions,
+            technical, solution, uiQuestions, ui, backlog);
 
         var pages = new List<CisDefinitionPage>
         {
@@ -598,16 +601,52 @@ The preview is derived from the current high-level UI questionnaire and directio
 
     private void EnsureSession(State state, string page)
     {
-        var current = ReadSession(state) ?? new WizardSession(1,
+        var current = ReadSession(state) ?? new WizardSession(2,
             "DEF-" + _clock().ToUniversalTime().ToString("yyyyMMddHHmmss") + "-" + Guid.NewGuid().ToString("N")[..8].ToUpperInvariant(),
-            page, _clock().ToUniversalTime().ToString("O"), null, true, null);
+            page, _clock().ToUniversalTime().ToString("O"), null, true, null, null);
         WriteAtomic(state.SessionPath!, JsonSerializer.Serialize(current with
         {
+            SchemaVersion = 2,
             CurrentPage = page,
             Active = true,
             ActivatedAtUtc = null,
             BaselineHash = null,
+            SemanticBaselineHash = null,
         }, JsonOptions));
+    }
+
+    private static WizardSession? MigrateSemanticBaseline(
+        State state,
+        WizardSession? session,
+        BrdResult brd,
+        TechnicalIntentQuestionnaireResult technicalQuestions,
+        TechnicalIntentResult technical,
+        SolutionDesignResult solution,
+        UiDirectionQuestionnaireResult uiQuestions,
+        UiDirectionResult ui,
+        BrdBacklogResult backlog)
+    {
+        if (session is null || session.Active || string.IsNullOrWhiteSpace(session.ActivatedAtUtc)
+            || string.IsNullOrWhiteSpace(session.BaselineHash) || !string.IsNullOrWhiteSpace(session.SemanticBaselineHash)
+            || state.DocumentationPath is null || state.SessionPath is null)
+            return session;
+        var coreCurrent = Accepted(brd.Validation?.Valid, brd.Validation?.Current, brd.Validation?.EffectiveStatus)
+            && technicalQuestions.Complete && technicalQuestions.Current
+            && Accepted(technical.Validation?.Valid, technical.Validation?.Current, technical.Validation?.EffectiveStatus)
+            && Accepted(solution.Validation?.Valid, solution.Validation?.Current, solution.Validation?.EffectiveStatus)
+            && uiQuestions.Complete && uiQuestions.Current
+            && Accepted(ui.Validation?.Valid, ui.Validation?.Current, ui.Validation?.EffectiveStatus)
+            && Accepted(backlog.Validation?.Valid, backlog.Validation?.Current, backlog.Validation?.EffectiveStatus);
+        if (!coreCurrent) return session;
+        var semanticHash = ProductDefinitionAuthority.ComputeBaselineHash(state.DocumentationPath, out var missing);
+        if (missing.Count > 0) return session;
+        var migrated = session with
+        {
+            SchemaVersion = 2,
+            SemanticBaselineHash = semanticHash,
+        };
+        WriteAtomic(state.SessionPath, JsonSerializer.Serialize(migrated, JsonOptions));
+        return migrated;
     }
 
     private State Resolve(string workspacePath)
@@ -791,7 +830,8 @@ The preview is derived from the current high-level UI questionnaire and directio
             [], [], [], null, [], errors, false);
 
     private sealed record WizardSession(int SchemaVersion, string SessionId, string CurrentPage,
-        string StartedAtUtc, string? ActivatedAtUtc, bool Active, string? BaselineHash);
+        string StartedAtUtc, string? ActivatedAtUtc, bool Active, string? BaselineHash,
+        string? SemanticBaselineHash = null);
     private sealed record PreviewModel(string FontFamily, string Density, string Radius,
         IReadOnlyDictionary<string, string> Colors, IReadOnlyList<string> Components,
         IReadOnlyList<string> Surfaces, string SourceHash);

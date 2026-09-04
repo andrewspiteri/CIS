@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Cis.Abstractions;
+using Cis.Modules.Brd;
 
 namespace Cis.Modules.Definition;
 
@@ -62,6 +63,7 @@ public sealed class ProductDefinitionAuthority(ICisRepositoryContextResolver rep
             var sessionId = Text(root, "sessionId");
             var activatedAt = Text(root, "activatedAtUtc");
             var recordedHash = Text(root, "baselineHash");
+            var recordedSemanticHash = Text(root, "semanticBaselineHash");
             var sessionActive = root.TryGetProperty("active", out var activeValue) && activeValue.ValueKind == JsonValueKind.True;
             var currentHash = ComputeBaselineHash(context.DocumentationPath, out var missing);
             var errors = new List<string>();
@@ -71,10 +73,13 @@ public sealed class ProductDefinitionAuthority(ICisRepositoryContextResolver rep
                 errors.Add("The activated product-definition baseline is incomplete: " + string.Join(", ", missing));
             if (!sessionActive && !string.IsNullOrWhiteSpace(activatedAt) && string.IsNullOrWhiteSpace(recordedHash))
                 errors.Add("The product-definition activation predates baseline binding; reopen and activate the definition once.");
-            else if (!string.IsNullOrWhiteSpace(recordedHash)
-                     && !string.Equals(recordedHash, currentHash, StringComparison.Ordinal))
+            else if (!sessionActive && !string.IsNullOrWhiteSpace(activatedAt)
+                     && string.IsNullOrWhiteSpace(recordedSemanticHash))
+                errors.Add("The product-definition activation predates semantic baseline binding; run `cis definition status` to migrate a still-current approved definition.");
+            else if (!string.IsNullOrWhiteSpace(recordedSemanticHash)
+                     && !string.Equals(recordedSemanticHash, currentHash, StringComparison.Ordinal))
                 errors.Add("The high-level product-definition artifacts changed after consolidated activation.");
-            return new(true, errors.Count == 0, sessionId, activatedAt, currentHash, errors);
+            return new(true, errors.Count == 0, sessionId, activatedAt, recordedHash ?? currentHash, errors);
         }
         catch (JsonException exception)
         {
@@ -114,6 +119,23 @@ public sealed class ProductDefinitionAuthority(ICisRepositoryContextResolver rep
     private static string NormalizedArtifact(string relativePath, string content)
     {
         var normalized = content.Replace("\r\n", "\n", StringComparison.Ordinal);
+        if (relativePath == "specs/business-requirements.md")
+            return "semantic-v1:" + BrdDocumentDigest.Compute(normalized);
+        if (relativePath == "specs/technical-intent-spec.md")
+        {
+            foreach (var key in new[] { "status", "last_reviewed" })
+                normalized = Regex.Replace(normalized, $"(?m)^{key}:.*$", $"{key}: <approval-metadata>",
+                    RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+            foreach (var key in new[] { "approved_by", "approved_at", "approval_reason", "approved_content_hash" })
+                normalized = Regex.Replace(normalized, $"(?m)^  {key}:.*$", $"  {key}: <approval-metadata>",
+                    RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+            normalized = Regex.Replace(normalized,
+                Regex.Escape("<!-- cis:technical-intent-baseline:start -->") + ".*?" +
+                Regex.Escape("<!-- cis:technical-intent-baseline:end -->"),
+                "<managed-technical-intent-baseline>", RegexOptions.Singleline | RegexOptions.CultureInvariant,
+                TimeSpan.FromSeconds(1));
+            return normalized;
+        }
         if (relativePath != "plans/high-level-backlog.md") return normalized;
         normalized = Regex.Replace(normalized, "(?m)^  approved_content_hash:.*$",
             "  approved_content_hash: <managed>", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));

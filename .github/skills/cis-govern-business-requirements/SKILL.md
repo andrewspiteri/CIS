@@ -26,7 +26,7 @@ description: Discover possible BRDs, domain-equivalent product-design documents 
 17. Run `cis brd backlog approve --reviewer <human> --reason <rationale>` only with explicit authority. An approved high-level item may then become a feature specification; it is not an implementation task.
 18. Start only a dependency-ready item with `cis brd backlog start --item <HLT-ID>`. Complete the generated Draft specification and run `cis brd feature validate --item <HLT-ID>` until it is Ready for Approval.
 19. Present the exact feature scope, validation result, and approval rationale. Run `cis brd feature approve --item <HLT-ID> --reviewer <human> --reason <rationale>` only with explicit human authority.
-20. After feature approval, rebuild the graph and reconcile the now-eligible feature evidence into the BRD. Use `cis technical-intent refresh`; renew downstream authority only when it reports an actual semantic change.
+20. After feature approval, rebuild the graph and reconcile the now-eligible feature evidence into the BRD. Use `cis technical-intent refresh`; renew downstream authority only when it reports an actual semantic change. In the VS Code delivery loop these mechanical steps, feature-rooted change creation, deterministic impact analysis, and `cis plan derive` are one continuation after approval; do not send an unchanged BRD back through secondary review merely because the approved feature was added to managed traceability.
 
 ## Guardrails
 

@@ -165,6 +165,14 @@ answers in place, previews derived architecture and visual-system artifacts, sup
 direct page navigation, and requests one consolidated activation. It is not a settings page, chat
 client, or canonical editor; all lifecycle and content authority remains in CIS and Markdown.
 
+Feature approval continues mechanically within the same delivery loop. The client rebuilds the
+graph, reconciles the newly approved feature as BRD traceability, refreshes technical intent, and
+checks that the activated product definition remains semantically current. It then creates one
+change dossier rooted at the feature, runs deterministic impact analysis, derives the task plan
+from the exact feature approval, and opens that
+change. It must not route to an old BRD secondary review merely because a backlog-governed feature
+became eligible source evidence, and it must not create a duplicate while a change is already active.
+
 ### Repository Doctor detail
 
 Selecting the Workspace health summary or **CIS: Run Repository Doctor** opens one dedicated
@@ -193,7 +201,7 @@ state that CIS can report directly.
 | Evidence | `context search`, `graph related`, canonical file links | None |
 | Design review | `design status`, `design validate` | `design approve`, `design reject` with human identity and rationale |
 | Runs/providers | `agent providers`, `agent provider diagnose`, `agent runs/show/status`, `test status`, `security status` | `agent author brd`, `agent review brd`, `agent revise brd`, `agent prepare/run/cancel/recover/resume/import-result` |
-| Product definition | `definition status`, `brd status`, `brd questions list/guidance`, `brd review status/freshness`, `technical-intent questions status`, UI-direction questions status, technical-intent, solution-design, UI-direction, and backlog status | `definition init/prepare/answer/activate`, `brd review init/decide/accept-all/approve`, `brd questions suggest/answer`, questionnaire answers, validation, and explicit approval commands |
+| Product definition | `definition status`, `brd status`, `brd questions list/guidance`, `brd review status/freshness`, `technical-intent questions status`, UI-direction questions status, technical-intent, solution-design, UI-direction, backlog, feature, and change status | `definition init/prepare/answer/activate`, `brd review init/decide/accept-all/approve`, `brd questions suggest/answer`, questionnaire answers, validation, explicit approval commands, feature evidence reconciliation, technical-intent refresh, change creation, deterministic impact analysis, and approved-plan derivation |
 | Governance | inventory/validate/status commands for skills, standards, references and Doctor | Explicit supported audit/fix commands after target confirmation |
 
 The first implementation may expose a subset of these actions, but it must not claim a

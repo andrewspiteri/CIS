@@ -8,7 +8,7 @@ const { CisCli, CisCliError } = require('./lib/cis-cli');
 const { bound, resolveWithin } = require('./lib/security');
 const { CisViewProvider, markdownFiles, repositoryMetadata } = require('./lib/views');
 const { projectChangeOverview } = require('./lib/projections');
-const { isReadyForApproval, nextStartableItem, productPaths, reviewMatchesBrd, stateOf } = require('./lib/product-journey');
+const { isActiveCurrent, isReadyForApproval, nextStartableItem, productPaths, reviewMatchesBrd, stateOf } = require('./lib/product-journey');
 const {
   confirmAgentRequest, openBrdQuestionsPanel, openTechnicalIntentQuestionsPanel, openUiDirectionQuestionsPanel, openDefinitionWizardPanel, openDoctorPanel, openChangeOverviewPanel, openDesignPanel, openEvidencePanel, openRecommendationReviewPanel,
   openContextPanel, openRunDetailPanel, openTaskDetailPanel,
@@ -874,10 +874,13 @@ function activate(context, overrides = {}) {
     const root = authority.root();
     if (!await ensureUiDirectionReady(vscode, cli, refresh, root)) return;
     const selected = itemId || await selectBacklogItem(cli, root, true); if (!selected) return;
-    return approveProductDocument(cli, refresh, showQuery, {
+    const approved = await approveProductDocument(cli, refresh, showQuery, {
       label: `${selected} feature specification`, validate: ['brd', 'feature', 'validate', '--item', selected],
       approve: ['brd', 'feature', 'approve', '--item', selected],
+      deferRefresh: true,
     }, root);
+    if (!approved) return;
+    return continueApprovedFeatureDelivery(vscode, cli, refresh, root, selected);
   });
   command('cis.repoDoctor', async () => {
     let current = await cli.query(['repo', 'doctor'], { acceptStructuredFailure: true });
@@ -1192,7 +1195,57 @@ async function approveProductDocument(cli, refresh, showQuery, definition, root)
   await cli.runForeground(`Approve ${definition.label}`,
     [...definition.approve, '--workspace', root, '--reviewer', actor, '--reason', reason.trim()], { repository: false });
   await cli.runForeground('Refresh CIS workspace graph', ['graph', 'build', '--workspace', root], { repository: false });
+  if (!definition.deferRefresh) await refresh(false);
+  return true;
+}
+
+async function continueApprovedFeatureDelivery(vscodeApi, cli, refresh, root, itemId) {
+  await cli.runForeground(`Reconcile ${itemId} into business traceability`,
+    ['brd', 'reconcile', '--workspace', root], { repository: false });
+  await cli.runForeground('Refresh technical intent from reconciled business evidence',
+    ['technical-intent', 'refresh', '--workspace', root], { repository: false });
+  await cli.runForeground('Refresh CIS workspace graph',
+    ['graph', 'build', '--workspace', root], { repository: false });
+
+  const definition = await queryWorkspace(cli, ['definition', 'status'], root);
+  if (definition.active !== false)
+    throw new Error('The consolidated product definition did not remain activated after feature reconciliation.');
+  const [feature, backlog, before] = await Promise.all([
+    queryWorkspace(cli, ['brd', 'feature', 'status', '--item', itemId], root),
+    queryWorkspace(cli, ['brd', 'backlog', 'status'], root),
+    cli.query(['change', 'list']),
+  ]);
+  const featureState = stateOf(feature);
+  if (!isActiveCurrent(featureState))
+    throw new Error(`${itemId} did not remain Active after BRD traceability reconciliation. Review the reported product-definition currency before delivery planning.`);
+  const existing = (before.changes || []).find(change => String(change.status || '').toLowerCase() !== 'closed');
+  if (existing) {
+    await refresh(false);
+    await vscodeApi.commands.executeCommand('cis.openChange', existing);
+    return existing;
+  }
+
+  const item = (backlog.items || []).find(candidate => String(candidate.id).toUpperCase() === String(itemId).toUpperCase());
+  if (!item) throw new Error(`High-level backlog item was not found after approval: ${itemId}`);
+  const title = `${item.id}: ${item.outcome || 'Feature delivery'}`;
+  const outcome = item.outcome || `Deliver the approved ${item.id} feature specification.`;
+  const featureRoot = `${feature.authorityRepositoryId || path.basename(root)}:feature:${String(item.id).toLowerCase()}`;
+  const knownIds = new Set((before.changes || []).map(change => change.id));
+  await cli.runForeground(`Create ${item.id} delivery change`,
+    ['change', 'create', '--title', title, '--outcome', outcome, '--root', featureRoot]);
+  const after = await cli.query(['change', 'list'], { cache: false });
+  const created = (after.changes || []).find(change => !knownIds.has(change.id)
+      && String(change.status || '').toLowerCase() !== 'closed')
+    || (after.changes || []).find(change => String(change.status || '').toLowerCase() !== 'closed');
+  if (!created) throw new Error(`CIS created no readable delivery change for ${item.id}.`);
+  if (!feature.relativePath) throw new Error(`${item.id} has no canonical feature-specification path.`);
+  await cli.runForeground(`Analyse ${item.id} delivery impact`,
+    ['impact', 'analyse', created.id, '--root', featureRoot]);
+  await cli.runForeground(`Derive ${item.id} delivery plan from approved scope`,
+    ['plan', 'derive', created.id, '--file', feature.relativePath]);
   await refresh(false);
+  await vscodeApi.commands.executeCommand('cis.openChange', created);
+  return created;
 }
 
 async function ensureSolutionDesignReady(vscodeApi, cli, refresh, root) {
@@ -1392,7 +1445,7 @@ function deactivate() {}
 
 module.exports = {
   activate, actorIdentity, agentStateCommand, brdRecommendationAcceptAllArgs, brdRecommendationDecisionArgs, brdRecommendationProgress, conciseError, deactivate, debounce, installWatchers,
-  approveProductDocument, compactValidationResult, currentProductPaths, definitionWizardModel, ensureSolutionDesignReady, ensureUiDirectionReady, markdownFiles, queryWorkspace, repositoryMetadata,
+  approveProductDocument, compactValidationResult, continueApprovedFeatureDelivery, currentProductPaths, definitionWizardModel, ensureSolutionDesignReady, ensureUiDirectionReady, markdownFiles, queryWorkspace, repositoryMetadata,
   refreshAfterReviewCompletion, requestAgentWork, resolveWithin, resumeAgent, runIdentity, selectBacklogItem, taskTransition, validateProductDocument,
   AuthoritySelector, CisCli, CisViewProvider,
 };

@@ -81,7 +81,8 @@ that generation; structured not-ready status is cached as state rather than retr
 failure. Repository Doctor, graph status, and whole-repository index status also use disposable
 content-aware caches beneath `.cis/local/`; full run events remain an on-demand evidence view
 rather than background payload. An unavailable routing index is shown as **not built** and can
-be generated in bounded local-AI batches from the Workspace View.
+be generated explicitly from the Workspace View. The cancellable foreground build completes
+all pending cards; startup never invokes the model or starts index generation.
 
 For a generated Review Required BRD, **Draft business requirements from reference** lets
 you select one or more non-sensitive plain-text or Word Open XML (`.docx`) files and assign

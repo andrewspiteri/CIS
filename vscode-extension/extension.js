@@ -908,7 +908,7 @@ function activate(context, overrides = {}) {
   });
   command('cis.graphBuild', async () => { await cli.runForeground('Build CIS context graph', ['graph', 'build']); await refresh(false); });
   command('cis.indexBuild', async () => {
-    await cli.runForeground('Build CIS routing index', ['index', 'build', '--limit', '100'], { cancellable: true });
+    await cli.runForeground('Build CIS routing index', ['index', 'build'], { cancellable: true });
     await refresh(false);
   });
   command('cis.contextSearch', async () => {

@@ -2133,6 +2133,7 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
     await doctorPanel.webview.message({ command: 'open-path', value: 'docs/changes/CIS-0001/proposal.md' });
     await doctorPanel.webview.message({ command: 'refresh', value: '' });
     await registered.get('cis.graphBuild')();
+    await registered.get('cis.indexBuild')();
     await registered.get('cis.contextSearch')();
     const contextPanel = panels.find(panel => panel.kind === 'cis.contextDetail');
     assert.ok(contextPanel);
@@ -2194,6 +2195,7 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
     assert.ok(foreground.some(item => item.args.join(' ') === 'repo init --root docs/cis --yes'));
     assert.ok(foreground.some(item => item.args.join(' ') === `repo import --workspace ${root} --source ${root} --root docs/cis --yes`));
     assert.ok(foreground.some(item => item.args.join(' ') === `graph build --workspace ${root}`));
+    assert.ok(foreground.some(item => item.args.join(' ') === 'index build' && item.options.cancellable === true));
     assert.ok(foreground.some(item => item.args.join(' ') === `agent author brd --provider codex --transport app-server --actor Andrew Spiteri --reference ${reference}`));
     assert.ok(foreground.some(item => item.args.join(' ') === 'agent review brd --provider claude --transport stream-json --actor Andrew Spiteri --include-authoring-evidence'));
     assert.ok(foreground.some(item => item.args[0] === 'brd' && item.args[1] === 'questions' && item.args[2] === 'answer'));

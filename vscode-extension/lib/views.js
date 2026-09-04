@@ -434,6 +434,24 @@ class CisViewProvider {
       return { group: this.productGroup(stages, backlog.status), next };
     }
 
+    const definition = await this.workspaceQuery(['definition', 'status'], root);
+    if (definition?.sessionId) {
+      const definitionActivated = definition.active === false;
+      const definitionStatus = definitionActivated
+        ? 'Active'
+        : definition.readyToActivate === true ? 'Ready for final approval' : 'In progress';
+      stage('7a. Consolidated product definition', definitionStatus,
+        definitionActivated ? 'pass' : 'circle-outline', undefined, 'cis.definitionWizard');
+      if (!definitionActivated) {
+        return {
+          group: this.productGroup(stages, 'Consolidated product definition approval required'),
+          next: action('Review and activate product definition',
+            'Review the complete business, technical, architecture, dictionary, UI, diagram, and backlog baseline as one bounded product definition before feature authoring.',
+            'cis.definitionWizard'),
+        };
+      }
+    }
+
     const items = backlogResult.items || [];
     const linked = linkedFeatureItems(items);
     for (const item of linked) {
@@ -443,7 +461,7 @@ class CisViewProvider {
       stage(`8. ${item.id}`, feature.status, stateIcon(feature.status), featureFile);
       if (!isActiveCurrent(feature)) {
         const featureErrors = [...(featureResult.errors || []), ...(featureResult.validation?.errors || [])];
-        const isTemplate = featureErrors.some(error => /TODO|TBD|placeholder/iu.test(String(error)));
+        const isTemplate = featureErrors.some(error => /TODO|TBD|placeholder|product-definition baseline|consolidated product definition/iu.test(String(error)));
         const next = isReadyForApproval(feature)
           ? action(`Approve ${item.id}`, 'Record explicit human approval of the validated feature specification.', 'cis.featureApprove', [String(item.id)])
           : feature.valid === false

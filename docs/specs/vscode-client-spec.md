@@ -32,8 +32,12 @@ receives the protected one-file result in canonical Markdown. The extension neve
 embeds, copies, or interprets the selected evidence itself and never turns the draft into
 approval.
 
-When a backlog item is started, the projection treats the generated file as a scaffold and
-offers `cis agent author feature` as the immediate next action. The controller selects and
+After the backlog is Active, the projection checks the consolidated definition-wizard session.
+An open session routes to the final Review and activate page; feature creation, drafting, or
+approval is not offered until that exact complete baseline is activated. When a backlog item is
+started, the projection treats the generated file as a scaffold and offers `cis agent author feature`
+as the immediate next action. An older substantive document whose `product_definition_hash` is
+missing or stale is routed through the same bounded redraft instead of approval. The controller selects and
 confirms a workspace-write provider; CIS supplies only the bounded governed product,
 technical, architecture, component, UI-direction, standards, security, and testing evidence
 inside an isolated scratch repository. The extension does not construct the prompt or apply

@@ -20,6 +20,7 @@ public sealed class BrdBacklogService
     private readonly RepositoryClassifier _classifier;
     private readonly ICisRepositoryContextResolver _repositoryResolver;
     private readonly IReadOnlyList<IChangeReadinessCheck> _readinessChecks;
+    private readonly IReadOnlyList<ICisProductDefinitionAuthority> _productDefinitionAuthorities;
     private readonly ICisWorkspaceRegistry _workspaceRegistry;
 
     public BrdBacklogService(
@@ -29,7 +30,8 @@ public sealed class BrdBacklogService
         DocumentationCatalogMerger catalogMerger,
         IEnumerable<IChangeReadinessCheck>? readinessChecks = null,
         Func<DateTimeOffset>? clock = null,
-        RepositoryClassifier? classifier = null)
+        RepositoryClassifier? classifier = null,
+        IEnumerable<ICisProductDefinitionAuthority>? productDefinitionAuthorities = null)
     {
         _brd = brd;
         _workspaceRegistry = workspaceRegistry;
@@ -37,6 +39,7 @@ public sealed class BrdBacklogService
         _catalogMerger = catalogMerger;
         _classifier = classifier ?? new RepositoryClassifier();
         _readinessChecks = readinessChecks?.ToArray() ?? [];
+        _productDefinitionAuthorities = productDefinitionAuthorities?.ToArray() ?? [];
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
     }
 
@@ -118,6 +121,12 @@ public sealed class BrdBacklogService
         if (assessed.Validation is not { Valid: true, Current: true, EffectiveStatus: "Active" })
             return FeatureError("blocked", state, itemId,
                 ["An Active, current high-level backlog is required. Run `cis brd backlog status`."]);
+        var productDefinition = ProductDefinition(state);
+        if (productDefinition is { Active: false })
+            return FeatureError("blocked", state, itemId,
+                productDefinition.Errors.Count > 0
+                    ? productDefinition.Errors
+                    : ["The complete high-level product definition must be consolidated and activated. Run `cis definition status`."]);
         var normalizedId = itemId.Trim().ToUpperInvariant();
         var item = assessed.Items.SingleOrDefault(candidate => candidate.Id == normalizedId);
         if (item is null)
@@ -144,7 +153,8 @@ public sealed class BrdBacklogService
         var requirement = ParseRequirements(File.ReadAllText(state.BrdPath!), "Functional requirements")
             .Single(candidate => candidate.Id == item.RequirementId);
         var existingFeatureContent = File.Exists(path) ? File.ReadAllText(path) : null;
-        var featureContent = existingFeatureContent ?? RenderFeatureSpecification(state, item, requirement, stableId);
+        var featureContent = existingFeatureContent ?? RenderFeatureSpecification(state, item, requirement, stableId,
+            productDefinition?.BaselineHash);
         if (File.Exists(path) && (!featureContent.Contains($"stable_id: {stableId}", StringComparison.Ordinal)
                                 || !featureContent.Contains($"high_level_item: {normalizedId}", StringComparison.Ordinal)))
             return FeatureError("collision", state, normalizedId,
@@ -418,6 +428,23 @@ public sealed class BrdBacklogService
         var recordedItemDigest = ReadNestedFrontMatter(content, "backlog_item_hash");
         var current = string.Equals(recordedItemDigest, ItemDigest(item), StringComparison.Ordinal);
         if (!current) warnings.Add("High-level backlog item changed after the feature specification was started.");
+        var productDefinition = ProductDefinition(feature.State);
+        if (productDefinition is { Active: false })
+        {
+            current = false;
+            errors.AddRange(productDefinition.Errors.Count > 0
+                ? productDefinition.Errors.Select(error => "Product-definition baseline: " + error)
+                : ["Product-definition baseline: the complete high-level product definition is not activated."]);
+        }
+        else if (productDefinition is { Active: true, BaselineHash: not null })
+        {
+            var recordedProductDefinition = ReadNestedFrontMatter(content, "product_definition_hash");
+            if (!string.Equals(recordedProductDefinition, productDefinition.BaselineHash, StringComparison.Ordinal))
+            {
+                current = false;
+                errors.Add("Product-definition baseline: the feature specification was not authored from the current consolidated product definition.");
+            }
+        }
         var documentStatus = ReadFrontMatter(content, "status") ?? "Unknown";
         if (!documentStatus.Equals("Active", StringComparison.OrdinalIgnoreCase))
         {
@@ -740,7 +767,8 @@ public sealed class BrdBacklogService
         return result;
     }
 
-    private string RenderFeatureSpecification(State state, BrdBacklogItem item, Requirement requirement, string stableId)
+    private string RenderFeatureSpecification(State state, BrdBacklogItem item, Requirement requirement, string stableId,
+        string? productDefinitionHash)
     {
         var created = _clock().ToUniversalTime().ToString("O");
         var targetLines = string.Join('\n', item.Repositories.Select(repository => $"  - {repository}"));
@@ -771,6 +799,7 @@ cis:
   high_level_item: {item.Id}
   brd_requirement: {item.RequirementId}
   backlog_item_hash: {ItemDigest(item)}
+  product_definition_hash: {productDefinitionHash ?? "null"}
   created_at: "{created}"
   approved_by: null
   approved_at: null
@@ -878,6 +907,14 @@ cis:
             break;
         }
         return string.Join('\n', lines);
+    }
+
+    private CisProductDefinitionAuthority? ProductDefinition(State state)
+    {
+        if (state.Authority is null) return null;
+        return _productDefinitionAuthorities
+            .Select(authority => authority.Evaluate(state.Authority.RepositoryPath))
+            .FirstOrDefault(result => result.Applicable);
     }
 
     private static bool HasCycle(IReadOnlyList<BrdBacklogItem> items)

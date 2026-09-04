@@ -14,6 +14,7 @@ function productPaths(root, metadata) {
     overallSolutionDesign: path.join(documentation, 'architecture', 'overall-solution-design.md'),
     architectureDiagrams: path.join(documentation, 'architecture', 'high-level-architecture-diagrams.md'),
     componentSheet: path.join(documentation, 'references', 'component-sheet.md'),
+    dictionaryIndex: path.join(documentation, 'references', 'dictionary-index.md'),
     uiDirectionQuestionnaire: path.join(documentation, 'specs', 'ui-direction-questionnaire.md'),
     uiDirection: path.join(documentation, 'design', 'ui-direction.md'),
     uiSystemPreview: path.join(documentation, 'design', 'ui-system-preview.md'),

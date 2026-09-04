@@ -11,7 +11,13 @@ public sealed class DefinitionModule : ICisModule
     public string Name => "definition";
     public string Description => "Coordinate the high-level product-definition wizard and consolidated activation.";
 
-    public void RegisterServices(IServiceCollection services) => services.AddSingleton<DefinitionWizardService>();
+    public void RegisterServices(IServiceCollection services)
+    {
+        services.AddSingleton<ProductDefinitionAuthority>();
+        services.AddSingleton<ICisProductDefinitionAuthority>(provider =>
+            provider.GetRequiredService<ProductDefinitionAuthority>());
+        services.AddSingleton<DefinitionWizardService>();
+    }
 
     public void RegisterCommands(ICisCommandRegistry commands, IServiceProvider services)
     {

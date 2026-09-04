@@ -80,7 +80,7 @@ public sealed class DefinitionWizardService
             ? existingSession
             : new WizardSession(1,
                 "DEF-" + now.ToString("yyyyMMddHHmmss") + "-" + Guid.NewGuid().ToString("N")[..8].ToUpperInvariant(),
-                "foundation", now.ToString("O"), null, true);
+                "foundation", now.ToString("O"), null, true, null);
         WriteAtomic(state.SessionPath!, JsonSerializer.Serialize(session with { Active = true }, JsonOptions));
         var refreshErrors = TryRefreshDerived(state);
         if (refreshErrors.Count > 0) return Error(state, refreshErrors);
@@ -190,7 +190,16 @@ public sealed class DefinitionWizardService
             foreach (var path in new[] { state.DiagramPath!, state.DictionaryIndexPath!, state.PreviewPath! })
                 ActivateDerived(path, reviewer, reason);
             UpdateDerivedCatalogStatus(state, "active");
-            var session = ReadSession(state)! with { Active = false, CurrentPage = "review", ActivatedAtUtc = _clock().ToUniversalTime().ToString("O") };
+            var baselineHash = ProductDefinitionAuthority.ComputeBaselineHash(state.DocumentationPath!, out var missing);
+            if (missing.Count > 0)
+                throw new InvalidOperationException("Product-definition activation artifacts are missing: " + string.Join(", ", missing));
+            var session = ReadSession(state)! with
+            {
+                Active = false,
+                CurrentPage = "review",
+                ActivatedAtUtc = _clock().ToUniversalTime().ToString("O"),
+                BaselineHash = baselineHash,
+            };
             WriteAtomic(state.SessionPath!, JsonSerializer.Serialize(session, JsonOptions));
             var graph = _graph.Build(state.AuthorityRepositoryPath!);
             if (graph.ExitCode != 0)
@@ -591,8 +600,14 @@ The preview is derived from the current high-level UI questionnaire and directio
     {
         var current = ReadSession(state) ?? new WizardSession(1,
             "DEF-" + _clock().ToUniversalTime().ToString("yyyyMMddHHmmss") + "-" + Guid.NewGuid().ToString("N")[..8].ToUpperInvariant(),
-            page, _clock().ToUniversalTime().ToString("O"), null, true);
-        WriteAtomic(state.SessionPath!, JsonSerializer.Serialize(current with { CurrentPage = page, Active = true, ActivatedAtUtc = null }, JsonOptions));
+            page, _clock().ToUniversalTime().ToString("O"), null, true, null);
+        WriteAtomic(state.SessionPath!, JsonSerializer.Serialize(current with
+        {
+            CurrentPage = page,
+            Active = true,
+            ActivatedAtUtc = null,
+            BaselineHash = null,
+        }, JsonOptions));
     }
 
     private State Resolve(string workspacePath)
@@ -776,7 +791,7 @@ The preview is derived from the current high-level UI questionnaire and directio
             [], [], [], null, [], errors, false);
 
     private sealed record WizardSession(int SchemaVersion, string SessionId, string CurrentPage,
-        string StartedAtUtc, string? ActivatedAtUtc, bool Active);
+        string StartedAtUtc, string? ActivatedAtUtc, bool Active, string? BaselineHash);
     private sealed record PreviewModel(string FontFamily, string Density, string Radius,
         IReadOnlyDictionary<string, string> Colors, IReadOnlyList<string> Components,
         IReadOnlyList<string> Surfaces, string SourceHash);

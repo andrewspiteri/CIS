@@ -70,6 +70,74 @@ public sealed class DefinitionWizardTests
     }
 
     [Fact]
+    public void ProductDefinitionAuthority_RequiresConsolidatedActivationAndDetectsBaselineDrift()
+    {
+        using var repository = TemporaryRepository.Create();
+        using var application = CreateApplication();
+        Assert.Equal(0, Invoke(application,
+            ["workspace", "init", "--repo", repository.Path, "--root", "docs/cis", "--yes", "--format", "json"]).ExitCode);
+        Assert.Equal(0, Invoke(application,
+            ["definition", "init", "--workspace", repository.Path, "--format", "json"]).ExitCode);
+        var authority = new ProductDefinitionAuthority(new CisRepositoryContextResolver());
+
+        var open = authority.Evaluate(repository.Path);
+        Assert.True(open.Applicable);
+        Assert.False(open.Active);
+        Assert.Contains(open.Errors, error => error.Contains("not been consolidated and activated", StringComparison.OrdinalIgnoreCase));
+
+        var documentation = Path.Combine(repository.Path, "docs", "cis");
+        ProductDefinitionAuthority.ComputeBaselineHash(documentation, out var initiallyMissing);
+        foreach (var relativePath in initiallyMissing)
+        {
+            var artifact = Path.Combine(documentation, relativePath.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(artifact)!);
+            File.WriteAllText(artifact, $"# {Path.GetFileNameWithoutExtension(artifact)}\n");
+        }
+        var backlog = Path.Combine(documentation, "plans", "high-level-backlog.md");
+        File.WriteAllText(backlog, """
+            ---
+            status: Active
+            cis:
+              approved_content_hash: sha256:first
+            ---
+            # High-level backlog
+            <!-- cis:brd-backlog-items:start -->
+            | ID | Requirement | Outcome | Priority | Repositories | Frontend | Depends on | Feature specification | Notes |
+            | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+            | HLT-FR-001 | BR-FR-001 | Outcome | Must | sample | customer | None | not-created | None |
+            <!-- cis:brd-backlog-items:end -->
+            """);
+        var baseline = ProductDefinitionAuthority.ComputeBaselineHash(documentation, out var missing);
+        Assert.Empty(missing);
+        File.WriteAllText(backlog, File.ReadAllText(backlog)
+            .Replace("sha256:first", "sha256:managed-link-update", StringComparison.Ordinal)
+            .Replace("not-created", "docs/cis/specs/features/hlt-fr-001/feature-specification.md", StringComparison.Ordinal));
+        var afterFeatureStart = ProductDefinitionAuthority.ComputeBaselineHash(documentation, out _);
+        Assert.Equal(baseline, afterFeatureStart);
+        var session = Path.Combine(repository.Path, ".cis", "local", "definition-wizard", "session.json");
+        File.WriteAllText(session, $$"""
+            {
+              "schemaVersion": 1,
+              "sessionId": "DEF-TEST",
+              "currentPage": "review",
+              "startedAtUtc": "2026-09-04T09:00:00Z",
+              "activatedAtUtc": "2026-09-04T10:00:00Z",
+              "active": false,
+              "baselineHash": "{{baseline}}"
+            }
+            """);
+
+        var activated = authority.Evaluate(repository.Path);
+        Assert.True(activated.Active, string.Join(Environment.NewLine, activated.Errors));
+        Assert.Equal(baseline, activated.BaselineHash);
+
+        File.AppendAllText(Path.Combine(documentation, "design", "ui-direction.md"), "\nChanged after activation.\n");
+        var stale = authority.Evaluate(repository.Path);
+        Assert.False(stale.Active);
+        Assert.Contains(stale.Errors, error => error.Contains("changed after consolidated activation", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void DraftScope_AcceptsValidatedDraftOnlyInsideTheBoundedCoordinatorScope()
     {
         Assert.False(CisDefinitionDraftScope.IsActive);

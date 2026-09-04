@@ -666,13 +666,27 @@ public sealed class BrdWorkflowTests
             RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
         File.WriteAllText(environment.CanonicalPath, brdContent);
         Assert.Equal(0, environment.Service.Approve(environment.Authority.Path, "Product owner", "Functional scope accepted").ExitCode);
+        var productDefinition = new MutableProductDefinitionAuthority
+        {
+            Active = false,
+            BaselineHash = "sha256:product-definition-v1",
+            Errors = ["The complete high-level product definition has not been activated."],
+        };
         var backlog = new BrdBacklogService(environment.Service, environment.Registry,
             new CisRepositoryContextResolver(), new DocumentationCatalogMerger(), [new ReadyCheck()],
-            () => new DateTimeOffset(2026, 8, 9, 13, 0, 0, TimeSpan.Zero));
+            () => new DateTimeOffset(2026, 8, 9, 13, 0, 0, TimeSpan.Zero),
+            productDefinitionAuthorities: [productDefinition]);
         Assert.Equal("built", backlog.Build(environment.Authority.Path).Status);
         Assert.Equal("approved", backlog.Approve(environment.Authority.Path, "Product owner", "High-level outcomes accepted").Status);
+
+        var blocked = backlog.StartFeature(environment.Authority.Path, "HLT-FR-001");
+        Assert.Equal("blocked", blocked.Status);
+        Assert.Contains(blocked.Errors, error => error.Contains("product definition", StringComparison.OrdinalIgnoreCase));
+        productDefinition.Active = true;
+        productDefinition.Errors = [];
         var started = backlog.StartFeature(environment.Authority.Path, "HLT-FR-001");
         var path = Path.Combine(environment.Authority.Path, started.RelativePath!.Replace('/', Path.DirectorySeparatorChar));
+        Assert.Contains("product_definition_hash: sha256:product-definition-v1", File.ReadAllText(path), StringComparison.Ordinal);
 
         var incomplete = backlog.ValidateFeature(environment.Authority.Path, "HLT-FR-001");
         Assert.Equal(5, incomplete.ExitCode);
@@ -683,6 +697,14 @@ public sealed class BrdWorkflowTests
         var ready = backlog.ValidateFeature(environment.Authority.Path, "HLT-FR-001");
         Assert.True(ready.ExitCode == 0, string.Join(Environment.NewLine, ready.Validation?.Errors ?? ready.Errors));
         Assert.Equal("Ready for Approval", ready.Validation!.EffectiveStatus);
+
+        productDefinition.BaselineHash = "sha256:product-definition-v2";
+        var wrongProductBaseline = backlog.ValidateFeature(environment.Authority.Path, "HLT-FR-001");
+        Assert.False(wrongProductBaseline.Validation!.Valid);
+        Assert.Equal("Review Required", wrongProductBaseline.Validation.EffectiveStatus);
+        Assert.Contains(wrongProductBaseline.Validation.Errors, error =>
+            error.Contains("Product-definition baseline", StringComparison.OrdinalIgnoreCase));
+        productDefinition.BaselineHash = "sha256:product-definition-v1";
 
         var backlogPath = Path.Combine(environment.Authority.Path, "docs", "plans", "high-level-backlog.md");
         var approvedBacklog = File.ReadAllText(backlogPath);
@@ -1009,6 +1031,16 @@ public sealed class BrdWorkflowTests
             return new("generated", "fake", "small",
                 $"{{\"suggestions\":[{{\"questionId\":\"{ids[0]}\",{body}}}]}}", null, true);
         }
+    }
+
+    private sealed class MutableProductDefinitionAuthority : ICisProductDefinitionAuthority
+    {
+        public bool Active { get; set; }
+        public string? BaselineHash { get; set; }
+        public IReadOnlyList<string> Errors { get; set; } = [];
+
+        public CisProductDefinitionAuthority Evaluate(string repositoryPath)
+            => new(true, Active, "DEF-TEST", Active ? "2026-09-04T10:00:00Z" : null, BaselineHash, Errors);
     }
 
     private sealed class WorkspaceEnvironment : IDisposable

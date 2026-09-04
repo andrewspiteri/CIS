@@ -313,8 +313,14 @@ public sealed class AgentExecutionTests
     {
         using var repository = AgentRepository.Create(git: false);
         repository.AddFeature();
+        repository.Write("docs/cis/architecture/high-level-architecture-diagrams.md", "# Architecture diagrams\n");
+        repository.Write("docs/cis/references/dictionary-index.md", "# Dictionary index\n");
+        repository.Write("docs/cis/specs/technical-intent-questionnaire.md", "# Technical choices\n");
+        repository.Write("docs/cis/specs/ui-direction-questionnaire.md", "# UI choices\n");
+        repository.Write("docs/cis/design/ui-system-preview.md", "# Visual system preview\n");
         var provider = new FakeProvider(draftFeature: true);
-        var service = new AgentService(new CisRepositoryContextResolver(), [provider], clock: Clock);
+        var service = new AgentService(new CisRepositoryContextResolver(), [provider], clock: Clock,
+            productDefinitionAuthorities: [new FixedProductDefinitionAuthority(true, "sha256:complete-product-definition")]);
 
         var result = service.AuthorFeature(repository.Path, "HLT-FR-001", "fake", "fake-json", 60, false,
             "Andrew Spiteri", TestContext.Current.CancellationToken);
@@ -325,15 +331,37 @@ public sealed class AgentExecutionTests
         Assert.Contains("The owner evaluates one customer", feature, StringComparison.Ordinal);
         Assert.DoesNotContain("TODO", feature, StringComparison.OrdinalIgnoreCase);
         Assert.Equal("Draft", FrontMatter(feature, "status"));
+        Assert.Contains("product_definition_hash: sha256:complete-product-definition", feature, StringComparison.Ordinal);
         Assert.Equal("HLT-FR-001", result.Run!.Manifest.ChangeId);
         Assert.Equal("FEATURE-DRAFT", result.Run.Manifest.TaskId);
         Assert.True(result.Run.Manifest.IsolatedWorktree);
         Assert.Contains("overall-solution-design.md", provider.LastRequest!.Prompt, StringComparison.Ordinal);
+        Assert.Contains("high-level-architecture-diagrams.md", provider.LastRequest.Prompt, StringComparison.Ordinal);
+        Assert.Contains("dictionary-index.md", provider.LastRequest.Prompt, StringComparison.Ordinal);
+        Assert.Contains("ui-system-preview.md", provider.LastRequest.Prompt, StringComparison.Ordinal);
+        Assert.Contains("sha256:complete-product-definition", provider.LastRequest.Prompt, StringComparison.Ordinal);
         Assert.Contains("ui-direction.md", provider.LastRequest.Prompt, StringComparison.Ordinal);
         Assert.Contains("do not create screen-specific wireframes", provider.LastRequest.Prompt, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Surface is a controlled value", provider.LastRequest.Prompt, StringComparison.Ordinal);
         Assert.Contains("`not-applicable`", provider.LastRequest.Prompt, StringComparison.Ordinal);
         Assert.Contains(result.Diagnostics, item => item.Contains("deterministic validation and human approval remain required", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AuthorFeature_BlocksUntilTheConsolidatedProductDefinitionIsActivated()
+    {
+        using var repository = AgentRepository.Create(git: false);
+        repository.AddFeature();
+        var provider = new FakeProvider(draftFeature: true);
+        var service = new AgentService(new CisRepositoryContextResolver(), [provider], clock: Clock,
+            productDefinitionAuthorities: [new FixedProductDefinitionAuthority(false, null)]);
+
+        var result = service.AuthorFeature(repository.Path, "HLT-FR-001", "fake", "fake-json", 60, false,
+            "Andrew Spiteri", TestContext.Current.CancellationToken);
+
+        Assert.Equal(4, result.ExitCode);
+        Assert.Equal(0, provider.ExecuteCalls);
+        Assert.Contains(result.Diagnostics, item => item.Contains("product-definition baseline", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -1269,6 +1297,14 @@ public sealed class AgentExecutionTests
     }
 
     private static DateTimeOffset Clock() => DateTimeOffset.Parse("2026-08-28T12:00:00Z");
+
+    private sealed class FixedProductDefinitionAuthority(bool active, string? baselineHash)
+        : ICisProductDefinitionAuthority
+    {
+        public CisProductDefinitionAuthority Evaluate(string repositoryPath)
+            => new(true, active, "DEF-TEST", active ? "2026-09-04T10:00:00Z" : null,
+                baselineHash, active ? [] : ["The complete high-level product definition has not been activated."]);
+    }
 
     private static string? FrontMatter(string value, string key) => value.Split('\n')
         .Select(line => line.TrimEnd('\r'))

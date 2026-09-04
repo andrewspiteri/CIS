@@ -71,6 +71,12 @@ Activation is transactional at the file boundary. CIS snapshots the protected ca
 activates the BRD, technical intent, solution-design bundle, UI direction, derived records, and
 backlog, updates their catalogue states, and rebuilds the graph. A bounded I/O or lifecycle failure
 restores every snapshot and reports `rolled-back`; partial activation is never presented as success.
+Successful activation records a stable digest over the complete business, technical, architecture,
+component, dictionary inventory, experience, preview, and semantic backlog artifact set. Managed
+feature-specification links and their approval-hash refresh do not change that digest; an agent run's
+scope digest separately binds the exact dictionary versions made available to it. Once a wizard session exists,
+feature start and authoring require this activation; feature validation requires the exact digest.
+Individual document approvals therefore cannot accidentally bypass the final product-definition review.
 After activation, any material edit follows the ordinary owning artifact's drift and renewed-review
 rules. The user may reopen the wizard to begin or resume a revision.
 

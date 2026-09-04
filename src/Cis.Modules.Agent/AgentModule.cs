@@ -18,7 +18,8 @@ public sealed class AgentModule : ICisModule
             serviceProvider.GetServices<ICisAgentProvider>(),
             serviceProvider.GetService<ICisWorkspaceRegistry>(),
             sourceEvidenceRegistrars: serviceProvider.GetServices<ICisSourceEvidenceRegistrar>(),
-            sourceEvidenceReconciler: serviceProvider.GetService<ICisBrdSourceEvidenceReconciler>()));
+            sourceEvidenceReconciler: serviceProvider.GetService<ICisBrdSourceEvidenceReconciler>(),
+            productDefinitionAuthorities: serviceProvider.GetServices<ICisProductDefinitionAuthority>()));
         services.AddSingleton<AgentEvidenceService>();
         services.AddSingleton<ICisRepositoryDoctorCheck, AgentProviderDoctorCheck>();
     }

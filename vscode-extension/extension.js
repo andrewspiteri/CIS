@@ -146,6 +146,7 @@ function activate(context, overrides = {}) {
       controller.update(next, page || controller.page());
       return next;
     };
+    const initialPage = model.readyToActivate === true && model.active !== false ? 'review' : undefined;
     controller = openDefinitionWizardPanel(vscode, root, model, async (action, value, wizard) => {
       if (action === 'refresh') { await reload(wizard.page()); return; }
       if (action === 'save-answer') {
@@ -199,7 +200,7 @@ function activate(context, overrides = {}) {
         await reload('review');
         await refresh(false);
       }
-    }, value => openReportedPath(value, false));
+    }, value => openReportedPath(value, false), initialPage);
   });
   command('cis.brdValidate', async () => validateProductDocument(cli, refresh, showQuery,
     'Business requirements validation', ['brd', 'validate'], authority.root()));

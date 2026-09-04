@@ -14,4 +14,7 @@
   <ItemGroup>
     <PackageReference Include="System.CommandLine" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Cis.Modules.Definition.Tests" />
+  </ItemGroup>
 </Project>

@@ -918,8 +918,10 @@ test('journey projection routes every technical-intent, solution-design, backlog
         if (phase === 'feature-active') items.push({ id: 'HLT-FR-002', outcome: 'Next feature', dependsOn: ['HLT-FR-001'], featureSpecification: 'not-created' });
         return { status: 'Active', valid: true, current: true, items };
       }
+      if (args[0] === 'definition' && args[1] === 'status')
+        return { sessionId: 'DEF-TEST', active: phase === 'definition-open', readyToActivate: true };
       if (args[0] === 'brd' && args[1] === 'feature')
-        return phase === 'feature-template' ? { status: 'Draft', valid: false, current: true, errors: ['Feature specification contains TODO placeholders.'], relativePath: 'docs/specs/features/HLT-FR-001.md' }
+        return phase === 'feature-template' ? { status: 'Review Required', valid: false, current: false, errors: ['Product-definition baseline: the feature specification was not authored from the current consolidated product definition.'], relativePath: 'docs/specs/features/HLT-FR-001.md' }
           : phase === 'feature-review' ? { status: 'ReadyForApproval', valid: true, current: true, relativePath: 'docs/specs/features/HLT-FR-001.md' }
           : { status: 'Active', valid: true, current: true, relativePath: 'docs/specs/features/HLT-FR-001.md' };
       throw new Error(`Unexpected journey query: ${args.join(' ')}`);
@@ -971,6 +973,8 @@ test('journey projection routes every technical-intent, solution-design, backlog
     fs.writeFileSync(backlog, '---\nstatus: Review Required\n---\n');
     phase = 'backlog-review';
     assert.ok((await nextCommands()).includes('cis.backlogApprove'));
+    phase = 'definition-open';
+    assert.ok((await nextCommands()).includes('cis.definitionWizard'));
     fs.writeFileSync(feature, '---\nstatus: Review Required\n---\n');
     phase = 'feature-template';
     assert.ok((await nextCommands()).includes('cis.featureAgentDraft'));

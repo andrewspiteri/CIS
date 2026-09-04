@@ -123,7 +123,7 @@ function openUiDirectionQuestionsPanel(vscode, status, onAction) {
   return controller;
 }
 
-function openDefinitionWizardPanel(vscode, root, model, onAction, onPath) {
+function openDefinitionWizardPanel(vscode, root, model, onAction, onPath, initialPage) {
   const panel = vscode.window.createWebviewPanel('cis.definitionWizard', 'High-level product definition', vscode.ViewColumn.Active, {
     enableScripts: true,
     retainContextWhenHidden: true,
@@ -132,7 +132,7 @@ function openDefinitionWizardPanel(vscode, root, model, onAction, onPath) {
   const scriptNonce = nonce();
   const allowed = new Set(['activate', 'business-action', 'navigate', 'open-path', 'prepare', 'refresh', 'save-answer']);
   let currentModel = model;
-  let currentPage = model?.currentPage || 'foundation';
+  let currentPage = initialPage || model?.currentPage || 'foundation';
   const controller = {
     panel,
     update(nextModel, requestedPage) {

@@ -57,6 +57,12 @@ later canonical backlog edit makes an Active backlog effectively `Stale`.
 Approval authorizes creation of feature specifications. It does not authorize detailed
 tasks, implementation, design, deployment, or release.
 
+When a definition-wizard session exists, individual upstream approvals and an Active backlog
+are necessary but not sufficient. The final consolidated product-definition activation is the
+feature-loop gate. New specifications record its exact `cis.product_definition_hash`; existing
+specifications without the current hash are not approval-ready and must be reconciled from the
+complete baseline.
+
 `cis brd backlog start --item <HLT-ID>` performs the governed transition for one
 dependency-ready item. It creates and catalogs a Draft authority-owned feature
 specification, records exact source provenance, and updates the item's managed feature
@@ -66,14 +72,17 @@ absorption until their lifecycle advances beyond Draft.
 
 The start operation deliberately creates a governed schema scaffold. It is not presented
 as a finished specification. `cis agent author feature --item <HLT-ID>` may expand that
-single file from the current approved BRD, technical intent, solution design, component
-sheet, UI direction, and applicable governance in an isolated scratch repository. Apply
+single file from the current approved BRD, technical questionnaire and intent, solution design,
+architecture diagrams, component sheet, dictionary index and dictionaries, UI questionnaire
+and direction, visual-system preview, and applicable governance in an isolated scratch repository. Apply
 requires unchanged frontmatter, an exact one-file diff, all required sections, structured
-feature requirements, and no template placeholders. The result retains Draft authority.
+feature requirements, and no template placeholders. CIS binds the applied result to the exact
+consolidated product-definition digest. The result retains Draft authority.
 
 `cis brd feature validate/status/approve --item <HLT-ID>` governs that transition.
 Validation requires complete sections, structured requirements, bounded surfaces and
-frontend types, exact repository routing, and no placeholders. The source digest is
+frontend types, exact repository routing, no placeholders, and the current consolidated
+product-definition binding. The source digest is
 scoped to the stable backlog item so unrelated feature-link updates do not revoke review.
 Explicit feature approval records human authority and a content digest. The resulting
 Active feature becomes eligible BRD evidence; it must be reconciled and assessed before

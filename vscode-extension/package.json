@@ -60,6 +60,7 @@
       { "command": "cis.featureApprove", "title": "CIS: Approve Feature Specification" },
       { "command": "cis.repoDoctor", "title": "CIS: Run Repository Doctor" },
       { "command": "cis.graphBuild", "title": "CIS: Build Context Graph" },
+      { "command": "cis.indexBuild", "title": "CIS: Build Routing Index" },
       { "command": "cis.contextSearch", "title": "CIS: Search Context" },
       { "command": "cis.graphRelated", "title": "CIS: Explore Graph Relationships" },
       { "command": "cis.filterChanges", "title": "CIS: Filter Changes" },

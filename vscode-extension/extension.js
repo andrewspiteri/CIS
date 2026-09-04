@@ -29,6 +29,7 @@ function activate(context, overrides = {}) {
   status.text = '$(pulse) CIS'; status.tooltip = 'Change Impact Studio'; status.show(); context.subscriptions.push(status);
   const refresh = debounce(async (stale = false, invalidate = false) => {
     if (stale) {
+      cli.clearQueryCache?.();
       for (const provider of providers.values()) provider.markStale();
       status.text = '$(history) CIS'; status.tooltip = 'CIS evidence changed; refresh required.'; return;
     }
@@ -906,6 +907,10 @@ function activate(context, overrides = {}) {
     });
   });
   command('cis.graphBuild', async () => { await cli.runForeground('Build CIS context graph', ['graph', 'build']); await refresh(false); });
+  command('cis.indexBuild', async () => {
+    await cli.runForeground('Build CIS routing index', ['index', 'build', '--limit', '100'], { cancellable: true });
+    await refresh(false);
+  });
   command('cis.contextSearch', async () => {
     const query = await vscode.window.showInputBox({ prompt: 'Search bounded CIS context', placeHolder: 'Terms, symbol, contract, or component' });
     if (!query) return;

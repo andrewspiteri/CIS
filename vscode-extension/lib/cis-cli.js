@@ -5,7 +5,9 @@ const { bound, redact, validateArgument, validateExecutable } = require('./secur
 const { openCommandProgressPanel } = require('./webview');
 
 const OUTPUT_LIMIT = 4 * 1024 * 1024;
-const QUERY_CACHE_TTL_MS = 30_000;
+// Read projections remain valid for the current repository generation. The extension
+// clears this cache when a watched repository input changes or a CIS mutation runs.
+const QUERY_CACHE_TTL_MS = Number.POSITIVE_INFINITY;
 const COMPATIBLE_CLI = Object.freeze({ major: 0, minimumMinor: 3 });
 
 class CisCliError extends Error {
@@ -234,6 +236,9 @@ function isCacheableQuery(args) {
     /^references (?:validate|inventory|status)(?: |$)/u,
     /^brd (?:status|questions guidance|questions status|review status|backlog status|feature status)(?: |$)/u,
     /^technical-intent (?:status|questions status)(?: |$)/u,
+    /^solution-design status(?: |$)/u,
+    /^ui-direction (?:status|questions status)(?: |$)/u,
+    /^definition status(?: |$)/u,
   ].some(pattern => pattern.test(command));
 }
 

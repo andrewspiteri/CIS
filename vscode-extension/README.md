@@ -75,11 +75,13 @@ There is no separate specification form or extension-owned copy. The Markdown op
 the guided action is the specification, and each refresh projects its current governed
 state and one next meaningful action.
 
-One refresh shares identical in-flight read-only CLI queries across views and uses compact
-status projections. The 30-second in-memory projection cache is invalidated by explicit
-refresh and every mutation. Repository Doctor, graph status, and whole-repository index
-status also use disposable content-aware caches beneath `.cis/local/`; full run events remain
-an on-demand evidence view rather than background payload.
+One repository generation shares identical in-flight and completed read-only CLI projections
+across views. Repository file notifications, explicit refresh, and every mutation invalidate
+that generation; structured not-ready status is cached as state rather than retried as a process
+failure. Repository Doctor, graph status, and whole-repository index status also use disposable
+content-aware caches beneath `.cis/local/`; full run events remain an on-demand evidence view
+rather than background payload. An unavailable routing index is shown as **not built** and can
+be generated in bounded local-AI batches from the Workspace View.
 
 For a generated Review Required BRD, **Draft business requirements from reference** lets
 you select one or more non-sensitive plain-text or Word Open XML (`.docx`) files and assign

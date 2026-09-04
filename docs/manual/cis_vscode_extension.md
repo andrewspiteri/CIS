@@ -201,7 +201,9 @@ Codex Desktop/App Server session can still be usable.
 | Existing repository is unimported | Run the import journey; review its dry-run summary before confirmation. |
 | Initialization collision | Run Repository Doctor; existing files are preserved. |
 | Stale view | Select **CIS: Refresh Workspace**. Watchers only mark evidence stale; one explicit refresh performs the bounded projection reload and stops when it completes. |
-| Repeated read-only CLI calls | Reload the current extension build. Identical workspace queries share one in-flight 30-second cache, invalidated by explicit refresh and mutations. Repository, graph, and index status also use content-aware disposable caches under `.cis/local/`. |
+| Repeated read-only CLI calls | Reload the current extension build. Identical workspace queries, including structured not-ready results, share one cache for the current repository generation. Watched changes, explicit refresh, and mutations invalidate it. Repository, graph, and index status also use content-aware disposable caches under `.cis/local/`. |
+| Context graph shown stale with information-only findings | Reload the current extension build. Informational extraction diagnostics remain visible in Doctor but no longer classify a fresh graph as stale. |
+| Routing index is not built | Select the Workspace entry or run **CIS: Build Routing Index**. CIS builds at most 100 pending cards per run and reuses current cards. |
 | Invalid evidence | Open bounded diagnostics; a successful process without readable expected output is not passed. |
 | Provider executable unavailable | Open provider diagnostics. Codex resolves an explicit `CIS_CODEX_EXECUTABLE`, the VS Code process `PATH`, then the current Windows Codex Desktop installation. Reload VS Code after changing its environment. |
 | Claude executable unavailable | Open provider diagnostics. Claude resolves an explicit `CIS_CLAUDE_EXECUTABLE`, the VS Code process `PATH`, then the newest Claude Code native binary installed by VS Code, VS Code Insiders, Cursor, or Windsurf on Windows. Reload VS Code after changing its environment. |

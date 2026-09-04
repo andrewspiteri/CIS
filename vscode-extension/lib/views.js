@@ -119,7 +119,11 @@ class CisViewProvider {
     const warnings = doctor.warningCount ?? doctor.warnings ?? 0;
     const errors = doctor.errorCount ?? doctor.errors ?? 0;
     const graphFindings = (doctor.findings || []).filter(finding => finding.category === 'context-graph');
+    const graphProblems = graphFindings.filter(isProblemFinding);
     const indexFindings = (doctor.findings || []).filter(finding => finding.category === 'file-index');
+    const indexProblems = indexFindings.filter(isProblemFinding);
+    const graphUnavailable = graphProblems.some(finding => finding.code === 'CIS-GRAPH-DOCTOR-001');
+    const indexUnavailable = indexProblems.some(finding => finding.code === 'CIS-INDEX-001');
     const readme = resolveWithin(metadata.documentationPath, 'README.md');
     const product = active ? undefined : await this.productJourney(root, metadata);
     return [
@@ -133,12 +137,16 @@ class CisViewProvider {
         description: doctor.ollama?.models?.join(', ') || doctor.ollama?.detail || '', command: 'cis.aiStatus',
         icon: doctor.ollama?.isAvailable ? 'sparkle' : 'circle-slash',
       }),
-      this.node(graphFindings.length ? 'Context graph is stale or invalid' : 'Context graph is current', {
-        description: graphFindings[0]?.message || 'Repository Doctor reports no graph finding.', command: 'cis.graphBuild',
-        icon: graphFindings.length ? 'warning' : 'type-hierarchy-sub',
+      this.node(graphUnavailable ? 'Context graph is not built'
+        : graphProblems.length ? 'Context graph is stale or invalid' : 'Context graph is current', {
+        description: graphProblems[0]?.message || graphFindings[0]?.message || 'Repository Doctor reports a current graph.',
+        command: 'cis.graphBuild', icon: graphProblems.length ? 'warning' : 'type-hierarchy-sub',
       }),
-      this.node(indexFindings.length ? 'Routing index is stale or incomplete' : 'Routing index is current', {
-        description: indexFindings[0]?.message || 'Repository Doctor reports no index finding.', icon: indexFindings.length ? 'warning' : 'list-tree',
+      this.node(indexUnavailable ? 'Routing index is not built'
+        : indexProblems.length ? 'Routing index is stale or incomplete' : 'Routing index is current', {
+        description: indexProblems[0]?.message || indexFindings[0]?.message || 'Repository Doctor reports a current routing index.',
+        command: indexProblems.length ? 'cis.indexBuild' : undefined,
+        icon: indexProblems.length ? 'warning' : 'list-tree',
       }),
       this.node(active ? active.id : 'No active change', {
         description: active ? `${active.status} — ${active.title}` : 'Complete product definition before creating a change.',
@@ -462,7 +470,12 @@ class CisViewProvider {
   }
 
   async workspaceQuery(args, root) {
-    try { return await this.cli.query([...args, '--workspace', root], { repository: false }); }
+    try {
+      return await this.cli.query([...args, '--workspace', root], {
+        repository: false,
+        acceptStructuredFailure: true,
+      });
+    }
     catch (error) {
       if (error?.data && typeof error.data === 'object') return error.data;
       return { status: 'Unavailable', valid: false, errors: [concise(error?.message || error)] };
@@ -671,6 +684,11 @@ function repositoryMetadata(root, fallback) {
   const declared = /^documentation_root:\s*['"]?([^'"\r\n]+)['"]?\s*$/mu.exec(text)?.[1]?.trim() || fallback;
   const documentationPath = resolveWithin(root, declared) || safeFallback;
   return { initialized: true, onboardingMode: 'configured', id, documentationRoot: path.relative(root, documentationPath).replaceAll('\\', '/'), documentationPath };
+}
+
+function isProblemFinding(finding) {
+  const severity = normalize(finding?.severity);
+  return severity === 'error' || severity === 'warning';
 }
 
 function hasExistingRepositoryEvidence(root) {

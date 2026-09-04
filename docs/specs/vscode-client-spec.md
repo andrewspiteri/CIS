@@ -216,8 +216,10 @@ unsupported CLI versions remain distinct errors.
   CLI projections directly; an explicit or lifecycle-owned refresh performs one bounded
   reload. Every caller coalesced into that reload receives the same completion or failure,
   so a completed foreground operation cannot remain suspended behind a cancelled timer.
-  Identical read-only CLI queries share one in-flight result and a 30-second projection
-  cache. Explicit refresh and every mutation invalidate the cache; failures are never cached.
+  Identical read-only CLI queries share one in-flight or completed result for the current
+  repository generation. Watched repository changes, explicit refresh, and every mutation
+  invalidate the generation. Structured not-ready status results are cached; malformed output,
+  timeouts, and runner failures are not.
   Workspace-only status reads use compact command projections, while explicit evidence views
   request full detail.
   Graph, workflow, test, security, agent, and workspace projection commands never run

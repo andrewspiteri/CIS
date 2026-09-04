@@ -150,10 +150,39 @@ test('CisCli shares in-flight read projections and invalidates them explicitly o
     await cli.query(['agent', 'providers']);
     assert.equal(calls, 4);
     assert.equal(isCacheableQuery(['repo', 'doctor']), true);
+    assert.equal(isCacheableQuery(['solution-design', 'status']), true);
+    assert.equal(isCacheableQuery(['ui-direction', 'questions', 'status', '--summary']), true);
+    assert.equal(isCacheableQuery(['ui-direction', 'status']), true);
+    assert.equal(isCacheableQuery(['definition', 'status']), true);
     assert.equal(isCacheableQuery(['agent', 'prepare', 'CIS-1', 'WORK-1']), false);
   } finally {
     vscode.workspace.workspaceFolders = originalFolders;
     vscode.workspace.isTrusted = originalTrusted;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('startup status projections cache structured unavailable results for one repository generation', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cis-cli-startup-cache-'));
+  const originalFolders = vscode.workspace.workspaceFolders;
+  vscode.workspace.workspaceFolders = [{ name: 'cache', uri: vscode.Uri.file(root) }];
+  let calls = 0;
+  const processes = { execFile: (_exe, _args, _options, callback) => {
+    calls += 1;
+    const error = new Error('not ready'); error.code = 4;
+    setImmediate(() => callback(error, '{"status":"missing","valid":false}', ''));
+  } };
+  try {
+    const cli = new CisCli(vscode, { appendLine() {} }, new AuthoritySelector(vscode, state()), processes);
+    const options = { acceptStructuredFailure: true };
+    const first = await cli.query(['solution-design', 'status'], options);
+    const second = await cli.query(['solution-design', 'status'], options);
+    assert.equal(first.status, 'missing'); assert.equal(second.status, 'missing'); assert.equal(calls, 1);
+    cli.clearQueryCache();
+    await cli.query(['solution-design', 'status'], options);
+    assert.equal(calls, 2);
+  } finally {
+    vscode.workspace.workspaceFolders = originalFolders;
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
@@ -1567,7 +1596,8 @@ test('TC-VSC-004-001 TC-VSC-006-001 TC-VSC-016-001 Workspace projection reports 
     fs.writeFileSync(path.join(root, 'docs', 'README.md'), '# Docs\n');
     const responses = {
       'repo doctor': { warningCount: 2, errorCount: 0, ollama: { isAvailable: true, models: ['local-model'] }, findings: [
-        { category: 'context-graph', message: 'Graph stale' }, { category: 'file-index', message: 'Index stale' },
+        { code: 'CIS-GRAPH-VALIDATE-STALE-003', severity: 'warning', category: 'context-graph', message: 'Graph stale' },
+        { code: 'CIS-INDEX-002', severity: 'warning', category: 'file-index', message: 'Index stale' },
       ] },
       'change list': { changes: [{ id: 'CIS-1', title: 'Feature', status: 'Proposed', relativePath: 'docs/changes/CIS-1' }] },
       'agent providers': { providers: [{ id: 'codex' }, { id: 'claude' }] },
@@ -1584,6 +1614,30 @@ test('TC-VSC-004-001 TC-VSC-006-001 TC-VSC-016-001 Workspace projection reports 
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test('Workspace projection does not classify informational graph and index findings as stale', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cis-vscode-current-context-'));
+  try {
+    fs.mkdirSync(path.join(root, '.cis'), { recursive: true }); fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.cis', 'repository.yml'), 'repository:\n  id: fixture\ndocumentation_root: docs\n');
+    const responses = {
+      'repo doctor': { warningCount: 0, errorCount: 0, ollama: { isAvailable: true }, findings: [
+        { code: 'CIS-GRAPH-REF-003', severity: 'information', category: 'context-graph', message: 'Placeholder skipped' },
+        { code: 'CIS-INDEX-003', severity: 'information', category: 'file-index', message: 'Index fresh' },
+      ] },
+      'change list': { changes: [{ id: 'CIS-1', title: 'Feature', status: 'Proposed', relativePath: 'docs/changes/CIS-1' }] },
+      'agent providers': { providers: [] },
+      'plan show CIS-1': { workItems: [] },
+      'design status CIS-1': { gateStatus: 'Not applicable', approvalStatus: 'Not applicable', artifacts: [] },
+    };
+    const cli = { version: async () => ({ raw: '0.3.0', compatible: true }), query: async args => responses[args.join(' ')] };
+    const provider = new extension.CisViewProvider(vscode, 'workspace', { root: () => root, needsSelection: () => false }, cli);
+    const labels = (await provider.getChildren()).map(item => item.label);
+    assert.ok(labels.includes('Context graph is current'));
+    assert.ok(labels.includes('Routing index is current'));
+    assert.ok(!labels.includes('Context graph is stale or invalid'));
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 // Trace: TC-VSC-008-001.
 test('TC-VSC-008-001 Evidence commands expose bounded search and explicit relationship traversal', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
@@ -1591,6 +1645,7 @@ test('TC-VSC-008-001 Evidence commands expose bounded search and explicit relati
   assert.equal(commands.has('cis.contextSearch'), true);
   assert.equal(commands.has('cis.graphRelated'), true);
   assert.equal(commands.has('cis.repoImport'), true);
+  assert.equal(commands.has('cis.indexBuild'), true);
 });
 
 // Trace: TC-VSC-010-001, TC-VSC-015-001.

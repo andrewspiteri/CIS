@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Cis.Modules.Agent\Cis.Modules.Agent.csproj" />
+    <ProjectReference Include="..\..\src\Cis.Modules.Repository\Cis.Modules.Repository.csproj" />
+    <ProjectReference Include="..\..\src\Cis.Host\Cis.Host.csproj" />
+    <ProjectReference Include="..\..\src\Cis.Providers.Agent.Codex\Cis.Providers.Agent.Codex.csproj" />
+    <ProjectReference Include="..\..\src\Cis.Providers.Agent.Claude\Cis.Providers.Agent.Claude.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

@@ -126,6 +126,6 @@ public sealed partial class DocumentationDoctorCheck : ICisRepositoryDoctorCheck
 
     [GeneratedRegex(
         "^\\s*(?:(?:[-*]\\s+)?TODO(?:\\s*:.*)?|\\|[^\\r\\n]*\\bTODO\\b[^\\r\\n]*\\|)\\s*$",
-        RegexOptions.CultureInvariant | RegexOptions.IgnoreCase | RegexOptions.Multiline)]
+        RegexOptions.CultureInvariant | RegexOptions.Multiline)]
     private static partial Regex TodoPattern();
 }

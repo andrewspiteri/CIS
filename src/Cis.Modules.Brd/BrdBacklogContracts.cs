@@ -36,6 +36,7 @@ public sealed record BrdBacklogResult(
         : Status == "missing"
             ? 4
             : Validation is { Valid: false } && Status is "validated" or "blocked"
+                || Validation is { Current: false } && Status == "validated"
                 ? 5
                 : 0;
 }

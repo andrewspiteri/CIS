@@ -1,6 +1,6 @@
 ---
 name: cis-import-repositories
-description: Import, initialize, register, list, graph, or validate several existing repositories as one CIS workspace. Use for multi-repository onboarding and repeatable workspace reconciliation without copying source repositories.
+description: Import, initialize, register, list, graph, or validate one or several existing repositories as a CIS workspace. Use for standalone or multi-repository onboarding and repeatable workspace reconciliation without copying source repositories.
 ---
 
 # Import CIS Repositories
@@ -11,7 +11,7 @@ Obtain the workspace path, every source repository path, and one explicit reposi
 
 ## Workflow
 
-1. Run `cis repo import --workspace <workspace> --source <repository>... --root <documentation-root> --dry-run --format agent`.
+1. Run `cis repo import --workspace <workspace> --source <repository>... --root <documentation-root> --dry-run --format agent`. For a standalone existing repository, use that same path for workspace and source so import bootstraps it as authority.
 2. Review every classification, planned initialization change, warning, collision, and workspace registry entry.
 3. If any repository cannot initialize, run `cis repo doctor` for that repository with the same root and report the evidence before retrying the batch.
 4. After explicit authorization, repeat import with `--yes`; never add `--yes` to the first run.

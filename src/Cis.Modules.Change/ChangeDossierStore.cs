@@ -250,13 +250,23 @@ public sealed partial class ChangeDossierStore
         var planPath = AbsoluteDossierFile(change, "plan.md");
         var impact = File.Exists(impactPath) ? File.ReadAllText(impactPath) : string.Empty;
         var plan = File.Exists(planPath) ? File.ReadAllText(planPath) : string.Empty;
-        if (Regex.IsMatch(impact, @"(?m)^\|\s*IMPACT-[^|]+\|", RegexOptions.CultureInvariant,
+        var impactFindingStates = Regex.Matches(
+                impact,
+                @"(?m)^\|\s*IMPACT-[^|]+\|.*$",
+                RegexOptions.CultureInvariant,
                 TimeSpan.FromSeconds(1))
+            .Select(match => match.Value.Split('|').Select(cell => cell.Trim()).ToArray())
+            .Where(cells => cells.Length >= 6)
+            .Select(cells => cells[5])
+            .ToArray();
+        var hasReviewedImpact = impactFindingStates.Any(state =>
+            !string.Equals(state, "proposed", StringComparison.OrdinalIgnoreCase));
+        if (hasReviewedImpact
             || Regex.IsMatch(plan, @"(?m)^\|\s*WORK-\d+\s*\|", RegexOptions.CultureInvariant,
                 TimeSpan.FromSeconds(1)))
             return Failure([
-                "Safe rebaseline is limited to a dossier with no impact findings or generated work items. " +
-                "Preserve reviewed evidence by creating a new change or explicitly revising scope instead.",
+                "Safe rebaseline is limited to a dossier with no reviewed impact findings or generated work items. " +
+                "Unreviewed proposed findings may be regenerated, but accepted, rejected, deferred, or planned evidence must be preserved by creating a new change or explicitly revising scope instead.",
             ]);
 
         var manifest = ReadGraphManifest(change.RepositoryPath);
@@ -281,10 +291,6 @@ public sealed partial class ChangeDossierStore
             "repository_baselines",
             JsonSerializer.Serialize(repositoryBaselines));
         File.WriteAllText(proposalPath, proposal);
-        if (File.Exists(impactPath))
-            File.WriteAllText(impactPath, ReplaceFrontMatterValue(impact, "graph_build_id", manifest.BuildId));
-        if (File.Exists(planPath))
-            File.WriteAllText(planPath, ReplaceFrontMatterValue(plan, "graph_build_id", manifest.BuildId));
 
         var updated = change with
         {
@@ -293,6 +299,17 @@ public sealed partial class ChangeDossierStore
             GraphBuildId = manifest.BuildId,
             RepositoryBaselines = repositoryBaselines,
         };
+        if (File.Exists(impactPath))
+        {
+            File.WriteAllText(
+                impactPath,
+                impactFindingStates.Length > 0
+                    ? RenderEmptyImpact(updated)
+                    : ReplaceFrontMatterValue(impact, "graph_build_id", manifest.BuildId));
+        }
+        if (File.Exists(planPath))
+            File.WriteAllText(planPath, ReplaceFrontMatterValue(plan, "graph_build_id", manifest.BuildId));
+
         AppendEvent(updated, "change-rebaselined", new Dictionary<string, string>
         {
             ["actor"] = request.Actor.Trim(),
@@ -301,9 +318,14 @@ public sealed partial class ChangeDossierStore
             ["previousGraphBuildId"] = change.GraphBuildId,
             ["baseline"] = baseline,
             ["graphBuildId"] = manifest.BuildId,
+            ["discardedProposedFindings"] = impactFindingStates.Length.ToString(CultureInfo.InvariantCulture),
+            ["previousImpactSha256"] = Sha256(impact),
         });
         return new ChangeResult("rebaselined", updated, [updated], [], Applied: true);
     }
+
+    private static string Sha256(string value)
+        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 
     public string DossierFile(ChangeDossier change, string fileName)
         => AbsoluteDossierFile(change, fileName);
@@ -475,31 +497,11 @@ public sealed partial class ChangeDossierStore
         output = string.Empty;
         try
         {
-            using var process = new Process
-            {
-                StartInfo = new ProcessStartInfo("git")
-                {
-                    WorkingDirectory = repositoryPath,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                },
-            };
-            foreach (var argument in arguments) process.StartInfo.ArgumentList.Add(argument);
-            process.Start();
-            var outputTask = process.StandardOutput.ReadToEndAsync();
-            var errorTask = process.StandardError.ReadToEndAsync();
-            if (!process.WaitForExit(30_000))
-            {
-                process.Kill(entireProcessTree: true);
-                process.WaitForExit();
-                return false;
-            }
-
-            output = outputTask.GetAwaiter().GetResult();
-            _ = errorTask.GetAwaiter().GetResult();
-            return process.ExitCode == 0;
+            var start = new ProcessStartInfo("git") { WorkingDirectory = repositoryPath };
+            foreach (var argument in arguments) start.ArgumentList.Add(argument);
+            var result = CisProcessSafety.Run(start, TimeSpan.FromSeconds(30));
+            output = result.StandardOutput;
+            return !result.TimedOut && result.ExitCode == 0;
         }
         catch (Exception exception) when (exception is IOException or System.ComponentModel.Win32Exception)
         {
@@ -511,23 +513,12 @@ public sealed partial class ChangeDossierStore
     {
         try
         {
-            using var process = new Process
-            {
-                StartInfo = new ProcessStartInfo("git")
-                {
-                    WorkingDirectory = repositoryPath,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                },
-            };
-            process.StartInfo.ArgumentList.Add("rev-parse");
-            process.StartInfo.ArgumentList.Add("HEAD");
-            process.Start();
-            var output = process.StandardOutput.ReadToEnd().Trim();
-            process.WaitForExit();
-            return process.ExitCode == 0 && output.Length > 0 ? output : null;
+            var start = new ProcessStartInfo("git") { WorkingDirectory = repositoryPath };
+            start.ArgumentList.Add("rev-parse");
+            start.ArgumentList.Add("HEAD");
+            var result = CisProcessSafety.Run(start, TimeSpan.FromSeconds(10));
+            var output = result.StandardOutput.Trim();
+            return !result.TimedOut && result.ExitCode == 0 && output.Length > 0 ? output : null;
         }
         catch (Exception exception) when (exception is IOException or System.ComponentModel.Win32Exception)
         {

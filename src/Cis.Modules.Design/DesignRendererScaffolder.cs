@@ -13,6 +13,8 @@ internal static class DesignRendererScaffolder
         IReadOnlyList<string> components,
         string guidelinePath,
         string guidelineSha256,
+        string uiDirectionPath,
+        string uiDirectionSha256,
         string wireframeSha256)
     {
         var options = new JsonSerializerOptions { WriteIndented = true };
@@ -36,6 +38,8 @@ internal static class DesignRendererScaffolder
             .Replace("__SCREENS__", screenJson, StringComparison.Ordinal)
             .Replace("__GUIDELINE_PATH__", EscapeJs(guidelinePath), StringComparison.Ordinal)
             .Replace("__GUIDELINE_SHA__", EscapeJs(guidelineSha256), StringComparison.Ordinal)
+            .Replace("__UI_DIRECTION_PATH__", EscapeJs(uiDirectionPath), StringComparison.Ordinal)
+            .Replace("__UI_DIRECTION_SHA__", EscapeJs(uiDirectionSha256), StringComparison.Ordinal)
             .Replace("__WIREFRAME_SHA__", EscapeJs(wireframeSha256), StringComparison.Ordinal);
     }
 
@@ -69,6 +73,8 @@ const provenance = Object.freeze({
   wireframeSha256: "__WIREFRAME_SHA__",
   guidelinePath: "__GUIDELINE_PATH__",
   guidelineSha256: "__GUIDELINE_SHA__",
+  uiDirectionPath: "__UI_DIRECTION_PATH__",
+  uiDirectionSha256: "__UI_DIRECTION_SHA__",
   shellTemplate: "__SHELL__@1.0",
   componentTemplates: __COMPONENTS__,
 });

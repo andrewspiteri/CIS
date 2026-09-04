@@ -103,6 +103,7 @@ public sealed class FileIndexServiceTests
         repository.Write("apps/web/node_modules/nested/package.json", "{\"name\":\"nested\"}");
         repository.Write("artifacts/release/copied.cs", "public sealed class Copied { }");
         repository.Write(".artifacts/staging/copied.ts", "export const copied = true;");
+        repository.Write(".codex-tmp/adoption-smoke/web/app/page.tsx", "export default function Home() { return null; }");
         repository.Write(".github/skills-quarantine/retired-skill/SKILL.md", "# Retired skill");
         var generation = new FakeGenerationService(local: true);
 
@@ -114,6 +115,8 @@ public sealed class FileIndexServiceTests
             card.Path.Contains("node_modules", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(ReadCards(repository.Path), card =>
             card.Path.Contains("artifacts", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(ReadCards(repository.Path), card =>
+            card.Path.Contains(".codex-tmp", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(ReadCards(repository.Path), card =>
             card.Path.Contains("skills-quarantine", StringComparison.OrdinalIgnoreCase));
         Assert.Equal(result.Candidates, generation.Calls);

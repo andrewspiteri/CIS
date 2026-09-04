@@ -23,7 +23,7 @@ Establish intent
     → review likely impact
     → resolve decisions
     → approve bounded work
-    → prepare human or agent execution
+    → prepare or run bounded human/agent execution
     → compare actual change with approved scope
     → accept completion
     → improve repository knowledge
@@ -334,7 +334,9 @@ Use these entry points rather than browsing every Markdown file:
 | Need | Start here |
 |---|---|
 | Product purpose and boundaries | [Product intent](docs/specs/product-intent-spec.md) and [system context](docs/specs/system-context-spec.md) |
-| Architecture and implementation principles | [Technical intent](docs/specs/technical-intent-spec.md) |
+| Architecture and implementation principles | [Technical intent](docs/specs/technical-intent-spec.md) and [overall solution-design governance](docs/specs/overall-solution-design-governance-spec.md) |
+| Product-wide UI look, feel, shell, reuse, responsiveness, and accessibility | [High-level UI direction governance](docs/specs/high-level-ui-direction-governance-spec.md) |
+| Eight-page product-definition journey and consolidated activation | [High-level product-definition wizard](docs/specs/high-level-product-definition-wizard-spec.md) |
 | Command syntax and behavior | [Command manual](docs/manual/README.md) |
 | Normative engineering rules | [`docs/standards/`](docs/standards/) and the [conformance matrix](docs/references/standards-conformance-matrix.md) |
 | Current inventories and profiles | [References index](docs/references/README.md) |
@@ -397,6 +399,19 @@ cis feedback opportunities --format agent
 
 Structured commands support human, JSON, and agent-oriented output where applicable.
 Standard output remains parseable and diagnostics are written to standard error.
+
+Provider-neutral direct execution is explicit and foreground-only:
+
+```powershell
+cis agent providers --format agent
+cis agent provider diagnose codex --format agent
+cis agent run CIS-0002 WORK-090 --provider codex --transport app-server `
+  --mode implement --permission workspace-write --actor "Andrew Spiteri"
+```
+
+Workspace-write runs use isolated Git worktrees by default. Provider credentials remain
+provider-native, network escalation is denied, run events are streamed and retained under
+`.cis/local/agents/runs/`, and results require explicit import before becoming canonical evidence.
 
 ### Versioning, releases, and validation
 

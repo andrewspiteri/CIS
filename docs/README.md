@@ -60,6 +60,8 @@ Canonical starting points:
 - `specs/visual-design-task-type.md` — self-contained JavaScript renderer, PNG screen-pack, validation, and approval contract
 - `specs/task-planning-implementation-readiness.md` — PARR comparison, remaining specification gaps, and implementation sequence
 - `specs/parr-testing-delivery-gap-matrix.md` — scored whole-process and test-suite comparison against the reusable PARR assurance model
+- `specs/parr-functional-parity-gap-matrix.md` — reusable PARR toolkit capability comparison, CIS evidence, and intentional product differences
+- `specs/cis-pre-adoption-hardening-review.md` — closed findings, verification evidence, residual boundaries, and the next-project adoption checklist
 - `specs/parr-testing-delivery-implementation-plan.md` — ordered CIS tooling and Friends Todo migration plan for closing the assurance gaps
 - `templates/design-guidelines-template.md` — governed visual-language and design-token template for target repositories
 - `templates/default-design-guidelines.md` — populated default palette, typography, layout, component, and visual-language rules
@@ -70,6 +72,7 @@ Canonical starting points:
 - `specs/module-catalog-spec.md` — module responsibilities and delivery sequence
 - `specs/implementation-roadmap.md` — canonical ten-stage implementation and completion state
 - `specs/execution-assurance-and-learning-spec.md` — AI, generation, workflows, agents, verification, diagnostics, and governed learning
+- `specs/deterministic-toolkit-evidence-spec.md` — deterministic template applicability, tooling evidence, policy-impact targets, and structured diagnostics
 - `specs/vscode-client-spec.md` — thin editor-client boundary over CLI JSON and canonical Markdown
 - `specs/cli-and-repository-initialisation-spec.md` — CLI and repository initialization contract
 - `specs/documentation-inventory-and-validation-spec.md` — documentation discovery and catalog health contract

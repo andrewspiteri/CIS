@@ -33,6 +33,7 @@ internal static partial class ImplementationGraphExtractor
     private static readonly HashSet<string> ExcludedDirectories = new(StringComparer.OrdinalIgnoreCase)
     {
         ".git",
+        ".codex-tmp",
         ".artifacts",
         "artifacts",
         "bin",

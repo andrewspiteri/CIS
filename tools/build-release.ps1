@@ -9,7 +9,9 @@ $PSNativeCommandUseErrorActionPreference = $true
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $resolvedOutput = [IO.Path]::GetFullPath((Join-Path $repoRoot $Output))
 $allowedRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot "artifacts"))
-if (-not $resolvedOutput.StartsWith($allowedRoot, [StringComparison]::OrdinalIgnoreCase)) {
+$comparison = if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+if (-not $resolvedOutput.Equals($allowedRoot, $comparison) -and
+    -not $resolvedOutput.StartsWith($allowedRoot + [IO.Path]::DirectorySeparatorChar, $comparison)) {
     throw "Release output must remain beneath $allowedRoot"
 }
 
@@ -19,12 +21,17 @@ $extension = Get-Content (Join-Path $repoRoot "vscode-extension/package.json") -
 if ([string]::IsNullOrWhiteSpace($version) -or $extension.version -ne $version) {
     throw "Version.props and vscode-extension/package.json must declare the same version."
 }
+if ($version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') { throw "Release version is not a safe semantic version." }
+$dirty = @(git -C $repoRoot status --porcelain=v1 --untracked-files=all)
+if ($LASTEXITCODE -ne 0) { throw "Unable to verify the Git worktree before packaging." }
+if ($dirty.Count -gt 0) { throw "Release packaging requires a clean worktree so the source archive and binaries have identical provenance." }
 
 New-Item -ItemType Directory -Force -Path $resolvedOutput | Out-Null
 Get-ChildItem -LiteralPath $resolvedOutput -Force | Remove-Item -Recurse -Force
 Push-Location $repoRoot
 try {
-    if (-not $SkipRestore) { dotnet restore ChangeImpactStudio.slnx }
+    if (-not $SkipRestore) { dotnet restore ChangeImpactStudio.slnx --configfile NuGet.Config }
+    node tools/audit-dotnet-packages.mjs ChangeImpactStudio.slnx
     dotnet build ChangeImpactStudio.slnx -c $Configuration --no-restore
     dotnet test ChangeImpactStudio.slnx -c $Configuration --no-build --no-restore --maxcpucount:1
     node --check vscode-extension/extension.js
@@ -56,14 +63,29 @@ try {
         $packagedCis = Join-Path $toolPath "cis"
         & $packagedCis --help | Out-Null
         $loadedModules = (& $packagedCis host modules --format agent) -join "`n"
-        foreach ($requiredModule in @("module=skills;", "module=standards;", "module=technical-intent;", "module=test;", "module=verify;")) {
+        foreach ($requiredModule in @(
+            "module=agent;",
+            "module=agent-claude;",
+            "module=agent-codex;",
+            "module=skills;",
+            "module=standards;",
+            "module=technical-intent;",
+            "module=solution-design;",
+            "module=ui-direction;",
+            "module=definition;",
+            "module=test;",
+            "module=verify;")) {
             if (-not $loadedModules.Contains($requiredModule, [StringComparison]::Ordinal)) {
                 throw "Packaged CLI did not register required module marker '$requiredModule'."
             }
         }
         & $packagedCis skills --help | Out-Null
+        & $packagedCis agent --help | Out-Null
         & $packagedCis standards --help | Out-Null
         & $packagedCis technical-intent --help | Out-Null
+        & $packagedCis solution-design --help | Out-Null
+        & $packagedCis ui-direction --help | Out-Null
+        & $packagedCis definition --help | Out-Null
         & $packagedCis test --help | Out-Null
         & $packagedCis verify --help | Out-Null
     }

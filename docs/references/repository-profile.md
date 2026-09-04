@@ -322,6 +322,18 @@ Repository shape: **monorepo**.
 - Evidence:
   - src/Cis.Providers.Tracker.Jira/Cis.Providers.Tracker.Jira.csproj
 
+### cis-abstractions-tests
+
+- Root: `tests/Cis.Abstractions.Tests`
+- Languages: csharp
+- Frameworks: dotnet-test
+- Roles: test-automation
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - tests/Cis.Abstractions.Tests/Cis.Abstractions.Tests.csproj
+  - .NET test SDK markers
+
 ### cis-host-tests
 
 - Root: `tests/Cis.Host.Tests`
@@ -500,6 +512,212 @@ Repository shape: **monorepo**.
 - Evidence:
   - tests/Cis.Modules.Tracker.Tests/Cis.Modules.Tracker.Tests.csproj
   - .NET test SDK markers
+
+### cis-modules-artifacts
+
+- Root: `src/Cis.Modules.Artifacts`
+- Languages: csharp
+- Frameworks: dotnet
+- Roles: shared-library
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - src/Cis.Modules.Artifacts/Cis.Modules.Artifacts.csproj
+
+### cis-modules-artifacts-tests
+
+- Root: `tests/Cis.Modules.Artifacts.Tests`
+- Languages: csharp
+- Frameworks: dotnet-test
+- Roles: test-automation
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - tests/Cis.Modules.Artifacts.Tests/Cis.Modules.Artifacts.Tests.csproj
+  - .NET test SDK markers
+
+### cis-modules-ci
+
+- Root: `src/Cis.Modules.Ci`
+- Languages: csharp
+- Frameworks: dotnet
+- Roles: shared-library
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - src/Cis.Modules.Ci/Cis.Modules.Ci.csproj
+
+### cis-modules-ci-tests
+
+- Root: `tests/Cis.Modules.Ci.Tests`
+- Languages: csharp
+- Frameworks: dotnet-test
+- Roles: test-automation
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - tests/Cis.Modules.Ci.Tests/Cis.Modules.Ci.Tests.csproj
+  - .NET test SDK markers
+
+### cis-modules-frontend
+
+- Root: `src/Cis.Modules.Frontend`
+- Languages: csharp
+- Frameworks: dotnet
+- Roles: shared-library
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - src/Cis.Modules.Frontend/Cis.Modules.Frontend.csproj
+
+### cis-modules-frontend-tests
+
+- Root: `tests/Cis.Modules.Frontend.Tests`
+- Languages: csharp
+- Frameworks: dotnet-test
+- Roles: test-automation
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - tests/Cis.Modules.Frontend.Tests/Cis.Modules.Frontend.Tests.csproj
+  - .NET test SDK markers
+
+### cis-modules-mcp
+
+- Root: `src/Cis.Modules.Mcp`
+- Languages: csharp
+- Frameworks: dotnet
+- Roles: shared-library
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - src/Cis.Modules.Mcp/Cis.Modules.Mcp.csproj
+
+### cis-modules-mcp-tests
+
+- Root: `tests/Cis.Modules.Mcp.Tests`
+- Languages: csharp
+- Frameworks: dotnet-test
+- Roles: test-automation
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - tests/Cis.Modules.Mcp.Tests/Cis.Modules.Mcp.Tests.csproj
+  - .NET test SDK markers
+
+### cis-modules-references
+
+- Root: `src/Cis.Modules.References`
+- Languages: csharp
+- Frameworks: dotnet
+- Roles: shared-library
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - src/Cis.Modules.References/Cis.Modules.References.csproj
+
+### cis-modules-references-tests
+
+- Root: `tests/Cis.Modules.References.Tests`
+- Languages: csharp
+- Frameworks: dotnet-test
+- Roles: test-automation
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - tests/Cis.Modules.References.Tests/Cis.Modules.References.Tests.csproj
+  - .NET test SDK markers
+
+### cis-modules-agent-tests
+
+- Root: `tests/Cis.Modules.Agent.Tests`
+- Languages: csharp
+- Frameworks: dotnet-test
+- Roles: test-automation
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - tests/Cis.Modules.Agent.Tests/Cis.Modules.Agent.Tests.csproj
+  - .NET test SDK markers
+
+### cis-modules-security
+
+- Root: `src/Cis.Modules.Security`
+- Languages: csharp
+- Frameworks: dotnet
+- Roles: shared-library
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - src/Cis.Modules.Security/Cis.Modules.Security.csproj
+
+### cis-modules-security-tests
+
+- Root: `tests/Cis.Modules.Security.Tests`
+- Languages: csharp
+- Frameworks: dotnet-test
+- Roles: test-automation
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - tests/Cis.Modules.Security.Tests/Cis.Modules.Security.Tests.csproj
+  - .NET test SDK markers
+
+### cis-modules-testing
+
+- Root: `src/Cis.Modules.Testing`
+- Languages: csharp
+- Frameworks: dotnet
+- Roles: shared-library
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - src/Cis.Modules.Testing/Cis.Modules.Testing.csproj
+
+### cis-modules-testing-tests
+
+- Root: `tests/Cis.Modules.Testing.Tests`
+- Languages: csharp
+- Frameworks: dotnet-test
+- Roles: test-automation
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - tests/Cis.Modules.Testing.Tests/Cis.Modules.Testing.Tests.csproj
+  - .NET test SDK markers
+
+### cis-providers-ci-github
+
+- Root: `src/Cis.Providers.Ci.GitHub`
+- Languages: csharp
+- Frameworks: dotnet
+- Roles: shared-library
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - src/Cis.Providers.Ci.GitHub/Cis.Providers.Ci.GitHub.csproj
+
+### cis-providers-agent-claude
+
+- Root: `src/Cis.Providers.Agent.Claude`
+- Languages: csharp
+- Frameworks: dotnet
+- Roles: shared-library
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - src/Cis.Providers.Agent.Claude/Cis.Providers.Agent.Claude.csproj
+
+### cis-providers-agent-codex
+
+- Root: `src/Cis.Providers.Agent.Codex`
+- Languages: csharp
+- Frameworks: dotnet
+- Roles: shared-library
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - src/Cis.Providers.Agent.Codex/Cis.Providers.Agent.Codex.csproj
 
 ### change-impact-studio
 

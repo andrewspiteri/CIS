@@ -5,7 +5,7 @@ status: Draft
 version: "0.2"
 scope: "Product:ChangeImpactStudio"
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-14"
+last_reviewed: "2026-09-01"
 review_cadence: "on change"
 ---
 
@@ -53,7 +53,7 @@ folder or a collection of command handlers.
 | `parrdiag` runtime evidence | `diagnostics` |
 | `parrdiag` learning and proposals | `learn` |
 | Issue and implementation packs | `change`, `plan`, `tracker` |
-| Completion and CI evidence | `verify` |
+| Completion and CI evidence | `test`, `security`, `verify` |
 
 The mapping separates reusable product concepts from the original toolkit's command
 layout. CIS can therefore evolve its contracts without preserving accidental PARR
@@ -73,6 +73,8 @@ coupling.
 | `context` | Search and bounded context packages for contracts, symbols, references, callers, and tests | `search`, `pack`, `contract`, `symbol`, `references`, `callers`, `tests-for` |
 | `index` | Incremental, non-authoritative per-file routing summaries and freshness | `build`, `status`, `find` |
 | `api` | API discovery, canonical contract correlation, governance validation, and compatibility | `discover`, `inventory`, `validate`, `diff` |
+| `references` | Provider-based non-API reference discovery, canonical correlation, validation, and Git-baseline drift | `discover`, `inventory`, `validate`, `diff` |
+| `frontend` | Provider-based web, native, and Godot screen, route, component, navigation, state, API-client discovery and graph augmentation | `discover`, `inventory`, `validate` |
 
 ### 4.2 Execution and intelligence modules
 
@@ -80,7 +82,10 @@ coupling.
 |---|---|---|
 | `generate` | Deterministic template discovery, validation, and rendering | `templates`, `describe`, `validate`, `render` |
 | `workflow` | Deterministic multi-step workflow execution and run records | `list`, `describe`, `run`, `status`, `log`, `summarise` |
-| `ai` | Provider-neutral routing, model policy, usage, evaluation, and cache visibility | `status`, `routes`, `providers`, `models`, `usage`, `evaluate`, `cache status` |
+| `ci` | Provider-neutral remote checks, runs, jobs, bounded logs, artifacts, diagnosis, reproduction, and safe reruns | `providers`, `status`, `runs`, `jobs`, `logs`, `artifacts`, `diagnose`, `reproduce`, `rerun-failed` |
+| `ai` | Provider-neutral routing, runtime model qualification, task-class approval, usage, evaluation, and cache visibility | `status`, `routes`, `providers`, `models`, `usage`, `evaluate`, `model probe`, `model benchmark`, `model approve`, `model status`, `route explain`, `eval prompt-regression`, `cache status` |
+| `mcp` | Fixed-repository local stdio adapter over CIS reads and explicitly confirmed mutations | `serve` |
+| `artifacts` | Local derived-state inventory, policy preview, verified reversible compaction, retrieval, conflict-aware restore, and hash-preserving cleanup records | `inventory`, `plan`, `compact`, `clean`, `archives`, `retrieve`, `restore` |
 | `feedback` | Sanitized tool-usage evidence, possible token savings, aggregation, and deterministic improvement opportunities | `summary`, `usage`, `opportunities` |
 | `diagnostics` | Runtime evidence sources, summaries, event streams, and analysis | `sources`, `summary`, `events`, `tail`, `analyse` |
 
@@ -89,19 +94,24 @@ coupling.
 | Module | Responsibility | Initial commands |
 |---|---|---|
 | `change` | Change dossier identity, lifecycle, state, and closure | `create`, `list`, `show`, `status`, `close` |
-| `brd` | Workspace business requirements, evidence intake, feature-spec absorption, content currency, high-level backlog decomposition, and human authority | `discover`, `init`, `reconcile`, `status`, `validate`, `approve`, `backlog build`, `backlog validate`, `backlog status`, `backlog approve`, `backlog start`, `feature validate`, `feature status`, `feature approve` |
+| `brd` | Workspace business requirements, evidence intake, independent-review dispositions, feature-spec absorption, content currency, high-level backlog decomposition, and human authority | `discover`, `init`, `reconcile`, `status`, `validate`, `questions list`, `questions guidance`, `questions suggest`, `questions answer`, `review init`, `review status`, `review freshness`, `review decide`, `review accept-all`, `review approve`, `approve`, `backlog build`, `backlog validate`, `backlog status`, `backlog approve`, `backlog start`, `feature validate`, `feature status`, `feature approve` |
 | `technical-intent` | Workspace technical direction, BRD and participant baselines, decisions, currency, and human authority | `init`, `status`, `validate`, `approve` |
-| `impact` | Impact discovery, findings, review dispositions, and completeness | `analyse`, `findings`, `accept`, `reject`, `defer`, `completeness` |
+| `solution-design` | Atomic overall architecture and component-sheet projection, source currency, traceability, and human authority | `init`, `status`, `validate`, `approve` |
+| `ui-direction` | Workspace-level UI questionnaire, look-and-feel projection, framework and guideline provenance, lifecycle, and human authority | `questions init`, `questions status`, `questions answer`, `init`, `status`, `validate`, `approve` |
+| `definition` | Resumable high-level product-definition coordination, diagrams, dictionary index, UI preview, and consolidated transactional activation | `init`, `status`, `prepare`, `answer`, `activate` |
+| `impact` | Change and policy impact discovery, findings, review dispositions, and completeness | `analyse`, `findings`, `accept`, `reject`, `defer`, `completeness`, `policy analyse` |
 | `decision` | Change-local decisions and promotion into durable records | `list`, `create`, `resolve`, `defer`, `promote` |
 | `plan` | Bounded work, provider capability selection, task-type migration, dependencies, approval gates, and plan validation | `build`, `import-spec`, `show`, `validate`, `approve`, `status`, `capability status`, `capability select`, `task transition`, `task migrate-type` |
 | `design` | Textual-wireframe review, cross-feature approved-artifact reuse, reusable shell/component renderer scaffolding, deterministic PNG generation, validation, and global human approval | `templates`, `reuse`, `scaffold`, `wireframe-validate`, `wireframe-approve`, `wireframe-reject`, `render`, `validate`, `reconcile`, `approve`, `reject`, `status` |
 | `tracker` | Provider-neutral external issue projection, durable identity, three-way drift detection, and human conflict resolution | `plan`, `push`, `pull`, `status`, `resolve` |
-| `agent` | Provider-neutral task envelopes and result ingestion | `prepare`, `providers`, `import-result`, `status` |
+| `agent` | Provider-neutral task envelopes, Codex/Claude execution coordination, durable run provenance, and explicit result ingestion | `providers`, `provider diagnose`, `prepare`, `run`, `author brd`, `author feature`, `review brd`, `revise brd`, `incorporate brd-questions`, `runs`, `show`, `cancel`, `recover`, `resume`, `import-result`, `status`, `evidence validate` |
 | `verify` | Baselines, planned-versus-actual comparison, evidence, and acceptance | `diff`, `compare`, `validate`, `evidence`, `accept` |
 | `learn` | Evidence collection, improvement proposals, review, application, and history | `collect`, `propose`, `review`, `apply`, `history` |
 
-Direct execution by `agent run` is intentionally deferred. The first contract creates
-portable task envelopes and imports results, preserving human and provider control.
+Direct execution is foreground, permission-bounded, and isolated by default. Provider adapters
+normalize their native protocols into durable local runs; they cannot approve plans or designs,
+transition tasks, accept verification, or close a change. Portable envelopes remain available
+when direct execution is unavailable or deliberately not selected.
 
 ## 5. Dependency direction
 
@@ -110,6 +120,10 @@ repo
 |-- workspace --> repository authority + registry
 |-- docs --> standards --> graph
 |-- brd --> workspace + docs + graph
+|-- technical-intent --> brd + standards + graph
+|-- solution-design --> technical-intent + repository catalogue
+|-- ui-direction --> solution-design + design guidelines + UI framework profiles
+|-- definition --> brd + technical-intent + solution-design + ui-direction + graph
 |-- context
 |-- generate
 |-- workflow

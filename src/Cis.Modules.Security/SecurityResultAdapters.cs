@@ -70,8 +70,8 @@ internal static partial class SecurityEvidence
         try
         {
             var full = Path.IsPathRooted(value) ? Path.GetFullPath(value) : Path.GetFullPath(Path.Combine(repository, value));
-            var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(repository));
-            return (full.Equals(root, StringComparison.OrdinalIgnoreCase) || full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            var root = Path.GetFullPath(repository);
+            return CisPathSafety.IsUnderRoot(root, full)
                 ? Path.GetRelativePath(root, full).Replace('\\', '/') : Path.GetFileName(value);
         }
         catch { return value.Replace('\\', '/'); }

@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><Description>Provider-neutral CIS CI investigation, evidence, diagnosis, and safe operations.</Description></PropertyGroup>
+  <ItemGroup><ProjectReference Include="..\Cis.Abstractions\Cis.Abstractions.csproj" /></ItemGroup>
+  <ItemGroup><PackageReference Include="System.CommandLine" /></ItemGroup>
+</Project>

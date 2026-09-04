@@ -101,7 +101,7 @@ public sealed class AiGovernanceService
 
     private static int EstimateTokens(string? value) => string.IsNullOrEmpty(value) ? 0 : Math.Max(1, (value.Length + 3) / 4);
 
-    private static IReadOnlyList<AiRoute> ReadRoutes(CisRepositoryContext context)
+    public static IReadOnlyList<AiRoute> ReadRoutes(CisRepositoryContext context)
     {
         var path = Path.Combine(context.DocumentationPath, "references", "ai-routing-profile.md");
         if (!File.Exists(path)) return [];

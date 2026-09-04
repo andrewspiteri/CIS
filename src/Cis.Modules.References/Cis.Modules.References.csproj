@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Provider-based CIS reference inventory, discovery, validation, and drift analysis.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Cis.Abstractions\Cis.Abstractions.csproj" />
+    <ProjectReference Include="..\Cis.Modules.Repository\Cis.Modules.Repository.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" />
+  </ItemGroup>
+</Project>

@@ -5,7 +5,7 @@ using Cis.Abstractions;
 
 namespace Cis.Modules.Ai;
 
-internal sealed class OpenAiCompatibleProvider : IAiProvider
+internal sealed class OpenAiCompatibleProvider : ICisAiProvider
 {
     public string Name => "openai-compatible";
 
@@ -47,6 +47,7 @@ internal sealed class OpenAiCompatibleProvider : IAiProvider
                 model,
                 temperature = 0.1,
                 max_tokens = Math.Clamp(request.MaxOutputTokens, 32, 32_768),
+                response_format = request.JsonMode ? new { type = "json_object" } : null,
                 messages = new[]
                 {
                     new { role = "system", content = "Return only the requested concise routing description." },

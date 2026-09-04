@@ -8,11 +8,14 @@ public sealed class GraphQueryService : ICisGraphQueryService
 
     private readonly ICisRepositoryContextResolver _repositoryContextResolver;
     private readonly SqliteGraphStore _store;
+    private readonly IReadOnlyList<string> _expectedExtractors;
 
-    public GraphQueryService(ICisRepositoryContextResolver repositoryContextResolver, SqliteGraphStore? store = null)
+    public GraphQueryService(ICisRepositoryContextResolver repositoryContextResolver, SqliteGraphStore? store = null,
+        IEnumerable<ICisGraphAugmenter>? augmenters = null)
     {
         _repositoryContextResolver = repositoryContextResolver;
         _store = store ?? new SqliteGraphStore();
+        _expectedExtractors = GraphBuilder.ComposeExtractors(augmenters);
     }
 
     public CisGraphQueryResult Find(string repositoryPath, CisGraphFindRequest request)
@@ -398,12 +401,12 @@ public sealed class GraphQueryService : ICisGraphQueryService
             staleEvidence.Count == 0 ? "fresh" : "stale", diagnostics, null);
     }
 
-    private static IReadOnlyList<string> FindStaleEvidence(
+    private IReadOnlyList<string> FindStaleEvidence(
         string repositoryPath,
         CisGraphManifest manifest)
     {
         var stale = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (!manifest.Extractors.SequenceEqual(GraphBuilder.CurrentExtractors, StringComparer.Ordinal))
+        if (!manifest.Extractors.SequenceEqual(_expectedExtractors, StringComparer.Ordinal))
         {
             stale.Add("extractor-set-changed");
         }

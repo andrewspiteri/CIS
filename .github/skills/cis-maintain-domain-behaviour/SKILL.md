@@ -23,7 +23,8 @@ Gather feature and technical specifications, affected code and tests, and the do
 2. Update matching reference rows with stable IDs, source evidence, lifecycle, and relationships.
 3. Keep command/event identities distinct and connect transitions, invariants, projections, and problems.
 4. Update module boundaries and contract references where the same change crosses them.
-5. Validate documentation and implementation evidence before handoff.
+5. Run `cis references discover`, `cis references validate --strict`, and `cis references diff --base <delivery-baseline>` before handoff.
+6. Validate documentation and implementation evidence before handoff.
 
 ## Output Expectations
 

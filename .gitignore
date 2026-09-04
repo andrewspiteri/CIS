@@ -10,4 +10,7 @@ coverage/
 *.user
 *.suo
 artifacts/
+.artifacts/
 .codex-tmp/
+**/StrykerOutput/
+**/.stryker-tmp/

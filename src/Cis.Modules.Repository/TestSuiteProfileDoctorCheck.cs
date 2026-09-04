@@ -27,7 +27,7 @@ public sealed class TestSuiteProfileDoctorCheck : ICisRepositoryDoctorCheck
                 findings.Add(Finding("CIS-TEST-DOCTOR-003", "error", $"Suite '{row.Id}' declares unsupported result format '{row.Format}'.", [row.Id, row.Format], "Select a registered CIS result adapter or install a module that provides one."));
             if (!InsideLocal(row.ResultPath) || (!Dash(row.CoveragePath) && !InsideLocal(row.CoveragePath)) || (!Dash(row.MutationPath) && !InsideLocal(row.MutationPath)))
                 findings.Add(Finding("CIS-TEST-DOCTOR-004", "error", $"Suite '{row.Id}' writes derived evidence outside .cis/local/.", [row.ResultPath, row.CoveragePath, row.MutationPath], "Move all generated test evidence under .cis/local/testing/."));
-            if (row.Framework.Equals("dotnet-test", StringComparison.OrdinalIgnoreCase) && !row.Command.StartsWith("dotnet test", StringComparison.OrdinalIgnoreCase))
+            if (row.Framework.Equals("dotnet-test", StringComparison.OrdinalIgnoreCase) && !IsDotnetTestCommand(row.Command))
                 findings.Add(Finding("CIS-TEST-DOCTOR-005", "warning", $"Suite '{row.Id}' framework and command disagree.", [row.Framework, row.Command], "Review the command and repository classification; preserve an intentional override with rationale."));
             var working = Resolve(context.RepositoryPath, row.WorkingDirectory);
             if (working is null || !Directory.Exists(working))
@@ -35,7 +35,10 @@ public sealed class TestSuiteProfileDoctorCheck : ICisRepositoryDoctorCheck
         }
 
         var classification = new RepositoryClassifier().Classify(context.RepositoryPath);
-        var components = classification.Components.Select(item => item.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var components = classification.Components
+            .SelectMany(item => new[] { item.Id, item.Root })
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var stale in rows.Where(row => !row.Component.Equals("repository", StringComparison.OrdinalIgnoreCase) && !components.Contains(row.Component)))
             findings.Add(Finding("CIS-TEST-DOCTOR-007", "warning", $"Suite '{stale.Id}' references component '{stale.Component}', which is absent from the current classification.", [stale.Component], "Rerun initialization, then reconcile the reviewed suite profile without discarding human-owned commands."));
         return findings;
@@ -62,10 +65,18 @@ public sealed class TestSuiteProfileDoctorCheck : ICisRepositoryDoctorCheck
     private static string? Resolve(string repository, string relative)
     {
         if (string.IsNullOrWhiteSpace(relative) || Path.IsPathRooted(relative)) return null;
-        var full = Path.GetFullPath(Path.Combine(repository, relative.Replace('/', Path.DirectorySeparatorChar)));
-        return full.Equals(repository, StringComparison.OrdinalIgnoreCase) || full.StartsWith(repository + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ? full : null;
+        return CisPathSafety.TryResolveUnderRoot(repository, relative, out var full, allowRoot: relative.Trim() == ".")
+               && !CisPathSafety.ContainsReparsePoint(repository, full) ? full : null;
     }
     private static bool InsideLocal(string path) => path.Replace('\\', '/').StartsWith(".cis/local/", StringComparison.OrdinalIgnoreCase);
+    private static bool IsDotnetTestCommand(string command)
+    {
+        var normalized = command.Replace('\\', '/').Trim();
+        return normalized.StartsWith("dotnet test", StringComparison.OrdinalIgnoreCase)
+               || ((normalized.StartsWith("pwsh ", StringComparison.OrdinalIgnoreCase)
+                    || normalized.StartsWith("powershell ", StringComparison.OrdinalIgnoreCase))
+                   && normalized.Contains("run-dotnet-tests.ps1", StringComparison.OrdinalIgnoreCase));
+    }
     private static bool Dash(string path) => string.IsNullOrWhiteSpace(path) || path == "-";
     private static string Relative(CisRepositoryContext context, string path) => Path.GetRelativePath(context.RepositoryPath, path).Replace('\\', '/');
     private static CisRepositoryDoctorFinding Finding(string code, string severity, string message, IReadOnlyList<string> evidence, string fix)

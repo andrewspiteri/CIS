@@ -133,16 +133,17 @@ public sealed class FeedbackModule : ICisModule
         if (format == "json") { Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions)); return; }
         if (format == "agent")
         {
-            Console.WriteLine($"status={result.Status};exitCode={result.ExitCode};invocations={result.InvocationCount};successful={result.SuccessfulCount};failed={result.FailedCount};outputEstimatedTokens={result.OutputEstimatedTokens};baselineEstimatedTokens={result.BaselineEstimatedTokens};actualEstimatedTokens={result.ActualEstimatedTokens};possibleTokenSavings={result.PossibleTokenSavings};possibleTokenSavingsPercent={result.PossibleTokenSavingsPercent};estimatedInvocations={result.EstimatedInvocationCount}");
-            foreach (var item in result.Commands) Console.WriteLine($"command={Clean(item.Command)};runs={item.InvocationCount};failed={item.FailedCount};elapsedMs={item.ElapsedMilliseconds};outputEstimatedTokens={item.OutputEstimatedTokens};possibleTokenSavings={item.PossibleTokenSavings}");
+            Console.WriteLine($"status={result.Status};exitCode={result.ExitCode};invocations={result.InvocationCount};successful={result.SuccessfulCount};failed={result.FailedCount};nonSuccessful={result.NonSuccessfulCount};blocked={result.BlockedCount};governedFindings={result.GovernedFindingCount};invalidRequests={result.InvalidRequestCount};cancelled={result.CancelledCount};outputEstimatedTokens={result.OutputEstimatedTokens};baselineEstimatedTokens={result.BaselineEstimatedTokens};actualEstimatedTokens={result.ActualEstimatedTokens};possibleTokenSavings={result.PossibleTokenSavings};possibleTokenSavingsPercent={result.PossibleTokenSavingsPercent};estimatedInvocations={result.EstimatedInvocationCount}");
+            foreach (var item in result.Commands) Console.WriteLine($"command={Clean(item.Command)};runs={item.InvocationCount};failed={item.FailedCount};nonSuccessful={item.NonSuccessfulCount};blocked={item.BlockedCount};governedFindings={item.GovernedFindingCount};elapsedMs={item.ElapsedMilliseconds};outputEstimatedTokens={item.OutputEstimatedTokens};possibleTokenSavings={item.PossibleTokenSavings}");
             return;
         }
 
         Console.WriteLine($"Feedback summary: {result.Status}");
-        Console.WriteLine($"Invocations: {result.InvocationCount}; successful: {result.SuccessfulCount}; failed: {result.FailedCount}");
+        Console.WriteLine($"Invocations: {result.InvocationCount}; successful: {result.SuccessfulCount}; execution failures: {result.FailedCount}; non-success: {result.NonSuccessfulCount}");
+        Console.WriteLine($"Governed outcomes: {result.BlockedCount} blocked, {result.GovernedFindingCount} finding-bearing, {result.InvalidRequestCount} invalid requests, {result.CancelledCount} cancelled.");
         Console.WriteLine($"Estimated tokens: baseline {result.BaselineEstimatedTokens}; actual {result.ActualEstimatedTokens}; possible savings {result.PossibleTokenSavings} ({result.PossibleTokenSavingsPercent}%)");
         Console.WriteLine($"Savings estimates supplied by {result.EstimatedInvocationCount} invocation(s); unestimated commands conservatively report zero savings.");
-        foreach (var item in result.Commands) Console.WriteLine($"- {item.Command}: {item.InvocationCount} run(s), {item.FailedCount} failed, ~{item.OutputEstimatedTokens} output tokens, ~{item.PossibleTokenSavings} possible savings");
+        foreach (var item in result.Commands) Console.WriteLine($"- {item.Command}: {item.InvocationCount} run(s), {item.FailedCount} execution failure(s), {item.NonSuccessfulCount} non-success, ~{item.OutputEstimatedTokens} output tokens, ~{item.PossibleTokenSavings} possible savings");
     }
 
     private static void RenderUsage(FeedbackUsageResult result, string format)
@@ -151,12 +152,12 @@ public sealed class FeedbackModule : ICisModule
         if (format == "agent")
         {
             Console.WriteLine($"status={result.Status};exitCode={result.ExitCode};entries={result.Entries.Count}");
-            foreach (var item in result.Entries) Console.WriteLine($"usage={item.InvocationId};started={item.StartedAtUtc:O};command={Clean(item.Command)};exitCode={item.ExitCode};elapsedMs={item.ElapsedMilliseconds};outputEstimatedTokens={item.OutputEstimatedTokens};possibleTokenSavings={item.PossibleTokenSavings};basis={Clean(item.SavingsBasis)};confidence={Clean(item.SavingsConfidence)}");
+            foreach (var item in result.Entries) Console.WriteLine($"usage={item.InvocationId};started={item.StartedAtUtc:O};command={Clean(item.Command)};exitCode={item.ExitCode};outcome={Clean(string.IsNullOrWhiteSpace(item.Outcome) ? ToolUsageStore.ClassifyOutcome(item.Command, item.ExitCode) : item.Outcome)};elapsedMs={item.ElapsedMilliseconds};outputEstimatedTokens={item.OutputEstimatedTokens};possibleTokenSavings={item.PossibleTokenSavings};basis={Clean(item.SavingsBasis)};confidence={Clean(item.SavingsConfidence)}");
             return;
         }
 
         Console.WriteLine($"Tool usage: {result.Status}; entries: {result.Entries.Count}");
-        foreach (var item in result.Entries) Console.WriteLine($"- {item.StartedAtUtc:u} {item.Command} exit={item.ExitCode} elapsed={item.ElapsedMilliseconds}ms output~{item.OutputEstimatedTokens} tokens savings~{item.PossibleTokenSavings} ({item.SavingsConfidence})");
+        foreach (var item in result.Entries) Console.WriteLine($"- {item.StartedAtUtc:u} {item.Command} exit={item.ExitCode} outcome={Clean(string.IsNullOrWhiteSpace(item.Outcome) ? ToolUsageStore.ClassifyOutcome(item.Command, item.ExitCode) : item.Outcome)} elapsed={item.ElapsedMilliseconds}ms output~{item.OutputEstimatedTokens} tokens savings~{item.PossibleTokenSavings} ({item.SavingsConfidence})");
     }
 
     private static void RenderOpportunities(FeedbackOpportunityResult result, string format)
@@ -164,12 +165,12 @@ public sealed class FeedbackModule : ICisModule
         if (format == "json") { Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions)); return; }
         if (format == "agent")
         {
-            Console.WriteLine($"status={result.Status};exitCode={result.ExitCode};opportunities={result.Opportunities.Count}");
+            Console.WriteLine($"status={result.Status};exitCode={result.ExitCode};opportunities={result.Opportunities.Count};since={result.SinceUtc:O}");
             foreach (var item in result.Opportunities) Console.WriteLine($"opportunity={item.Code};severity={item.Severity};command={Clean(item.Command)};message={Clean(item.Message)};suggestedAction={Clean(item.SuggestedAction)}");
             return;
         }
 
-        Console.WriteLine($"Feedback opportunities: {result.Status}; count: {result.Opportunities.Count}");
+        Console.WriteLine($"Feedback opportunities: {result.Status}; count: {result.Opportunities.Count}; since: {result.SinceUtc:u}");
         foreach (var item in result.Opportunities) Console.WriteLine($"- [{item.Severity}] {item.Code} / {item.Command}: {item.Message} {item.SuggestedAction}");
     }
 

@@ -4,7 +4,7 @@ using Cis.Abstractions;
 
 namespace Cis.Modules.Ai;
 
-internal sealed class OllamaAiProvider : IAiProvider
+internal sealed class OllamaAiProvider : ICisAiProvider
 {
     private const string DefaultEndpoint = "http://127.0.0.1:11434";
 
@@ -57,6 +57,7 @@ internal sealed class OllamaAiProvider : IAiProvider
                 model,
                 prompt = request.Prompt,
                 stream = false,
+                format = request.JsonMode ? "json" : null,
                 options = new
                 {
                     temperature = 0.1,

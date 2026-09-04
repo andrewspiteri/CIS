@@ -16,4 +16,7 @@ Sources are disabled until their repository-relative sanitized export exists.
 | Source | Kind | Location | Enabled | Sensitive |
 |---|---|---|---|---|
 | application-log | text-log | .cis/local/diagnostics/input/application.log | no | no |
-| test-log | text-log | .cis/local/diagnostics/input/tests.log | no | no |
+| structured-runtime | jsonl | .cis/local/diagnostics/input/runtime.jsonl | no | no |
+| test-log | workflow-log | .cis/local/diagnostics/input/tests.log | no | no |
+| browser-log | browser-log | .cis/local/diagnostics/input/browser.jsonl | no | no |
+| container-log | container-log | .cis/local/diagnostics/input/containers.log | no | no |

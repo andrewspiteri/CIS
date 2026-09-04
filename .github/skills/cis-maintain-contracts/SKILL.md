@@ -25,7 +25,9 @@ Gather the diff, relevant governance specifications, references under `docs/refe
 4. For an API change, co-update its API row, permission usage and semantics, Problem Details identities, consumers, supported version, and OpenAPI where affected.
 5. Do not remove an older operation or version until its lifecycle, compatibility window, and known consumers are dispositioned.
 6. Update governance specifications only when maintenance rules change.
-7. Run strict documentation validation, deterministic OpenAPI export, forward-transitive diff against every supported baseline in the same major version, and relevant contract/reference drift checks.
+7. Run `cis references discover` and preview safe additive canonical updates with `cis references reconcile`. Apply them with `--yes` only after review.
+8. Run `cis references validate --strict` and `cis references diff --base <delivery-baseline>` for non-API references.
+9. Run strict documentation validation, deterministic OpenAPI export, and forward-transitive API diff against every supported baseline in the same major version.
 
 ## Output Expectations
 

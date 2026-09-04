@@ -1,37 +1,50 @@
 using Cis.Host;
 using Cis.Modules.Change;
+using Cis.Modules.Ci;
 using Cis.Modules.Ai;
 using Cis.Modules.Agent;
 using Cis.Modules.Api;
+using Cis.Modules.Artifacts;
 using Cis.Modules.Brd;
 using Cis.Modules.Context;
 using Cis.Modules.Decision;
 using Cis.Modules.Design;
+using Cis.Modules.Definition;
 using Cis.Modules.Diagnostics;
 using Cis.Modules.Docs;
 using Cis.Modules.Feedback;
+using Cis.Modules.Frontend;
 using Cis.Modules.Graph;
 using Cis.Modules.Generate;
 using Cis.Modules.Host;
 using Cis.Modules.Impact;
 using Cis.Modules.Index;
 using Cis.Modules.Learn;
+using Cis.Modules.Mcp;
 using Cis.Modules.Plan;
 using Cis.Modules.Repository;
+using Cis.Modules.References;
 using Cis.Modules.Security;
 using Cis.Modules.Skills;
+using Cis.Modules.SolutionDesign;
 using Cis.Modules.Standards;
 using Cis.Modules.TechnicalIntent;
 using Cis.Modules.Testing;
 using Cis.Modules.Tracker;
+using Cis.Modules.UiDirection;
 using Cis.Modules.Workflow;
 using Cis.Modules.Verify;
 using Cis.Providers.Tracker.GitHub;
 using Cis.Providers.Tracker.Jira;
+using Cis.Providers.Ci.GitHub;
+using Cis.Providers.Agent.Claude;
+using Cis.Providers.Agent.Codex;
 
 using var application = new CisHostBuilder()
     .AddModule(new HostModule())
     .AddModule(new RepositoryModule())
+    .AddModule(new ReferencesModule())
+    .AddModule(new McpModule())
     .AddModule(new SkillsModule())
     .AddModule(new StandardsModule())
     .AddModule(new WorkspaceModule())
@@ -39,14 +52,20 @@ using var application = new CisHostBuilder()
     .AddModule(new AgentModule())
     .AddModule(new DocsModule())
     .AddModule(new ApiModule())
+    .AddModule(new ArtifactsModule())
+    .AddModule(new CiModule())
     .AddModule(new GraphModule())
     .AddModule(new ContextModule())
     .AddModule(new IndexModule())
     .AddModule(new LearnModule())
     .AddModule(new FeedbackModule())
+    .AddModule(new FrontendModule())
     .AddModule(new GenerateModule())
     .AddModule(new BrdModule())
     .AddModule(new TechnicalIntentModule())
+    .AddModule(new SolutionDesignModule())
+    .AddModule(new UiDirectionModule())
+    .AddModule(new DefinitionModule())
     .AddModule(new ChangeModule())
     .AddModule(new DecisionModule())
     .AddModule(new DesignModule())
@@ -60,6 +79,9 @@ using var application = new CisHostBuilder()
     .AddModule(new VerifyModule())
     .AddModule(new GitHubTrackerProviderModule())
     .AddModule(new JiraTrackerProviderModule())
+    .AddModule(new GitHubCiProviderModule())
+    .AddModule(new CodexAgentProviderModule())
+    .AddModule(new ClaudeAgentProviderModule())
     .Build();
 
 return application.Invoke(args);

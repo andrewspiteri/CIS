@@ -1,0 +1,6 @@
+<Project>
+  <Import Project="..\Directory.Build.props" />
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

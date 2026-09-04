@@ -24,6 +24,13 @@ public sealed class BrdModule : ICisModule
     {
         services.TryAddSingleton<DocumentationCatalogMerger>();
         services.AddSingleton<BrdService>();
+        services.AddSingleton<ICisBrdSourceEvidenceReconciler>(provider => provider.GetRequiredService<BrdService>());
+        services.AddSingleton<BrdReviewDispositionService>();
+        services.AddSingleton<ICisBrdReviewFreshness>(provider => provider.GetRequiredService<BrdReviewDispositionService>());
+        services.AddSingleton(provider => new BrdQuestionGuidanceService(
+            provider.GetRequiredService<BrdService>(),
+            provider.GetRequiredService<ICisWorkspaceRegistry>(),
+            provider.GetService<ICisTextGenerationService>()));
         services.AddSingleton<BrdBacklogService>();
         services.AddSingleton<ICisFeatureApprovalAuthority, BrdFeatureApprovalAuthority>();
     }
@@ -46,10 +53,138 @@ public sealed class BrdModule : ICisModule
             "validate",
             "Validate BRD structure, source assessment, graph freshness, and participant baselines.",
             service.Validate));
+        brd.Subcommands.Add(CreateQuestionsCommand(service,
+            services.GetRequiredService<BrdQuestionGuidanceService>()));
+        brd.Subcommands.Add(CreateReviewCommand(services.GetRequiredService<BrdReviewDispositionService>()));
         brd.Subcommands.Add(CreateApproveCommand(service));
         brd.Subcommands.Add(CreateBacklogCommand(services.GetRequiredService<BrdBacklogService>()));
         brd.Subcommands.Add(CreateFeatureCommand(services.GetRequiredService<BrdBacklogService>()));
         commands.Add(brd);
+    }
+
+    private static Command CreateReviewCommand(BrdReviewDispositionService service)
+    {
+        var review = new Command("review", "Independently disposition and approve advisory BRD review recommendations.");
+
+        var init = new Command("init", "Create the canonical human disposition record from one successful agent review.");
+        var initRun = new Argument<string>("run-id"); var initWorkspace = WorkspaceOption(); var initFormat = FormatOption();
+        init.Arguments.Add(initRun); init.Options.Add(initWorkspace); init.Options.Add(initFormat);
+        init.SetAction(result => RenderReviewDisposition(service.Initialize(
+            result.GetValue(initWorkspace) ?? Directory.GetCurrentDirectory(), result.GetValue(initRun) ?? string.Empty),
+            result.GetValue(initFormat)!));
+        review.Subcommands.Add(init);
+
+        var status = new Command("status", "Show every recommendation and its independent human disposition.");
+        var statusRun = new Argument<string>("run-id"); var statusWorkspace = WorkspaceOption(); var statusFormat = FormatOption();
+        status.Arguments.Add(statusRun); status.Options.Add(statusWorkspace); status.Options.Add(statusFormat);
+        status.SetAction(result => RenderReviewDisposition(service.Status(
+            result.GetValue(statusWorkspace) ?? Directory.GetCurrentDirectory(), result.GetValue(statusRun) ?? string.Empty),
+            result.GetValue(statusFormat)!));
+        review.Subcommands.Add(status);
+
+        var freshness = new Command("freshness", "Classify whether a successful independent review still covers the current BRD.");
+        var freshnessRun = new Argument<string>("run-id"); var freshnessWorkspace = WorkspaceOption(); var freshnessFormat = FormatOption();
+        freshness.Arguments.Add(freshnessRun); freshness.Options.Add(freshnessWorkspace); freshness.Options.Add(freshnessFormat);
+        freshness.SetAction(result => RenderReviewFreshness(service.Freshness(
+            result.GetValue(freshnessWorkspace) ?? Directory.GetCurrentDirectory(), result.GetValue(freshnessRun) ?? string.Empty),
+            result.GetValue(freshnessFormat)!));
+        review.Subcommands.Add(freshness);
+
+        var decide = new Command("decide", "Approve one recommendation as written or with exact human-edited remediation text; legacy rejection remains supported with a rationale.");
+        var decideRun = new Argument<string>("run-id"); var finding = new Argument<string>("finding-id");
+        var decision = new Option<string>("--decision") { Required = true, Description = "accepted or rejected" };
+        var actor = new Option<string>("--actor") { Required = true };
+        var rationale = new Option<string?>("--reason") { Description = "Required only for a legacy rejected disposition." };
+        var approvedRecommendation = new Option<string?>("--approved-recommendation")
+        {
+            Description = "Exact remediation text approved by the human. Omit to approve the reviewer's recommendation as written."
+        };
+        var decideWorkspace = WorkspaceOption(); var decideFormat = FormatOption();
+        decide.Arguments.Add(decideRun); decide.Arguments.Add(finding);
+        foreach (var option in new Option[] { decision, actor, rationale, approvedRecommendation, decideWorkspace, decideFormat }) decide.Options.Add(option);
+        decide.SetAction(result => RenderReviewDisposition(service.Decide(
+            result.GetValue(decideWorkspace) ?? Directory.GetCurrentDirectory(), result.GetValue(decideRun) ?? string.Empty,
+            result.GetValue(finding) ?? string.Empty, result.GetValue(decision) ?? string.Empty,
+            result.GetValue(actor) ?? string.Empty, result.GetValue(rationale) ?? string.Empty,
+            result.GetValue(approvedRecommendation)), result.GetValue(decideFormat)!));
+        review.Subcommands.Add(decide);
+
+        var acceptAll = new Command("accept-all", "Approve every pending recommendation as written and atomically lock the complete bounded set.");
+        var acceptAllRun = new Argument<string>("run-id");
+        var acceptAllActor = new Option<string>("--actor") { Required = true };
+        var acceptAllWorkspace = WorkspaceOption(); var acceptAllFormat = FormatOption();
+        acceptAll.Arguments.Add(acceptAllRun);
+        foreach (var option in new Option[] { acceptAllActor, acceptAllWorkspace, acceptAllFormat }) acceptAll.Options.Add(option);
+        acceptAll.SetAction(result => RenderReviewDisposition(service.AcceptAll(
+            result.GetValue(acceptAllWorkspace) ?? Directory.GetCurrentDirectory(),
+            result.GetValue(acceptAllRun) ?? string.Empty,
+            result.GetValue(acceptAllActor) ?? string.Empty), result.GetValue(acceptAllFormat)!));
+        review.Subcommands.Add(acceptAll);
+
+        var approve = new Command("approve", "Recover a complete legacy disposition set that predates automatic locking.");
+        var approveRun = new Argument<string>("run-id"); var reviewer = new Option<string>("--reviewer") { Required = true };
+        var reason = new Option<string?>("--reason") { Description = "Optional legacy approval rationale; the exact approved recommendation text is authoritative." };
+        var approveWorkspace = WorkspaceOption(); var approveFormat = FormatOption();
+        approve.Arguments.Add(approveRun);
+        foreach (var option in new Option[] { reviewer, reason, approveWorkspace, approveFormat }) approve.Options.Add(option);
+        approve.SetAction(result => RenderReviewDisposition(service.Approve(
+            result.GetValue(approveWorkspace) ?? Directory.GetCurrentDirectory(), result.GetValue(approveRun) ?? string.Empty,
+            result.GetValue(reviewer) ?? string.Empty, result.GetValue(reason) ?? string.Empty), result.GetValue(approveFormat)!));
+        review.Subcommands.Add(approve);
+        return review;
+    }
+
+    private static Command CreateQuestionsCommand(BrdService service, BrdQuestionGuidanceService guidanceService)
+    {
+        var questions = new Command("questions", "List and answer canonical BRD open questions.");
+        var list = new Command("list", "List structured and numbered open questions with their answer status.");
+        var listWorkspace = WorkspaceOption(); var listFormat = FormatOption();
+        list.Options.Add(listWorkspace); list.Options.Add(listFormat);
+        list.SetAction(parseResult =>
+        {
+            var selected = GetFormat(parseResult.GetValue(listFormat)); if (selected is null) return 2;
+            var result = service.Questions(parseResult.GetValue(listWorkspace) ?? Directory.GetCurrentDirectory());
+            RenderQuestions(result, selected); return result.ExitCode;
+        });
+        questions.Subcommands.Add(list);
+
+        var guidance = new Command("guidance", "Show every BRD question with deterministic context and current advisory suggestions.");
+        var guidanceWorkspace = WorkspaceOption(); var guidanceFormat = FormatOption();
+        guidance.Options.Add(guidanceWorkspace); guidance.Options.Add(guidanceFormat);
+        guidance.SetAction(parseResult => RenderQuestionGuidance(guidanceService.Guidance(
+            parseResult.GetValue(guidanceWorkspace) ?? Directory.GetCurrentDirectory()),
+            parseResult.GetValue(guidanceFormat)!));
+        questions.Subcommands.Add(guidance);
+
+        var suggest = new Command("suggest", "Generate digest-bound advisory answers from bounded BRD context without answering any question.");
+        var suggestionProvider = new Option<string?>("--provider") { Description = "AI provider; omission selects an available local provider only." };
+        var suggestionModel = new Option<string?>("--model") { Description = "Optional provider model." };
+        var allowRemote = new Option<bool>("--allow-remote") { Description = "Authorize sending the displayed BRD question context to the selected remote provider." };
+        var suggestWorkspace = WorkspaceOption(); var suggestFormat = FormatOption();
+        foreach (var option in new Option[] { suggestionProvider, suggestionModel, allowRemote, suggestWorkspace, suggestFormat }) suggest.Options.Add(option);
+        suggest.SetAction(parseResult => RenderQuestionGuidance(guidanceService.Suggest(
+            parseResult.GetValue(suggestWorkspace) ?? Directory.GetCurrentDirectory(),
+            parseResult.GetValue(suggestionProvider), parseResult.GetValue(suggestionModel),
+            parseResult.GetValue(allowRemote)), parseResult.GetValue(suggestFormat)!));
+        questions.Subcommands.Add(suggest);
+
+        var answer = new Command("answer", "Record one human answer and normalize the Open questions section.");
+        var id = new Argument<string>("question-id");
+        var value = new Option<string>("--answer") { Required = true, Description = "Substantive human answer." };
+        var actor = new Option<string>("--actor") { Required = true, Description = "Human actor recorded with the answer." };
+        var answerWorkspace = WorkspaceOption(); var answerFormat = FormatOption();
+        answer.Arguments.Add(id); answer.Options.Add(value); answer.Options.Add(actor);
+        answer.Options.Add(answerWorkspace); answer.Options.Add(answerFormat);
+        answer.SetAction(parseResult =>
+        {
+            var selected = GetFormat(parseResult.GetValue(answerFormat)); if (selected is null) return 2;
+            var result = service.AnswerQuestion(parseResult.GetValue(answerWorkspace) ?? Directory.GetCurrentDirectory(),
+                parseResult.GetValue(id) ?? string.Empty, parseResult.GetValue(value) ?? string.Empty,
+                parseResult.GetValue(actor) ?? string.Empty);
+            RenderQuestions(result, selected); return result.ExitCode;
+        });
+        questions.Subcommands.Add(answer);
+        return questions;
     }
 
     private static Command CreateFeatureCommand(BrdBacklogService service)
@@ -402,6 +537,101 @@ public sealed class BrdModule : ICisModule
         }
     }
 
+    private static void RenderQuestions(BrdQuestionsResult result, string format)
+    {
+        if (format == "json") { Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions)); return; }
+        if (format == "agent")
+        {
+            Console.WriteLine($"status={Clean(result.Status)};exitCode={result.ExitCode};applied={result.Applied.ToString().ToLowerInvariant()};questions={result.Questions.Count};unanswered={result.UnansweredCount};answerDigest={Clean(result.AnswerDigest)}");
+            Console.WriteLine($"workspace={Clean(result.WorkspacePath)}");
+            Console.WriteLine($"authority={Clean(result.AuthorityRepositoryId)}");
+            Console.WriteLine($"canonicalPath={Clean(result.CanonicalPath)}");
+            foreach (var question in result.Questions)
+                Console.WriteLine($"question={Clean(question.Id)};ordinal={question.Ordinal};status={Clean(question.Status)};text={Clean(question.Question)};actor={Clean(question.AnsweredBy)};answeredAt={Clean(question.AnsweredAtUtc)}");
+            foreach (var error in result.Errors) Console.WriteLine($"error={Clean(error)}");
+            return;
+        }
+        Console.WriteLine($"BRD open questions: {result.Status}; {result.UnansweredCount} unanswered of {result.Questions.Count}");
+        foreach (var question in result.Questions)
+            Console.WriteLine($"- {question.Id} [{question.Status}] {question.Question}{(question.Answer is null ? string.Empty : " — " + question.Answer)}");
+        foreach (var error in result.Errors) Console.WriteLine($"Error: {error}");
+    }
+
+    private static int RenderQuestionGuidance(BrdQuestionGuidanceResult result, string format)
+    {
+        if (format == "json") Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+        else if (format == "agent")
+        {
+            Console.WriteLine($"status={Clean(result.Status)};exitCode={result.ExitCode};questions={result.Questions.Count};unanswered={result.UnansweredCount};suggested={result.SuggestedCount};suggestionStatus={Clean(result.SuggestionStatus)};applied={result.Applied.ToString().ToLowerInvariant()}");
+            Console.WriteLine($"workspace={Clean(result.WorkspacePath)}");
+            Console.WriteLine($"canonicalPath={Clean(result.CanonicalPath)}");
+            Console.WriteLine($"suggestionProvider={Clean(result.SuggestionProvider)};suggestionModel={Clean(result.SuggestionModel)};suggestedAt={Clean(result.SuggestedAtUtc)}");
+            foreach (var question in result.Questions)
+            {
+                Console.WriteLine($"question={Clean(question.Id)};status={Clean(question.Status)};text={Clean(question.Question)};suggestionConfidence={Clean(question.SuggestionConfidence)};suggestedAnswer={Clean(question.SuggestedAnswer)};suggestionReason={Clean(question.SuggestionReason)}");
+                foreach (var context in question.Context)
+                    Console.WriteLine($"context={Clean(context.Id)};question={Clean(question.Id)};section={Clean(context.Section)};excerpt={Clean(context.Excerpt)}");
+            }
+            foreach (var error in result.Errors) Console.WriteLine($"error={Clean(error)}");
+        }
+        else
+        {
+            Console.WriteLine($"BRD question guidance: {result.Status}; {result.UnansweredCount} unanswered; {result.SuggestedCount} suggestions ({result.SuggestionStatus})");
+            foreach (var question in result.Questions)
+            {
+                Console.WriteLine($"- {question.Id} [{question.Status}] {question.Question}");
+                foreach (var context in question.Context) Console.WriteLine($"  - {context.Section}: {context.Excerpt}");
+                if (question.SuggestedAnswer is not null) Console.WriteLine($"  Suggested ({question.SuggestionConfidence}): {question.SuggestedAnswer}");
+            }
+            foreach (var error in result.Errors) Console.WriteLine($"Error: {error}");
+        }
+        return result.ExitCode;
+    }
+
+    private static int RenderReviewDisposition(BrdReviewDispositionResult result, string format)
+    {
+        if (format == "json") Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+        else if (format == "agent")
+        {
+            var approved = result.Disposition is not null && CisBrdReviewDispositionCodec.IsApproved(result.Disposition);
+            Console.WriteLine($"status={Clean(result.Status)};exitCode={result.ExitCode};applied={result.Applied.ToString().ToLowerInvariant()};pending={result.PendingCount};accepted={result.AcceptedCount};rejected={result.RejectedCount};approved={approved.ToString().ToLowerInvariant()}");
+            Console.WriteLine($"workspace={Clean(result.WorkspacePath)}");
+            Console.WriteLine($"canonicalPath={Clean(result.CanonicalPath)}");
+            foreach (var finding in result.Disposition?.Findings ?? [])
+                Console.WriteLine($"finding={Clean(finding.Id)};severity={Clean(finding.Severity)};decision={Clean(finding.Decision)};category={Clean(finding.Category)};location={Clean(finding.Location)};observation={Clean(finding.Observation)};recommendation={Clean(finding.Recommendation)};approvedRecommendation={Clean(finding.ApprovedRecommendation)};actor={Clean(finding.DecidedBy)};reason={Clean(finding.Rationale)}");
+            foreach (var error in result.Errors) Console.WriteLine($"error={Clean(error)}");
+        }
+        else
+        {
+            Console.WriteLine($"BRD review recommendations: {result.Status}; {result.PendingCount} pending, {result.AcceptedCount} accepted, {result.RejectedCount} rejected");
+            foreach (var finding in result.Disposition?.Findings ?? [])
+                Console.WriteLine($"- {finding.Id} [{finding.Severity}] {finding.Decision}: {(finding.Decision == "accepted" ? CisBrdReviewDispositionCodec.EffectiveRecommendation(finding) : finding.Recommendation)}");
+            foreach (var error in result.Errors) Console.WriteLine($"Error: {error}");
+        }
+        return result.ExitCode;
+    }
+
+    private static int RenderReviewFreshness(CisBrdReviewFreshness result, string format)
+    {
+        if (format == "json") Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+        else if (format == "agent")
+        {
+            Console.WriteLine($"status={Clean(result.Status)};exitCode={result.ExitCode};compatible={result.Compatible.ToString().ToLowerInvariant()};runId={Clean(result.ReviewRunId)}");
+            Console.WriteLine($"workspace={Clean(result.WorkspacePath)}");
+            Console.WriteLine($"canonicalPath={Clean(result.CanonicalPath)}");
+            Console.WriteLine($"reviewedSha256={Clean(result.ReviewedSha256)};currentSha256={Clean(result.CurrentSha256)}");
+            foreach (var error in result.Errors) Console.WriteLine($"error={Clean(error)}");
+        }
+        else
+        {
+            Console.WriteLine($"BRD review freshness: {result.Status}; compatible: {result.Compatible}");
+            Console.WriteLine($"Review run: {result.ReviewRunId ?? string.Empty}");
+            Console.WriteLine($"Canonical path: {result.CanonicalPath ?? string.Empty}");
+            foreach (var error in result.Errors) Console.WriteLine($"Error: {error}");
+        }
+        return result.ExitCode;
+    }
+
     private static void RenderBacklog(BrdBacklogResult result, string format)
     {
         if (format == "json") { Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions)); return; }
@@ -409,7 +639,8 @@ public sealed class BrdModule : ICisModule
         {
             Console.WriteLine($"status={Clean(result.Status)};exitCode={result.ExitCode};applied={result.Applied.ToString().ToLowerInvariant()};items={result.Items.Count};effectiveStatus={Clean(result.Validation?.EffectiveStatus)};valid={result.Validation?.Valid.ToString().ToLowerInvariant() ?? "false"};current={result.Validation?.Current.ToString().ToLowerInvariant() ?? "false"}");
             Console.WriteLine($"workspace={Clean(result.WorkspacePath)}"); Console.WriteLine($"authority={Clean(result.AuthorityRepositoryId)}"); Console.WriteLine($"canonicalPath={Clean(result.RelativePath)}");
-            foreach (var item in result.Items) Console.WriteLine($"item={Clean(item.Id)};requirement={Clean(item.RequirementId)};repositories={Clean(string.Join(',', item.Repositories))};frontendTypes={Clean(string.Join(',', item.FrontendTypes))};dependsOn={Clean(string.Join(',', item.DependsOn))};featureSpec={Clean(item.FeatureSpecification)};outcome={Clean(item.Outcome)}");
+            if (result.Validation?.Current != false)
+                foreach (var item in result.Items) Console.WriteLine($"item={Clean(item.Id)};requirement={Clean(item.RequirementId)};repositories={Clean(string.Join(',', item.Repositories))};frontendTypes={Clean(string.Join(',', item.FrontendTypes))};dependsOn={Clean(string.Join(',', item.DependsOn))};featureSpec={Clean(item.FeatureSpecification)};outcome={Clean(item.Outcome)}");
             foreach (var error in result.Validation?.Errors ?? []) Console.WriteLine($"validationError={Clean(error)}");
             foreach (var warning in result.Validation?.Warnings ?? []) Console.WriteLine($"validationWarning={Clean(warning)}");
             foreach (var error in result.Errors) Console.WriteLine($"error={Clean(error)}");
@@ -417,7 +648,8 @@ public sealed class BrdModule : ICisModule
         }
         Console.WriteLine($"BRD high-level backlog: {result.Status}; items: {result.Items.Count}");
         Console.WriteLine($"Effective status: {result.Validation?.EffectiveStatus ?? string.Empty}");
-        foreach (var item in result.Items) Console.WriteLine($"- {item.Id} [{item.RequirementId}] {item.Outcome}");
+        if (result.Validation?.Current != false)
+            foreach (var item in result.Items) Console.WriteLine($"- {item.Id} [{item.RequirementId}] {item.Outcome}");
         foreach (var error in result.Validation?.Errors ?? []) Console.WriteLine($"Validation error: {error}");
         foreach (var warning in result.Validation?.Warnings ?? []) Console.WriteLine($"Warning: {warning}");
         foreach (var error in result.Errors) Console.WriteLine($"Error: {error}");

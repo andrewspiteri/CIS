@@ -293,6 +293,21 @@ public sealed class StandardsGovernanceTests
     }
 
     [Fact]
+    public void Import_RejectsPlainHttpSourcesBeforeSendingARequest()
+    {
+        using var repository = StandardRepository.Create();
+        var handler = new ArchiveHandler(CreateZip(new Dictionary<string, string>()));
+        var service = new StandardImportService(new CisRepositoryContextResolver(), new DocumentationCatalogMerger(), new HttpClient(handler));
+
+        var result = service.Import(new StandardImportRequest(repository.Path, ["http://example.test/standards.zip"],
+            DryRun: true, Confirmed: false, Fix: false, Strict: true));
+
+        Assert.Equal(2, result.ExitCode);
+        Assert.Contains(result.Errors, error => error.Contains("HTTPS", StringComparison.OrdinalIgnoreCase));
+        Assert.Null(handler.RequestUri);
+    }
+
+    [Fact]
     public void AuditFix_QuarantinesOneDeterministicDuplicateAndPreservesHistoricalCatalogAndMappings()
     {
         using var repository = StandardRepository.Create();

@@ -9,6 +9,7 @@ internal static class RepositoryReferenceSeeder
     private static readonly HashSet<string> ExcludedDirectories = new(StringComparer.OrdinalIgnoreCase)
     {
         ".cis",
+        ".codex-tmp",
         ".git",
         ".idea",
         ".next",

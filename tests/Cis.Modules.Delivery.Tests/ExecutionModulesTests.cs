@@ -44,6 +44,55 @@ public sealed class ExecutionModulesTests
     }
 
     [Fact]
+    public void AiQualification_RequiresRuntimeProbeBenchmarkAndPromptRegressionBeforeApproval()
+    {
+        using var repository = ExecutionRepository.Create();
+        repository.Write("docs/cis/references/ai-routing-profile.md", """
+            | Capability | Provider | Model | Allow remote | Cache |
+            |---|---|---|---|---|
+            | index-card | fake | small | no | yes |
+            """);
+        repository.Write("docs/cis/references/ai-evaluation-datasets/index-card.md", """
+            ---
+            task_class: index-card
+            ---
+            | Case ID | Prompt | Required terms |
+            |---|---|---|
+            | summary | Summarize routing | route, summary |
+            """);
+        var service = new AiQualificationService([new FakeAiProvider()], new CisRepositoryContextResolver(), Clock);
+
+        var premature = service.Approve(repository.Path, "fake", "small", "index-card", "Andrew", "reviewed", true);
+        Assert.Equal(4, premature.ExitCode);
+
+        Assert.Equal(0, service.Probe(repository.Path, "fake", "small", false).ExitCode);
+        Assert.Equal(0, service.Benchmark(repository.Path, "fake", "small", "index-card", false).ExitCode);
+        Assert.Equal(0, service.PromptRegression(repository.Path, "fake", "small", "index-card",
+            "docs/cis/references/ai-evaluation-datasets/index-card.md", false).ExitCode);
+        var approved = service.Approve(repository.Path, "fake", "small", "index-card", "Andrew", "Runtime evidence reviewed", true);
+
+        Assert.Equal("approved", approved.Status);
+        Assert.Contains("Runtime evidence reviewed", File.ReadAllText(System.IO.Path.Combine(repository.Path,
+            "docs", "cis", "references", "ai-model-registry.md")));
+        var route = service.ExplainRoute(repository.Path, "index-card", false);
+        Assert.Equal("selected", Assert.Single(route.Routes).Decision);
+    }
+
+    [Fact]
+    public void AiQualification_DoesNotPersistGeneratedContent()
+    {
+        using var repository = ExecutionRepository.Create();
+        var service = new AiQualificationService([new FakeAiProvider()], new CisRepositoryContextResolver(), Clock);
+
+        Assert.Equal(0, service.Probe(repository.Path, "fake", "small", false).ExitCode);
+
+        var evidence = string.Join("\n", Directory.EnumerateFiles(System.IO.Path.Combine(repository.Path,
+            ".cis", "local", "ai", "qualification"), "*.json", SearchOption.AllDirectories).Select(File.ReadAllText));
+        Assert.DoesNotContain("CIS_PROBE_OK", evidence, StringComparison.Ordinal);
+        Assert.Contains("outputHash", evidence, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void GenerateRender_IsIdempotentAndRejectsRepositoryEscape()
     {
         using var repository = ExecutionRepository.Create();
@@ -59,6 +108,21 @@ public sealed class ExecutionModulesTests
         Assert.False(second.Applied);
         Assert.NotEqual(0, escaped.ExitCode);
         Assert.Equal("Hello Andrew.\n", File.ReadAllText(System.IO.Path.Combine(repository.Path, "generated", "hello.md")));
+    }
+
+    [Fact]
+    public void GenerateApplicable_RanksRepositoryTemplatesWithoutUsingAModel()
+    {
+        using var repository = ExecutionRepository.Create();
+        repository.Write("docs/cis/templates/api-endpoint.md", "# {{endpoint}}\n");
+        repository.Write("docs/cis/templates/release-notes.md", "# {{version}}\n");
+        var service = new GenerateService(new CisRepositoryContextResolver(), Clock);
+
+        var result = service.Applicable(repository.Path, "Add an API endpoint", ["src/api/orders.ts"]);
+
+        Assert.Equal("evaluated", result.Status);
+        Assert.Equal("api-endpoint.md", Assert.Single(result.Candidates, item => item.Template.Id == "api-endpoint.md").Template.Id);
+        Assert.Contains("endpoint", result.Candidates.First().RequiredModelFields);
     }
 
     [Fact]
@@ -97,6 +161,26 @@ public sealed class ExecutionModulesTests
 
         Assert.Equal("failed", result.Status);
         Assert.Equal("missing-prerequisite", Assert.Single(result.Run!.Steps).FailureKind);
+    }
+
+    [Fact]
+    public void WorkflowRun_ClassifiesScannerRuntimeFailureAsInfrastructure()
+    {
+        using var repository = ExecutionRepository.Create();
+        var command = OperatingSystem.IsWindows()
+            ? "cmd.exe /d /s /c \"echo Scanner process failed with exit code 1. & exit /b 1\""
+            : "/bin/sh -c \"echo Scanner process failed with exit code 1.; exit 1\"";
+        repository.Write("docs/cis/workflows/check.md", $"""
+            | Step | Command | Depends on | Continue on failure | Timeout seconds |
+            |---|---|---|---|---:|
+            | security | {command} | - | no | 30 |
+            """);
+        var service = new WorkflowService(new CisRepositoryContextResolver(), Clock);
+
+        var result = service.Run(repository.Path, "check", "RUN-SCANNER-INFRASTRUCTURE");
+
+        Assert.Equal("failed", result.Status);
+        Assert.Equal("infrastructure", Assert.Single(result.Run!.Steps).FailureKind);
     }
 
     [Fact]
@@ -202,6 +286,26 @@ public sealed class ExecutionModulesTests
     }
 
     [Fact]
+    public void AgentEvidence_StrictlyRequiresRoutingTestingGenerationAndUsageEvidence()
+    {
+        using var repository = ExecutionRepository.Create();
+        repository.Write(".cis/local/feedback/tool-usage.jsonl", "{}\n");
+        repository.Write("handoff.md", """
+            ## CIS tooling evidence
+            - `cis graph find Order --repo .`
+            - cis generate not applicable: no matching source scaffold
+            - `cis test reconcile --run RUN-42`
+            - run-id: RUN-42
+            """);
+        var service = new AgentEvidenceService(new CisRepositoryContextResolver());
+
+        var result = service.Validate(repository.Path, "handoff.md", ["src/Orders.cs"], true);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal("valid", result.Status);
+    }
+
+    [Fact]
     public void DiagnosticsAndLearning_RequireProfilesAndHumanReview()
     {
         using var repository = ExecutionRepository.Create();
@@ -225,6 +329,49 @@ public sealed class ExecutionModulesTests
         Assert.Equal("reviewed", learn.Review(repository.Path, proposal.Id, "approve", "andrew", "Evidence supports the bounded improvement.").Status);
         Assert.Equal("applied", learn.Apply(repository.Path, proposal.Id).Status);
         Assert.True(File.Exists(System.IO.Path.Combine(repository.Path, "docs", "cis", "references", "learning-history.md")));
+    }
+
+    [Fact]
+    public void Diagnostics_ParsesFiltersFingerprintsRedactsAndExportsStructuredJsonl()
+    {
+        using var repository = ExecutionRepository.Create();
+        repository.Write("logs/events.jsonl", """
+            {"timestamp":"2026-08-27T09:00:00Z","level":"Warning","message":"request 123 timeout token=abc","traceId":"trace-one"}
+            {"timestamp":"2026-08-27T09:01:00Z","level":"Error","message":"request 456 failed password=bad","traceId":"trace-two"}
+            """);
+        repository.Write("docs/cis/references/diagnostics-profile.md", """
+            | Source | Kind | Location | Enabled | Sensitive |
+            |---|---|---|---|---|
+            | runtime | jsonl | logs/events.jsonl | yes | no |
+            """);
+        var service = new DiagnosticsService(new CisRepositoryContextResolver(), Clock);
+
+        var warnings = service.Events(repository.Path, "runtime", 100, "warning", "timeout", null);
+        var exported = service.Export(repository.Path);
+
+        var item = Assert.Single(warnings.Events);
+        Assert.Equal("warning", item.Severity);
+        Assert.DoesNotContain("abc", item.Message, StringComparison.Ordinal);
+        Assert.NotNull(item.Fingerprint);
+        Assert.Equal("exported", exported.Status);
+        Assert.True(File.Exists(System.IO.Path.Combine(repository.Path, ".cis", "local", "diagnostics", "export", "events.jsonl")));
+    }
+
+    [Fact]
+    public void PolicyImpact_UsesExplicitTargetsAndWritesBoundedDerivedReports()
+    {
+        using var repository = ExecutionRepository.Create();
+        repository.Write("docs/cis/policies/api-policy.md", "---\ntargets: [api, testing]\n---\n# API policy\n");
+        repository.Write("src/OrdersApi.cs", "class OrdersApi {}\n");
+        repository.Write("tests/OrdersApiTests.cs", "class OrdersApiTests {}\n");
+        var service = new PolicyImpactService(new CisRepositoryContextResolver());
+
+        var result = service.Analyse(repository.Path, "docs/cis/policies/api-policy.md", true);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains(result.Candidates, item => item.Path == "src/OrdersApi.cs");
+        Assert.Contains(result.Candidates, item => item.Path == "tests/OrdersApiTests.cs");
+        Assert.True(File.Exists(System.IO.Path.Combine(repository.Path, result.MarkdownPath!.Replace('/', System.IO.Path.DirectorySeparatorChar))));
     }
 
     [Fact]
@@ -470,7 +617,10 @@ public sealed class ExecutionModulesTests
             "Only work performed after change creation is reported.",
             [])).Change);
         var participantBaseline = Assert.Single(change.RepositoryBaselines!, item => item.RepositoryId == "participant");
-        Assert.Contains(participantBaseline.WorkingTree!, item => item.Path == "src/preexisting.txt" && item.Status == "??");
+        var preexisting = Assert.Single(participantBaseline.WorkingTree!, item => item.Path == "src/preexisting.txt" && item.Status == "??");
+        var proposalPath = Path.Combine(authority.Path, "docs/cis/changes/CIS-0001/proposal.md");
+        File.WriteAllText(proposalPath, File.ReadAllText(proposalPath).Replace(
+            preexisting.Digest, preexisting.Digest.ToUpperInvariant(), StringComparison.Ordinal));
 
         authority.Write("docs/cis/changes/CIS-0001/plan.md", "---\nstatus: Approved\nfeature_spec_frontend: false\n---\n# Plan\n");
         authority.Write("docs/cis/changes/CIS-0001/verification.md", "---\nstatus: Draft\n---\n| Task | Check | Artifact | Result | Notes |\n|---|---|---|---|---|\n| WORK-001 | tests | `test` | Passed | exact |\n");
@@ -590,6 +740,24 @@ status: Draft
         public int Calls { get; private set; }
         public CisAiStatus GetStatus() => new([new("fake", "available", "local", true, [new("small")], null)]);
         public CisTextGenerationResult Generate(CisTextGenerationRequest request) { Calls++; return new("generated", "fake", "small", "short result", null, true); }
+    }
+
+    private sealed class FakeAiProvider : ICisAiProvider
+    {
+        public string Name => "fake";
+        public CisAiProviderStatus GetStatus() => new(Name, "available", "local", true, [new("small", 1)], null);
+        public CisTextGenerationResult Generate(CisTextGenerationRequest request, string model)
+        {
+            var text = request.Prompt switch
+            {
+                var value when value.Contains("CIS_PROBE_OK", StringComparison.Ordinal) => "CIS_PROBE_OK",
+                var value when value.Contains("CIS_TEXT_OK", StringComparison.Ordinal) => "CIS_TEXT_OK",
+                var value when value.Contains("JSON object", StringComparison.Ordinal) => "{\"cis\":\"ok\"}",
+                var value when value.Contains("three words", StringComparison.Ordinal) => "CIS MODEL READY",
+                _ => "route summary",
+            };
+            return new("generated", Name, model, text, null, true);
+        }
     }
 
     private sealed class ExecutionRepository : IDisposable

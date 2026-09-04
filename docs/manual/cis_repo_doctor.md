@@ -53,6 +53,13 @@ Loaded modules may contribute further checks through `ICisRepositoryDoctorCheck`
 - Draft document reporting; and
 - unresolved `TODO` marker reporting.
 
+The agent module diagnoses every enabled direct provider, even when no provider is the
+default. A missing executable is a warning. Inconclusive provider authentication is
+informational `CIS-AGENT-DOCTOR-008`, because ambient Desktop/App Server authentication
+may still work; its suggested fix starts `cis agent provider authenticate <provider>`
+when the provider exposes a native authentication capability. Doctor never receives a
+credential and does not start an authentication flow itself.
+
 The graph module contributes:
 
 - missing local graph generation reporting;

@@ -232,7 +232,7 @@ public sealed partial class TestingService
         var runRoot = Regex.IsMatch(runId, @"\A[A-Za-z0-9._-]{1,128}\z", RegexOptions.CultureInvariant)
             ? Path.Combine(suiteRoot, runId) : Path.Combine(suiteRoot, "__invalid-run-id__");
         var root = Directory.Exists(runRoot) ? runRoot : suiteRoot;
-        var paths = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
+        var paths = CisPathSafety.EnumerateFiles(root)
             .Where(path => IsCurrentDiagnosticArtifact(path, suite.Id, runStartedAt, diagnostics))
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase).ToArray();
         if (paths.Length > MaximumDiagnosticArtifactsPerSuite)
@@ -413,8 +413,8 @@ public sealed partial class TestingService
             var result = SafePath(context.RepositoryPath, suite.ResultPath, diagnostics, suite.Id, required: true);
             if (strict && result is not null)
             {
-                var local = Path.Combine(context.RepositoryPath, ".cis", "local") + Path.DirectorySeparatorChar;
-                if (!result.StartsWith(local, StringComparison.OrdinalIgnoreCase))
+                var local = Path.Combine(context.RepositoryPath, ".cis", "local");
+                if (!CisPathSafety.IsUnderRoot(local, result, allowRoot: false))
                     diagnostics.Add($"ERROR: Test suite '{suite.Id}' result path must remain under .cis/local/.");
             }
             SafePath(context.RepositoryPath, suite.CoveragePath, diagnostics, suite.Id, required: false);
@@ -432,12 +432,10 @@ public sealed partial class TestingService
         }
         try
         {
-            var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(repository));
-            var path = Path.GetFullPath(Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar)));
-            if (!path.Equals(root, StringComparison.OrdinalIgnoreCase)
-                && !path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            if (!CisPathSafety.TryResolveUnderRoot(repository, relative, out var path, allowRoot: directory)
+                || CisPathSafety.ContainsReparsePoint(repository, path))
             {
-                diagnostics.Add($"ERROR: Test suite '{suite}' path escapes the repository: {relative}");
+                diagnostics.Add($"ERROR: Test suite '{suite}' path escapes the repository or traverses a linked directory: {relative}");
                 return null;
             }
             return path;
@@ -506,10 +504,10 @@ public sealed partial class TestingService
     {
         try
         {
-            using var process = new Process { StartInfo = new ProcessStartInfo("git") { WorkingDirectory = repository, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true } };
-            process.StartInfo.ArgumentList.Add("rev-parse"); process.StartInfo.ArgumentList.Add("HEAD"); process.Start();
-            var output = process.StandardOutput.ReadToEnd(); process.WaitForExit(10_000);
-            return process.ExitCode == 0 ? output.Trim() : "unavailable";
+            var start = new ProcessStartInfo("git") { WorkingDirectory = repository };
+            start.ArgumentList.Add("rev-parse"); start.ArgumentList.Add("HEAD");
+            var result = CisProcessSafety.Run(start, TimeSpan.FromSeconds(10));
+            return !result.TimedOut && result.ExitCode == 0 ? result.StandardOutput.Trim() : "unavailable";
         }
         catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception or IOException)
         {

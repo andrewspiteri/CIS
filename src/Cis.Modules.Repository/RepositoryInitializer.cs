@@ -105,6 +105,69 @@ public sealed partial class RepositoryInitializer
         return plan.Result with { Status = "initialized", Applied = true };
     }
 
+    /// <summary>
+    /// Adds only missing governed contract/reference starters for a documentation authority.
+    /// Existing files are never rewritten, so this bounded reconciliation cannot collide with
+    /// human-managed technical, product, workflow, skill, or standard content.
+    /// </summary>
+    public RepositoryReferenceSeedResult SeedAuthorityReferences(string repositoryPath, string documentationRoot)
+    {
+        try
+        {
+            var root = Path.GetFullPath(repositoryPath);
+            var normalizedRoot = documentationRoot.Replace('\\', '/').Trim('/');
+            if (Path.IsPathRooted(documentationRoot) || normalizedRoot.Length == 0
+                || normalizedRoot.Split('/').Any(segment => segment is "" or "." or ".."))
+                return new("invalid", [], [], ["Documentation root must be a contained repository-relative path."], false);
+            var documentationPath = Path.GetFullPath(Path.Combine(root,
+                normalizedRoot.Replace('/', Path.DirectorySeparatorChar)));
+            if (!documentationPath.StartsWith(root + Path.DirectorySeparatorChar,
+                    OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+                return new("invalid", [], [], ["Documentation root escapes the authority repository."], false);
+
+            var repositoryId = CreateRepositoryId(root);
+            var classification = _classifier.Classify(root);
+            var binding = _starterBinder.Bind(root, repositoryId, normalizedRoot, classification, workspaceAuthority: true);
+            var selected = binding.Artifacts
+                .Where(artifact => artifact.Definition.StartsWith("reference.", StringComparison.Ordinal))
+                .ToArray();
+            var catalogPath = Path.Combine(documentationPath, "catalog.yml");
+            if (!File.Exists(catalogPath))
+                return new("invalid", [], [], ["The documentation catalogue is missing."], false);
+            var catalog = _catalogMerger.Merge(repositoryId, File.ReadAllText(catalogPath),
+                selected.Where(artifact => artifact.CatalogEntry is not null).Select(artifact => artifact.CatalogEntry!).ToArray());
+            if (catalog.Collisions.Count > 0)
+                return new("collision", [], catalog.Collisions, [], false);
+
+            var created = new List<string>();
+            foreach (var artifact in selected)
+            {
+                var path = Path.GetFullPath(Path.Combine(root,
+                    artifact.RelativePath.Replace('/', Path.DirectorySeparatorChar)));
+                if (!path.StartsWith(root + Path.DirectorySeparatorChar,
+                        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+                    return new("invalid", created, [], [$"Starter reference path escapes the repository: {artifact.RelativePath}"], created.Count > 0);
+                if (File.Exists(path)) continue;
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                using var writer = new StreamWriter(stream, new UTF8Encoding(false));
+                writer.Write(artifact.Content);
+                created.Add(artifact.RelativePath);
+            }
+            if (catalog.Changed)
+            {
+                var temporary = catalogPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                File.WriteAllText(temporary, catalog.Content, new UTF8Encoding(false));
+                File.Move(temporary, catalogPath, true);
+            }
+            return new(created.Count > 0 || catalog.Changed ? "initialized" : "unchanged", created, [], [], created.Count > 0 || catalog.Changed);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return new("invalid", [], [], [exception.Message], false);
+        }
+    }
+
     private InitializationPlan CreatePlan(RepositoryInitRequest request)
     {
         var errors = new List<string>();
@@ -125,7 +188,8 @@ public sealed partial class RepositoryInitializer
             return InvalidPlan(errors, repositoryPath);
         }
 
-        var repositoryId = CreateRepositoryId(repositoryPath!);
+        var existingContext = new CisRepositoryContextResolver().Resolve(repositoryPath!);
+        var repositoryId = existingContext.Context?.RepositoryId ?? CreateRepositoryId(repositoryPath!);
         var classification = _classifier.Classify(repositoryPath!);
         warnings.AddRange(classification.Warnings);
         var binding = _starterBinder.Bind(
@@ -604,6 +668,61 @@ public sealed partial class RepositoryInitializer
             return;
         }
 
+        if (artifact.Definition.Equals("reference.standards-conformance-matrix", StringComparison.Ordinal)
+            && previousArtifacts.ContainsKey(artifact.RelativePath)
+            && TryMergeConformanceRows(currentContent, artifact.Content, out var mergedContent))
+        {
+            if (!string.Equals(currentContent, mergedContent, StringComparison.Ordinal))
+            {
+                files.Add(new PlannedFile(
+                    artifact.RelativePath,
+                    absolutePath,
+                    mergedContent,
+                    currentContent,
+                    PlannedFileAction.Update));
+            }
+            else
+            {
+                retained.Add(artifact.RelativePath);
+            }
+
+            nextArtifacts[artifact.RelativePath] = next with
+            {
+                AppliedHash = ComputeHash(mergedContent),
+                Ownership = "human",
+            };
+            return;
+        }
+
+        // Some starter documents become canonical, human-governed authorities after a
+        // dedicated CIS workflow has initialized them. Repository init must not mistake
+        // that governed evolution for an arbitrary edit when its starter later changes.
+        if (IsGovernedCanonicalEvolution(artifact, currentContent))
+        {
+            retained.Add(artifact.RelativePath);
+            nextArtifacts[artifact.RelativePath] = next with
+            {
+                AppliedHash = currentHash,
+                Ownership = "human",
+            };
+            return;
+        }
+
+        // Source evidence is seeded by init but becomes a human-governed append-only registry.
+        // Repositories initialized before the seed was introduced may already have a valid
+        // registry created by `cis references source import`; adopt only its bounded schema.
+        if (!previousArtifacts.ContainsKey(artifact.RelativePath)
+            && IsAdoptableDynamicArtifact(artifact, currentContent))
+        {
+            retained.Add(artifact.RelativePath);
+            nextArtifacts[artifact.RelativePath] = next with
+            {
+                AppliedHash = currentHash,
+                Ownership = "human",
+            };
+            return;
+        }
+
         if (previousArtifacts.TryGetValue(artifact.RelativePath, out var owned)
             && string.Equals(owned.Ownership, "human", StringComparison.OrdinalIgnoreCase))
         {
@@ -655,6 +774,99 @@ public sealed partial class RepositoryInitializer
         }
 
         collisions.Add($"{artifact.RelativePath} was edited and also requires a generated update; merge it manually.");
+    }
+
+    private static bool IsGovernedCanonicalEvolution(RepositoryStarterArtifact artifact, string content)
+    {
+        if (!artifact.Definition.Equals("specification.technical-intent", StringComparison.Ordinal)) return false;
+
+        var normalized = content.Replace("\r\n", "\n", StringComparison.Ordinal);
+        if (!Regex.IsMatch(
+                normalized,
+                "(?m)^\\s*technical_intent_schema:\\s*(?:2|3)\\s*$",
+                RegexOptions.CultureInvariant))
+            return false;
+
+        return normalized.Contains("<!-- cis:technical-intent-baseline:start -->", StringComparison.Ordinal)
+            && normalized.Contains("<!-- cis:technical-intent-baseline:end -->", StringComparison.Ordinal)
+            && normalized.Contains("<!-- cis:technical-intent-business-evidence:start -->", StringComparison.Ordinal)
+            && normalized.Contains("<!-- cis:technical-intent-business-evidence:end -->", StringComparison.Ordinal);
+    }
+
+    private static bool IsAdoptableDynamicArtifact(RepositoryStarterArtifact artifact, string content)
+    {
+        if (!artifact.Definition.Equals("reference.source-evidence", StringComparison.Ordinal)) return false;
+        var normalized = content.Replace("\r\n", "\n", StringComparison.Ordinal);
+        if (!normalized.StartsWith("---\n", StringComparison.Ordinal)) return false;
+        var frontmatterEnd = normalized.IndexOf("\n---\n", 4, StringComparison.Ordinal);
+        if (frontmatterEnd < 0) return false;
+        var frontmatter = normalized[4..frontmatterEnd].Split('\n');
+        if (!frontmatter.Any(line => line.Trim().Equals("type: source-evidence-registry", StringComparison.OrdinalIgnoreCase)))
+            return false;
+
+        var lines = normalized.Split('\n');
+        var headerIndex = Array.FindIndex(lines, line =>
+            SourceEvidenceCells(line) is ["ID", "Source path", "Format", "Registered SHA-256", "Assessment", "Actor", "Registered at (UTC)", "Rationale"]);
+        if (headerIndex < 0 || headerIndex + 1 >= lines.Length || !IsMarkdownSeparator(lines[headerIndex + 1])) return false;
+        foreach (var line in lines.Skip(headerIndex + 2).Where(line => line.TrimStart().StartsWith('|')))
+        {
+            var cells = SourceEvidenceCells(line);
+            if (cells.Length != 8
+                || !Regex.IsMatch(cells[0], "^BRD-SRC-[A-Za-z0-9-]{6,80}$", RegexOptions.CultureInvariant)
+                || string.IsNullOrWhiteSpace(cells[1])
+                || cells[2] is not ("docx" or "md" or "txt" or "repository")
+                || !Regex.IsMatch(cells[3], "^sha256:[0-9a-fA-F]{64}$", RegexOptions.CultureInvariant)
+                || cells[4] is not ("Unreviewed" or "Reference" or "Adopted" or "Rejected")
+                || string.IsNullOrWhiteSpace(cells[5])
+                || !DateTimeOffset.TryParse(cells[6], out _)
+                || string.IsNullOrWhiteSpace(cells[7]))
+                return false;
+        }
+        return true;
+    }
+
+    private static string[] SourceEvidenceCells(string line)
+        => line.Trim().Trim('|').Split('|').Select(cell => cell.Trim()).ToArray();
+
+    private static bool IsMarkdownSeparator(string line)
+    {
+        var cells = SourceEvidenceCells(line);
+        return cells.Length == 8 && cells.All(cell => cell.Length >= 3
+            && cell.Trim(':').All(character => character == '-'));
+    }
+
+    private static bool TryMergeConformanceRows(string current, string generated, out string merged)
+    {
+        merged = current;
+        if (!current.Contains("| Standard ID | Rule ID |", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        static (string Key, string Line)? ParseRuleRow(string line)
+        {
+            if (!line.TrimStart().StartsWith('|')) return null;
+            var cells = line.Trim().Trim('|').Split('|').Select(cell => cell.Trim()).ToArray();
+            if (cells.Length < 2
+                || cells[0].Equals("Standard ID", StringComparison.OrdinalIgnoreCase)
+                || cells.All(cell => cell.All(character => character is '-' or ':' or ' '))
+                || !cells[0].Contains(":standard:", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            return ($"{cells[0]}|{cells[1]}", line.TrimEnd());
+        }
+
+        var currentKeys = current.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(ParseRuleRow).Where(row => row is not null)
+            .Select(row => row!.Value.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var missing = generated.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(ParseRuleRow).Where(row => row is not null && !currentKeys.Contains(row.Value.Key))
+            .Select(row => row!.Value.Line).ToArray();
+        if (missing.Length == 0) return true;
+
+        var newline = current.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+        merged = current.TrimEnd('\r', '\n') + newline + string.Join(newline, missing) + newline;
+        return true;
     }
 
     private static void AddPreservedFile(

@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><Description>GitHub Actions transport for provider-neutral CIS CI investigation.</Description></PropertyGroup>
+  <ItemGroup><ProjectReference Include="..\Cis.Abstractions\Cis.Abstractions.csproj" /></ItemGroup>
+</Project>

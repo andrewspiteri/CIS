@@ -86,11 +86,7 @@ public sealed class SecuritySuiteProfileDoctorCheck : ICisRepositoryDoctorCheck
                         .Select(match => $"{Relative(context, path)}:{lineNumber} {match.Value}"));
                 }
             }
-        foreach (var path in Directory.EnumerateFiles(context.RepositoryPath, "Dockerfile*", SearchOption.AllDirectories)
-                     .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}.git{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase)
-                         && !path.Contains($"{Path.DirectorySeparatorChar}node_modules{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase)
-                         && !path.Contains($"{Path.DirectorySeparatorChar}.stryker-tmp{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase)
-                         && !path.Contains($"{Path.DirectorySeparatorChar}.cis{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase)))
+        foreach (var path in RepositorySecurityStarter.EnumerateDockerfiles(context.RepositoryPath))
         {
             var lineNumber = 0;
             foreach (var line in File.ReadLines(path))
@@ -148,9 +144,8 @@ public sealed class SecuritySuiteProfileDoctorCheck : ICisRepositoryDoctorCheck
     private static string? Resolve(string repository, string relative)
     {
         if (string.IsNullOrWhiteSpace(relative) || Path.IsPathRooted(relative)) return null;
-        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(repository));
-        var full = Path.GetFullPath(Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar)));
-        return full.Equals(root, StringComparison.OrdinalIgnoreCase) || full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ? full : null;
+        return CisPathSafety.TryResolveUnderRoot(repository, relative, out var full, allowRoot: relative.Trim() == ".")
+               && !CisPathSafety.ContainsReparsePoint(repository, full) ? full : null;
     }
     private static string Relative(CisRepositoryContext context, string path) => Path.GetRelativePath(context.RepositoryPath, path).Replace('\\', '/');
     private static CisRepositoryDoctorFinding Finding(string code, string severity, string message, IReadOnlyList<string> evidence, string fix)

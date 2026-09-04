@@ -6,11 +6,14 @@ public sealed class GraphSnapshotReader : ICisGraphSnapshotReader
 {
     private readonly ICisRepositoryContextResolver _resolver;
     private readonly SqliteGraphStore _store;
+    private readonly IReadOnlyList<string> _expectedExtractors;
 
-    public GraphSnapshotReader(ICisRepositoryContextResolver resolver, SqliteGraphStore? store = null)
+    public GraphSnapshotReader(ICisRepositoryContextResolver resolver, SqliteGraphStore? store = null,
+        IEnumerable<ICisGraphAugmenter>? augmenters = null)
     {
         _resolver = resolver;
         _store = store ?? new SqliteGraphStore();
+        _expectedExtractors = GraphBuilder.ComposeExtractors(augmenters);
     }
 
     public CisGraphSnapshotReadResult Read(string repositoryPath)
@@ -84,10 +87,10 @@ public sealed class GraphSnapshotReader : ICisGraphSnapshotReader
         return capabilities.ToArray();
     }
 
-    private static IReadOnlyList<string> FindStaleInputs(string repositoryPath, CisGraphManifest manifest)
+    private IReadOnlyList<string> FindStaleInputs(string repositoryPath, CisGraphManifest manifest)
     {
         var stale = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (!manifest.Extractors.SequenceEqual(GraphBuilder.CurrentExtractors, StringComparer.Ordinal)) stale.Add("extractor-set-changed");
+        if (!manifest.Extractors.SequenceEqual(_expectedExtractors, StringComparer.Ordinal)) stale.Add("extractor-set-changed");
         var known = manifest.Inputs.Select(input => input.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var input in manifest.Inputs)
         {

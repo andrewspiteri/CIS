@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using Cis.Abstractions;
 
 namespace Cis.Modules.Design;
 
@@ -12,6 +13,8 @@ public interface IDesignProcessRunner
 
 public sealed class NodeDesignProcessRunner : IDesignProcessRunner
 {
+    public static readonly TimeSpan RendererTimeout = TimeSpan.FromMinutes(5);
+
     public DesignProcessResult Run(string repositoryPath, string rendererPath)
     {
         var start = new ProcessStartInfo("node")
@@ -26,12 +29,11 @@ public sealed class NodeDesignProcessRunner : IDesignProcessRunner
         var sharpNodeModules = FindSharpNodeModules(repositoryPath, rendererPath);
         if (sharpNodeModules is not null)
             start.Environment["CIS_SHARP_NODE_MODULES"] = sharpNodeModules;
-        using var process = Process.Start(start)
-            ?? throw new InvalidOperationException("Node renderer process could not be started.");
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return new(process.ExitCode, output, error);
+        var result = CisProcessSafety.Run(start, RendererTimeout, maximumCharactersPerStream: 2_097_152);
+        var error = result.StandardError;
+        if (result.TimedOut) error = $"Renderer timed out after {RendererTimeout.TotalMinutes:0} minutes.\n{error}";
+        if (result.OutputTruncated) error = $"{error}\nRenderer output exceeded the retained-output limit.".TrimStart();
+        return new(result.ExitCode ?? -1, result.StandardOutput, error);
     }
 
     public static string? FindSharpNodeModules(string repositoryPath, string rendererPath)

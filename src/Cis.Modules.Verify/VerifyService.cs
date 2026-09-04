@@ -1,4 +1,6 @@
+using System.ComponentModel;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -147,7 +149,7 @@ public sealed class VerifyService
             findings.Any(x => x.Severity == "error") ? "invalid" : "valid");
     }
 
-    private void ValidateReconciledSecurity(CisRepositoryContext context, ICollection<VerifyFinding> findings)
+    private void ValidateReconciledSecurity(CisRepositoryContext context, List<VerifyFinding> findings)
     {
         var result = _security!.Status(context.RepositoryPath, null);
         if (result.Manifest is null)
@@ -166,12 +168,15 @@ public sealed class VerifyService
     {
         try
         {
-            using var process = new Process { StartInfo = new("git") { WorkingDirectory = repository, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true } };
-            process.StartInfo.ArgumentList.Add("rev-parse"); process.StartInfo.ArgumentList.Add("HEAD");
-            process.Start(); var output = process.StandardOutput.ReadToEnd(); process.WaitForExit(GitCommandTimeoutMilliseconds);
-            return process.ExitCode == 0 ? output.Trim() : "unavailable";
+            var start = new ProcessStartInfo("git") { WorkingDirectory = repository };
+            start.ArgumentList.Add("rev-parse"); start.ArgumentList.Add("HEAD");
+            var result = CisProcessSafety.Run(start, TimeSpan.FromMilliseconds(GitCommandTimeoutMilliseconds));
+            return !result.TimedOut && result.ExitCode == 0 ? result.StandardOutput.Trim() : "unavailable";
         }
-        catch { return "unavailable"; }
+        catch (Win32Exception) { return "unavailable"; }
+        catch (InvalidOperationException) { return "unavailable"; }
+        catch (IOException) { return "unavailable"; }
+        catch (UnauthorizedAccessException) { return "unavailable"; }
     }
 
     public VerifyResult Evidence(string repo, string change, string task, string check, string artifact, string result, string notes)
@@ -340,7 +345,7 @@ public sealed class VerifyService
         return context is not null && dossier is not null && findings.Count == 0;
     }
 
-    private static IReadOnlyList<VerifyFileChange> GitDiff(
+    private static VerifyFileChange[] GitDiff(
         string repo,
         string id,
         string baseline,
@@ -367,7 +372,7 @@ public sealed class VerifyService
             .Where(path => !current.TryGetValue(path, out var currentFile)
                 || !initial.TryGetValue(path, out var initialFile)
                 || !currentFile.Status.Equals(initialFile.Status, StringComparison.Ordinal)
-                || !currentFile.Digest.Equals(initialFile.Digest, StringComparison.Ordinal))
+                || !currentFile.Digest.Equals(initialFile.Digest, StringComparison.OrdinalIgnoreCase))
             .Select(path => current.TryGetValue(path, out var file)
                 ? new VerifyFileChange(file.Status, file.Path, id, file.Digest)
                 : new VerifyFileChange("D", path, id, FileDigest(repo, path)))
@@ -382,6 +387,7 @@ public sealed class VerifyService
         return new(status, normalized, digest);
     }
 
+    [SuppressMessage("Globalization", "CA1308", Justification = "Lowercase hexadecimal preserves the existing canonical digest representation.")]
     private static string FileDigest(string repositoryPath, string normalizedPath)
     {
         var absolute = Path.Combine(repositoryPath, normalizedPath.Replace('/', Path.DirectorySeparatorChar));
@@ -394,23 +400,17 @@ public sealed class VerifyService
     {
         try
         {
-            using var process = new Process { StartInfo = new("git") { WorkingDirectory = repo, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true } };
-            foreach (var arg in args) process.StartInfo.ArgumentList.Add(arg);
-            process.Start();
-            var outputTask = process.StandardOutput.ReadToEndAsync();
-            var errorTask = process.StandardError.ReadToEndAsync();
-            if (!process.WaitForExit(GitCommandTimeoutMilliseconds))
+            var start = new ProcessStartInfo("git") { WorkingDirectory = repo };
+            foreach (var arg in args) start.ArgumentList.Add(arg);
+            var result = CisProcessSafety.Run(start, TimeSpan.FromMilliseconds(GitCommandTimeoutMilliseconds));
+            if (result.TimedOut)
             {
-                process.Kill(entireProcessTree: true);
-                process.WaitForExit();
                 findings.Add(new("error", "CIS-VERIFY-GIT-TIMEOUT",
                     $"Git command exceeded {GitCommandTimeoutMilliseconds / 1000} seconds: git {string.Join(' ', args)}", id));
                 return string.Empty;
             }
-            var output = outputTask.GetAwaiter().GetResult();
-            var error = errorTask.GetAwaiter().GetResult();
-            if (process.ExitCode == 0) return output;
-            findings.Add(new("error", "CIS-VERIFY-GIT", error.Trim(), id));
+            if (result.ExitCode == 0) return result.StandardOutput;
+            findings.Add(new("error", "CIS-VERIFY-GIT", result.StandardError.Trim(), id));
         }
         catch (Exception e) when (e is IOException or System.ComponentModel.Win32Exception) { findings.Add(new("error", "CIS-VERIFY-GIT", e.Message, id)); }
         return string.Empty;
@@ -430,12 +430,12 @@ public sealed class VerifyService
             foreach (var line in lines)
             {
                 if (Regex.IsMatch(line, @"^##\s+Required outputs\s*$", RegexOptions.IgnoreCase)) { inOutputs = true; continue; }
-                if (inOutputs && line.StartsWith("## ")) inOutputs = false;
+                if (inOutputs && line.StartsWith("## ", StringComparison.Ordinal)) inOutputs = false;
                 var explicitTarget = Regex.IsMatch(line, @"^\s*(?:[-*]\s*)?Targets?(?:\s+files?|\s+paths?)?\s*[:`]", RegexOptions.IgnoreCase);
                 if (!inOutputs && !explicitTarget) continue;
                 foreach (Match m in Regex.Matches(line, @"`(?<p>[^`\r\n]+[/\\][^`\r\n]+)`"))
                 {
-                    var value = m.Groups["p"].Value; if (value.Contains(' ') || Uri.TryCreate(value, UriKind.Absolute, out _)) continue;
+                    var value = m.Groups["p"].Value; if (value.Contains(' ', StringComparison.Ordinal) || Uri.TryCreate(value, UriKind.Absolute, out _)) continue;
                     var split = value.IndexOf("::", StringComparison.Ordinal);
                     paths.Add(split > 0 ? new(value[..split], Normalize(value[(split + 2)..])) : new(null, Normalize(value)));
                 }
@@ -463,7 +463,7 @@ public sealed class VerifyService
             && !Regex.IsMatch(text, @"(?m)^\s*-\s*\[\s\]\s+") && Regex.IsMatch(text, @"(?im)^\|[^\r\n]*\|\s*Passed\s*\|");
     }
     private void ValidateFeatureAuthority(CisRepositoryContext context, string planPath, string planText,
-        ICollection<VerifyFinding> findings)
+        List<VerifyFinding> findings)
     {
         var match = Regex.Match(planText, @"(?im)^feature_spec_path:\s*(?<value>[^\r\n]+)$");
         if (!match.Success) return;
@@ -486,7 +486,7 @@ public sealed class VerifyService
         findings.Add(new("error", "CIS-VERIFY-FEATURE-AUTHORITY", message, Relative(context, planPath)));
     }
     private void ValidateReconciledTesting(CisRepositoryContext context, string change, string verificationPath,
-        ICollection<VerifyFinding> findings)
+        List<VerifyFinding> findings)
     {
         var text = File.Exists(verificationPath) ? File.ReadAllText(verificationPath) : string.Empty;
         var run = Regex.Match(text, @"(?im)^test_run_id:\s*(?<value>[^\r\n]+)$").Groups["value"].Value.Trim().Trim('"', '\'');
@@ -519,11 +519,14 @@ public sealed class VerifyService
     }
     private static VerifyResult Invalid(VerifyResult result, string code, string message) => result with { Status = "invalid", Findings = result.Findings.Append(new VerifyFinding("error", code, message, null)).ToArray() };
     private static string Digest(IEnumerable<VerifyFileChange> files) => Sha(string.Join("\n", files.Select(x => $"{x.RepositoryId}\t{x.Status}\t{x.Path}\t{x.ContentDigest}")));
-    private static IReadOnlyList<string> ReadEvidence(string path) => File.Exists(path) ? File.ReadLines(path).Where(x => x.TrimStart().StartsWith('|') && !x.Contains("---")).ToArray() : [];
+    private static string[] ReadEvidence(string path) => File.Exists(path)
+        ? File.ReadLines(path).Where(x => x.TrimStart().StartsWith('|') && !x.Contains("---", StringComparison.Ordinal)).ToArray()
+        : [];
     private static string SnapshotPath(CisRepositoryContext c, string id) => Path.Combine(c.RepositoryPath, RootPath.Replace('/', Path.DirectorySeparatorChar), id, "snapshot.json");
     private static string Relative(CisRepositoryContext c, string path) => Path.GetRelativePath(c.RepositoryPath, path).Replace(Path.DirectorySeparatorChar, '/');
     private static string Normalize(string path) => path.Replace('\\', '/').TrimStart('.', '/');
     private static string Esc(string? value) => (value ?? "").Replace('|', '/').Replace('\r', ' ').Replace('\n', ' ').Trim();
+    [SuppressMessage("Globalization", "CA1308", Justification = "Lowercase hexadecimal preserves the existing canonical digest representation.")]
     private static string Sha(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
     private static void Write(string path, string text) { Directory.CreateDirectory(Path.GetDirectoryName(path)!); var temp = path + ".tmp"; File.WriteAllText(temp, text); File.Move(temp, path, true); }
     private static VerifyResult New(CisRepositoryContext? c, string id, VerifySnapshot? s, IReadOnlyList<VerifyFinding> f, IReadOnlyList<string> e, bool a, string status) => new(status, c?.RepositoryPath, id, s, f, e, a);

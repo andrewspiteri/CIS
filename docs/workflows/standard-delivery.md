@@ -16,11 +16,11 @@ CIS executes these arguments without a shell and checkpoints each step under
 
 | Step | Command | Working directory | Test suites | Depends on | Continue on failure | Timeout seconds |
 |---|---|---|---|---|---|---:|
-| build | dotnet build ChangeImpactStudio.slnx --no-restore | . | - | - | no | 1200 |
-| dotnet-tests | dotnet test ChangeImpactStudio.slnx --no-build --no-restore --logger trx;LogFileName=dotnet-tests.trx --results-directory .cis/local/testing/results | . | dotnet-tests | build | no | 3600 |
+| build | dotnet build ChangeImpactStudio.slnx -c Release --no-restore | . | - | - | no | 1200 |
+| dotnet-tests | pwsh tools/run-dotnet-tests.ps1 | . | dotnet-tests | build | no | 3600 |
 | extension-syntax | node --check vscode-extension/extension.js | . | - | build | no | 300 |
-| extension-tests | node --test vscode-extension/test/*.test.js | . | - | extension-syntax | no | 600 |
+| extension-tests | pwsh tools/run-vscode-extension-tests.ps1 | . | vscode-extension-tests | extension-syntax | no | 600 |
 | cis-sast | node tools/run-security-scan.mjs sast | . | cis-sast | build | no | 1800 |
 | cis-secrets | node tools/run-security-scan.mjs secrets | . | cis-secrets | build | no | 900 |
 | cis-filesystem | node tools/run-security-scan.mjs filesystem | . | cis-filesystem | build | no | 1800 |
-| docs | cis docs validate --root docs --strict | . | - | dotnet-tests,cis-sast,cis-secrets,cis-filesystem | no | 600 |
+| docs | dotnet src/Cis.Host/bin/Release/net10.0/cis.dll docs validate --repo . --strict | . | - | dotnet-tests,cis-sast,cis-secrets,cis-filesystem | no | 600 |

@@ -42,16 +42,24 @@ public sealed class RepositoryImporter
         }
 
         var workspace = workspaceResolution.Workspace!;
+        var bootstrappingAuthority = workspace.Repositories.Count == 0
+            && sources.Any(source => PathComparer.Equals(source, workspace.WorkspacePath));
+        bool IsAuthoritySource(string source) =>
+            bootstrappingAuthority && PathComparer.Equals(source, workspace.WorkspacePath)
+            || workspace.Repositories.Any(repository => repository.Role == "authority"
+                && PathComparer.Equals(repository.RepositoryPath, source));
         var entries = new List<RepositoryImportEntryResult>();
         var plannedRepositories = new List<CisWorkspaceRepository>();
         var initializationPlans = new List<(string Source, RepositoryInitResult Result)>();
         foreach (var source in sources)
         {
+            var isAuthoritySource = IsAuthoritySource(source);
             var plan = _initializer.Initialize(new RepositoryInitRequest(
                 source,
                 request.DocumentationRoot,
                 DryRun: true,
-                Confirmed: true));
+                Confirmed: true,
+                WorkspaceAuthority: isAuthoritySource));
             initializationPlans.Add((source, plan));
             warnings.AddRange(plan.Warnings.Select(warning => $"{source}: {warning}"));
             errors.AddRange(plan.Errors.Select(error => $"{source}: {error}"));
@@ -72,7 +80,8 @@ public sealed class RepositoryImporter
             plannedRepositories.Add(new CisWorkspaceRepository(
                 id,
                 source,
-                request.DocumentationRoot.Replace('\\', '/').Trim('/')));
+                request.DocumentationRoot.Replace('\\', '/').Trim('/'),
+                isAuthoritySource ? "authority" : "participant"));
         }
 
         DetectImportCollisions(workspace.Repositories, plannedRepositories, collisions);
@@ -125,11 +134,13 @@ public sealed class RepositoryImporter
         var appliedEntries = new List<RepositoryImportEntryResult>();
         foreach (var plan in initializationPlans)
         {
+            var isAuthoritySource = IsAuthoritySource(plan.Source);
             var result = _initializer.Initialize(new RepositoryInitRequest(
                 plan.Source,
                 request.DocumentationRoot,
                 DryRun: false,
-                Confirmed: true));
+                Confirmed: true,
+                WorkspaceAuthority: isAuthoritySource));
             if (result.ExitCode != 0)
             {
                 errors.AddRange(result.Errors.Select(error => $"{plan.Source}: {error}"));

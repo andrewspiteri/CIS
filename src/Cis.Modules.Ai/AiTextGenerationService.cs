@@ -4,9 +4,9 @@ namespace Cis.Modules.Ai;
 
 public sealed class AiTextGenerationService : ICisTextGenerationService
 {
-    private readonly IReadOnlyList<IAiProvider> _providers;
+    private readonly IReadOnlyList<ICisAiProvider> _providers;
 
-    internal AiTextGenerationService(IEnumerable<IAiProvider> providers)
+    public AiTextGenerationService(IEnumerable<ICisAiProvider> providers)
     {
         _providers = providers.ToArray();
     }
@@ -49,8 +49,8 @@ public sealed class AiTextGenerationService : ICisTextGenerationService
         return selected.Value.Provider.Generate(request, model);
     }
 
-    private static (IAiProvider Provider, CisAiProviderStatus Status)? SelectProvider(
-        IReadOnlyList<(IAiProvider Provider, CisAiProviderStatus Status)> providers,
+    private static (ICisAiProvider Provider, CisAiProviderStatus Status)? SelectProvider(
+        IReadOnlyList<(ICisAiProvider Provider, CisAiProviderStatus Status)> providers,
         string? requested)
     {
         if (!string.IsNullOrWhiteSpace(requested))

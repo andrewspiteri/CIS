@@ -16,6 +16,7 @@ cis brd backlog validate [--workspace <path>] [--format <human|json|agent>]
 ```
 
 Validates one-to-one functional BRD coverage, source hashes, affected repositories,
-frontend types, dependencies, placeholders, approval digest, and technical-intent
-readiness. Invalid structure exits `5`; invalid workspace/authority exits `2`.
-
+frontend types, dependencies, placeholders, approval digest, technical-intent
+readiness, and the Active overall solution-design bundle. Invalid structure exits
+`5`; a structurally valid backlog made non-current by an upstream gate reports
+`blocked` and exits `5`; invalid workspace/authority exits `2`.

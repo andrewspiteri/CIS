@@ -168,6 +168,22 @@ public sealed class TestingServiceTests
     }
 
     [Fact]
+    public void StrykerAdapter_AcceptsAHashBoundPassingGateDespiteDisposedSurvivors()
+    {
+        using var repository = TestRepository.Create();
+        repository.Write(".cis/local/results/stryker.json", """{"schemaVersion":"2","thresholds":{"high":85,"low":80},"cisGate":{"break":80,"score":80,"passed":true,"sourceDigest":"abc"},"files":{"src/app.cs":{"mutants":[{"status":"Killed"},{"status":"Killed"},{"status":"Killed"},{"status":"Killed"},{"status":"Survived"}]}}}""");
+        var execution = new StrykerJsonResultAdapter().Read(new(repository.Path,
+            Suite("api-mutation", "mutation", "stryker-json", ".cis/local/results/stryker.json"),
+            Path.Combine(repository.Path, ".cis/local/results/stryker.json"), null, null));
+
+        Assert.Equal("passed", execution.Status);
+        Assert.Equal(80, execution.Mutation!.Score);
+        Assert.Equal(85, execution.Mutation.HighThreshold);
+        Assert.Equal(80, execution.Mutation.LowThreshold);
+        Assert.Equal(80, execution.Mutation.BreakThreshold);
+    }
+
+    [Fact]
     public void MalformedAdapterEvidence_IsRejectedByReconcileBoundary()
     {
         using var repository = TestRepository.Create();

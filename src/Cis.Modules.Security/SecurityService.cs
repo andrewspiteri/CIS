@@ -211,9 +211,10 @@ public sealed partial class SecurityService
         var diagnostics = status.Diagnostics.ToList();
         var deterministic = DeterministicSummary(status.Manifest);
         var output = deterministic;
-        string provider = "none", model = "none", generationStatus = noLlm ? "disabled" : "unavailable";
+        var hasFindings = status.Manifest.Suites.Any(suite => suite.Findings.Count > 0);
+        string provider = "none", model = "none", generationStatus = noLlm ? "disabled" : hasFindings ? "unavailable" : "not-required";
         var prompt = SecurityPrompt(status.Manifest);
-        if (!noLlm)
+        if (!noLlm && hasFindings)
         {
             var generated = _textGeneration.Generate(new(prompt, AllowRemote: false, TimeoutSeconds: 120, MaxOutputTokens: 700));
             generationStatus = generated.Status; provider = generated.Provider ?? "none"; model = generated.Model ?? "none";
@@ -257,6 +258,8 @@ public sealed partial class SecurityService
         var lines = new List<string> { $"# Security run {manifest.RunId}", "", $"- Status: **{manifest.Status}**", $"- Revision: `{manifest.RepositoryRevision}`", "", "| Suite | Category | Status | Critical | High | Medium | Low | Accepted |", "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |" };
         lines.AddRange(manifest.Suites.Select(item => $"| {item.SuiteId} | {item.Category} | {item.Status} | {item.Critical} | {item.High} | {item.Medium} | {item.Low} | {item.Accepted} |"));
         lines.AddRange(["", "Scanner findings and policy determine the verdict. Any model-generated triage below is advisory only.", ""]);
+        if (!manifest.Suites.Any(suite => suite.Findings.Count > 0))
+            lines.AddRange(["No normalized security findings were reported; AI triage was not invoked.", ""]);
         return string.Join('\n', lines);
     }
 
@@ -307,7 +310,8 @@ public sealed partial class SecurityService
             if (string.IsNullOrWhiteSpace(suite.Command) || suite.Command == "-") diagnostics.Add($"ERROR: Security suite '{suite.Id}' has no command.");
             SafePath(context.RepositoryPath, suite.WorkingDirectory, diagnostics, suite.Id, false);
             var result = SafePath(context.RepositoryPath, suite.ResultPath, diagnostics, suite.Id, true);
-            if (strict && result is not null && !result.StartsWith(Path.Combine(context.RepositoryPath, ".cis", "local", "security") + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            if (strict && result is not null
+                && !CisPathSafety.IsUnderRoot(Path.Combine(context.RepositoryPath, ".cis", "local", "security"), result, allowRoot: false))
                 diagnostics.Add($"ERROR: Security suite '{suite.Id}' result path must remain under .cis/local/security/.");
         }
     }
@@ -373,14 +377,14 @@ public sealed partial class SecurityService
     private static string Hash(string value) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
     private static string Revision(string repository)
     {
-        try { using var process = new Process { StartInfo = new("git") { WorkingDirectory = repository, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true } }; process.StartInfo.ArgumentList.Add("rev-parse"); process.StartInfo.ArgumentList.Add("HEAD"); process.Start(); var output = process.StandardOutput.ReadToEnd(); process.WaitForExit(10_000); return process.ExitCode == 0 ? output.Trim() : "unavailable"; }
+        try { var start = new ProcessStartInfo("git") { WorkingDirectory = repository }; start.ArgumentList.Add("rev-parse"); start.ArgumentList.Add("HEAD"); var result = CisProcessSafety.Run(start, TimeSpan.FromSeconds(10)); return !result.TimedOut && result.ExitCode == 0 ? result.StandardOutput.Trim() : "unavailable"; }
         catch { return "unavailable"; }
     }
     private static string? LatestRun(string repository) { var root = Path.Combine(LocalPath(repository), "runs"); return Directory.Exists(root) ? Directory.EnumerateDirectories(root).OrderByDescending(Directory.GetLastWriteTimeUtc).Select(Path.GetFileName).FirstOrDefault() : null; }
     private static string? SafePath(string repository, string relative, ICollection<string> diagnostics, string suite, bool required)
     {
         if (string.IsNullOrWhiteSpace(relative) || relative == "-") { if (required) diagnostics.Add($"ERROR: Security suite '{suite}' has no result path."); return null; }
-        try { var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(repository)); var path = Path.GetFullPath(Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar))); if (!path.Equals(root, StringComparison.OrdinalIgnoreCase) && !path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) { diagnostics.Add($"ERROR: Security suite '{suite}' path escapes the repository: {relative}"); return null; } return path; }
+        try { if (!CisPathSafety.TryResolveUnderRoot(repository, relative, out var path, allowRoot: relative.Trim() == ".") || CisPathSafety.ContainsReparsePoint(repository, path)) { diagnostics.Add($"ERROR: Security suite '{suite}' path escapes the repository or traverses a linked directory: {relative}"); return null; } return path; }
         catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException) { diagnostics.Add($"ERROR: Security suite '{suite}' path is invalid: {exception.Message}"); return null; }
     }
     private static void Write(string path, string content) { Directory.CreateDirectory(Path.GetDirectoryName(path)!); var temporary = path + ".tmp"; File.WriteAllText(temporary, content.EndsWith('\n') ? content : content + "\n"); File.Move(temporary, path, true); }

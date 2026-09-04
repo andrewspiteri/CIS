@@ -1,5 +1,5 @@
 ---
-title: "Task Type: API and Consumed Contract"
+title: "Task Type: Consumed Contract"
 type: task-type-definition
 status: Draft
 version: "0.2"
@@ -11,7 +11,7 @@ cis:
   stable_id: change-impact-studio:task-type:core.api.contract
 ---
 
-# Task Type: API and Consumed Contract
+# Task Type: Consumed Contract
 
 ## Identity and boundary
 
@@ -23,13 +23,15 @@ cis:
 | Required predecessor(s) | Documentation, Security, and Data where applicable; approved Visual Design for UI-bearing scope |
 | Primary consumer(s) | Backend, frontend, integration, verification, and external consumers |
 
-Own externally or cross-boundary consumed request, response, message, validation, error, concurrency, and compatibility semantics.
+Own externally or cross-boundary consumed HTTP, message, CLI, process, JSON, event,
+validation, error, cancellation, concurrency, and compatibility semantics.
 
 ## Activation and inputs
 
 ### Creation evidence
 
-- Endpoint, API, request, response, DTO, OpenAPI, schema, message contract, ETag, or consumer evidence.
+- Endpoint, API, request, response, DTO, OpenAPI, schema, message, command arguments,
+  exit codes, structured output, JSONL events, process lifecycle, or consumer evidence.
 
 ### Required inputs
 
@@ -54,11 +56,14 @@ Own externally or cross-boundary consumed request, response, message, validation
    rate limits, safe telemetry, cancellation/timeouts, files, webhooks, and security headers.
 9. Keep the governed API inventory, permissions dictionary, Problem Details catalogue,
    OpenAPI document, supported-version registry, implementation, and consumer evidence
-   aligned in the same change.
+   aligned in the same change when an HTTP API is affected.
+10. For CLI or process contracts, define executable discovery, argument arrays, exit codes,
+    stdout/stderr ownership, JSON schema/version, event streaming, cancellation, timeout,
+    malformed/partial/oversized output, and compatibility behavior without shell parsing.
 
 ## Required outputs, dependencies, and authority
 
-- Versioned API/message contract and implementation.
+- Versioned HTTP/message/CLI/process contract and implementation.
 - Updated schemas/dictionaries and consumer-impact record.
 - Compatibility, validation, error, and integration evidence.
 
@@ -78,8 +83,12 @@ that authority.
       and idempotency/concurrency position where applicable.
 - [ ] Resource routing, major-version lifecycle, deprecation window, and known-consumer
       compatibility follow the repository API governance specification.
-- [ ] API dictionary rows, permission semantics, Problem Details identities, OpenAPI,
-      implementation, and tests agree without unexplained `TBD` values.
+- [ ] When HTTP APIs are affected, API dictionary rows, permission semantics, Problem
+      Details identities, OpenAPI, implementation, and tests agree without unexplained
+      `TBD` values.
+- [ ] When CLI or process contracts are affected, arguments, exit codes, output schema,
+      stream ownership, cancellation, timeout, malformed-output handling, implementation,
+      and consumer tests agree.
 - [ ] `PUBLIC-ENDPOINT-CACHE`: every unauthenticated operation has explicit cache
       semantics and no contract path implies a direct endpoint-to-database fallback.
 
@@ -93,12 +102,15 @@ that authority.
   scope, perform business orchestration in a controller, or reveal whether a sensitive
   forbidden resource exists.
 - Do not treat generated OpenAPI as a replacement for the governed row-level API inventory.
+- Do not reinterpret CLI output presentation text, build a shell command string, or infer
+  success from process exit alone when a structured result is required.
 
 ## Validation and completion evidence
 
-- Run handler/validator, authentication, object/property authorization, abuse-control,
-  schema, serialization, compatibility, consumer, idempotency/concurrency, OpenAPI-diff,
-  and documentation drift checks.
+- Run applicable adapter/handler, authentication, authorization, abuse-control, schema,
+  serialization, exit-code, malformed-output, cancellation/timeout, compatibility,
+  consumer, idempotency/concurrency, and documentation-drift checks. Run OpenAPI diff
+  only for affected HTTP APIs.
 - Record schema digest, operations/cases, commands, results, and consumer disposition.
 
 Completion evidence must identify the exact baseline, affected target, command or
@@ -113,7 +125,7 @@ condition, residual risk, and human approval. Low for one compatible operation; 
 
 ## External issue hints
 
-- Title: `API and Consumed Contract: <feature title>`.
+- Title: `Consumed Contract: <feature title>`.
 - Labels: `cis`, `task-type:core.api.contract`, plus affected repository/component labels.
 - Body: canonical task link, source digest, targets, dependencies, gates, acceptance,
   validation, and evidence expectations.

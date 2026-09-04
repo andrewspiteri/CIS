@@ -776,11 +776,8 @@ public sealed class ContextPackService
             return false;
         }
 
-        absolutePath = Path.GetFullPath(Path.Combine(
-            repositoryPath,
-            path.Replace('/', Path.DirectorySeparatorChar)));
-        var repositoryPrefix = repositoryPath.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        if (!absolutePath.StartsWith(repositoryPrefix, StringComparison.OrdinalIgnoreCase))
+        if (!CisPathSafety.TryResolveUnderRoot(repositoryPath, path, out absolutePath)
+            || CisPathSafety.ContainsReparsePoint(repositoryPath, absolutePath))
         {
             return false;
         }
@@ -1079,14 +1076,13 @@ public sealed class ContextPackService
             return new OutputResolution(false, null, "Output must be a Markdown file beneath .cis/local/context/.");
         }
 
-        var absolutePath = Path.GetFullPath(Path.Combine(
-            repositoryPath,
-            relativePath.Replace('/', Path.DirectorySeparatorChar)));
-        var contextPrefix = Path.GetFullPath(Path.Combine(repositoryPath, ContextRoot.Replace('/', Path.DirectorySeparatorChar)))
-            .TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        return absolutePath.StartsWith(contextPrefix, StringComparison.OrdinalIgnoreCase)
+        var contextRoot = Path.GetFullPath(Path.Combine(repositoryPath, ContextRoot.Replace('/', Path.DirectorySeparatorChar)));
+        if (!CisPathSafety.TryResolveUnderRoot(repositoryPath, relativePath, out var absolutePath))
+            return new OutputResolution(false, null, "Output escapes .cis/local/context/.");
+        return CisPathSafety.IsUnderRoot(contextRoot, absolutePath, allowRoot: false)
+               && !CisPathSafety.ContainsReparsePoint(repositoryPath, absolutePath)
             ? new OutputResolution(true, absolutePath, null)
-            : new OutputResolution(false, null, "Output escapes .cis/local/context/.");
+            : new OutputResolution(false, null, "Output escapes .cis/local/context/ or traverses a linked directory.");
     }
 
     private static ContextPackResult FromQueries(

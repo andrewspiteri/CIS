@@ -9,37 +9,48 @@
     <Authors>Andrew Spiteri</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <RepositoryUrl>https://github.com/AndrewSpiteri/change-impact-studio</RepositoryUrl>
+    <RepositoryUrl>https://github.com/andrewspiteri/CIS</RepositoryUrl>
     <PackageTags>change-impact;architecture;ai-delivery;cli</PackageTags>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="..\Cis.Providers.Agent.Claude\Cis.Providers.Agent.Claude.csproj" />
+    <ProjectReference Include="..\Cis.Providers.Agent.Codex\Cis.Providers.Agent.Codex.csproj" />
     <ProjectReference Include="..\Cis.Providers.Tracker.GitHub\Cis.Providers.Tracker.GitHub.csproj" />
+    <ProjectReference Include="..\Cis.Providers.Ci.GitHub\Cis.Providers.Ci.GitHub.csproj" />
     <ProjectReference Include="..\Cis.Providers.Tracker.Jira\Cis.Providers.Tracker.Jira.csproj" />
     <ProjectReference Include="..\Cis.Modules.Ai\Cis.Modules.Ai.csproj" />
     <ProjectReference Include="..\Cis.Modules.Agent\Cis.Modules.Agent.csproj" />
     <ProjectReference Include="..\Cis.Modules.Brd\Cis.Modules.Brd.csproj" />
     <ProjectReference Include="..\Cis.Abstractions\Cis.Abstractions.csproj" />
     <ProjectReference Include="..\Cis.Modules.Api\Cis.Modules.Api.csproj" />
+    <ProjectReference Include="..\Cis.Modules.Artifacts\Cis.Modules.Artifacts.csproj" />
     <ProjectReference Include="..\Cis.Modules.Host\Cis.Modules.Host.csproj" />
     <ProjectReference Include="..\Cis.Modules.Change\Cis.Modules.Change.csproj" />
+    <ProjectReference Include="..\Cis.Modules.Ci\Cis.Modules.Ci.csproj" />
     <ProjectReference Include="..\Cis.Modules.Decision\Cis.Modules.Decision.csproj" />
     <ProjectReference Include="..\Cis.Modules.Design\Cis.Modules.Design.csproj" />
+    <ProjectReference Include="..\Cis.Modules.Definition\Cis.Modules.Definition.csproj" />
     <ProjectReference Include="..\Cis.Modules.Diagnostics\Cis.Modules.Diagnostics.csproj" />
     <ProjectReference Include="..\Cis.Modules.Context\Cis.Modules.Context.csproj" />
     <ProjectReference Include="..\Cis.Modules.Docs\Cis.Modules.Docs.csproj" />
     <ProjectReference Include="..\Cis.Modules.Feedback\Cis.Modules.Feedback.csproj" />
+    <ProjectReference Include="..\Cis.Modules.Frontend\Cis.Modules.Frontend.csproj" />
     <ProjectReference Include="..\Cis.Modules.Generate\Cis.Modules.Generate.csproj" />
     <ProjectReference Include="..\Cis.Modules.Graph\Cis.Modules.Graph.csproj" />
     <ProjectReference Include="..\Cis.Modules.Impact\Cis.Modules.Impact.csproj" />
     <ProjectReference Include="..\Cis.Modules.Index\Cis.Modules.Index.csproj" />
     <ProjectReference Include="..\Cis.Modules.Learn\Cis.Modules.Learn.csproj" />
+    <ProjectReference Include="..\Cis.Modules.Mcp\Cis.Modules.Mcp.csproj" />
     <ProjectReference Include="..\Cis.Modules.Plan\Cis.Modules.Plan.csproj" />
     <ProjectReference Include="..\Cis.Modules.Repository\Cis.Modules.Repository.csproj" />
+    <ProjectReference Include="..\Cis.Modules.References\Cis.Modules.References.csproj" />
     <ProjectReference Include="..\Cis.Modules.Security\Cis.Modules.Security.csproj" />
     <ProjectReference Include="..\Cis.Modules.Skills\Cis.Modules.Skills.csproj" />
+    <ProjectReference Include="..\Cis.Modules.SolutionDesign\Cis.Modules.SolutionDesign.csproj" />
     <ProjectReference Include="..\Cis.Modules.Standards\Cis.Modules.Standards.csproj" />
     <ProjectReference Include="..\Cis.Modules.TechnicalIntent\Cis.Modules.TechnicalIntent.csproj" />
     <ProjectReference Include="..\Cis.Modules.Testing\Cis.Modules.Testing.csproj" />
+    <ProjectReference Include="..\Cis.Modules.UiDirection\Cis.Modules.UiDirection.csproj" />
     <ProjectReference Include="..\Cis.Modules.Tracker\Cis.Modules.Tracker.csproj" />
     <ProjectReference Include="..\Cis.Modules.Workflow\Cis.Modules.Workflow.csproj" />
     <ProjectReference Include="..\Cis.Modules.Verify\Cis.Modules.Verify.csproj" />

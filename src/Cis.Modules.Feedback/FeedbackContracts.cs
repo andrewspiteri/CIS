@@ -17,7 +17,8 @@ public sealed record ToolUsageEntry(
     int PossibleTokenSavings,
     double PossibleTokenSavingsPercent,
     string SavingsBasis,
-    string SavingsConfidence);
+    string SavingsConfidence,
+    string Outcome = "");
 
 public sealed record FeedbackSummary(
     string Status,
@@ -27,11 +28,16 @@ public sealed record FeedbackSummary(
     int InvocationCount,
     int SuccessfulCount,
     int FailedCount,
+    int NonSuccessfulCount,
+    int BlockedCount,
+    int GovernedFindingCount,
+    int InvalidRequestCount,
+    int CancelledCount,
     long ElapsedMilliseconds,
-    int OutputEstimatedTokens,
-    int BaselineEstimatedTokens,
-    int ActualEstimatedTokens,
-    int PossibleTokenSavings,
+    long OutputEstimatedTokens,
+    long BaselineEstimatedTokens,
+    long ActualEstimatedTokens,
+    long PossibleTokenSavings,
     double PossibleTokenSavingsPercent,
     int EstimatedInvocationCount,
     IReadOnlyList<FeedbackCommandSummary> Commands,
@@ -41,9 +47,12 @@ public sealed record FeedbackCommandSummary(
     string Command,
     int InvocationCount,
     int FailedCount,
+    int NonSuccessfulCount,
+    int BlockedCount,
+    int GovernedFindingCount,
     long ElapsedMilliseconds,
-    int OutputEstimatedTokens,
-    int PossibleTokenSavings);
+    long OutputEstimatedTokens,
+    long PossibleTokenSavings);
 
 public sealed record FeedbackUsageResult(
     string Status,
@@ -56,6 +65,7 @@ public sealed record FeedbackOpportunityResult(
     string Status,
     int ExitCode,
     string? LedgerPath,
+    DateTimeOffset? SinceUtc,
     IReadOnlyList<FeedbackOpportunity> Opportunities,
     IReadOnlyList<string> Errors);
 

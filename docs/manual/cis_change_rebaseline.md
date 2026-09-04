@@ -19,11 +19,15 @@ cis change rebaseline <change-id> --actor <identity> --reason <rationale>
   [--repo <path>] [--format <human|json|agent>]
 ```
 
-The command is intentionally limited to the pre-impact stage: `impact.md` must contain
-no findings and `plan.md` must contain no generated work items. It updates the managed
-baseline fields in `proposal.md`, `impact.md`, and `plan.md`, then appends a
-`change-rebaselined` event containing the previous and new identities, actor, and
-rationale. It never rewrites reviewed impact, task, approval, or completion evidence.
+The command is intentionally limited to the pre-review stage: `impact.md` may contain no
+human-reviewed findings and `plan.md` must contain no generated work items. Unreviewed
+deterministic `proposed` findings are disposable derived output, so rebaseline clears them
+for regeneration and records their count and the previous impact SHA-256 in the audit event.
+Any accepted, rejected, or deferred finding blocks rebaseline. The command updates the
+managed baseline fields in `proposal.md`, `impact.md`, and `plan.md`, then appends a
+`change-rebaselined` event containing the previous and new identities, actor, rationale,
+discarded proposal count, and prior impact digest. It never rewrites reviewed impact, task,
+approval, or completion evidence.
 
 Normal creation of or edits to `changes/CIS-NNNN/` do not require rebaseline. Managed
 change-dossier documents and their catalog entries remain graph content but are

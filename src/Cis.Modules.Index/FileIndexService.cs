@@ -16,7 +16,7 @@ public sealed partial class FileIndexService
         : StringComparison.Ordinal;
     private static readonly HashSet<string> ExcludedDirectories = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".git", ".vs", ".idea", "bin", "obj", "node_modules", ".artifacts", "artifacts", "coverage",
+        ".git", ".codex-tmp", ".vs", ".idea", "bin", "obj", "node_modules", ".artifacts", "artifacts", "coverage",
         "TestResults", "dist", ".next", ".godot", ".gradle", "skills-quarantine",
     };
     private static readonly HashSet<string> SupportedExtensions = new(StringComparer.OrdinalIgnoreCase)

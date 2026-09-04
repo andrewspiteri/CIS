@@ -35,3 +35,36 @@ public sealed record TechnicalIntentResult(
                 ? 5
                 : 0;
 }
+
+public sealed record TechnicalIntentQuestion(
+    string Id,
+    string Area,
+    string Question,
+    string Why,
+    IReadOnlyList<string> CommonOptions,
+    string SuggestedAnswer,
+    string Status,
+    string? Answer,
+    string? AnsweredBy,
+    string? AnsweredAtUtc,
+    string ResolutionSource = "human",
+    string? Confidence = null,
+    IReadOnlyList<string>? Evidence = null);
+
+public sealed record TechnicalIntentQuestionnaireResult(
+    string Status,
+    string? WorkspacePath,
+    string? AuthorityRepositoryId,
+    string? CanonicalPath,
+    string? BrdVersion,
+    bool Current,
+    bool Complete,
+    int AnsweredCount,
+    int UnansweredCount,
+    IReadOnlyList<TechnicalIntentQuestion> Questions,
+    IReadOnlyList<string> Warnings,
+    IReadOnlyList<string> Errors,
+    bool Applied)
+{
+    public int ExitCode => Status == "blocked" ? 5 : Errors.Count > 0 ? 2 : Status == "missing" ? 4 : Current ? 0 : 5;
+}

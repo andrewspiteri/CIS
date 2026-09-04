@@ -3,7 +3,7 @@ title: "cis repo import"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-09"
+last_reviewed: "2026-09-04"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-repo-import
@@ -31,8 +31,14 @@ an initialization collision. It then merges the repositories into
 `.cis/workspace.yml`. Registry paths are stored relative to the workspace when
 possible.
 
-Run `cis workspace init` in the documentation repository first when the workspace will
-own cross-repository canonical documents such as the BRD. Imported repositories use
+For an existing standalone repository, set both `--workspace` and `--source` to that
+repository. If no workspace configuration exists, the import initializes the existing
+source in place and registers it as the workspace `authority` in one transaction. This
+is the preferred existing-repository onboarding flow; it does not copy or rewrite source
+implementation files.
+
+Run `cis workspace init` first when a separate documentation repository will own
+cross-repository canonical documents such as the BRD. Other imported repositories use
 role `participant`; importing the authority repository again never downgrades its role.
 
 Without `--yes`, a non-empty plan returns a confirmation-required result and changes
@@ -78,6 +84,8 @@ configuration, and mismatched documentation roots invalidate the workspace.
 
 - Uses the same classification, curated starters, collision handling, and ownership
   rules as `cis repo init`.
+- Bootstraps a missing workspace authority only when the workspace directory is itself
+  one of the explicitly selected existing sources.
 - Plans the complete batch before changing the first repository.
 - Never removes an earlier registry entry merely because it was omitted from a later
   import.
@@ -99,6 +107,8 @@ same root, resolve its evidence-backed findings, and retry the complete import.
 ## Examples
 
 ```powershell
+cis repo import --workspace C:\work\existing-api --source C:\work\existing-api --root docs/cis --dry-run --format agent
+cis repo import --workspace C:\work\existing-api --source C:\work\existing-api --root docs/cis --yes
 cis repo import --workspace C:\work\commerce --source C:\work\orders-api C:\work\orders-web --root docs/cis --dry-run --format agent
 cis repo import --workspace C:\work\commerce --source C:\work\orders-api C:\work\orders-web --root docs/cis --yes
 cis graph build --workspace C:\work\commerce --format agent

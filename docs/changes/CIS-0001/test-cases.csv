@@ -1,0 +1,175 @@
+"ID","Title","Section","Priority","Type","Preconditions","Steps","Expected Result","References","Frontend Type","Automation Status","Automated Test References"
+"TC-VSC-001-001","The extension shall remain a thin client over stable CIS CLI arguments, exit codes, JSON results, canonical Markdown,...","Contract","Low","Security","The feature build matching sha256:ce2683513b826563779bf48fb60afd9e9952f42916bb766fb5d6a0e48e51bf73 is deployed in a manual-test environment. The tester has the actor, data, configuration, and permissions needed for VSC-001.","1. Use the supported application or API client to reach the boundary governed by VSC-001.
+2. Establish the normal actor, data, and configuration preconditions without bypassing authorization or validation.
+3. Perform the required behavior: The extension shall remain a thin client over stable CIS CLI arguments, exit codes, JSON results, canonical Markdown, and repository-local state.
+4. Observe the resulting user-visible, API, persistence, and operational state that applies.","No graph, planning, approval, testing, security, or verification rule is reimplemented in the extension; every displayed authoritative state identifies its CLI or Markdown source.","VSC-001","not-applicable","Automated","change-impact-studio::vscode-extension/test/cli.integration.test.js:16
+change-impact-studio::vscode-extension/test/extension.test.js:71
+change-impact-studio::vscode-extension/test/extension.test.js:72"
+"TC-VSC-002-001","An empty or uninitialized workspace shall show a concise native Welcome View.","Frontend / Backoffice","Low","User interface","The feature build matching sha256:ce2683513b826563779bf48fb60afd9e9952f42916bb766fb5d6a0e48e51bf73 is deployed in a manual-test environment. The tester has the actor, data, configuration, and permissions needed for VSC-002.","1. Open the approved backoffice entry point for requirement VSC-002.
+2. Establish the normal actor, data, and configuration preconditions without bypassing authorization or validation.
+3. Perform the required behavior: An empty or uninitialized workspace shall show a concise native Welcome View.
+4. Observe the resulting user-visible, API, persistence, and operational state that applies.","The view distinguishes no folder, missing CLI, unsupported CLI, uninitialized repository, and initialized repository states and offers only the applicable primary action and documentation links.","VSC-002","backoffice","Automated","change-impact-studio::vscode-extension/test/extension.test.js:261
+change-impact-studio::vscode-extension/test/extension.test.js:262
+change-impact-studio::vscode-extension/test/extension.test.js:420
+change-impact-studio::vscode-extension/test/extension.test.js:424"
+"TC-VSC-003-001","The controller shall be able to select the CIS authority repository when more than one VS Code workspace folder is open.","Frontend / Backoffice","Low","User interface","The feature build matching sha256:ce2683513b826563779bf48fb60afd9e9952f42916bb766fb5d6a0e48e51bf73 is deployed in a manual-test environment. The tester has the actor, data, configuration, and permissions needed for VSC-003.","1. Open the approved backoffice entry point for requirement VSC-003.
+2. Establish the normal actor, data, and configuration preconditions without bypassing authorization or validation.
+3. Perform the required behavior: The controller shall be able to select the CIS authority repository when more than one VS Code workspace folder is open.
+4. Observe the resulting user-visible, API, persistence, and operational state that applies.","A native Quick Pick lists eligible folders, preserves the explicit selection per workspace, and never silently changes authority when folders are added or removed.","VSC-003","backoffice","Automated","change-impact-studio::vscode-extension/test/extension.test.js:138
+change-impact-studio::vscode-extension/test/extension.test.js:139
+change-impact-studio::vscode-extension/test/extension.test.js:420
+change-impact-studio::vscode-extension/test/extension.test.js:424"
+"TC-VSC-004-001","The Workspace view shall summarize repository identity, documentation root, health, graph/index freshness, local AI a...","Frontend / Backoffice","Low","User interface","The feature build matching sha256:ce2683513b826563779bf48fb60afd9e9952f42916bb766fb5d6a0e48e51bf73 is deployed in a manual-test environment. The tester has the actor, data, configuration, and permissions needed for VSC-004.","1. Open the approved backoffice entry point for requirement VSC-004.
+2. Establish the normal actor, data, and configuration preconditions without bypassing authorization or validation.
+3. Perform the required behavior: The Workspace view shall summarize repository identity, documentation root, health, graph/index freshness, local AI availability, active change, and blocking review state.
+4. Observe the resulting user-visible, API, persistence, and operational state that applies.","Each summary item has a truthful state, opens its evidence or applicable command, and refreshes without requiring a VS Code reload.","VSC-004","backoffice","Automated","change-impact-studio::vscode-extension/test/extension.test.js:278
+change-impact-studio::vscode-extension/test/extension.test.js:279"
+"TC-VSC-005-001","The Changes view shall present current and closed dossiers with phase, lifecycle, stale-state, and blocking-gate info...","Frontend / Backoffice","Low","User interface","The feature build matching sha256:ce2683513b826563779bf48fb60afd9e9952f42916bb766fb5d6a0e48e51bf73 is deployed in a manual-test environment. The tester has the actor, data, configuration, and permissions needed for VSC-005.","1. Open the approved backoffice entry point for requirement VSC-005.
+2. Establish the normal actor, data, and configuration preconditions without bypassing authorization or validation.
+3. Perform the required behavior: The Changes view shall present current and closed dossiers with phase, lifecycle, stale-state, and blocking-gate information.
+4. Observe the resulting user-visible, API, persistence, and operational state that applies.","Changes are filterable without deep tree nesting; selecting a change opens its overview rather than executing a mutation.","VSC-005","backoffice","Automated","change-impact-studio::vscode-extension/test/extension.test.js:222
+change-impact-studio::vscode-extension/test/extension.test.js:223"
+"TC-VSC-006-001","A change overview shall present intent, progress, accepted scope, decisions, tasks, required human review points, and...","Frontend / Backoffice","Low","User interface","The feature build matching sha256:ce2683513b826563779bf48fb60afd9e9952f42916bb766fb5d6a0e48e51bf73 is deployed in a manual-test environment. The tester has the actor, data, configuration, and permissions needed for VSC-006.","1. Open the approved backoffice entry point for requirement VSC-006.
+2. Establish the normal actor, data, and configuration preconditions without bypassing authorization or validation.
+3. Perform the required behavior: A change overview shall present intent, progress, accepted scope, decisions, tasks, required human review points, and the single next recommended action.
+4. Observe the resulting user-visible, API, persistence, and operational state that applies.","The recommendation is derived from CLI status, explains why it is available or blocked, and never represents a mechanical gate as a new human approval.","VSC-006","backoffice","Automated","change-impact-studio::vscode-extension/test/extension.test.js:208
+change-impact-studio::vscode-extension/test/extension.test.js:209
+change-impact-studio::vscode-extension/test/extension.test.js:278
+change-impact-studio::vscode-extension/test/extension.test.js:279"
+"TC-VSC-007-001","Canonical Markdown shall remain directly inspectable and editable through VS Code editors and built-in Markdown preview.","Frontend / Backoffice","Low","User interface","The feature build matching sha256:ce2683513b826563779bf48fb60afd9e9952f42916bb766fb5d6a0e48e51bf73 is deployed in a manual-test environment. The tester has the actor, data, configuration, and permissions needed for VSC-007.","1. Open the approved backoffice entry point for requirement VSC-007.
+2. Establish the normal actor, data, and configuration preconditions without bypassing authorization or validation.
+3. Perform the required behavior: Canonical Markdown shall remain directly inspectable and editable through VS Code editors and built-in Markdown preview.
+4. Observe the resulting user-visible, API, persistence, and operational state that applies.","Every summarized requirement, decision, plan, design, test case, and verification claim links to its canonical file; the UI does not maintain a competing editable copy.","VSC-007","backoffice","Automated","change-impact-studio::vscode-extension/test/extension.test.js:166
+change-impact-studio::vscode-extension/test/extension.test.js:167
+change-impact-studio::vscode-extension/test/extension.test.js:222
+change-impact-studio::vscode-extension/test/extension.test.js:223
+change-impact-studio::vscode-extension/test/extension.test.js:420
+change-impact-studio::vscode-extension/test/extension.test.js:424"
+"TC-VSC-008-001","The controller shall be able to search bounded context and inspect source evidence and graph relationships.","Frontend / Backoffice","Medium","User interface","The feature build matching sha256:ce2683513b826563779bf48fb60afd9e9952f42916bb766fb5d6a0e48e51bf73 is deployed in a manual-test environment. The tester has the actor, data, configuration, and permissions needed for VSC-008.","1. Open the approved backoffice entry point for requirement VSC-008.
+2. Establish the normal actor, data, and configuration preconditions without bypassing authorization or validation.
+3. Perform the required behavior: The controller shall be able to search bounded context and inspect source evidence and graph relationships.
+4. Observe the resulting user-visible, API, persistence, and operational state that applies.","Search uses native input/Quick Pick behavior, shows truncation and freshness, opens file locations, and loads graph visualization only when explicitly requested.","VSC-008","backoffice","Automated","change-impact-studio::vscode-extension/test/extension.test.js:304
+change-impact-studio::vscode-extension/test/extension.test.js:305"
+"TC-VSC-009-001","Plans and tasks shall show category, complexity, dependencies, acceptance criteria, status, owner, and blocking evide...","Frontend / Backoffice","Low","User interface","The feature build matching sha256:ce2683513b826563779bf48fb60afd9e9952f42916bb766fb5d6a0e48e51bf73 is deployed in a manual-test environment. The tester has the actor, data, configuration, and permissions needed for VSC-009.","1. Open the approved backoffice entry point for requirement VSC-009.
+2. Establish the normal actor, data, and configuration preconditions without bypassing authorization or validation.
+3. Perform the required behavior: Plans and tasks shall show category, complexity, dependencies, acceptance criteria, status, owner, and blocking evidence.
+4. Observe the resulting user-visible, API, persistence, and operational state that applies.","Task transitions invoke CIS commands, require rationale only where the CLI requires it, and refresh from canonical state after completion or failure.","VSC-009","backoffice","Automated","change-impact-studio::vscode-extension/test/extension.test.js:208
+change-impact-studio::vscode-extension/test/extension.test.js:209
+change-impact-studio::vscode-extension/test/extension.test.js:420
+change-impact-studio::vscode-extension/test/extension.test.js:424"
+"TC-VSC-010-001","Design review shall show textual wireframes, rendered PNGs, provenance, manifest validation, and approve/reject actio...","Frontend / Backoffice","Low","User interface","The feature build matching sha256:ce2683513b826563779bf48fb60afd9e9952f42916bb766fb5d6a0e48e51bf73 is deployed in a manual-test environment. The tester has the actor, data, configuration, and permissions needed for VSC-010.","1. Open the approved backoffice entry point for requirement VSC-010.
+2. Establish the normal actor, data, and configuration preconditions without bypassing authorization or validation.
+3. Perform the required behavior: Design review shall show textual wireframes, rendered PNGs, provenance, manifest validation, and approve/reject actions at the global design barrier.
+4. Observe the resulting user-visible, API, persistence, and operational state that applies.","Reviewers can compare all declared screen states, enter a rationale, approve or reject through CIS, and cannot start downstream work while the CLI reports the design gate as paused.","VSC-010","backoffice","Automated","change-impact-studio::vscode-extension/test/extension.test.js:197
+change-impact-studio::vscode-extension/test/extension.test.js:198
+change-impact-studio::vscode-extension/test/extension.test.js:312
+change-impact-studio::vscode-extension/test/extension.test.js:313
+change-impact-studio::vscode-extension/test/extension.test.js:421
+change-impact-studio::vscode-extension/test/extension.test.js:424"
+"TC-VSC-011-001","Runs shall present workflow, test, coverage, mutation, security, diagnostics, and independent-assurance outcomes with...","Frontend / Backoffice","Medium","Security","The feature build matching sha256:ce2683513b826563779bf48fb60afd9e9952f42916bb766fb5d6a0e48e51bf73 is deployed in a manual-test environment. The tester has the actor, data, configuration, and permissions needed for VSC-011.","1. Open the approved backoffice entry point for requirement VSC-011.
+2. Establish the normal actor, data, and configuration preconditions without bypassing authorization or validation.
+3. Perform the required behavior: Runs shall present workflow, test, coverage, mutation, security, diagnostics, and independent-assurance outcomes without conflating them.
+4. Observe the resulting user-visible, API, persistence, and operational state that applies.","The view preserves first-attempt failures, failure classification, unavailable suites, repository revision, run ID, and artifact hashes; logs and retained artifacts open through bounded CIS retrieval.","VSC-011","backoffice","Automated","change-impact-studio::vscode-extension/test/extension.test.js:244
+change-impact-studio::vscode-extension/test/extension.test.js:245"
+"TC-VSC-012-001","Governance shall expose skills, instructions, standards, references, provider selections, and Repository Doctor findi...","Frontend / Backoffice","Low","User interface","The feature build matching sha256:ce2683513b826563779bf48fb60afd9e9952f42916bb766fb5d6a0e48e51bf73 is deployed in a manual-test environment. The tester has the actor, data, configuration, and permissions needed for VSC-012.","1. Open the approved backoffice entry point for requirement VSC-012.
+2. Establish the normal actor, data, and configuration preconditions without bypassing authorization or validation.
+3. Perform the required behavior: Governance shall expose skills, instructions, standards, references, provider selections, and Repository Doctor findings.
+4. Observe the resulting user-visible, API, persistence, and operational state that applies.","Inventories remain compact and searchable; conflicts, quarantines, stale profiles, and suggested fixes are visually distinct from healthy informational state.","VSC-012","backoffice","Automated","change-impact-studio::vscode-extension/test/extension.test.js:327
+change-impact-studio::vscode-extension/test/extension.test.js:328
+change-impact-studio::vscode-extension/test/extension.test.js:421
+change-impact-studio::vscode-extension/test/extension.test.js:424"
+"TC-VSC-013-001","Long-running or mutating commands shall have visible progress, cancellation where supported, and inspectable output.","Frontend / Backoffice","Low","User interface","The feature build matching sha256:ce2683513b826563779bf48fb60afd9e9952f42916bb766fb5d6a0e48e51bf73 is deployed in a manual-test environment. The tester has the actor, data, configuration, and permissions needed for VSC-013.","1. Open the approved backoffice entry point for requirement VSC-013.
+2. Establish the normal actor, data, and configuration preconditions without bypassing authorization or validation.
+3. Perform the required behavior: Long-running or mutating commands shall have visible progress, cancellation where supported, and inspectable output.
+4. Observe the resulting user-visible, API, persistence, and operational state that applies.","The command is launched as an argument array without a shell; success, warning, failure, timeout, cancellation, and invalid-evidence outcomes remain distinct and the original CLI exit code is retained.","VSC-013","backoffice","Automated","change-impact-studio::vscode-extension/test/extension.test.js:108
+change-impact-studio::vscode-extension/test/extension.test.js:109
+change-impact-studio::vscode-extension/test/extension.test.js:421
+change-impact-studio::vscode-extension/test/extension.test.js:424"
+"TC-VSC-014-001","The UI shall refresh deterministically when canonical files or relevant derived manifests change.","Frontend / Backoffice","Low","User interface","The feature build matching sha256:ce2683513b826563779bf48fb60afd9e9952f42916bb766fb5d6a0e48e51bf73 is deployed in a manual-test environment. The tester has the actor, data, configuration, and permissions needed for VSC-014.","1. Open the approved backoffice entry point for requirement VSC-014.
+2. Establish the normal actor, data, and configuration preconditions without bypassing authorization or validation.
+3. Perform the required behavior: The UI shall refresh deterministically when canonical files or relevant derived manifests change.
+4. Observe the resulting user-visible, API, persistence, and operational state that applies.","Refresh is debounced, never reads dependency or secret folders, marks stale data instead of presenting it as current, and does not continuously rerun expensive commands.","VSC-014","backoffice","Automated","change-impact-studio::vscode-extension/test/extension.test.js:410
+change-impact-studio::vscode-extension/test/extension.test.js:411
+change-impact-studio::vscode-extension/test/extension.test.js:421
+change-impact-studio::vscode-extension/test/extension.test.js:424"
+"TC-VSC-015-001","All views shall support keyboard operation, logical focus restoration, zoom, reduced motion, screen readers, and VS C...","Frontend / Backoffice","Low","Accessibility","The feature build matching sha256:ce2683513b826563779bf48fb60afd9e9952f42916bb766fb5d6a0e48e51bf73 is deployed in a manual-test environment. The tester has the actor, data, configuration, and permissions needed for VSC-015.","1. Open the approved backoffice entry point for requirement VSC-015.
+2. Establish the normal actor, data, and configuration preconditions without bypassing authorization or validation.
+3. Perform the required behavior: All views shall support keyboard operation, logical focus restoration, zoom, reduced motion, screen readers, and VS Code light, dark, and high-contrast themes.
+4. Observe the resulting user-visible, API, persistence, and operational state that applies.","Primary journeys complete without a mouse; focus returns to the initiating control after dialogs; status is never communicated by color alone; webview content uses VS Code theme tokens and accessible names.","VSC-015","backoffice","Automated","change-impact-studio::vscode-extension/test/extension.test.js:197
+change-impact-studio::vscode-extension/test/extension.test.js:198
+change-impact-studio::vscode-extension/test/extension.test.js:312
+change-impact-studio::vscode-extension/test/extension.test.js:313
+change-impact-studio::vscode-extension/test/extension.test.js:422
+change-impact-studio::vscode-extension/test/extension.test.js:424"
+"TC-VSC-016-001","Loading, empty, partial, unavailable, stale, warning, error, cancelled, and success states shall be explicitly designed.","Frontend / Backoffice","Low","User interface","The feature build matching sha256:ce2683513b826563779bf48fb60afd9e9952f42916bb766fb5d6a0e48e51bf73 is deployed in a manual-test environment. The tester has the actor, data, configuration, and permissions needed for VSC-016.","1. Open the approved backoffice entry point for requirement VSC-016.
+2. Establish the normal actor, data, and configuration preconditions without bypassing authorization or validation.
+3. Perform the required behavior: Loading, empty, partial, unavailable, stale, warning, error, cancelled, and success states shall be explicitly designed.
+4. Observe the resulting user-visible, API, persistence, and operational state that applies.","Every view has bounded recovery guidance; errors disclose no secret values or unrestricted process output and never replace a previous authoritative result with a false success.","VSC-016","backoffice","Automated","change-impact-studio::vscode-extension/test/extension.test.js:261
+change-impact-studio::vscode-extension/test/extension.test.js:262
+change-impact-studio::vscode-extension/test/extension.test.js:278
+change-impact-studio::vscode-extension/test/extension.test.js:279
+change-impact-studio::vscode-extension/test/extension.test.js:346
+change-impact-studio::vscode-extension/test/extension.test.js:347
+change-impact-studio::vscode-extension/test/extension.test.js:422
+change-impact-studio::vscode-extension/test/extension.test.js:424
+change-impact-studio::vscode-extension/test/extension.test.js:71
+change-impact-studio::vscode-extension/test/extension.test.js:72"
+"TC-VSC-017-001","The extension shall preserve CIS filesystem, process, credential, and evidence trust boundaries.","Security","Low","Security","The feature build matching sha256:ce2683513b826563779bf48fb60afd9e9952f42916bb766fb5d6a0e48e51bf73 is deployed in a manual-test environment. The tester has the actor, data, configuration, and permissions needed for VSC-017.","1. Prepare the supported product or operational boundary governed by VSC-017.
+2. Establish the normal actor, data, and configuration preconditions without bypassing authorization or validation.
+3. Perform the required behavior: The extension shall preserve CIS filesystem, process, credential, and evidence trust boundaries.
+4. Observe the resulting user-visible, API, persistence, and operational state that applies.","It reads only selected workspace files and bounded CLI output, never reads credentials or `.env` content, applies workspace containment to opened paths, and requires workspace trust for process execution.","VSC-017","not-applicable","Automated","change-impact-studio::vscode-extension/test/extension.test.js:108
+change-impact-studio::vscode-extension/test/extension.test.js:109
+change-impact-studio::vscode-extension/test/extension.test.js:166
+change-impact-studio::vscode-extension/test/extension.test.js:167
+change-impact-studio::vscode-extension/test/extension.test.js:197
+change-impact-studio::vscode-extension/test/extension.test.js:198
+change-impact-studio::vscode-extension/test/extension.test.js:71
+change-impact-studio::vscode-extension/test/extension.test.js:72"
+"TC-VSC-018-001","Installation shall verify compatible VS Code and CIS CLI versions and provide actionable recovery when either compone...","Delivery","Low","Functional","The feature build matching sha256:ce2683513b826563779bf48fb60afd9e9952f42916bb766fb5d6a0e48e51bf73 is deployed in a manual-test environment. The tester has the actor, data, configuration, and permissions needed for VSC-018.","1. Prepare the supported product or operational boundary governed by VSC-018.
+2. Establish the normal actor, data, and configuration preconditions without bypassing authorization or validation.
+3. Perform the required behavior: Installation shall verify compatible VS Code and CIS CLI versions and provide actionable recovery when either component is absent or incompatible.
+4. Observe the resulting user-visible, API, persistence, and operational state that applies.","A packaged VSIX installs on the supported VS Code range, finds `cis` on `PATH` or an explicit executable path, reports the detected versions, and passes clean-profile installation and activation smoke tests.","VSC-018","not-applicable","Automated","change-impact-studio::vscode-extension/test/cli.integration.test.js:16
+change-impact-studio::vscode-extension/test/extension.test.js:261
+change-impact-studio::vscode-extension/test/extension.test.js:262
+change-impact-studio::vscode-extension/test/extension.test.js:422
+change-impact-studio::vscode-extension/test/extension.test.js:424"
+"TC-VSC-019-001","User and contributor documentation shall describe installation, first use, navigation, review points, settings, troub...","Documentation","Low","Functional","The feature build matching sha256:ce2683513b826563779bf48fb60afd9e9952f42916bb766fb5d6a0e48e51bf73 is deployed in a manual-test environment. The tester has the actor, data, configuration, and permissions needed for VSC-019.","1. Prepare the supported product or operational boundary governed by VSC-019.
+2. Establish the normal actor, data, and configuration preconditions without bypassing authorization or validation.
+3. Perform the required behavior: User and contributor documentation shall describe installation, first use, navigation, review points, settings, troubleshooting, and the thin-client boundary.
+4. Observe the resulting user-visible, API, persistence, and operational state that applies.","The VSIX README and CIS manual agree with implemented commands and screenshots and contain no unpublished or unsupported workflow claims.","VSC-019","not-applicable","Automated","change-impact-studio::vscode-extension/test/extension.test.js:363
+change-impact-studio::vscode-extension/test/extension.test.js:364"
+"TC-VSC-020-001","The Runs view shall expose discovered agent providers and truthful provider diagnostics.","Frontend / Backoffice","Low","Security","The feature build matching sha256:ce2683513b826563779bf48fb60afd9e9952f42916bb766fb5d6a0e48e51bf73 is deployed in a manual-test environment. The tester has the actor, data, configuration, and permissions needed for VSC-020.","1. Open the approved backoffice entry point for requirement VSC-020.
+2. Establish the normal actor, data, and configuration preconditions without bypassing authorization or validation.
+3. Perform the required behavior: The Runs view shall expose discovered agent providers and truthful provider diagnostics.
+4. Observe the resulting user-visible, API, persistence, and operational state that applies.","Codex and Claude availability, transport, version, authentication, supported run modes, permission capabilities, resume support, and failure reason come from `cis agent providers` or `cis agent provider diagnose`; the extension never reads or manages provider credentials.","VSC-020","backoffice","Automated","change-impact-studio::vscode-extension/test/cli.integration.test.js:16
+change-impact-studio::vscode-extension/test/extension.test.js:244
+change-impact-studio::vscode-extension/test/extension.test.js:245
+change-impact-studio::vscode-extension/test/extension.test.js:371
+change-impact-studio::vscode-extension/test/extension.test.js:372
+change-impact-studio::vscode-extension/test/extension.test.js:422
+change-impact-studio::vscode-extension/test/extension.test.js:424"
+"TC-VSC-021-001","An eligible planned task shall offer a governed Request agent work action.","Frontend / Backoffice","Low","Security","The feature build matching sha256:ce2683513b826563779bf48fb60afd9e9952f42916bb766fb5d6a0e48e51bf73 is deployed in a manual-test environment. The tester has the actor, data, configuration, and permissions needed for VSC-021.","1. Open the approved backoffice entry point for requirement VSC-021.
+2. Establish the normal actor, data, and configuration preconditions without bypassing authorization or validation.
+3. Perform the required behavior: An eligible planned task shall offer a governed Request agent work action.
+4. Observe the resulting user-visible, API, persistence, and operational state that applies.","The controller selects only provider, declared run mode, permission ceiling, and target repository values supported by CIS; the extension invokes `cis agent prepare` and `cis agent run` as argument arrays, presents the exact task and ceiling before launch, and displays the precise CIS gate when execution is rejected.","VSC-021","backoffice","Automated","change-impact-studio::vscode-extension/test/extension.test.js:371
+change-impact-studio::vscode-extension/test/extension.test.js:372"
+"TC-VSC-022-001","A foreground agent run shall remain observable and controllable from the workspace.","Frontend / Backoffice","Low","Security","The feature build matching sha256:ce2683513b826563779bf48fb60afd9e9952f42916bb766fb5d6a0e48e51bf73 is deployed in a manual-test environment. The tester has the actor, data, configuration, and permissions needed for VSC-022.","1. Open the approved backoffice entry point for requirement VSC-022.
+2. Establish the normal actor, data, and configuration preconditions without bypassing authorization or validation.
+3. Perform the required behavior: A foreground agent run shall remain observable and controllable from the workspace.
+4. Observe the resulting user-visible, API, persistence, and operational state that applies.","Normalized events show attempt, state, bounded progress, permission requests, isolation mode, provider session reference, cancellation, timeout, failure, and completion without rendering an unrestricted provider transcript; supported cancel, recover, and resume actions invoke CIS and every resume creates a visible new attempt.","VSC-022","backoffice","Automated","change-impact-studio::vscode-extension/test/extension.test.js:108
+change-impact-studio::vscode-extension/test/extension.test.js:109
+change-impact-studio::vscode-extension/test/extension.test.js:371
+change-impact-studio::vscode-extension/test/extension.test.js:372
+change-impact-studio::vscode-extension/test/extension.test.js:423
+change-impact-studio::vscode-extension/test/extension.test.js:424"
+"TC-VSC-023-001","Agent results shall remain evidence rather than lifecycle authority.","Frontend / Backoffice","Low","User interface","The feature build matching sha256:ce2683513b826563779bf48fb60afd9e9952f42916bb766fb5d6a0e48e51bf73 is deployed in a manual-test environment. The tester has the actor, data, configuration, and permissions needed for VSC-023.","1. Open the approved backoffice entry point for requirement VSC-023.
+2. Establish the normal actor, data, and configuration preconditions without bypassing authorization or validation.
+3. Perform the required behavior: Agent results shall remain evidence rather than lifecycle authority.
+4. Observe the resulting user-visible, API, persistence, and operational state that applies.","The run detail opens the bounded result, changed-file inventory, validations, artifacts, hashes, and imported task evidence; importing a result never approves scope, transitions a task, closes a change, or hides the required human review point.","VSC-023","backoffice","Automated","change-impact-studio::vscode-extension/test/extension.test.js:166
+change-impact-studio::vscode-extension/test/extension.test.js:167
+change-impact-studio::vscode-extension/test/extension.test.js:244
+change-impact-studio::vscode-extension/test/extension.test.js:245
+change-impact-studio::vscode-extension/test/extension.test.js:371
+change-impact-studio::vscode-extension/test/extension.test.js:372
+change-impact-studio::vscode-extension/test/extension.test.js:423
+change-impact-studio::vscode-extension/test/extension.test.js:424"

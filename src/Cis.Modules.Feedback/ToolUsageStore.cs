@@ -8,7 +8,31 @@ public sealed class ToolUsageStore : ICisToolUsageRecorder
 {
     public const string RelativeLedgerPath = ".cis/local/feedback/tool-usage.jsonl";
     private const int CharactersPerEstimatedToken = 4;
+    private const int DefaultMaximumRetainedEntries = 25_000;
+    private const long DefaultCompactionThresholdBytes = 16 * 1024 * 1024;
+    private static readonly TimeSpan DefaultRetention = TimeSpan.FromDays(30);
     private static readonly JsonSerializerOptions LineOptions = new(JsonSerializerDefaults.Web);
+    private readonly int _maximumRetainedEntries;
+    private readonly long _compactionThresholdBytes;
+    private readonly TimeSpan _retention;
+    private readonly Func<DateTimeOffset> _clock;
+
+    public ToolUsageStore()
+        : this(DefaultMaximumRetainedEntries, DefaultCompactionThresholdBytes, DefaultRetention, () => DateTimeOffset.UtcNow)
+    {
+    }
+
+    public ToolUsageStore(int maximumRetainedEntries, long compactionThresholdBytes, TimeSpan retention,
+        Func<DateTimeOffset>? clock = null)
+    {
+        if (maximumRetainedEntries < 1) throw new ArgumentOutOfRangeException(nameof(maximumRetainedEntries));
+        if (compactionThresholdBytes < 1) throw new ArgumentOutOfRangeException(nameof(compactionThresholdBytes));
+        if (retention <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(retention));
+        _maximumRetainedEntries = maximumRetainedEntries;
+        _compactionThresholdBytes = compactionThresholdBytes;
+        _retention = retention;
+        _clock = clock ?? (() => DateTimeOffset.UtcNow);
+    }
 
     public void Record(CisToolUsageCapture capture)
     {
@@ -28,13 +52,14 @@ public sealed class ToolUsageStore : ICisToolUsageRecorder
         var actual = candidate?.ActualEstimatedTokens ?? outputTokens;
         var savings = Math.Max(0, baseline - actual);
         var savingsPercent = baseline == 0 ? 0 : Math.Round(100d * savings / baseline, 2);
+        var command = CommandPath(capture.Arguments);
         var entry = new ToolUsageEntry(
-            1,
+            2,
             Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture),
             capture.StartedAtUtc,
             capture.EndedAtUtc,
             capture.ElapsedMilliseconds,
-            CommandPath(capture.Arguments),
+            command,
             OptionNames(capture.Arguments),
             capture.ExitCode,
             capture.StandardOutputCharacters,
@@ -45,8 +70,9 @@ public sealed class ToolUsageStore : ICisToolUsageRecorder
             savings,
             savingsPercent,
             candidate?.Basis ?? "command-output-only; no defensible counterfactual registered",
-            candidate?.Confidence ?? "none");
-        File.AppendAllText(ledgerPath, JsonSerializer.Serialize(entry, LineOptions) + Environment.NewLine);
+            candidate?.Confidence ?? "none",
+            ClassifyOutcome(command, capture.ExitCode));
+        AppendBounded(ledgerPath, entry);
     }
 
     public FeedbackUsageResult Read(string repositoryPath, DateTimeOffset? sinceUtc = null, int limit = 100)
@@ -185,6 +211,11 @@ public sealed class ToolUsageStore : ICisToolUsageRecorder
 
     private static string CommandPath(IReadOnlyList<string> arguments)
     {
+        if (arguments.Any(argument => string.Equals(argument, "--version", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "version";
+        }
+
         var parts = arguments.TakeWhile(argument => !argument.StartsWith('-')).Take(2).ToArray();
         return parts.Length == 0 ? "help" : string.Join(' ', parts);
     }
@@ -198,4 +229,73 @@ public sealed class ToolUsageStore : ICisToolUsageRecorder
 
     private static int EstimateTokens(int characters) =>
         characters == 0 ? 0 : Math.Max(1, (int)Math.Ceiling(characters / (double)CharactersPerEstimatedToken));
+
+    internal static string ClassifyOutcome(string command, int exitCode)
+    {
+        if (exitCode == 0) return "succeeded";
+        if (exitCode == 130) return "cancelled";
+        if (command.Equals("repo doctor", StringComparison.Ordinal) && exitCode == 5) return "governed-findings";
+        return exitCode switch
+        {
+            2 => "invalid-request",
+            4 or 5 => "blocked",
+            _ => "failed",
+        };
+    }
+
+    private void AppendBounded(string ledgerPath, ToolUsageEntry entry)
+    {
+        var lockPath = ledgerPath + ".lock";
+        FileStream? lockStream = null;
+        for (var attempt = 0; attempt < 10 && lockStream is null; attempt++)
+        {
+            try
+            {
+                lockStream = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            }
+            catch (IOException) when (attempt < 9)
+            {
+                Thread.Sleep(20);
+            }
+        }
+
+        if (lockStream is null) return;
+        using (lockStream)
+        {
+            File.AppendAllText(ledgerPath, JsonSerializer.Serialize(entry, LineOptions) + Environment.NewLine);
+            if (new FileInfo(ledgerPath).Length >= _compactionThresholdBytes)
+            {
+                Compact(ledgerPath);
+            }
+        }
+    }
+
+    private void Compact(string ledgerPath)
+    {
+        var cutoff = _clock() - _retention;
+        var retained = new Queue<ToolUsageEntry>();
+        foreach (var line in File.ReadLines(ledgerPath))
+        {
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            try
+            {
+                var item = JsonSerializer.Deserialize<ToolUsageEntry>(line, LineOptions);
+                if (item is null || item.StartedAtUtc < cutoff) continue;
+                retained.Enqueue(item);
+                while (retained.Count > _maximumRetainedEntries) retained.Dequeue();
+            }
+            catch (JsonException)
+            {
+                // Derived malformed records are omitted during bounded compaction.
+            }
+        }
+
+        var temporary = ledgerPath + ".compact-" + Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture);
+        using (var writer = new StreamWriter(temporary, append: false))
+        {
+            foreach (var item in retained)
+                writer.WriteLine(JsonSerializer.Serialize(item, LineOptions));
+        }
+        File.Move(temporary, ledgerPath, overwrite: true);
+    }
 }

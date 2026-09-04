@@ -30,6 +30,12 @@ The command:
 4. registers the document in the authority catalog; and
 5. records its canonical path in the backlog row.
 
+The generated file is deliberately a schema-complete scaffold, not a finished feature.
+Immediately run `cis agent author feature --item <HLT-ID> --provider <provider>
+--actor <human>` (or use the VS Code **Draft with agent** action) to expand it from the
+current governed baseline. CIS applies only a protected one-file result with no remaining
+template placeholders. Manual authoring remains supported.
+
 The managed link update does not revoke the human-approved outcome or dependency graph.
 Other backlog edits still invalidate approval. A backlog-derived feature remains downstream
 Draft work and is not offered for BRD absorption until it leaves Draft. Rerunning with the

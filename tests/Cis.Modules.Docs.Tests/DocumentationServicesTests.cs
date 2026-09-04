@@ -197,6 +197,27 @@ public sealed class DocumentationServicesTests
     }
 
     [Fact]
+    public void DocumentationDoctorCheck_DoesNotTreatProductNameFriendsTodoAsTodoMarker()
+    {
+        using var repository = TemporaryRepository.CreateInitialized();
+        repository.WriteDocumentation(
+            "specs/friends-todo.md",
+            "---\ntitle: Friends Todo\ntype: specification\nstatus: Draft\n---\n# Friends Todo\n\nThe Friends Todo application is the reference product.\n");
+        repository.WriteCatalog(CatalogEntry(
+            "example:spec:friends-todo",
+            "docs/specs/friends-todo.md",
+            "specification"));
+        var resolution = new CisRepositoryContextResolver().Resolve(repository.Path);
+        var check = new DocumentationDoctorCheck(CreateValidationService(), CreateInventoryService());
+
+        var findings = check.Inspect(resolution.Context!);
+
+        Assert.DoesNotContain(
+            findings.Where(finding => finding.Code == "CIS-DOC-005").SelectMany(finding => finding.Evidence),
+            path => path.Equals("docs/specs/friends-todo.md", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void Validate_StrictlyAcceptsClassificationGeneratedDocumentation()
     {
         using var repository = TemporaryRepository.Create();

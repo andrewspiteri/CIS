@@ -152,9 +152,11 @@ public sealed class SkillsModule : ICisModule
         var repo = CreateRepositoryOption();
         var format = CreateFormatOption();
         var details = new Option<bool>("--details") { Description = "Include every valid skill in agent output." };
+        var summary = new Option<bool>("--summary") { Description = "Omit individual skills and diagnostics from structured output." };
         command.Options.Add(repo);
         command.Options.Add(format);
         command.Options.Add(details);
+        command.Options.Add(summary);
         command.SetAction(parseResult =>
         {
             var selectedFormat = GetFormat(parseResult.GetValue(format));
@@ -167,7 +169,7 @@ public sealed class SkillsModule : ICisModule
                 parseResult.GetValue(repo) ?? Directory.GetCurrentDirectory(),
                 strict: false);
             AddCompactSavings(result, selectedFormat, parseResult.GetValue(details), savings);
-            Render(result, selectedFormat, includeDiagnostics: false, parseResult.GetValue(details));
+            Render(result, selectedFormat, includeDiagnostics: false, parseResult.GetValue(details), parseResult.GetValue(summary));
             return result.ErrorCount > 0 ? 2 : 0;
         });
         return command;
@@ -237,11 +239,24 @@ public sealed class SkillsModule : ICisModule
         return null;
     }
 
-    private static void Render(SkillValidationResult result, string format, bool includeDiagnostics, bool details = false)
+    private static void Render(SkillValidationResult result, string format, bool includeDiagnostics, bool details = false, bool summary = false)
     {
         if (format == "json")
         {
-            Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions
+            var output = summary ? new
+            {
+                result.Status,
+                result.ExitCode,
+                result.RepositoryPath,
+                result.SkillsRoot,
+                result.SkillCount,
+                result.ErrorCount,
+                result.WarningCount,
+                result.Strict,
+                result.FixRequested,
+                result.Applied,
+            } : (object)result;
+            Console.WriteLine(JsonSerializer.Serialize(output, new JsonSerializerOptions
             {
                 PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
                 WriteIndented = true,

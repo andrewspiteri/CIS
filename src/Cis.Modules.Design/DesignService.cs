@@ -141,6 +141,9 @@ public sealed class DesignService
         if (guidelinePath is null) return Error(change.Id, "No governed design-guidelines document was found.");
         var relativeGuideline = Relative(change.RepositoryPath, guidelinePath);
         var guidelineSha = Sha(File.ReadAllBytes(guidelinePath));
+        var uiDirectionPath = FindUiDirection(change);
+        var relativeUiDirection = uiDirectionPath is null ? "not-recorded" : Relative(change.RepositoryPath, uiDirectionPath);
+        var uiDirectionSha = uiDirectionPath is null ? "not-recorded" : Sha(File.ReadAllBytes(uiDirectionPath));
         var wireframeSha = CurrentApprovedWireframeSha(wireframe) ?? WireframeBodySha(wireframe);
         var slug = Slug(request.Feature);
         if (slug.Length == 0) return Error(change.Id, "Feature name must produce a non-empty renderer filename.");
@@ -156,7 +159,8 @@ public sealed class DesignService
             : request.Components.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var selected = _templates.ResolveComponents(request.Shell, requestedComponents);
         File.WriteAllText(rendererPath, DesignRendererScaffolder.Render(
-            request.Feature, screens, request.Shell, selected, relativeGuideline, guidelineSha, wireframeSha));
+            request.Feature, screens, request.Shell, selected, relativeGuideline, guidelineSha,
+            relativeUiDirection, uiDirectionSha, wireframeSha));
 
         var rendererRelative = Relative(change.RepositoryPath, rendererPath);
         design = ReplaceSection(design, "## Inputs and renderer", $"""
@@ -165,6 +169,8 @@ public sealed class DesignService
 | Wireframe path | Wireframe SHA-256 | Guideline path | Guideline SHA-256 | Renderer path | Renderer SHA-256 | Node | Sharp | libvips |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `{Relative(change.RepositoryPath, wireframePath)}` | `{wireframeSha}` | `{relativeGuideline}` | `{guidelineSha}` | `{rendererRelative}` | `{Sha(File.ReadAllBytes(rendererPath))}` | Pending render | Pending render | Pending render |
+
+High-level UI direction: `{relativeUiDirection}` at `{uiDirectionSha}`.
 
 """);
         var usedTemplates = new[] { request.Shell }.Concat(selected).Select(id => _templates.Find(id)!).ToArray();
@@ -198,6 +204,7 @@ public sealed class DesignService
             ["wireframeSha256"] = wireframeSha,
             ["wireframeApproval"] = FrontMatter(wireframe, "approval_status"),
             ["guidelineSha256"] = guidelineSha,
+            ["uiDirectionSha256"] = uiDirectionSha,
             ["templates"] = string.Join(',', usedTemplates.Select(template => template.Id)),
             ["renderScreens"] = string.Join(',', screens.Select(screen => Slug(screen.Id))),
             ["reusedScreens"] = string.Join(',', reusedTargets),
@@ -236,6 +243,21 @@ public sealed class DesignService
                     $"Renderer provenance must contain selected template {component}.", diagnostics);
             }
             Required(source, "guidelineSha256", "Renderer must preserve design-guideline provenance.", diagnostics);
+            Required(source, "uiDirectionSha256", "Renderer must preserve high-level UI-direction provenance.", diagnostics);
+            var directionPath = Regex.Match(source, "uiDirectionPath:\\s*\\\"(?<value>[^\\\"]+)\\\"", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)).Groups["value"].Value;
+            var directionSha = Regex.Match(source, "uiDirectionSha256:\\s*\\\"(?<value>[^\\\"]+)\\\"", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)).Groups["value"].Value;
+            if (directionPath == "not-recorded")
+                diagnostics.Add("INFO: This legacy design renderer predates high-level UI-direction provenance.");
+            else if (directionPath.Length > 0)
+            {
+                var candidate = Path.GetFullPath(Path.Combine(change.RepositoryPath, directionPath.Replace('/', Path.DirectorySeparatorChar)));
+                if (!CisPathSafety.IsUnderRoot(change.RepositoryPath, candidate) || !File.Exists(candidate))
+                    diagnostics.Add("ERROR: Renderer high-level UI-direction path is missing or outside the repository.");
+                else if (directionSha != Sha(File.ReadAllBytes(candidate)))
+                    diagnostics.Add("ERROR: Renderer high-level UI-direction provenance is stale.");
+                else if (!design.Contains($"`{directionPath}` at `{directionSha}`", StringComparison.Ordinal))
+                    diagnostics.Add("ERROR: design.md must record the same high-level UI-direction provenance as the renderer.");
+            }
             var sourceWithoutSvgNamespace = source.Replace("http://www.w3.org/2000/svg", string.Empty, StringComparison.OrdinalIgnoreCase);
             if (sourceWithoutSvgNamespace.Contains("fetch(", StringComparison.Ordinal)
                 || sourceWithoutSvgNamespace.Contains("http://", StringComparison.OrdinalIgnoreCase)
@@ -664,8 +686,9 @@ Rejected PNG files are removed. Preserve their manifest hashes and review eviden
         foreach (var artifact in localArtifacts)
         {
             var path = Path.GetFullPath(Path.Combine(change.RepositoryPath, artifact.Path.Replace('/', Path.DirectorySeparatorChar)));
-            var assetRoot = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(designPath)!, "assets")) + Path.DirectorySeparatorChar;
-            if (path.StartsWith(assetRoot, StringComparison.OrdinalIgnoreCase) && File.Exists(path)) File.Delete(path);
+            var assetRoot = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(designPath)!, "assets"));
+            if (CisPathSafety.IsUnderRoot(assetRoot, path, allowRoot: false)
+                && !CisPathSafety.ContainsReparsePoint(assetRoot, path) && File.Exists(path)) File.Delete(path);
         }
         _changes.AppendEvent(change, "design-rejected", new Dictionary<string, string>
         {
@@ -931,11 +954,19 @@ approval digests and current file hashes before rendering or approving this pack
     {
         var documentation = Path.Combine(change.RepositoryPath, change.DocumentationRoot.Replace('/', Path.DirectorySeparatorChar));
         if (!Directory.Exists(documentation)) return null;
-        return Directory.EnumerateFiles(documentation, "*.md", SearchOption.AllDirectories)
+        return CisPathSafety.EnumerateFiles(documentation, "*.md")
             .Where(path => File.ReadLines(path).Take(30).Any(line => line.Trim().Equals("type: design-guidelines", StringComparison.OrdinalIgnoreCase)))
             .OrderBy(path => path.Contains($"{Path.DirectorySeparatorChar}templates{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase) ? 1 : 0)
             .ThenBy(path => path, StringComparer.OrdinalIgnoreCase)
             .FirstOrDefault();
+    }
+
+    private static string? FindUiDirection(ChangeDossier change)
+    {
+        var path = Path.Combine(change.RepositoryPath,
+            change.DocumentationRoot.Replace('/', Path.DirectorySeparatorChar), "design", "ui-direction.md");
+        return File.Exists(path) && File.ReadLines(path).Take(30)
+            .Any(line => line.Trim().Equals("type: ui-direction", StringComparison.OrdinalIgnoreCase)) ? path : null;
     }
 
     private static string? ResolveRenderer(ChangeDossier change, string design)

@@ -1,9 +1,11 @@
 using Cis.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 using System.CommandLine;
+using System.Diagnostics.CodeAnalysis;
 
 namespace Cis.Host;
 
+[SuppressMessage("Maintainability", "CA1515", Justification = "The builder is the supported composition surface for external module hosts and integration tests.")]
 public sealed class CisHostBuilder
 {
     private readonly List<ICisModule> _modules = [];

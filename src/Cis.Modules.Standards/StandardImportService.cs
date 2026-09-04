@@ -1,4 +1,3 @@
-using System.IO.Compression;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -17,7 +16,7 @@ public sealed partial class StandardImportService
     private const int MaximumArchiveEntries = 10_000;
     private static readonly HashSet<string> ExcludedDirectories = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".git", ".cis", "node_modules", "bin", "obj", "standards-quarantine",
+        ".git", ".cis", ".codex-tmp", "node_modules", "bin", "obj", "standards-quarantine",
     };
 
     private readonly ICisRepositoryContextResolver _resolver;
@@ -144,7 +143,9 @@ public sealed partial class StandardImportService
         }
         finally
         {
-            if (Directory.Exists(stagingRoot)) Directory.Delete(stagingRoot, recursive: true);
+            if (Directory.Exists(stagingRoot))
+                try { Directory.Delete(stagingRoot, recursive: true); }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
         }
     }
 
@@ -224,8 +225,11 @@ public sealed partial class StandardImportService
 
     private void Materialize(string source, string repositoryPath, string stagingRoot, ICollection<ImportCandidate> candidates, ICollection<string> errors)
     {
-        if (Uri.TryCreate(source, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https")
+        if (Uri.TryCreate(source, UriKind.Absolute, out var uri) && uri.Scheme == "http")
+            throw new InvalidDataException("Remote standard sources must use HTTPS.");
+        if (uri is not null && uri.Scheme == "https")
         {
+            if (!string.IsNullOrEmpty(uri.UserInfo)) throw new InvalidDataException("Remote standard source URLs cannot contain credentials.");
             var remote = ResolveRemote(uri); var archive = Path.Combine(stagingRoot, Guid.NewGuid().ToString("N") + ".zip"); Download(remote.Archive, archive);
             var expanded = Path.Combine(stagingRoot, Guid.NewGuid().ToString("N")); Extract(archive, expanded); Discover(ResolveScanRoot(expanded, remote.Subpath), source, candidates, errors); return;
         }
@@ -251,16 +255,9 @@ public sealed partial class StandardImportService
     }
 
     private static IEnumerable<string> EnumerateMarkdown(string root)
-    {
-        var pending = new Stack<string>(); pending.Push(root);
-        while (pending.Count > 0)
-        {
-            var directory = pending.Pop(); if (ExcludedDirectories.Contains(Path.GetFileName(directory))) continue;
-            foreach (var file in Directory.EnumerateFiles(directory, "*.md")) yield return file;
-            foreach (var child in Directory.EnumerateDirectories(directory))
-                if ((File.GetAttributes(child) & FileAttributes.ReparsePoint) == 0) pending.Push(child);
-        }
-    }
+        => CisPathSafety.EnumerateFiles(root, "*.md")
+            .Where(path => !Path.GetRelativePath(root, path).Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                .Any(ExcludedDirectories.Contains));
 
     private static bool IsStandardDocument(string path)
     {
@@ -295,6 +292,7 @@ public sealed partial class StandardImportService
         var parts = source.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries); if (parts.Length < 2) throw new InvalidDataException("GitHub standard URLs must include an owner and repository.");
         if (source.AbsolutePath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) return new RemoteSource(source, null);
         var owner = parts[0]; var repo = parts[1].EndsWith(".git", StringComparison.OrdinalIgnoreCase) ? parts[1][..^4] : parts[1]; var reference = "HEAD"; string? subpath = null;
+        if (!SafeGitHubSegment(owner) || !SafeGitHubSegment(repo)) throw new InvalidDataException("GitHub standard owner and repository names contain unsupported characters.");
         if (parts.Length >= 4 && parts[2].Equals("tree", StringComparison.OrdinalIgnoreCase)) { reference = Uri.UnescapeDataString(parts[3]); subpath = parts.Length > 4 ? string.Join('/', parts.Skip(4)) : null; }
         else if (parts.Length > 2) throw new InvalidDataException("Use a GitHub repository URL, tree/<ref>/<path> URL, or direct ZIP URL.");
         return new RemoteSource(new Uri($"https://github.com/{owner}/{repo}/archive/{Uri.EscapeDataString(reference)}.zip"), subpath);
@@ -303,29 +301,20 @@ public sealed partial class StandardImportService
     private void Download(Uri uri, string destination)
     {
         using var response = _httpClient.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult();
+        var finalUri = response.RequestMessage?.RequestUri ?? uri;
+        if (!finalUri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Standard download redirected to a non-HTTPS endpoint.");
         if (response.StatusCode is < HttpStatusCode.OK or >= HttpStatusCode.MultipleChoices) throw new HttpRequestException($"Standard download failed with HTTP {(int)response.StatusCode} from {uri}.");
         if (response.Content.Headers.ContentLength > MaximumDownloadBytes) throw new InvalidDataException("Standard archive exceeds the download limit.");
         using var input = response.Content.ReadAsStream(); using var output = File.Create(destination); CopyLimit(input, output, MaximumDownloadBytes);
     }
 
     private static void Extract(string archivePath, string destination)
-    {
-        Directory.CreateDirectory(destination); var boundary = Path.GetFullPath(destination).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        using var archive = ZipFile.OpenRead(archivePath); if (archive.Entries.Count > MaximumArchiveEntries) throw new InvalidDataException("Standard archive contains too many entries.");
-        long expanded = 0; foreach (var entry in archive.Entries)
-        {
-            expanded += entry.Length; if (expanded > MaximumExpandedBytes) throw new InvalidDataException("Standard archive exceeds the expanded-size limit.");
-            var path = Path.GetFullPath(Path.Combine(destination, entry.FullName.Replace('/', Path.DirectorySeparatorChar))); if (!path.StartsWith(boundary, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException($"Standard archive contains an escaping path: {entry.FullName}");
-            if (string.IsNullOrEmpty(entry.Name)) { Directory.CreateDirectory(path); continue; }
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!); using var input = entry.Open(); using var output = File.Create(path); input.CopyTo(output);
-        }
-    }
+        => CisArchiveSafety.ExtractZip(archivePath, destination, MaximumArchiveEntries, MaximumExpandedBytes);
 
     private static string ResolveScanRoot(string extraction, string? subpath)
     {
         if (string.IsNullOrWhiteSpace(subpath)) return extraction; var roots = Directory.EnumerateDirectories(extraction).ToArray(); var root = roots.Length == 1 ? roots[0] : extraction;
-        var resolved = Path.GetFullPath(Path.Combine(root, subpath.Replace('/', Path.DirectorySeparatorChar))); var boundary = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        if (!resolved.StartsWith(boundary, StringComparison.OrdinalIgnoreCase) || !Directory.Exists(resolved)) throw new InvalidDataException($"GitHub archive does not contain requested standard path '{subpath}'."); return resolved;
+        if (!CisPathSafety.TryResolveUnderRoot(root, subpath, out var resolved) || !Directory.Exists(resolved)) throw new InvalidDataException($"GitHub archive does not contain requested standard path '{subpath}'."); return resolved;
     }
 
     private static void CopyLimit(Stream input, Stream output, long limit)
@@ -368,6 +357,9 @@ public sealed partial class StandardImportService
     }
     private static string YamlScalar(string value) => '"' + value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal) + '"';
     private static string Sha256(string content) => "sha256:" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(content)));
+    private static bool SafeGitHubSegment(string value) => value.Length is > 0 and <= 100
+        && value is not "." and not ".."
+        && value.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_' or '.');
     private static void Write(string path, string content) { var temporary = path + ".tmp"; File.WriteAllText(temporary, content); File.Move(temporary, path, overwrite: true); }
     private static void WriteImportRecord(CisRepositoryContext context, IReadOnlyList<StandardImportItem> items) { var root = Path.Combine(context.RepositoryPath, ".cis", "local", "standards"); Directory.CreateDirectory(root); Write(Path.Combine(root, "imports.json"), System.Text.Json.JsonSerializer.Serialize(items, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web) { WriteIndented = true }) + "\n"); }
     private static StandardImportResult Result(string status, int exit, string? repo, StandardImportRequest request, IReadOnlyList<StandardImportItem> items, IReadOnlyList<string> warnings, IReadOnlyList<string> conflicts, IReadOnlyList<string> errors, bool confirmationRequired = false, bool applied = false) => new(status, exit, repo, request.DryRun, confirmationRequired, applied, items, warnings.Distinct().ToArray(), conflicts.Distinct().ToArray(), errors.Distinct().ToArray());

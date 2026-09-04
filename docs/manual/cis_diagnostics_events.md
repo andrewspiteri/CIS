@@ -14,7 +14,11 @@ cis:
 List bounded normalized diagnostic events.
 
 ```text
-cis diagnostics events [--source <id>] [--limit <1-5000>] [--repo <path>] [--format <human|json|agent>]
+cis diagnostics events [--source <id>] [--limit <1-5000>]
+  [--level <info|warning|error>] [--contains <text>] [--since-minutes <n>]
+  [--repo <path>] [--format <human|json|agent>]
 ```
 
 Known secret-shaped fields are redacted; profile sensitivity remains the primary boundary.
+JSONL sources preserve timestamps, categories, correlation identifiers, and normalized
+fingerprints. Filters reduce the bounded event set without changing source evidence.

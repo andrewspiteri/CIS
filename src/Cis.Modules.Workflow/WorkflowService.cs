@@ -92,13 +92,11 @@ public sealed class WorkflowService
         using var log = new BoundedProcessLog(logPath, _clock, Path.GetFileName(runDirectory), step.Id, attempt);
         try
         {
-            var workingDirectory = Path.GetFullPath(Path.Combine(repository, step.WorkingDirectory.Replace('/', Path.DirectorySeparatorChar)));
-            var repositoryRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(repository));
-            if (!workingDirectory.Equals(repositoryRoot, StringComparison.OrdinalIgnoreCase)
-                && !workingDirectory.StartsWith(repositoryRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            if (!CisPathSafety.TryResolveUnderRoot(repository, step.WorkingDirectory, out var workingDirectory, allowRoot: true)
+                || CisPathSafety.ContainsReparsePoint(repository, workingDirectory))
             {
-                log.Write("cis", "Working directory escapes the repository.");
-                return State("failed", null, "Working directory escapes the repository.", "missing-prerequisite");
+                log.Write("cis", "Working directory escapes the repository or traverses a linked directory.");
+                return State("failed", null, "Working directory escapes the repository or traverses a linked directory.", "missing-prerequisite");
             }
             if (!Directory.Exists(workingDirectory))
             {
@@ -170,7 +168,7 @@ public sealed class WorkflowService
     { if (workflow.Steps.Count == 0) d.Add("ERROR: Workflow has no steps."); var ids = workflow.Steps.Select(x => x.Id).ToHashSet(StringComparer.OrdinalIgnoreCase); if (ids.Count != workflow.Steps.Count) d.Add("ERROR: Workflow step IDs must be unique."); foreach (var step in workflow.Steps) { foreach (var dep in step.DependsOn) if (!ids.Contains(dep)) d.Add($"ERROR: Step '{step.Id}' has unknown dependency '{dep}'."); if (string.IsNullOrWhiteSpace(step.WorkingDirectory)) d.Add($"ERROR: Step '{step.Id}' has no working directory."); } }
     private static string ClassifyFailure(string output)
     {
-        if (new[] { "ENOSPC", "out of memory", "ENOMEM", "worker process", "process exited unexpectedly", "docker daemon", "cannot connect to the Docker", "resource temporarily unavailable" }.Any(marker => output.Contains(marker, StringComparison.OrdinalIgnoreCase))) return "infrastructure";
+        if (new[] { "ENOSPC", "out of memory", "ENOMEM", "worker process", "process exited unexpectedly", "docker daemon", "cannot connect to the Docker", "resource temporarily unavailable", "scanner process failed", "context deadline exceeded", "failed analysis" }.Any(marker => output.Contains(marker, StringComparison.OrdinalIgnoreCase))) return "infrastructure";
         if (new[]
             {
                 "command not found", "is not recognized", "No such file or directory", "SDK not found",

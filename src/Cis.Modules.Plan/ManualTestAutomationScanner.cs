@@ -13,7 +13,7 @@ internal sealed partial class ManualTestAutomationScanner
     };
     private static readonly HashSet<string> ExcludedDirectories = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".git", ".artifacts", "artifacts", "bin", "obj", "node_modules", ".vs", ".idea",
+        ".git", ".codex-tmp", ".artifacts", "artifacts", "bin", "obj", "node_modules", ".vs", ".idea",
         ".next", "dist", "build", "coverage", "DerivedData", ".gradle", "build_out",
         "skills-quarantine", "_old", "nongit",
     };

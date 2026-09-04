@@ -4,8 +4,8 @@ applyTo: "**"
 
 # CIS repository guidance
 
-- When onboarding or reconciling a repository, use `.github/skills/cis-repository-bootstrap/SKILL.md`.
-- When onboarding several repositories, use `.github/skills/cis-import-repositories/SKILL.md`; dry-run the whole batch before confirmation.
+- When onboarding or reconciling a repository, use `.github/skills/cis-repository-bootstrap/SKILL.md`; import existing source and initialize only a genuinely new empty project.
+- When importing one or several existing repositories, use `.github/skills/cis-import-repositories/SKILL.md`; dry-run the complete selection before confirmation.
 - For BRD intake or currency review, use `.github/skills/cis-govern-business-requirements/SKILL.md`; discovery never proves currency and approval is human-only.
 - Run `cis repo init` with an explicit maintainer-selected `--root`; if it returns an error or collision, run `cis repo doctor` with the same `--repo` and `--root`.
 - Read `.cis/repository.yml` before repository-wide work.

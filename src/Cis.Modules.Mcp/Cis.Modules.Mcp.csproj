@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Repository-scoped MCP stdio adapter over CIS application services.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Cis.Abstractions\Cis.Abstractions.csproj" />
+    <ProjectReference Include="..\Cis.Modules.Change\Cis.Modules.Change.csproj" />
+    <ProjectReference Include="..\Cis.Modules.Graph\Cis.Modules.Graph.csproj" />
+    <ProjectReference Include="..\Cis.Modules.References\Cis.Modules.References.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" />
+  </ItemGroup>
+</Project>

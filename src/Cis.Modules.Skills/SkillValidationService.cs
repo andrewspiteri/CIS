@@ -226,9 +226,20 @@ public sealed partial class SkillValidationService
                 continue;
             }
 
-            var resolved = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(skillPath)!, target.Replace('/', Path.DirectorySeparatorChar)));
-            if (!resolved.StartsWith(repositoryPath + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
-                || !File.Exists(resolved) && !Directory.Exists(resolved))
+            string? resolved = null;
+            try
+            {
+                var candidate = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(skillPath)!,
+                    target.Replace('/', Path.DirectorySeparatorChar)));
+                var relative = Path.GetRelativePath(repositoryPath, candidate);
+                if (CisPathSafety.TryResolveUnderRoot(repositoryPath, relative, out var safe)
+                    && !CisPathSafety.ContainsReparsePoint(repositoryPath, safe)) resolved = safe;
+            }
+            catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+            {
+                // Report the invalid target through the normal link diagnostic below.
+            }
+            if (resolved is null || !File.Exists(resolved) && !Directory.Exists(resolved))
             {
                 diagnostics.Add(new SkillDiagnostic(
                     "CIS-SKILL-LINK-001", "error", relativePath,

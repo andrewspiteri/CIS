@@ -55,8 +55,9 @@ public sealed class StandardsModule : ICisModule
         var repo = Repo(); var target = Many("--target", "Governed target filter; repeat for more than one.");
         var stack = Many("--stack", "Technology stack filter; repeat for more than one.");
         var status = new Option<string?>("--status") { Description = "Lifecycle status filter." }; var format = Format();
-        command.Options.Add(repo); command.Options.Add(target); command.Options.Add(stack); command.Options.Add(status); command.Options.Add(format);
-        command.SetAction(parse => Render(service.Inventory(parse.GetValue(repo)!, parse.GetValue(target), parse.GetValue(stack), parse.GetValue(status)), GetFormat(parse.GetValue(format))));
+        var summary = new Option<bool>("--summary") { Description = "Omit individual standards from structured output." };
+        command.Options.Add(repo); command.Options.Add(target); command.Options.Add(stack); command.Options.Add(status); command.Options.Add(summary); command.Options.Add(format);
+        command.SetAction(parse => Render(service.Inventory(parse.GetValue(repo)!, parse.GetValue(target), parse.GetValue(stack), parse.GetValue(status)), GetFormat(parse.GetValue(format)), parse.GetValue(summary)));
         return command;
     }
 
@@ -148,11 +149,24 @@ public sealed class StandardsModule : ICisModule
         Console.Error.WriteLine($"Unsupported format '{format}'. Expected human, json, or agent."); return null;
     }
 
-    private static int Render(object result, string? format)
+    private static int Render(object result, string? format, bool summary = false)
     {
         if (format is null) return 2;
         var exit = result switch { StandardInventoryResult value => value.ExitCode, StandardsValidationResult value => value.ExitCode, StandardsConformanceResult value => value.ExitCode, StandardImportResult value => value.ExitCode, StandardAuditResult value => value.ExitCode, StandardPatternCatalogResult value => value.ExitCode, StandardInferenceResult value => value.ExitCode, _ => 5 };
-        if (format == "json") Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
+        if (format == "json")
+        {
+            var output = summary && result is StandardInventoryResult inventorySummary ? new
+            {
+                inventorySummary.Status,
+                inventorySummary.RepositoryPath,
+                inventorySummary.DocumentationRoot,
+                StandardCount = inventorySummary.Standards.Count,
+                WarningCount = inventorySummary.Warnings.Count,
+                ErrorCount = inventorySummary.Errors.Count,
+                inventorySummary.ExitCode,
+            } : result;
+            Console.WriteLine(JsonSerializer.Serialize(output, new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
+        }
         else if (result is StandardInventoryResult inventory) RenderInventory(inventory, format);
         else if (result is StandardsValidationResult validation) RenderValidation(validation, format);
         else if (result is StandardsConformanceResult conformance) RenderConformance(conformance, format);

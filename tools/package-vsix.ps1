@@ -8,8 +8,15 @@ $extensionRoot = Join-Path $repoRoot "vscode-extension"
 $package = Get-Content (Join-Path $extensionRoot "package.json") -Raw | ConvertFrom-Json
 $resolvedOutput = [IO.Path]::GetFullPath((Join-Path $repoRoot $Output))
 $allowedRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot "artifacts"))
-if (-not $resolvedOutput.StartsWith($allowedRoot, [StringComparison]::OrdinalIgnoreCase)) {
+$comparison = if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+if (-not $resolvedOutput.Equals($allowedRoot, $comparison) -and
+    -not $resolvedOutput.StartsWith($allowedRoot + [IO.Path]::DirectorySeparatorChar, $comparison)) {
     throw "VSIX output must remain beneath $allowedRoot"
+}
+if ($package.version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$' -or
+    $package.name -notmatch '^[a-z0-9][a-z0-9-]{0,99}$' -or
+    $package.publisher -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$') {
+    throw "VSIX identity contains an unsafe name, publisher, or version."
 }
 
 $stage = Join-Path $resolvedOutput ".vsix-stage"
@@ -22,19 +29,26 @@ Get-ChildItem -LiteralPath $extensionRoot -Force | Where-Object {
     -not ($excluded | Where-Object { $name -like $_ })
 } | Copy-Item -Destination (Join-Path $stage "extension") -Recurse -Force
 
+$identityName = [Security.SecurityElement]::Escape([string]$package.name)
+$identityVersion = [Security.SecurityElement]::Escape([string]$package.version)
+$identityPublisher = [Security.SecurityElement]::Escape([string]$package.publisher)
+$displayName = [Security.SecurityElement]::Escape([string]$package.displayName)
+$description = [Security.SecurityElement]::Escape([string]$package.description)
+$tags = [Security.SecurityElement]::Escape([string]::Join(',', $package.keywords))
+$engine = [Security.SecurityElement]::Escape([string]$package.engines.vscode)
 $manifest = @"
 <?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011">
   <Metadata>
-    <Identity Language="en-US" Id="$($package.name)" Version="$($package.version)" Publisher="$($package.publisher)" />
-    <DisplayName>$($package.displayName)</DisplayName>
-    <Description xml:space="preserve">$($package.description)</Description>
-    <Tags>$([string]::Join(',', $package.keywords))</Tags>
+    <Identity Language="en-US" Id="$identityName" Version="$identityVersion" Publisher="$identityPublisher" />
+    <DisplayName>$displayName</DisplayName>
+    <Description xml:space="preserve">$description</Description>
+    <Tags>$tags</Tags>
     <Categories>Other</Categories>
     <GalleryFlags>Public</GalleryFlags>
     <Properties>
-      <Property Id="Microsoft.VisualStudio.Code.Engine" Value="$($package.engines.vscode)" />
-      <Property Id="Microsoft.VisualStudio.Services.Links.Source" Value="https://github.com/AndrewSpiteri/change-impact-studio" />
+      <Property Id="Microsoft.VisualStudio.Code.Engine" Value="$engine" />
+      <Property Id="Microsoft.VisualStudio.Services.Links.Source" Value="https://github.com/andrewspiteri/CIS" />
     </Properties>
     <Icon>extension/media/cis.svg</Icon>
     <License>extension/LICENSE.md</License>
@@ -57,7 +71,7 @@ $contentTypes = @"
 "@
 [IO.File]::WriteAllText((Join-Path $stage "extension.vsixmanifest"), $manifest, [Text.UTF8Encoding]::new($false))
 [IO.File]::WriteAllText((Join-Path $stage "[Content_Types].xml"), $contentTypes, [Text.UTF8Encoding]::new($false))
-Copy-Item -LiteralPath (Join-Path $repoRoot "LICENSE.md") -Destination (Join-Path $stage "extension" "LICENSE.md")
+Copy-Item -LiteralPath (Join-Path $repoRoot "LICENSE.md") -Destination (Join-Path (Join-Path $stage "extension") "LICENSE.md")
 
 $vsix = Join-Path $resolvedOutput "$($package.name)-$($package.version).vsix"
 if (Test-Path -LiteralPath $vsix) { Remove-Item -LiteralPath $vsix -Force }

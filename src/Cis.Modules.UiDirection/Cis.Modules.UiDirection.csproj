@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Built-in CIS high-level UI direction and experience-governance module.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Cis.Abstractions\Cis.Abstractions.csproj" />
+    <ProjectReference Include="..\Cis.Modules.Repository\Cis.Modules.Repository.csproj" />
+    <ProjectReference Include="..\Cis.Modules.SolutionDesign\Cis.Modules.SolutionDesign.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" />
+  </ItemGroup>
+</Project>

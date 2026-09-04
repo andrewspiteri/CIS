@@ -1,4 +1,3 @@
-using System.IO.Compression;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -11,7 +10,7 @@ public sealed class SkillImportService
 {
     private static readonly HashSet<string> ExcludedDirectories = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".git", ".cis", "node_modules", "bin", "obj", "skills-quarantine",
+        ".git", ".cis", ".codex-tmp", "node_modules", "bin", "obj", "skills-quarantine",
     };
 
     private const long MaximumDownloadBytes = 100 * 1024 * 1024;
@@ -152,9 +151,8 @@ public sealed class SkillImportService
         finally
         {
             if (Directory.Exists(stagingRoot))
-            {
-                Directory.Delete(stagingRoot, recursive: true);
-            }
+                try { Directory.Delete(stagingRoot, recursive: true); }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
         }
     }
 
@@ -167,9 +165,11 @@ public sealed class SkillImportService
         ICollection<string> warnings,
         ICollection<string> errors)
     {
-        if (Uri.TryCreate(source, UriKind.Absolute, out var uri)
-            && uri.Scheme is "http" or "https")
+        if (Uri.TryCreate(source, UriKind.Absolute, out var uri) && uri.Scheme == "http")
+            throw new InvalidDataException("Remote skill sources must use HTTPS.");
+        if (uri is not null && uri.Scheme == "https")
         {
+            if (!string.IsNullOrEmpty(uri.UserInfo)) throw new InvalidDataException("Remote skill source URLs cannot contain credentials.");
             var remote = ResolveRemote(uri);
             var archivePath = Path.Combine(stagingRoot, "download-" + Guid.NewGuid().ToString("N") + ".zip");
             Download(remote.ArchiveUri, archivePath);
@@ -232,6 +232,8 @@ public sealed class SkillImportService
         var repository = segments[1].EndsWith(".git", StringComparison.OrdinalIgnoreCase)
             ? segments[1][..^4]
             : segments[1];
+        if (!SafeGitHubSegment(owner) || !SafeGitHubSegment(repository))
+            throw new InvalidDataException("GitHub skill owner and repository names contain unsupported characters.");
         var reference = "HEAD";
         string? subpath = null;
         if (segments.Length >= 4 && string.Equals(segments[2], "tree", StringComparison.OrdinalIgnoreCase))
@@ -252,6 +254,9 @@ public sealed class SkillImportService
     {
         using var response = _httpClient.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead)
             .GetAwaiter().GetResult();
+        var finalUri = response.RequestMessage?.RequestUri ?? uri;
+        if (!finalUri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("Skill download redirected to a non-HTTPS endpoint.");
         if (response.StatusCode is < HttpStatusCode.OK or >= HttpStatusCode.MultipleChoices)
         {
             throw new HttpRequestException($"Skill download failed with HTTP {(int)response.StatusCode} from {uri}.");
@@ -268,42 +273,7 @@ public sealed class SkillImportService
     }
 
     private static void ExtractArchive(string archivePath, string destination)
-    {
-        Directory.CreateDirectory(destination);
-        var destinationRoot = Path.GetFullPath(destination).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        using var archive = ZipFile.OpenRead(archivePath);
-        if (archive.Entries.Count > MaximumArchiveEntries)
-        {
-            throw new InvalidDataException($"Skill archive exceeds the {MaximumArchiveEntries} entry limit.");
-        }
-
-        long expanded = 0;
-        foreach (var entry in archive.Entries)
-        {
-            expanded += entry.Length;
-            if (expanded > MaximumExpandedBytes)
-            {
-                throw new InvalidDataException($"Skill archive exceeds the {MaximumExpandedBytes} byte expanded-size limit.");
-            }
-
-            var destinationPath = Path.GetFullPath(Path.Combine(destination, entry.FullName.Replace('/', Path.DirectorySeparatorChar)));
-            if (!destinationPath.StartsWith(destinationRoot, StringComparison.OrdinalIgnoreCase))
-            {
-                throw new InvalidDataException($"Skill archive contains an escaping path: {entry.FullName}");
-            }
-
-            if (string.IsNullOrEmpty(entry.Name))
-            {
-                Directory.CreateDirectory(destinationPath);
-                continue;
-            }
-
-            Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
-            using var input = entry.Open();
-            using var output = File.Create(destinationPath);
-            input.CopyTo(output);
-        }
-    }
+        => CisArchiveSafety.ExtractZip(archivePath, destination, MaximumArchiveEntries, MaximumExpandedBytes);
 
     private static string ResolveArchiveScanRoot(string extractionRoot, string? subpath)
     {
@@ -314,9 +284,7 @@ public sealed class SkillImportService
 
         var topDirectories = Directory.EnumerateDirectories(extractionRoot).ToArray();
         var archiveRoot = topDirectories.Length == 1 ? topDirectories[0] : extractionRoot;
-        var resolved = Path.GetFullPath(Path.Combine(archiveRoot, subpath.Replace('/', Path.DirectorySeparatorChar)));
-        var boundary = Path.GetFullPath(archiveRoot).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        if (!resolved.StartsWith(boundary, StringComparison.OrdinalIgnoreCase) || !Directory.Exists(resolved))
+        if (!CisPathSafety.TryResolveUnderRoot(archiveRoot, subpath, out var resolved) || !Directory.Exists(resolved))
         {
             throw new InvalidDataException($"GitHub archive does not contain requested skill path '{subpath}'.");
         }
@@ -388,14 +356,12 @@ public sealed class SkillImportService
     }
 
     private static bool ContainsReparsePoint(string root)
-        => Directory.EnumerateFileSystemEntries(root, "*", SearchOption.AllDirectories)
-            .Prepend(root)
-            .Any(path => File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint));
+        => CisPathSafety.ContainsReparsePointInTree(root);
 
     private static void CopyDirectory(string source, string destination)
     {
         Directory.CreateDirectory(destination);
-        var files = Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories)
+        var files = CisPathSafety.EnumerateFiles(source)
             .Where(path => !Path.GetRelativePath(source, path).Split(Path.DirectorySeparatorChar)
                 .Any(ExcludedDirectories.Contains))
             .ToArray();
@@ -494,7 +460,7 @@ public sealed class SkillImportService
     private static string HashDirectory(string directory)
     {
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories)
+        foreach (var file in CisPathSafety.EnumerateFiles(directory)
                      .OrderBy(path => Path.GetRelativePath(directory, path), StringComparer.Ordinal))
         {
             var relative = Normalize(Path.GetRelativePath(directory, file));
@@ -512,7 +478,7 @@ public sealed class SkillImportService
     }
 
     private static int CountBundleFiles(string directory)
-        => Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories).Count();
+        => CisPathSafety.EnumerateFiles(directory).Count();
 
     private static void CopyWithLimit(Stream input, Stream output, long limit, string operation)
     {
@@ -532,6 +498,10 @@ public sealed class SkillImportService
     }
 
     private static string Normalize(string value) => value.Replace('\\', '/');
+
+    private static bool SafeGitHubSegment(string value) => value.Length is > 0 and <= 100
+        && value is not "." and not ".."
+        && value.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_' or '.');
 
     private sealed record RemoteSource(Uri ArchiveUri, string? Subpath);
 }

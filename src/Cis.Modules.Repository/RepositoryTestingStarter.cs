@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Cis.Abstractions;
 
 namespace Cis.Modules.Repository;
 
@@ -32,7 +33,7 @@ internal static class RepositoryTestingStarter
                 "CIS CLI and a repository-owned JUnit export wrapper", "documentation changes", "pr", "retain-on-failure"));
         }
 
-        steps.Add(new("docs", $"cis docs validate --root {documentationRoot} --strict", ".", "-", "-", "no", 600));
+        steps.Add(new("docs", "cis docs validate --repo . --strict", ".", "-", "-", "no", 600));
         return new(
             CreateWorkflow(steps),
             CreateSecurityWorkflow(security.Steps),
@@ -139,7 +140,7 @@ internal static class RepositoryTestingStarter
             steps.Add(new("compose-validate", "docker compose config --quiet", ".", "-", "-", "no", 300));
         if (classification.Components.Any(item => item.Frameworks.Contains("terraform", StringComparer.Ordinal)))
         {
-            var root = Directory.EnumerateFiles(repositoryPath, "*.tf", SearchOption.AllDirectories)
+            var root = CisPathSafety.EnumerateFiles(repositoryPath, "*.tf")
                 .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}.terraform{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase))
                 .Select(Path.GetDirectoryName).FirstOrDefault() ?? repositoryPath;
             steps.Add(new("terraform-fmt", "terraform fmt -check", Relative(repositoryPath, root), "-", "-", "no", 300));

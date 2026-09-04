@@ -20,7 +20,8 @@ one stable product outcome without prematurely generating implementation tasks.
 The sequence is:
 
 ```text
-Active BRD -> Active technical intent -> approved high-level backlog
+Active BRD -> Active technical intent -> Active overall solution-design bundle
+-> approved high-level backlog
 -> feature specification -> change dossier/impact -> bounded task plan
 ```
 
@@ -43,7 +44,8 @@ token matching is word-aware so terms such as `possession` do not imply session 
 
 ## Lifecycle and gates
 
-Build requires an Active/current BRD and Active/current technical intent. The backlog
+Build requires an Active/current BRD, Active/current technical intent, and Active/current
+overall solution design plus component sheet. The backlog
 records hashes of both sources. Validation requires complete one-to-one functional
 requirement coverage, known acyclic dependencies, affected repositories, bounded
 frontend classifications, and no placeholders.
@@ -61,6 +63,13 @@ specification, records exact source provenance, and updates the item's managed f
 link without changing the approved outcome or dependency authority. Draft specifications
 created from a backlog item remain downstream work-in-progress and do not enter BRD
 absorption until their lifecycle advances beyond Draft.
+
+The start operation deliberately creates a governed schema scaffold. It is not presented
+as a finished specification. `cis agent author feature --item <HLT-ID>` may expand that
+single file from the current approved BRD, technical intent, solution design, component
+sheet, UI direction, and applicable governance in an isolated scratch repository. Apply
+requires unchanged frontmatter, an exact one-file diff, all required sections, structured
+feature requirements, and no template placeholders. The result retains Draft authority.
 
 `cis brd feature validate/status/approve --item <HLT-ID>` governs that transition.
 Validation requires complete sections, structured requirements, bounded surfaces and

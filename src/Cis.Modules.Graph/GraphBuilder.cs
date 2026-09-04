@@ -36,6 +36,8 @@ public sealed class GraphBuilder
     ];
 
     internal static IReadOnlyList<string> CurrentExtractors => Extractors;
+    internal static IReadOnlyList<string> ComposeExtractors(IEnumerable<ICisGraphAugmenter>? augmenters)
+        => Extractors.Concat((augmenters ?? []).Select(item => item.Name).Distinct(StringComparer.Ordinal)).ToArray();
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -48,19 +50,22 @@ public sealed class GraphBuilder
     private readonly ICisRepositoryContextResolver _repositoryContextResolver;
     private readonly SqliteGraphStore _store;
     private readonly DocumentationValidationService _validationService;
+    private readonly IReadOnlyList<ICisGraphAugmenter> _augmenters;
 
     public GraphBuilder(
         ICisRepositoryContextResolver repositoryContextResolver,
         DocumentationCatalogReader catalogReader,
         DocumentationInventoryService inventoryService,
         DocumentationValidationService validationService,
-        SqliteGraphStore? store = null)
+        SqliteGraphStore? store = null,
+        IEnumerable<ICisGraphAugmenter>? augmenters = null)
     {
         _repositoryContextResolver = repositoryContextResolver;
         _catalogReader = catalogReader;
         _inventoryService = inventoryService;
         _validationService = validationService;
         _store = store ?? new SqliteGraphStore();
+        _augmenters = (augmenters ?? []).OrderBy(item => item.Name, StringComparer.Ordinal).ToArray();
     }
 
     public GraphBuildResult Build(string repositoryPath)
@@ -119,7 +124,10 @@ public sealed class GraphBuilder
         }
 
         var git = ReadGitState(context.RepositoryPath);
-        var buildId = CreateBuildId(inputs);
+        var activeExtractors = ComposeExtractors(_augmenters);
+        foreach (var duplicate in _augmenters.GroupBy(item => item.Name, StringComparer.OrdinalIgnoreCase).Where(group => group.Count() > 1))
+            diagnostics.Add(Diagnostic("CIS-GRAPH-AUGMENTER-001", "error", $"Graph augmenter is registered more than once: {duplicate.Key}", duplicate.Key));
+        var buildId = CreateBuildId(inputs, activeExtractors);
         var nodes = new Dictionary<string, CisGraphNode>(StringComparer.Ordinal);
         var edges = new Dictionary<string, CisGraphEdge>(StringComparer.Ordinal);
         var hashes = inputs.ToDictionary(input => input.Path, input => input.Hash, StringComparer.OrdinalIgnoreCase);
@@ -195,6 +203,14 @@ public sealed class GraphBuilder
             diagnostics);
         ExtractApiDerivedState(context, hashes, nodes, edges, diagnostics, repositoryNode.Key);
         ExtractTrackerDerivedState(context, hashes, nodes, edges, diagnostics, repositoryNode.Key);
+        foreach (var augmenter in _augmenters.GroupBy(item => item.Name, StringComparer.OrdinalIgnoreCase).Where(group => group.Count() == 1).Select(group => group.Single()))
+        {
+            var augmentation = augmenter.Augment(context, hashes);
+            diagnostics.AddRange(augmentation.Diagnostics);
+            foreach (var node in augmentation.Nodes) AddNode(node, nodes, diagnostics);
+            foreach (var edge in augmentation.Edges) AddEdge(context.RepositoryId, edge.Type, edge.From, edge.To,
+                edge.State, edge.Confidence, edge.Observations, edges, edge.Properties);
+        }
         ValidateEdges(nodes, edges, diagnostics);
 
         var orderedDiagnostics = diagnostics
@@ -225,7 +241,7 @@ public sealed class GraphBuilder
             git.Head,
             git.Dirty,
             inputs,
-            Extractors);
+            activeExtractors);
 
         return Persist(context, graph, manifest, orderedDiagnostics);
     }
@@ -2007,10 +2023,13 @@ public sealed class GraphBuilder
         => $"{repositoryId}::{kind}::{localId}";
 
     internal static string CreateBuildId(IReadOnlyList<CisGraphInput> inputs)
+        => CreateBuildId(inputs, Extractors);
+
+    internal static string CreateBuildId(IReadOnlyList<CisGraphInput> inputs, IReadOnlyList<string> extractors)
         => "sha256:" + HashText(string.Join(
             '\n',
             new[] { $"schema:{GraphSchemaVersion}" }
-                .Concat(Extractors.Select(extractor => $"extractor:{extractor}"))
+                .Concat(extractors.Select(extractor => $"extractor:{extractor}"))
                 .Concat(inputs
                     .Where(input => !IsManagedChangeDossierPath(input.Path))
                     .Select(input => $"input:{input.Path}={input.Hash}"))));
@@ -2100,36 +2119,13 @@ public sealed class GraphBuilder
     {
         try
         {
-            using var process = new Process
-            {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = "git",
-                    WorkingDirectory = repositoryPath,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                },
-            };
+            var start = new ProcessStartInfo { FileName = "git", WorkingDirectory = repositoryPath };
             foreach (var argument in arguments)
             {
-                process.StartInfo.ArgumentList.Add(argument);
+                start.ArgumentList.Add(argument);
             }
-
-            if (!process.Start())
-            {
-                return null;
-            }
-
-            var output = process.StandardOutput.ReadToEnd();
-            if (!process.WaitForExit(2000))
-            {
-                process.Kill(entireProcessTree: true);
-                return null;
-            }
-
-            return process.ExitCode == 0 ? output : null;
+            var result = CisProcessSafety.Run(start, TimeSpan.FromSeconds(2));
+            return !result.TimedOut && result.ExitCode == 0 ? result.StandardOutput : null;
         }
         catch (Exception exception) when (exception is Win32Exception
             or InvalidOperationException

@@ -1,1 +1,53 @@
-using System.CommandLine;using System.Text.Json;using Cis.Abstractions;using Microsoft.Extensions.DependencyInjection;namespace Cis.Modules.Diagnostics;public sealed class DiagnosticsModule:ICisModule{private static readonly JsonSerializerOptions J=new(JsonSerializerDefaults.Web){WriteIndented=true};public string Name=>"diagnostics";public string Description=>"Inspect bounded redacted runtime evidence and persist deterministic analysis.";public void RegisterServices(IServiceCollection s)=>s.AddSingleton<DiagnosticsService>();public void RegisterCommands(ICisCommandRegistry c,IServiceProvider p){var s=p.GetRequiredService<DiagnosticsService>();var r=new Command(Name,Description);r.Subcommands.Add(Simple("sources","List configured evidence sources.",s.Sources));r.Subcommands.Add(Simple("summary","Summarise bounded evidence.",s.Summary));r.Subcommands.Add(Events(s));r.Subcommands.Add(Tail(s));r.Subcommands.Add(Simple("analyse","Persist deterministic diagnostic analysis.",s.Analyse));c.Add(r);}private static Command Events(DiagnosticsService s){var c=new Command("events","List bounded normalized events.");var source=new Option<string?>("--source");var limit=new Option<int>("--limit"){DefaultValueFactory=_=>500};return Custom(c,[source,limit],(x,r)=>s.Events(x.GetValue(r)!,x.GetValue(source),x.GetValue(limit)));}private static Command Tail(DiagnosticsService s){var c=new Command("tail","Read the latest bounded lines from one source; this command does not wait.");var source=new Argument<string>("source");var lines=new Option<int>("--lines"){DefaultValueFactory=_=>100};c.Arguments.Add(source);return Custom(c,[lines],(x,r)=>s.Tail(x.GetValue(r)!,x.GetValue(source)!,x.GetValue(lines)));}private static Command Simple(string n,string d,Func<string,DiagnosticsResult>a){var c=new Command(n,d);return Custom(c,[],(x,r)=>a(x.GetValue(r)!));}private static Command Custom(Command c,IEnumerable<Option>options,Func<ParseResult,Option<string>,DiagnosticsResult>a){var r=Repo();var f=Format();foreach(var o in options)c.Options.Add(o);c.Options.Add(r);c.Options.Add(f);c.SetAction(x=>Render(a(x,r),x.GetValue(f)!));return c;}private static int Render(DiagnosticsResult r,string f){if(f=="json")Console.WriteLine(JsonSerializer.Serialize(r,J));else if(f=="agent"){Console.WriteLine($"status={r.Status};exitCode={r.ExitCode};sources={r.Sources.Count};events={r.Events.Count};applied={r.Applied.ToString().ToLowerInvariant()}");foreach(var e in r.Errors)Console.WriteLine($"error={e.Replace(';',',')}");}else if(f=="human"){Console.WriteLine($"Diagnostics: {r.Status}; sources={r.Sources.Count}; events={r.Events.Count}");foreach(var e in r.Events)Console.WriteLine($"{e.Severity.ToUpperInvariant()} {e.Source}: {e.Message}");foreach(var e in r.Errors)Console.WriteLine($"ERROR: {e}");}else return 2;return r.ExitCode;}private static Option<string>Repo()=>new("--repo"){DefaultValueFactory=_=>Directory.GetCurrentDirectory()};private static Option<string>Format()=>new("--format"){DefaultValueFactory=_=>"human"};}
+using System.CommandLine;
+using System.Text.Json;
+using Cis.Abstractions;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace Cis.Modules.Diagnostics;
+
+public sealed class DiagnosticsModule : ICisModule
+{
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
+    public string Name => "diagnostics";
+    public string Description => "Inspect bounded redacted runtime evidence and persist deterministic analysis.";
+    public void RegisterServices(IServiceCollection services) => services.AddSingleton<DiagnosticsService>();
+    public void RegisterCommands(ICisCommandRegistry commands, IServiceProvider provider)
+    {
+        var service = provider.GetRequiredService<DiagnosticsService>(); var root = new Command(Name, Description);
+        root.Subcommands.Add(Simple("sources", "List configured evidence sources.", service.Sources));
+        root.Subcommands.Add(Simple("doctor", "Validate diagnostics profiles and source readiness.", service.Doctor));
+        root.Subcommands.Add(Simple("summary", "Summarise bounded evidence.", service.Summary));
+        root.Subcommands.Add(Events(service)); root.Subcommands.Add(Tail(service));
+        root.Subcommands.Add(Simple("analyse", "Persist deterministic diagnostic analysis.", service.Analyse));
+        root.Subcommands.Add(Simple("export", "Write a bounded redacted normalized JSONL export.", service.Export)); commands.Add(root);
+    }
+    private static Command Events(DiagnosticsService service)
+    {
+        var command = new Command("events", "List bounded normalized events."); var source = new Option<string?>("--source");
+        var limit = new Option<int>("--limit") { DefaultValueFactory = _ => 500 }; var level = new Option<string?>("--level");
+        var contains = new Option<string?>("--contains"); var since = new Option<int?>("--since-minutes");
+        return Custom(command, [source, limit, level, contains, since], (parse, repo) => service.Events(parse.GetValue(repo)!, parse.GetValue(source), parse.GetValue(limit), parse.GetValue(level), parse.GetValue(contains), parse.GetValue(since)));
+    }
+    private static Command Tail(DiagnosticsService service)
+    {
+        var command = new Command("tail", "Read the latest bounded lines from one source; this command does not wait.");
+        var source = new Argument<string>("source"); var lines = new Option<int>("--lines") { DefaultValueFactory = _ => 100 };
+        command.Arguments.Add(source); return Custom(command, [lines], (parse, repo) => service.Tail(parse.GetValue(repo)!, parse.GetValue(source)!, parse.GetValue(lines)));
+    }
+    private static Command Simple(string name, string description, Func<string, DiagnosticsResult> action)
+        => Custom(new Command(name, description), [], (parse, repo) => action(parse.GetValue(repo)!));
+    private static Command Custom(Command command, IEnumerable<Option> options, Func<ParseResult, Option<string>, DiagnosticsResult> action)
+    {
+        var repo = Repo(); var format = Format(); foreach (var option in options) command.Options.Add(option); command.Options.Add(repo); command.Options.Add(format);
+        command.SetAction(parse => Render(action(parse, repo), parse.GetValue(format)!)); return command;
+    }
+    private static int Render(DiagnosticsResult result, string format)
+    {
+        if (format == "json") Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+        else if (format == "agent") { Console.WriteLine($"status={result.Status};exitCode={result.ExitCode};sources={result.Sources.Count};events={result.Events.Count};applied={result.Applied.ToString().ToLowerInvariant()}"); foreach (var finding in result.Errors) Console.WriteLine($"diagnostic={finding.Replace(';', ',')}"); }
+        else if (format == "human") { Console.WriteLine($"Diagnostics: {result.Status}; sources={result.Sources.Count}; events={result.Events.Count}"); foreach (var item in result.Events) Console.WriteLine($"{item.Severity.ToUpperInvariant()} {item.Source}: {item.Message}"); foreach (var finding in result.Errors) Console.WriteLine(finding); }
+        else return 2; return result.ExitCode;
+    }
+    private static Option<string> Repo() => new("--repo") { DefaultValueFactory = _ => Directory.GetCurrentDirectory() };
+    private static Option<string> Format() => new("--format") { DefaultValueFactory = _ => "human" };
+}

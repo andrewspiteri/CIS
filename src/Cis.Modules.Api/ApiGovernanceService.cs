@@ -23,7 +23,7 @@ public sealed class ApiGovernanceService(ICisRepositoryContextResolver contextRe
 
     private static readonly HashSet<string> ExcludedDirectories = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".cis", ".git", ".idea", ".vs", "bin", "node_modules", "obj",
+        ".cis", ".codex-tmp", ".git", ".idea", ".vs", "bin", "node_modules", "obj",
     };
 
     private static readonly Regex MinimalApi = new(
@@ -857,7 +857,8 @@ public sealed class ApiGovernanceService(ICisRepositoryContextResolver contextRe
             IEnumerable<string> files;
             try { directories = Directory.EnumerateDirectories(current); files = Directory.EnumerateFiles(current); }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { continue; }
-            foreach (var directory in directories.Where(directory => !ExcludedDirectories.Contains(Path.GetFileName(directory)))) pending.Push(directory);
+            foreach (var directory in directories.Where(directory => !ExcludedDirectories.Contains(Path.GetFileName(directory))
+                                                                       && !CisPathSafety.IsReparsePoint(directory))) pending.Push(directory);
             foreach (var file in files) yield return file;
         }
     }
@@ -866,9 +867,8 @@ public sealed class ApiGovernanceService(ICisRepositoryContextResolver contextRe
     {
         try
         {
-            var absolute = Path.GetFullPath(Path.Combine(root, configured.Replace('/', Path.DirectorySeparatorChar)));
-            var prefix = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)) + Path.DirectorySeparatorChar;
-            return absolute.StartsWith(prefix, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal) ? absolute : null;
+            return CisPathSafety.TryResolveUnderRoot(root, configured, out var absolute)
+                   && !CisPathSafety.ContainsReparsePoint(root, absolute) ? absolute : null;
         }
         catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException) { return null; }
     }

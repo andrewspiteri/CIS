@@ -159,6 +159,27 @@ public sealed class SecurityServiceTests
         Assert.Contains("deterministicVerdictPreserved", File.ReadAllText(Path.Combine(repository.Path, ".cis/local/security/runs/RUN-AI/summary-metadata.json")), StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void LocalAiSummary_DoesNotInvokeModelWhenThereAreNoFindings()
+    {
+        using var repository = TestRepository.Create();
+        repository.Write("docs/cis/references/security-suite-profile.md", Profile("semgrep-json", ".cis/local/security/results/semgrep.json"));
+        repository.Write("docs/cis/references/accepted-security-findings.md", Acceptances());
+        var execution = new SecuritySuiteExecution("api-sast", "sast", "semgrep", "passed", SecurityFailureKind.None, 0, 0, 0, 0, 0, [], [], []);
+        var manifest = new SecurityRunManifest(1, "RUN-CLEAN", "verify", "workflow", "fixture", "revision", "profile", "test", "start", "end", "passed", [execution], []);
+        repository.Write(".cis/local/security/runs/RUN-CLEAN/manifest.json", JsonSerializer.Serialize(manifest, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        var ai = new CapturingAi();
+
+        var result = Service(ai).Summarise(repository.Path, "RUN-CLEAN", noLlm: false);
+
+        Assert.Equal("summarised", result.Status);
+        Assert.Equal(0, ai.Calls);
+        var summary = File.ReadAllText(Path.Combine(repository.Path, ".cis/local/security/runs/RUN-CLEAN/summary.md"));
+        Assert.Contains("No normalized security findings were reported; AI triage was not invoked.", summary, StringComparison.Ordinal);
+        var metadata = File.ReadAllText(Path.Combine(repository.Path, ".cis/local/security/runs/RUN-CLEAN/summary-metadata.json"));
+        Assert.Contains("\"generationStatus\": \"not-required\"", metadata, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData("../outside")]
     [InlineData("nested/run")]
@@ -209,10 +230,12 @@ public sealed class SecurityServiceTests
 
     private sealed class CapturingAi : ICisTextGenerationService
     {
+        public int Calls { get; private set; }
         public string Prompt { get; private set; } = string.Empty;
         public CisAiStatus GetStatus() => new([]);
         public CisTextGenerationResult Generate(CisTextGenerationRequest request)
         {
+            Calls++;
             Prompt = request.Prompt;
             return new("generated", "ollama", "fixture", "Fix the finding.", null, true);
         }

@@ -19,11 +19,13 @@ public sealed class AiModule : ICisModule
 
     public void RegisterServices(IServiceCollection services)
     {
-        services.AddSingleton<IAiProvider, OllamaAiProvider>();
-        services.AddSingleton<IAiProvider, OpenAiCompatibleProvider>();
+        services.AddSingleton<ICisAiProvider, OllamaAiProvider>();
+        services.AddSingleton<ICisAiProvider, OpenAiCompatibleProvider>();
         services.AddSingleton<ICisTextGenerationService>(provider =>
-            new AiTextGenerationService(provider.GetServices<IAiProvider>()));
+            new AiTextGenerationService(provider.GetServices<ICisAiProvider>()));
         services.AddSingleton<AiGovernanceService>();
+        services.AddSingleton<AiQualificationService>();
+        services.AddSingleton<ICisRepositoryDoctorCheck, AiQualificationDoctorCheck>();
     }
 
     public void RegisterCommands(ICisCommandRegistry commands, IServiceProvider services)
@@ -80,11 +82,81 @@ public sealed class AiModule : ICisModule
             ai.Subcommands.Add(Report("routes", "List repository-owned capability routes.", governance.Providers));
             ai.Subcommands.Add(Usage(governance));
             ai.Subcommands.Add(Evaluate(governance));
+            var qualification = services.GetRequiredService<AiQualificationService>();
+            ai.Subcommands.Add(ModelCommands(qualification));
+            ai.Subcommands.Add(RouteCommands(qualification));
+            ai.Subcommands.Add(EvaluationCommands(qualification));
             var cache = new Command("cache", "Inspect model-response cache state.");
             cache.Subcommands.Add(Report("status", "Report disposable model-response cache entries.", governance.Providers));
             ai.Subcommands.Add(cache);
         }
         commands.Add(ai);
+    }
+
+    private static Command ModelCommands(AiQualificationService service)
+    {
+        var model = new Command("model", "Probe, benchmark, approve, and inspect model/task-class qualifications.");
+
+        var probe = new Command("probe", "Execute a real provider capability probe and retain hashed local evidence.");
+        var probeProvider = Required("--provider", "Loaded provider name.");
+        var probeModel = Required("--model", "Provider model name.");
+        var probeRemote = new Option<bool>("--allow-remote"); var probeRepo = Repo(); var probeFormat = Format();
+        probe.Options.Add(probeProvider); probe.Options.Add(probeModel); probe.Options.Add(probeRemote); probe.Options.Add(probeRepo); probe.Options.Add(probeFormat);
+        probe.SetAction(parse => RenderQualification(service.Probe(parse.GetValue(probeRepo)!, parse.GetValue(probeProvider)!,
+            parse.GetValue(probeModel)!, parse.GetValue(probeRemote)), parse.GetValue(probeFormat)!));
+        model.Subcommands.Add(probe);
+
+        var benchmark = new Command("benchmark", "Run deterministic runtime qualification cases for one task class.");
+        var benchProvider = Required("--provider", "Loaded provider name."); var benchModel = Required("--model", "Provider model name.");
+        var taskClass = Required("--task-class", "Governed task class."); var benchRemote = new Option<bool>("--allow-remote");
+        var benchRepo = Repo(); var benchFormat = Format();
+        benchmark.Options.Add(benchProvider); benchmark.Options.Add(benchModel); benchmark.Options.Add(taskClass); benchmark.Options.Add(benchRemote); benchmark.Options.Add(benchRepo); benchmark.Options.Add(benchFormat);
+        benchmark.SetAction(parse => RenderQualification(service.Benchmark(parse.GetValue(benchRepo)!, parse.GetValue(benchProvider)!,
+            parse.GetValue(benchModel)!, parse.GetValue(taskClass)!, parse.GetValue(benchRemote)), parse.GetValue(benchFormat)!));
+        model.Subcommands.Add(benchmark);
+
+        var approve = new Command("approve", "Approve a model for a task class only after complete runtime evidence exists.");
+        var approveProvider = Required("--provider", "Loaded provider name."); var approveModel = Required("--model", "Provider model name.");
+        var approveTask = Required("--task-class", "Governed task class."); var reviewer = Required("--reviewer", "Human approval authority.");
+        var reason = Required("--reason", "Bounded approval rationale."); var yes = new Option<bool>("--yes"); var approveRepo = Repo(); var approveFormat = Format();
+        approve.Options.Add(approveProvider); approve.Options.Add(approveModel); approve.Options.Add(approveTask); approve.Options.Add(reviewer); approve.Options.Add(reason); approve.Options.Add(yes); approve.Options.Add(approveRepo); approve.Options.Add(approveFormat);
+        approve.SetAction(parse => RenderQualification(service.Approve(parse.GetValue(approveRepo)!, parse.GetValue(approveProvider)!,
+            parse.GetValue(approveModel)!, parse.GetValue(approveTask)!, parse.GetValue(reviewer)!, parse.GetValue(reason)!,
+            parse.GetValue(yes)), parse.GetValue(approveFormat)!));
+        model.Subcommands.Add(approve);
+
+        var status = new Command("status", "Report qualification evidence and task-class approvals."); var statusRepo = Repo(); var statusFormat = Format();
+        status.Options.Add(statusRepo); status.Options.Add(statusFormat);
+        status.SetAction(parse => RenderQualification(service.Status(parse.GetValue(statusRepo)!), parse.GetValue(statusFormat)!));
+        model.Subcommands.Add(status);
+        return model;
+    }
+
+    private static Command RouteCommands(AiQualificationService service)
+    {
+        var route = new Command("route", "Explain governed route selection and qualification.");
+        var explain = new Command("explain", "Explain why a capability route is selected, unqualified, or blocked.");
+        var capability = new Argument<string>("capability"); var allowRemote = new Option<bool>("--allow-remote"); var repo = Repo(); var format = Format();
+        explain.Arguments.Add(capability); explain.Options.Add(allowRemote); explain.Options.Add(repo); explain.Options.Add(format);
+        explain.SetAction(parse => RenderQualification(service.ExplainRoute(parse.GetValue(repo)!, parse.GetValue(capability)!,
+            parse.GetValue(allowRemote)), parse.GetValue(format)!));
+        route.Subcommands.Add(explain);
+        return route;
+    }
+
+    private static Command EvaluationCommands(AiQualificationService service)
+    {
+        var eval = new Command("eval", "Run deterministic model evaluation datasets.");
+        var regression = new Command("prompt-regression", "Execute a repository-owned prompt-regression dataset at runtime.");
+        var provider = Required("--provider", "Loaded provider name."); var model = Required("--model", "Provider model name.");
+        var taskClass = Required("--task-class", "Governed task class."); var dataset = Required("--dataset", "Repository-relative JSON dataset.");
+        var allowRemote = new Option<bool>("--allow-remote"); var repo = Repo(); var format = Format();
+        regression.Options.Add(provider); regression.Options.Add(model); regression.Options.Add(taskClass); regression.Options.Add(dataset);
+        regression.Options.Add(allowRemote); regression.Options.Add(repo); regression.Options.Add(format);
+        regression.SetAction(parse => RenderQualification(service.PromptRegression(parse.GetValue(repo)!, parse.GetValue(provider)!,
+            parse.GetValue(model)!, parse.GetValue(taskClass)!, parse.GetValue(dataset)!, parse.GetValue(allowRemote)), parse.GetValue(format)!));
+        eval.Subcommands.Add(regression);
+        return eval;
     }
 
     private static Command Report(string name, string description, Func<string, AiGovernanceResult> action)
@@ -132,8 +204,35 @@ public sealed class AiModule : ICisModule
         return result.ExitCode;
     }
 
+    private static int RenderQualification(AiQualificationResult result, string format)
+    {
+        var selected = format.Trim().ToLowerInvariant();
+        if (selected == "json") Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+        else if (selected == "agent")
+        {
+            Console.WriteLine($"status={Normalize(result.Status)};exitCode={result.ExitCode};evidence={result.Evidence.Count};approvals={result.Approvals.Count};routes={result.Routes.Count}");
+            foreach (var item in result.Evidence) Console.WriteLine($"evidence={Normalize(item.EvidenceId)};kind={Normalize(item.Kind)};provider={Normalize(item.Provider)};model={Normalize(item.Model)};taskClass={Normalize(item.TaskClass)};result={Normalize(item.Status)}");
+            foreach (var route in result.Routes) Console.WriteLine($"capability={Normalize(route.Capability)};provider={Normalize(route.Provider)};model={Normalize(route.Model)};approval={Normalize(route.ApprovalState)};decision={Normalize(route.Decision)}");
+            foreach (var error in result.Errors) Console.WriteLine($"error={Normalize(error)}");
+        }
+        else if (selected == "human")
+        {
+            Console.WriteLine($"AI qualification: {result.Status}; evidence={result.Evidence.Count}; approvals={result.Approvals.Count}");
+            foreach (var item in result.Evidence) Console.WriteLine($"- {item.Kind} {item.Provider}/{item.Model} [{item.TaskClass}]: {item.Status}; {item.EvidenceId}");
+            foreach (var route in result.Routes)
+            {
+                Console.WriteLine($"- {route.Capability}: {route.Provider}/{route.Model}; {route.Decision}; approval={route.ApprovalState}");
+                foreach (var reason in route.Reasons) Console.WriteLine($"  - {reason}");
+            }
+            foreach (var error in result.Errors) Console.WriteLine($"ERROR: {error}");
+        }
+        else { Console.Error.WriteLine("Unsupported format. Use human, json, or agent."); return 2; }
+        return result.ExitCode;
+    }
+
     private static Option<string> Repo() => new("--repo") { DefaultValueFactory = _ => Directory.GetCurrentDirectory() };
     private static Option<string> Format() => new("--format") { DefaultValueFactory = _ => "human" };
+    private static Option<string> Required(string name, string description) => new(name) { Description = description, Required = true };
 
     private static string Normalize(string value) =>
         value.Replace('\r', ' ').Replace('\n', ' ').Replace(';', ',').Trim();

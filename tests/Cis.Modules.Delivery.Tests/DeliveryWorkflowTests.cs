@@ -228,7 +228,7 @@ status: Active
     }
 
     [Fact]
-    public void ChangeRebaseline_IsAuditedAndLimitedToPreImpactDossiers()
+    public void ChangeRebaseline_IsAuditedAndDiscardsOnlyUnreviewedImpactProposals()
     {
         using var repository = TemporaryRepository.Create();
         var services = CreateServices();
@@ -237,6 +237,12 @@ status: Active
             "Change order lookup",
             "Customers can retrieve an order with the revised contract.",
             [new ChangeRoot("orders-api", "component")])).Change);
+        var initialAnalysis = services.Impacts.Analyse(new ImpactAnalyseRequest(
+            repository.Path, change.Id, [], 1, 50, false));
+        Assert.True(initialAnalysis.ExitCode == 0, string.Join(Environment.NewLine, initialAnalysis.Diagnostics));
+        Assert.NotEmpty(initialAnalysis.Findings);
+        Assert.All(initialAnalysis.Findings, finding => Assert.Equal("proposed", finding.State));
+
         repository.Write("src/Orders.Api/BeforeImpact.cs", "namespace Orders.Api; public sealed class BeforeImpact { }");
         var rebuilt = services.Graph.Build(repository.Path);
         Assert.NotEqual(change.GraphBuildId, rebuilt.BuildId);
@@ -250,16 +256,27 @@ status: Active
         var events = File.ReadAllText(services.Changes.DossierFile(result.Change, "events.jsonl"));
         Assert.Contains("change-rebaselined", events, StringComparison.Ordinal);
         Assert.Contains("review-agent", events, StringComparison.Ordinal);
+        Assert.Contains("discardedProposedFindings", events, StringComparison.Ordinal);
+        Assert.Contains("previousImpactSha256", events, StringComparison.Ordinal);
+        var resetImpact = File.ReadAllText(services.Changes.DossierFile(result.Change, "impact.md"));
+        Assert.DoesNotContain("| IMPACT-", resetImpact, StringComparison.Ordinal);
         var postRebaseline = services.Impacts.Analyse(new ImpactAnalyseRequest(
             repository.Path, change.Id, [], 1, 50, false));
         Assert.True(postRebaseline.ExitCode == 0, string.Join(Environment.NewLine, postRebaseline.Diagnostics));
+        var accepted = services.Impacts.Disposition(
+            repository.Path,
+            change.Id,
+            postRebaseline.Findings[0].Id,
+            "accepted",
+            "Reviewed impact must survive later source changes.");
+        Assert.Equal(0, accepted.ExitCode);
 
         repository.Write("src/Orders.Api/AfterImpact.cs", "namespace Orders.Api; public sealed class AfterImpact { }");
         Assert.Equal(0, services.Graph.Build(repository.Path).ExitCode);
         var blocked = services.Changes.Rebaseline(new ChangeRebaselineRequest(
             repository.Path, change.Id, "review-agent", "Attempt to replace reviewed impact evidence."));
         Assert.Equal(2, blocked.ExitCode);
-        Assert.Contains(blocked.Errors, error => error.Contains("no impact findings", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(blocked.Errors, error => error.Contains("no reviewed impact findings", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -772,6 +789,52 @@ and automation mappings.
             item.AcceptanceCriteria.Contains("PUBLIC-ENDPOINT-CACHE", StringComparison.Ordinal));
         var security = Assert.Single(imported.WorkItems, item => item.Category == "security");
         Assert.Contains("STATE-003", security.RequirementIds);
+        Assert.True(imported.Validation!.Valid);
+    }
+
+    [Fact]
+    public void PlanImportSpec_UsesConsumedContractWithoutInventingBackendForCliContract()
+    {
+        using var repository = TemporaryRepository.Create();
+        var services = CreateServices();
+        var change = Assert.IsType<ChangeDossier>(services.Changes.Create(new ChangeCreateRequest(
+            repository.Path, "Add CLI thin client", "A native client consumes stable CLI JSON without owning engine behavior.",
+            [new ChangeRoot("orders-api", "component")])).Change);
+        var analysis = services.Impacts.Analyse(new ImpactAnalyseRequest(repository.Path, change.Id, [], 2, 200, false));
+        foreach (var finding in analysis.Findings)
+            services.Impacts.Disposition(repository.Path, change.Id, finding.Id, "accepted", "Reviewed CLI client scope.");
+        DefineAcceptanceCriteria(services.Changes.DossierFile(change, "proposal.md"));
+        repository.Write("docs/cis/specs/cli-client-feature.md", """
+---
+title: CLI thin client
+type: feature-specification
+status: Draft
+---
+
+## Functional requirements
+
+| ID | Surface | Frontend type | Requirement | Acceptance criteria |
+|---|---|---|---|---|
+| CLI-001 | contract | not-applicable | The client shall consume stable CLI arguments, exit codes, and versioned JSON output. | Missing, malformed, incompatible, failed, and successful results remain distinct without reimplementing engine rules. |
+| CLI-002 | frontend | backoffice | The client shall display the current CLI result in a native view. | The view links to canonical evidence and exposes no competing source of truth. |
+| CLI-003 | delivery | not-applicable | Installation shall provide actionable recovery when the CLI is missing. | Recovery guidance identifies the missing prerequisite without inventing a customer-facing screen. |
+
+## Non-goals and explicit exclusions
+
+No backend service, HTTP API, OpenAPI document, database, persistence, or infrastructure
+change is required.
+""");
+
+        var imported = services.Plans.ImportSpec(new FeatureSpecImportRequest(
+            repository.Path, change.Id, "docs/cis/specs/cli-client-feature.md"));
+
+        Assert.True(imported.ExitCode == 0, string.Join(Environment.NewLine, imported.Errors));
+        var contract = Assert.Single(imported.WorkItems, item => item.Category == "contract");
+        Assert.Equal("Implement consumed contracts", contract.Title);
+        Assert.Contains("declared contract baseline", contract.AcceptanceCriteria, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("OpenAPI evidence are required only", contract.AcceptanceCriteria, StringComparison.Ordinal);
+        Assert.DoesNotContain(imported.WorkItems, item => item.Category == "backend");
+        Assert.DoesNotContain(imported.WorkItems, item => item.FrontendType == "customer");
         Assert.True(imported.Validation!.Valid);
     }
 

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Cis.Abstractions;
 
 namespace Cis.Modules.Repository;
 
@@ -7,6 +8,12 @@ internal sealed record RepositorySecurityStep(string Id, string Command, string 
 
 internal static class RepositorySecurityStarter
 {
+    private static readonly HashSet<string> ExcludedDirectories = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".git", ".cis", ".codex-tmp", ".next", ".terraform", ".artifacts",
+        "artifacts", "bin", "coverage", "dist", "node_modules", "obj", "out"
+    };
+
     public static RepositorySecurityStarterContent Create(string repositoryPath, RepositoryClassification classification)
     {
         var suites = new List<Suite>();
@@ -14,7 +21,7 @@ internal static class RepositorySecurityStarter
         var hasCode = classification.Components.Any(component => component.Languages.Any(language =>
             language is "csharp" or "typescript" or "javascript" or "swift" or "kotlin" or "gdscript" or "hcl"));
         var hasContainers = classification.Components.Any(component => component.Frameworks.Contains("docker-compose", StringComparer.Ordinal))
-            || Directory.EnumerateFiles(repositoryPath, "Dockerfile*", SearchOption.AllDirectories).Any(path => !Excluded(path));
+            || EnumerateDockerfiles(repositoryPath).Any();
         var hasConfiguration = classification.Components.Any(component => component.Frameworks.Any(framework => framework is "docker-compose" or "terraform"));
 
         if (hasCode)
@@ -105,8 +112,37 @@ internal static class RepositorySecurityStarter
 
     private static string PackageRunner(string repositoryPath) => File.Exists(Path.Combine(repositoryPath, "pnpm-lock.yaml")) ? "corepack pnpm"
         : File.Exists(Path.Combine(repositoryPath, "yarn.lock")) ? "corepack yarn" : "npm";
-    private static bool Excluded(string path) => path.Contains($"{Path.DirectorySeparatorChar}node_modules{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase)
-        || path.Contains($"{Path.DirectorySeparatorChar}.git{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase);
+    internal static IEnumerable<string> EnumerateDockerfiles(string repositoryPath)
+    {
+        var pending = new Stack<string>();
+        pending.Push(repositoryPath);
+        while (pending.Count > 0)
+        {
+            var directory = pending.Pop();
+            string[] files;
+            string[] directories;
+            try
+            {
+                files = Directory.GetFiles(directory, "Dockerfile*");
+                directories = Directory.GetDirectories(directory);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                continue;
+            }
+
+            foreach (var file in files)
+                yield return file;
+
+            foreach (var child in directories)
+            {
+                if (ExcludedDirectories.Contains(Path.GetFileName(child)) || CisPathSafety.IsReparsePoint(child))
+                    continue;
+                pending.Push(child);
+            }
+        }
+    }
+
     private sealed record Suite(string Id, string Component, string Category, string Tool, string Command,
         string WorkingDirectory, string ResultFormat, string ResultPath, string Target, string AppliesWhen,
         string CiTier, string FailSeverities, string Artifacts);

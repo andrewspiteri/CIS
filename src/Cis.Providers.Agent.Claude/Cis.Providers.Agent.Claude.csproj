@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><Description>Claude structured headless execution provider for CIS agent runs.</Description></PropertyGroup>
+  <ItemGroup><ProjectReference Include="..\Cis.Abstractions\Cis.Abstractions.csproj" /></ItemGroup>
+</Project>

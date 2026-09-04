@@ -212,6 +212,19 @@ public sealed class SkillValidationServiceTests
     }
 
     [Fact]
+    public void Import_RejectsPlainHttpSourcesBeforeSendingARequest()
+    {
+        using var target = TemporaryRepository.CreateInitialized();
+        var handler = new ArchiveHandler(CreateZip(new Dictionary<string, string>()));
+        var result = CreateImportService(new HttpClient(handler)).Import(new SkillImportRequest(
+            target.Path, ["http://example.test/skills.zip"], DryRun: true, Confirmed: false, Fix: false, Strict: true));
+
+        Assert.Equal(2, result.ExitCode);
+        Assert.Contains(result.Errors, error => error.Contains("HTTPS", StringComparison.OrdinalIgnoreCase));
+        Assert.Null(handler.RequestUri);
+    }
+
+    [Fact]
     public void Import_ExcludesQuarantinedSkillBundlesFromDiscovery()
     {
         using var source = TemporaryRepository.CreateInitialized();

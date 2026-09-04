@@ -241,6 +241,51 @@ public sealed class RepositoryInitializerTests
     }
 
     [Fact]
+    public void Import_ExistingStandaloneRepositoryBootstrapsItAsWorkspaceAuthority()
+    {
+        using var repository = TemporaryRepository.Create();
+        repository.Write(
+            "src/Existing.Api/Existing.Api.csproj",
+            "<Project Sdk=\"Microsoft.NET.Sdk.Web\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+        repository.Write("src/Existing.Api/Program.cs", "var app = WebApplication.CreateBuilder(args).Build(); app.MapGet(\"/health\", () => \"ok\");");
+        var importer = CreateImporter();
+
+        var imported = importer.Import(new RepositoryImportRequest(
+            repository.Path,
+            "docs/cis",
+            [repository.Path],
+            DryRun: false,
+            Confirmed: true));
+
+        Assert.Equal(0, imported.ExitCode);
+        Assert.Equal("imported", imported.Status);
+        Assert.True(imported.Applied);
+        Assert.True(File.Exists(Path.Combine(repository.Path, ".cis", "repository.yml")));
+        var configuration = File.ReadAllText(Path.Combine(repository.Path, ".cis", "workspace.yml"));
+        Assert.Contains("role: authority", configuration, StringComparison.Ordinal);
+
+        var resolved = new WorkspaceRegistry(new CisRepositoryContextResolver()).Resolve(repository.Path);
+        Assert.True(resolved.IsSuccess);
+        var authority = Assert.Single(resolved.Workspace!.Repositories);
+        Assert.Equal("authority", authority.Role);
+        Assert.Equal(repository.Path, authority.RepositoryPath);
+        Assert.True(File.Exists(Path.Combine(repository.Path, "docs", "cis", "references", "api-dictionary.md")));
+        Assert.True(File.Exists(Path.Combine(repository.Path, "docs", "cis", "references", "permissions-dictionary.md")));
+        var agentSkill = File.ReadAllText(Path.Combine(repository.Path, ".github", "skills", "cis-agent-execution", "SKILL.md"));
+        Assert.StartsWith("---\nname: cis-agent-execution\ndescription:", agentSkill.Replace("\r\n", "\n", StringComparison.Ordinal), StringComparison.Ordinal);
+
+        var repeated = importer.Import(new RepositoryImportRequest(
+            repository.Path,
+            "docs/cis",
+            [repository.Path],
+            DryRun: false,
+            Confirmed: true));
+        Assert.Equal(0, repeated.ExitCode);
+        Assert.Equal("unchanged", repeated.Status);
+        Assert.False(repeated.Applied);
+    }
+
+    [Fact]
     public void Import_InvalidSourcePreventsMutationOfEveryRepository()
     {
         using var workspace = TemporaryRepository.Create();
@@ -374,6 +419,41 @@ public sealed class RepositoryInitializerTests
         Assert.Contains(
             finding.Evidence,
             evidence => evidence.Contains("cis-verification", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Doctor_AdoptsValidLegacySourceEvidenceRegistryWithoutCollision()
+    {
+        using var repository = TemporaryRepository.Create();
+        var initializer = new RepositoryInitializer();
+        Assert.Equal(0, initializer.Initialize(new RepositoryInitRequest(
+            repository.Path, "docs/cis", DryRun: false, Confirmed: true)).ExitCode);
+
+        var manifestPath = Path.Combine(repository.Path, ".cis", "starter-manifest.yml");
+        var store = new StarterManifestStore();
+        var manifest = Assert.IsType<StarterManifest>(store.Read(manifestPath).Manifest);
+        File.WriteAllText(manifestPath, store.Write(manifest with
+        {
+            ManagedArtifacts = manifest.ManagedArtifacts
+                .Where(item => item.Definition != "reference.source-evidence").ToArray(),
+        }));
+        File.AppendAllText(Path.Combine(repository.Path, "docs", "cis", "references", "source-evidence.md"),
+            "\n| BRD-SRC-abcdef123456 | docs/ref/source.md | md | sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef | Reference | Andrew | 2026-08-30T10:00:00Z | Selected evidence. |\n");
+        var doctor = CreateDoctor(initializer,
+            new OllamaProbeResult("available", "http://127.0.0.1:11434", ["qwen3:8b"], null));
+
+        var before = doctor.Inspect(repository.Path);
+
+        Assert.True(before.ExitCode == 0, string.Join("\n", before.Findings.Select(item =>
+            $"{item.Code}/{item.Severity}: {item.Message}")));
+        Assert.DoesNotContain(before.Findings, finding => finding.Code == "CIS-REPO-003");
+        Assert.Contains(before.Findings, finding => finding.Code == "CIS-REPO-005"
+            && finding.Evidence.Any(item => item.Contains("starter-manifest.yml", StringComparison.Ordinal)));
+
+        Assert.Equal(0, initializer.Initialize(new RepositoryInitRequest(
+            repository.Path, "docs/cis", DryRun: false, Confirmed: true)).ExitCode);
+        var after = doctor.Inspect(repository.Path);
+        Assert.DoesNotContain(after.Findings, finding => finding.Code is "CIS-REPO-003" or "CIS-REPO-005");
     }
 
     [Fact]
@@ -1444,13 +1524,26 @@ public sealed class RepositoryInitializerTests
         Assert.True(File.Exists(Path.Combine(repository.Path, "docs", "cis", "references", "repository-profile.md")));
         Assert.True(File.Exists(Path.Combine(repository.Path, ".github", "skills", "cis-change-impact", "SKILL.md")));
         Assert.True(File.Exists(Path.Combine(repository.Path, ".github", "skills", "cis-delivery-execution", "SKILL.md")));
+        Assert.True(File.Exists(Path.Combine(repository.Path, ".github", "skills", "cis-agent-execution", "SKILL.md")));
         Assert.True(File.Exists(Path.Combine(repository.Path, ".github", "skills", "cis-security-testing", "SKILL.md")));
         Assert.True(File.Exists(Path.Combine(repository.Path, ".github", "instructions", "cis-delivery-execution.instructions.md")));
+        Assert.True(File.Exists(Path.Combine(repository.Path, ".github", "instructions", "cis-agent-execution.instructions.md")));
         Assert.True(File.Exists(Path.Combine(repository.Path, ".github", "instructions", "cis-security-testing.instructions.md")));
+        Assert.True(File.Exists(Path.Combine(repository.Path, "docs", "cis", "references", "agent-provider-profile.md")));
         Assert.True(File.Exists(Path.Combine(repository.Path, "docs", "cis", "references", "ai-routing-profile.md")));
+        Assert.Contains("| brd-question-suggestion | ollama | repository-smallest-local | no | no |",
+            File.ReadAllText(Path.Combine(repository.Path, "docs", "cis", "references", "ai-routing-profile.md")),
+            StringComparison.Ordinal);
+        Assert.Contains("| brd-question-suggestions | .cis/local/brd/questions | 0 | 0 | preserve |",
+            File.ReadAllText(Path.Combine(repository.Path, "docs", "cis", "references", "local-artifact-retention.md")),
+            StringComparison.Ordinal);
         Assert.True(File.Exists(Path.Combine(repository.Path, "docs", "cis", "references", "diagnostics-profile.md")));
         Assert.True(File.Exists(Path.Combine(repository.Path, "docs", "cis", "references", "learning-history.md")));
         Assert.True(File.Exists(Path.Combine(repository.Path, "docs", "cis", "workflows", "standard-delivery.md")));
+        Assert.Contains(
+            "cis docs validate --repo . --strict",
+            File.ReadAllText(Path.Combine(repository.Path, "docs", "cis", "workflows", "standard-delivery.md")),
+            StringComparison.Ordinal);
         Assert.True(File.Exists(Path.Combine(repository.Path, "docs", "cis", "references", "security-suite-profile.md")));
         Assert.True(File.Exists(Path.Combine(repository.Path, "docs", "cis", "references", "accepted-security-findings.md")));
         Assert.True(File.Exists(Path.Combine(repository.Path, "docs", "cis", "standards", "api-controller-standard.md")));
@@ -1535,6 +1628,14 @@ public sealed class RepositoryInitializerTests
         Assert.Contains(result.StarterSelections, selection =>
             selection.Definition == "guidance.skill.govern-business-requirements");
         Assert.Contains(result.StarterSelections, selection =>
+            selection.Definition == "guidance.skill.govern-solution-design");
+        Assert.Contains(result.StarterSelections, selection =>
+            selection.Definition == "guidance.instruction.solution-design");
+        Assert.Contains(result.StarterSelections, selection =>
+            selection.Definition == "guidance.skill.govern-ui-direction");
+        Assert.Contains(result.StarterSelections, selection =>
+            selection.Definition == "guidance.instruction.ui-direction");
+        Assert.Contains(result.StarterSelections, selection =>
             selection.Definition == "guidance.skill.graph-context");
         Assert.Contains(result.StarterSelections, selection =>
             selection.Definition == "guidance.skill.file-index");
@@ -1618,6 +1719,36 @@ public sealed class RepositoryInitializerTests
         Assert.Contains("Adopted feature specification", brdSkill, StringComparison.Ordinal);
         Assert.Contains("cis brd approve", brdSkill, StringComparison.Ordinal);
         Assert.Contains("explicitly authorizes", brdSkill, StringComparison.Ordinal);
+        var solutionDesignSkill = File.ReadAllText(Path.Combine(
+            repository.Path,
+            ".github",
+            "skills",
+            "cis-govern-solution-design",
+            "SKILL.md"));
+        Assert.Contains("cis solution-design init", solutionDesignSkill, StringComparison.Ordinal);
+        Assert.Contains("one review point", solutionDesignSkill, StringComparison.Ordinal);
+        var solutionDesignInstruction = File.ReadAllText(Path.Combine(
+            repository.Path,
+            ".github",
+            "instructions",
+            "cis-solution-design.instructions.md"));
+        Assert.Contains("one atomic review", solutionDesignInstruction, StringComparison.Ordinal);
+        Assert.Contains("TI-MOD-*", solutionDesignInstruction, StringComparison.Ordinal);
+        var uiDirectionSkill = File.ReadAllText(Path.Combine(
+            repository.Path,
+            ".github",
+            "skills",
+            "cis-govern-ui-direction",
+            "SKILL.md"));
+        Assert.Contains("cis ui-direction questions init", uiDirectionSkill, StringComparison.Ordinal);
+        Assert.Contains("Feature textual wireframes", uiDirectionSkill, StringComparison.Ordinal);
+        var uiDirectionInstruction = File.ReadAllText(Path.Combine(
+            repository.Path,
+            ".github",
+            "instructions",
+            "cis-ui-direction.instructions.md"));
+        Assert.Contains("UI-framework-profile provenance", uiDirectionInstruction, StringComparison.Ordinal);
+        Assert.Contains("Sharp/SVG", uiDirectionInstruction, StringComparison.Ordinal);
         var repositoryInstruction = File.ReadAllText(Path.Combine(
             repository.Path,
             ".github",
@@ -1804,6 +1935,14 @@ public sealed class RepositoryInitializerTests
             "cis",
             "specs",
             "technical-intent-spec.md")));
+        var technicalIntent = File.ReadAllText(Path.Combine(
+            repository.Path,
+            "docs",
+            "cis",
+            "specs",
+            "technical-intent-spec.md"));
+        Assert.Contains("technical_intent_schema: 2", technicalIntent, StringComparison.Ordinal);
+        Assert.Contains("approved_content_hash: null", technicalIntent, StringComparison.Ordinal);
         var apiProfile = File.ReadAllText(Path.Combine(
             repository.Path,
             "docs",
@@ -2225,6 +2364,60 @@ public sealed class RepositoryInitializerTests
     }
 
     [Fact]
+    public void Initialize_AdoptsGovernedTechnicalIntentEvolutionWithoutFalseCollision()
+    {
+        using var repository = TemporaryRepository.Create();
+        var initializer = new RepositoryInitializer();
+        var request = new RepositoryInitRequest(repository.Path, "docs/cis", DryRun: false, Confirmed: true);
+        Assert.Equal(0, initializer.Initialize(request).ExitCode);
+
+        var technicalIntentPath = Path.Combine(repository.Path, "docs", "cis", "specs", "technical-intent-spec.md");
+        File.WriteAllText(technicalIntentPath, """
+            ---
+            title: Governed Technical Intent
+            type: specification
+            status: Draft
+            cis:
+              stable_id: example:spec:technical-intent
+              technical_intent_schema: 3
+            ---
+
+            # Governed Technical Intent
+
+            <!-- cis:technical-intent-baseline:start -->
+            | Kind | ID | Version | Evidence |
+            | --- | --- | --- | --- |
+            | brd | example:spec:business-requirements | semantic-v1:sha256:example | Active canonical BRD |
+            <!-- cis:technical-intent-baseline:end -->
+
+            <!-- cis:technical-intent-business-evidence:start -->
+            Governed business evidence.
+            <!-- cis:technical-intent-business-evidence:end -->
+            """);
+        repository.Write(
+            "src/Example.Api/Example.Api.csproj",
+            "<Project Sdk=\"Microsoft.NET.Sdk.Web\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+
+        var preview = initializer.Initialize(new RepositoryInitRequest(
+            repository.Path, "docs/cis", DryRun: true, Confirmed: false));
+
+        Assert.DoesNotContain(preview.Collisions, collision =>
+            collision.Contains("technical-intent-spec.md", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains("docs/cis/specs/technical-intent-spec.md", preview.RetainedPaths);
+
+        Assert.Equal(0, initializer.Initialize(request).ExitCode);
+        var repeated = initializer.Initialize(new RepositoryInitRequest(
+            repository.Path, "docs/cis", DryRun: true, Confirmed: false));
+        Assert.DoesNotContain(repeated.Collisions, collision =>
+            collision.Contains("technical-intent-spec.md", StringComparison.OrdinalIgnoreCase));
+
+        var manifest = File.ReadAllText(Path.Combine(repository.Path, ".cis", "starter-manifest.yml"));
+        Assert.Contains("definition: specification.technical-intent", manifest, StringComparison.Ordinal);
+        Assert.Contains("ownership: human", manifest, StringComparison.Ordinal);
+        Assert.Contains("Governed business evidence.", File.ReadAllText(technicalIntentPath), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Classifier_RecognizesVsCodeExtensionAsToolingComponent()
     {
         using var repository = TemporaryRepository.Create();
@@ -2250,6 +2443,9 @@ public sealed class RepositoryInitializerTests
             "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
         repository.Write(
             "artifacts/copied/FalseComponent.csproj",
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+        repository.Write(
+            ".codex-tmp/adoption-smoke/FalseTemporaryComponent.csproj",
             "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
 
         var component = Assert.Single(new RepositoryClassifier().Classify(repository.Path).Components);
@@ -2292,6 +2488,20 @@ public sealed class RepositoryInitializerTests
     }
 
     [Fact]
+    public void SecurityDoctor_PrunesGeneratedArtifactTreesBeforeInspectingDockerfiles()
+    {
+        using var repository = TemporaryRepository.Create();
+        repository.Write("src/app.ts", "export const ready = true;");
+        new RepositoryInitializer().Initialize(new RepositoryInitRequest(repository.Path, "docs/cis", DryRun: false, Confirmed: true));
+        repository.Write("artifacts/clean-profile/agent-host/local-endpoint/Dockerfile", "FROM node:latest\n");
+        var context = new CisRepositoryContextResolver().Resolve(repository.Path).Context!;
+
+        var findings = new SecuritySuiteProfileDoctorCheck().Inspect(context);
+
+        Assert.DoesNotContain(findings, finding => finding.Code == "CIS-SEC-DOCTOR-009");
+    }
+
+    [Fact]
     public void SecurityDoctor_AcceptsGovernedScannerWrapperModes()
     {
         using var repository = TemporaryRepository.Create();
@@ -2309,6 +2519,110 @@ public sealed class RepositoryInitializerTests
         var findings = new SecuritySuiteProfileDoctorCheck().Inspect(context);
 
         Assert.DoesNotContain(findings, finding => finding.Code == "CIS-SEC-DOCTOR-007");
+    }
+
+    [Fact]
+    public void Initializer_PrunesGeneratedArtifactTreesWhenDetectingContainerSecuritySuites()
+    {
+        using var repository = TemporaryRepository.Create();
+        repository.Write(
+            "package.json",
+            "{\"name\":\"sample\",\"scripts\":{\"security:image\":\"trivy image sample\"},\"dependencies\":{\"next\":\"16.0.0\"}}");
+        repository.Write("src/app.ts", "export const ready = true;");
+        repository.Write("artifacts/clean-profile/agent-host/local-endpoint/Dockerfile", "FROM scratch\n");
+
+        var result = new RepositoryInitializer().Initialize(
+            new RepositoryInitRequest(repository.Path, "docs/cis", DryRun: false, Confirmed: true));
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.True(result.Applied);
+        var profile = File.ReadAllText(System.IO.Path.Combine(repository.Path, "docs", "cis", "references", "security-suite-profile.md"));
+        Assert.DoesNotContain("repository-image", profile, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Initializer_PreservesConfiguredRepositoryIdentityWhenCheckoutFolderNameChanges()
+    {
+        using var repository = TemporaryRepository.Create();
+        repository.Write(
+            ".cis/repository.yml",
+            "schema_version: 1\n\nrepository:\n  id: portable-repository\n\ndocumentation_root: docs/cis\n");
+        repository.Write("docs/cis/.keep", string.Empty);
+        repository.Write("src/app.ts", "export const ready = true;");
+
+        var result = new RepositoryInitializer().Initialize(
+            new RepositoryInitRequest(repository.Path, "docs/cis", DryRun: false, Confirmed: true));
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.True(result.Applied);
+        Assert.Contains("id: portable-repository", File.ReadAllText(System.IO.Path.Combine(repository.Path, ".cis", "repository.yml")), StringComparison.Ordinal);
+        Assert.Contains("portable-repository:docs:root", File.ReadAllText(System.IO.Path.Combine(repository.Path, "docs", "cis", "catalog.yml")), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Reinitialize_AddsNewDefaultStandardMappingsWithoutReplacingHumanMatrixRows()
+    {
+        using var repository = TemporaryRepository.Create();
+        var initializer = new RepositoryInitializer();
+        var request = new RepositoryInitRequest(repository.Path, "docs/cis", DryRun: false, Confirmed: true);
+        Assert.Equal(0, initializer.Initialize(request).ExitCode);
+        var matrixPath = System.IO.Path.Combine(repository.Path, "docs", "cis", "references", "standards-conformance-matrix.md");
+        File.AppendAllText(
+            matrixPath,
+            "| repository:standard:custom | CUSTOM-001 | custom | manual-review | maintainer review | Active | Human-owned row. |\n");
+        repository.Write("package.json", "{\"name\":\"portal\",\"dependencies\":{\"next\":\"16.0.0\",\"react\":\"19.0.0\"}}");
+        repository.Write("app/page.tsx", "export default function Page() { return null; }\n");
+
+        var result = initializer.Initialize(request);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.True(result.Applied);
+        var matrix = File.ReadAllText(matrixPath);
+        Assert.Contains("CUSTOM-001", matrix, StringComparison.Ordinal);
+        Assert.Contains("SEC-FEAT-006", matrix, StringComparison.Ordinal);
+        Assert.Equal(1, matrix.Split("SEC-FEAT-006", StringSplitOptions.None).Length - 1);
+        Assert.Equal("unchanged", initializer.Initialize(request).Status);
+    }
+
+    [Fact]
+    public void TestingDoctor_AcceptsGovernedDotnetTestWrapper()
+    {
+        using var repository = TemporaryRepository.Create();
+        repository.Write(
+            "src/App/App.csproj",
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+        new RepositoryInitializer().Initialize(new RepositoryInitRequest(repository.Path, "docs/cis", DryRun: false, Confirmed: true));
+        repository.Write(
+            "docs/cis/references/test-suite-profile.md",
+            "| Suite ID | Component | Framework | Command | Working directory | Result format | Result path | Coverage path | Mutation path |\n" +
+            "|---|---|---|---|---|---|---|---|---|\n" +
+            "| dotnet-tests | repository | dotnet-test | pwsh tools/run-dotnet-tests.ps1 | . | trx | .cis/local/testing/results/dotnet-tests.trx | .cis/local/testing/coverage/summary.json | - |\n");
+        var context = new CisRepositoryContextResolver().Resolve(repository.Path).Context!;
+
+        var findings = new TestSuiteProfileDoctorCheck().Inspect(context);
+
+        Assert.DoesNotContain(findings, finding => finding.Code == "CIS-TEST-DOCTOR-005");
+    }
+
+    [Fact]
+    public void TestingDoctor_AcceptsClassificationComponentRootAsSuiteComponent()
+    {
+        using var repository = TemporaryRepository.Create();
+        repository.Write(
+            "vscode-extension/package.json",
+            "{\"name\":\"sample-extension\",\"engines\":{\"vscode\":\"^1.109.0\"},\"scripts\":{\"test\":\"node --test\"}}");
+        repository.Write("vscode-extension/extension.js", "exports.activate = () => {};\n");
+        new RepositoryInitializer().Initialize(new RepositoryInitRequest(repository.Path, "docs/cis", DryRun: false, Confirmed: true));
+        repository.Write(
+            "docs/cis/references/test-suite-profile.md",
+            "| Suite ID | Component | Framework | Command | Working directory | Result format | Result path | Coverage path | Mutation path |\n" +
+            "|---|---|---|---|---|---|---|---|---|\n" +
+            "| vscode-tests | vscode-extension | vitest | npm test | vscode-extension | vitest-json | .cis/local/testing/results/vscode.json | - | - |\n");
+        var context = new CisRepositoryContextResolver().Resolve(repository.Path).Context!;
+
+        var findings = new TestSuiteProfileDoctorCheck().Inspect(context);
+
+        Assert.DoesNotContain(findings, finding => finding.Code == "CIS-TEST-DOCTOR-007");
     }
 
     private sealed class TemporaryRepository : IDisposable

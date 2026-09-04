@@ -31,6 +31,12 @@ public sealed partial class GraphValidator
         "api-finding",
         "external-work-item",
         "tracker-conflict",
+        "screen",
+        "route",
+        "ui-component",
+        "navigation",
+        "api-client",
+        "state-store",
     };
 
     private static readonly HashSet<string> Authorities = new(StringComparer.Ordinal)
@@ -101,6 +107,8 @@ public sealed partial class GraphValidator
         "has-finding",
         "generated-from",
         "supersedes",
+        "renders",
+        "navigates-to",
     };
 
     private static readonly HashSet<string> EdgeStates = new(StringComparer.Ordinal)
@@ -122,11 +130,14 @@ public sealed partial class GraphValidator
 
     private readonly ICisRepositoryContextResolver _repositoryContextResolver;
     private readonly SqliteGraphStore _store;
+    private readonly IReadOnlyList<string> _expectedExtractors;
 
-    public GraphValidator(ICisRepositoryContextResolver repositoryContextResolver, SqliteGraphStore? store = null)
+    public GraphValidator(ICisRepositoryContextResolver repositoryContextResolver, SqliteGraphStore? store = null,
+        IEnumerable<ICisGraphAugmenter>? augmenters = null)
     {
         _repositoryContextResolver = repositoryContextResolver;
         _store = store ?? new SqliteGraphStore();
+        _expectedExtractors = GraphBuilder.ComposeExtractors(augmenters);
     }
 
     public GraphValidationResult Validate(string repositoryPath, bool strict)
@@ -212,7 +223,7 @@ public sealed partial class GraphValidator
             GraphAvailable: true);
     }
 
-    private static void ValidateGenerationMetadata(
+    private void ValidateGenerationMetadata(
         CisRepositoryContext context,
         CisGraphDocument graph,
         CisGraphManifest manifest,
@@ -239,8 +250,8 @@ public sealed partial class GraphValidator
                 manifest.BuildId));
         }
 
-        if (manifest.Extractors.SequenceEqual(GraphBuilder.CurrentExtractors, StringComparer.Ordinal)
-            && !string.Equals(graph.Build.Id, GraphBuilder.CreateBuildId(manifest.Inputs), StringComparison.Ordinal))
+        if (manifest.Extractors.SequenceEqual(_expectedExtractors, StringComparer.Ordinal)
+            && !string.Equals(graph.Build.Id, GraphBuilder.CreateBuildId(manifest.Inputs, _expectedExtractors), StringComparison.Ordinal))
         {
             diagnostics.Add(Diagnostic(
                 "CIS-GRAPH-VALIDATE-BUILD-002",
@@ -261,7 +272,7 @@ public sealed partial class GraphValidator
                 manifest.RepositoryId));
         }
 
-        if (!manifest.Extractors.SequenceEqual(GraphBuilder.CurrentExtractors, StringComparer.Ordinal))
+        if (!manifest.Extractors.SequenceEqual(_expectedExtractors, StringComparer.Ordinal))
         {
             diagnostics.Add(Diagnostic(
                 "CIS-GRAPH-VALIDATE-STALE-001",
@@ -597,7 +608,8 @@ public sealed partial class GraphValidator
         {
             "contains" => from switch
             {
-                "repository" => to is "component" or "document" or "source-file" or "workflow" or "external-work-item",
+                "repository" => to is "component" or "document" or "source-file" or "workflow" or "external-work-item"
+                    or "screen" or "route" or "ui-component" or "navigation" or "api-client" or "state-store",
                 "document" => to is "document-section" or "requirement" or "decision" or "reference-item",
                 "source-file" => to is "symbol" or "test",
                 _ => false,
@@ -829,30 +841,13 @@ public sealed partial class GraphValidator
     {
         try
         {
-            using var process = new Process
-            {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = "git",
-                    WorkingDirectory = repositoryPath,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                },
-            };
+            var start = new ProcessStartInfo { FileName = "git", WorkingDirectory = repositoryPath };
             foreach (var argument in arguments)
             {
-                process.StartInfo.ArgumentList.Add(argument);
+                start.ArgumentList.Add(argument);
             }
-
-            if (!process.Start())
-            {
-                return null;
-            }
-
-            var output = process.StandardOutput.ReadToEnd();
-            return process.WaitForExit(2000) && process.ExitCode == 0 ? output : null;
+            var result = CisProcessSafety.Run(start, TimeSpan.FromSeconds(2));
+            return !result.TimedOut && result.ExitCode == 0 ? result.StandardOutput : null;
         }
         catch (Exception exception) when (exception is Win32Exception
             or InvalidOperationException

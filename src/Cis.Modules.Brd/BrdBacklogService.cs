@@ -58,14 +58,18 @@ public sealed class BrdBacklogService
         var existing = existingContent is not null
             ? ParseItems(existingContent).ToDictionary(item => item.RequirementId, StringComparer.Ordinal)
             : new Dictionary<string, BrdBacklogItem>(StringComparer.Ordinal);
-        var repositoryRoles = state.Workspace!.Repositories
+        var routableRepositories = state.Workspace!.Repositories
             .Where(repository => repository.Role == "participant")
+            .ToArray();
+        if (routableRepositories.Length == 0 && state.Workspace.AuthorityRepository is { } authorityRepository)
+            routableRepositories = [authorityRepository];
+        var repositoryRoles = routableRepositories
             .ToDictionary(repository => repository.Id, repository => _classifier.Classify(repository.RepositoryPath)
                 .Components.SelectMany(component => component.Roles).ToHashSet(StringComparer.Ordinal), StringComparer.Ordinal);
         var migrateDependencies = existingContent is not null
             && ReadNestedFrontMatter(existingContent, "backlog_schema") != "3"
             && !string.Equals(ReadFrontMatter(existingContent, "status"), "Active", StringComparison.OrdinalIgnoreCase);
-        var items = requirements.Select(requirement => CreateItem(requirement, requirements, state.Workspace!,
+        var items = requirements.Select(requirement => CreateItem(requirement, requirements, routableRepositories,
             repositoryRoles, existing, migrateDependencies)).ToArray();
         var title = ReadFrontMatter(brdContent, "title") ?? "Business Requirements";
         var next = Render(title, state, items, obligations);
@@ -96,7 +100,13 @@ public sealed class BrdBacklogService
         return ValidateInternal(workspacePath, "built", applied: true);
     }
 
-    public BrdBacklogResult Validate(string workspacePath) => ValidateInternal(workspacePath, "validated", applied: false);
+    public BrdBacklogResult Validate(string workspacePath)
+    {
+        var result = ValidateInternal(workspacePath, "validated", applied: false);
+        return result.Validation is { Valid: true, Current: false }
+            ? result with { Status = "blocked" }
+            : result;
+    }
 
     public BrdBacklogResult Status(string workspacePath) => ValidateInternal(workspacePath, "status", applied: false);
 
@@ -332,7 +342,8 @@ public sealed class BrdBacklogService
         if (state.Authority is null || state.Workspace is null) return [];
         var errors = new List<string>();
         var brdStatus = _brd.Status(state.Workspace.WorkspacePath);
-        if (brdStatus.Validation is not { Valid: true, Current: true, EffectiveStatus: "Active" })
+        if (brdStatus.Validation is not { } brdValidation
+            || !CisDefinitionDraftScope.Accepts(brdValidation.Valid, brdValidation.Current, brdValidation.EffectiveStatus))
             errors.Add("An Active, current BRD is required. Run `cis brd status`.");
         if (!File.Exists(state.TechnicalIntentPath!))
             errors.Add("Technical intent is missing. Run `cis technical-intent init`.");
@@ -455,22 +466,21 @@ public sealed class BrdBacklogService
         if (item is null) return new FeatureState(state, null, null, null, [$"High-level backlog item was not found: {normalizedId}"]);
         if (item.FeatureSpecification == "not-created")
             return new FeatureState(state, item, null, null, [$"Feature specification has not been started for {normalizedId}."]);
-        var authorityRoot = Path.GetFullPath(state.Authority!.RepositoryPath).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        var path = Path.GetFullPath(Path.Combine(state.Authority.RepositoryPath,
-            item.FeatureSpecification.Replace('/', Path.DirectorySeparatorChar)));
-        if (!path.StartsWith(authorityRoot, StringComparison.OrdinalIgnoreCase))
-            return new FeatureState(state, item, path, item.FeatureSpecification, ["Feature-specification path escapes the authority repository."]);
+        if (!CisPathSafety.TryResolveUnderRoot(state.Authority!.RepositoryPath, item.FeatureSpecification, out var path)
+            || CisPathSafety.ContainsReparsePoint(state.Authority.RepositoryPath, path))
+            return new FeatureState(state, item, null, item.FeatureSpecification, ["Feature-specification path escapes the authority repository or traverses a linked directory."]);
         if (!File.Exists(path))
             return new FeatureState(state, item, null, item.FeatureSpecification, [$"Feature specification file was not found: {item.FeatureSpecification}"]);
         return new FeatureState(state, item, path, item.FeatureSpecification, []);
     }
 
     private static BrdBacklogItem CreateItem(Requirement requirement, IReadOnlyList<Requirement> requirements,
-        CisWorkspace workspace, IReadOnlyDictionary<string, HashSet<string>> repositoryRoles,
+        IReadOnlyList<CisWorkspaceRepository> routableRepositories,
+        IReadOnlyDictionary<string, HashSet<string>> repositoryRoles,
         IReadOnlyDictionary<string, BrdBacklogItem> existing, bool migrateDependencies)
     {
-        var text = requirement.Text + " " + requirement.Acceptance;
-        var participants = workspace.Repositories.Where(repository => repository.Role == "participant").ToArray();
+        var text = requirement.Outcome + " " + requirement.Text + " " + requirement.Acceptance;
+        var participants = routableRepositories.ToArray();
         var localRuntime = HasAny(text, "local startup", "clean environment", "smoke tests");
         var infrastructure = HasAny(text, "infrastructure", "health check", "persistent storage", "configuration boundaries");
         var authentication = HasAny(text, "authentication", "session", "sessions", "sign-in", "registration", "supertokens");
@@ -487,20 +497,20 @@ public sealed class BrdBacklogService
         var frontend = new List<string>();
         if (HasAny(text, "public", "unauthenticated", "visitor", "sign-in", "registration")) frontend.Add("public");
         if (!infrastructure && HasAny(text, "user", "owner", "member", "customer", "web", "todo", "list", "session", "sessions")) frontend.Add("customer");
-        var id = "HLT-" + requirement.Id.Replace("BRD-", string.Empty, StringComparison.Ordinal);
+        var id = BacklogItemId(requirement.Id);
         existing.TryGetValue(requirement.Id, out var previous);
         var inferredDependencies = InferDependencies(requirement, requirements);
         var dependencies = previous is null || migrateDependencies
             ? inferredDependencies
             : previous.DependsOn;
-        return new BrdBacklogItem(id, requirement.Id, requirement.Text, requirement.Priority, repositories,
+        return new BrdBacklogItem(id, requirement.Id, requirement.Outcome, requirement.Priority, repositories,
             frontend.Distinct(StringComparer.Ordinal).ToArray(), dependencies,
             previous?.FeatureSpecification ?? "not-created", previous?.Notes ?? string.Empty);
     }
 
     private static IReadOnlyList<string> InferDependencies(Requirement requirement, IReadOnlyList<Requirement> requirements)
     {
-        var text = requirement.Text + " " + requirement.Acceptance;
+        var text = requirement.Outcome + " " + requirement.Text + " " + requirement.Acceptance;
         var authentication = requirements.FirstOrDefault(candidate =>
             HasAny(candidate.Text + " " + candidate.Acceptance, "sign-in", "registration", "authentication")
             && HasAny(candidate.Text + " " + candidate.Acceptance, "session", "sessions", "identity"));
@@ -601,13 +611,106 @@ public sealed class BrdBacklogService
     {
         var section = Section(content, heading);
         var result = new List<Requirement>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        string? currentId = null;
+        string? currentOutcome = null;
+        string? currentBody = null;
+
+        void FlushNarrative()
+        {
+            if (currentId is null)
+                return;
+
+            var body = Regex.Replace(currentBody?.Trim() ?? string.Empty, @"\s+", " ",
+                RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+            var outcome = string.IsNullOrWhiteSpace(currentOutcome) ? body : currentOutcome.Trim();
+            if (seen.Add(currentId) && !string.IsNullOrWhiteSpace(outcome))
+                result.Add(new Requirement(currentId, outcome, body, "Must", body));
+            currentId = null;
+            currentOutcome = null;
+            currentBody = null;
+        }
+
         foreach (var line in section.Split('\n'))
         {
             var cells = Cells(line);
-            if (cells.Length < 2 || !cells[0].StartsWith("BRD-", StringComparison.Ordinal)) continue;
-            result.Add(new Requirement(cells[0], cells[1], cells.Length > 2 ? cells[2] : "Must", cells.Length > 3 ? cells[3] : string.Empty));
+            if (cells.Length >= 2 && IsBusinessRequirementId(cells[0]))
+            {
+                FlushNarrative();
+                if (seen.Add(cells[0]))
+                    result.Add(new Requirement(cells[0], cells[1], cells[1],
+                        cells.Length > 2 ? cells[2] : "Must",
+                        cells.Length > 3 ? cells[3] : string.Empty));
+                continue;
+            }
+
+            if (TryParseNarrativeRequirement(line, out var id, out var outcome, out var body))
+            {
+                FlushNarrative();
+                currentId = id;
+                currentOutcome = outcome;
+                currentBody = body;
+                continue;
+            }
+
+            if (currentId is null)
+                continue;
+
+            var continuation = line.Trim();
+            if (continuation.Length == 0)
+                continue;
+            if (continuation.StartsWith('|') || Regex.IsMatch(continuation, @"^[-*+]\s+",
+                    RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
+            {
+                FlushNarrative();
+                continue;
+            }
+
+            currentBody = string.IsNullOrWhiteSpace(currentBody)
+                ? continuation
+                : currentBody + " " + continuation;
         }
+
+        FlushNarrative();
         return result;
+    }
+
+    private static bool TryParseNarrativeRequirement(string line, out string id, out string outcome, out string body)
+    {
+        id = string.Empty;
+        outcome = string.Empty;
+        body = string.Empty;
+        var bullet = Regex.Match(line,
+            @"^\s*[-*+]\s+\*\*(?<label>.+?)\*\*\s*:?[ \t]*(?<body>.*)$",
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        if (!bullet.Success)
+            return false;
+
+        var label = bullet.Groups["label"].Value.Trim().TrimEnd(':').Trim();
+        var identity = Regex.Match(label,
+            @"^(?<id>BR(?:D)?-[A-Z0-9]+(?:-[A-Z0-9]+)+)(?:\s+(?:—|–|-)\s+(?<outcome>.+))?$",
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        if (!identity.Success || !IsBusinessRequirementId(identity.Groups["id"].Value))
+            return false;
+
+        id = identity.Groups["id"].Value;
+        outcome = identity.Groups["outcome"].Value.Trim();
+        body = bullet.Groups["body"].Value.Trim();
+        return true;
+    }
+
+    private static bool IsBusinessRequirementId(string value)
+        => Regex.IsMatch(value, @"^BR(?:D)?-[A-Z0-9]+(?:-[A-Z0-9]+)+$",
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+
+    private static string BacklogItemId(string requirementId)
+    {
+        var suffix = requirementId.StartsWith("BRD-", StringComparison.Ordinal)
+            ? requirementId[4..]
+            : requirementId.StartsWith("BR-", StringComparison.Ordinal)
+                ? requirementId[3..]
+                : requirementId;
+        return "HLT-" + suffix;
     }
 
     private static IReadOnlyList<BrdBacklogItem> ParseItems(string content)
@@ -867,7 +970,7 @@ cis:
     private static BrdFeatureSpecificationResult FeatureError(string status, State state, string? itemId, IReadOnlyList<string> errors)
         => new(status, state.Workspace?.WorkspacePath, state.Authority?.Id, itemId, null, null, errors, false);
 
-    private sealed record Requirement(string Id, string Text, string Priority, string Acceptance);
+    private sealed record Requirement(string Id, string Outcome, string Text, string Priority, string Acceptance);
     private sealed record FeatureRequirement(string Id, string Surface, string FrontendType, string Requirement, string Acceptance);
     private sealed record FeatureState(State? State, BrdBacklogItem? Item, string? Path, string? RelativePath,
         IReadOnlyList<string> Errors);

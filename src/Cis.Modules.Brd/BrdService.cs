@@ -8,7 +8,7 @@ using Cis.Modules.Repository;
 
 namespace Cis.Modules.Brd;
 
-public sealed partial class BrdService
+public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
 {
     private const string BaselineStart = "<!-- cis:baseline:start -->";
     private const string BaselineEnd = "<!-- cis:baseline:end -->";
@@ -40,6 +40,7 @@ public sealed partial class BrdService
         "/bin/",
         "/obj/",
         "/node_modules/",
+        "/.codex-tmp/",
         "/.next/",
         "/dist/",
         "/build/",
@@ -51,6 +52,7 @@ public sealed partial class BrdService
     private readonly ICisGraphSnapshotReader _graphReader;
     private readonly ICisRepositoryContextResolver _repositoryResolver;
     private readonly ICisWorkspaceRegistry _workspaceRegistry;
+    private readonly IReadOnlyList<ICisBrdSourceEvidenceProvider> _sourceEvidenceProviders;
 
     public BrdService(
         ICisWorkspaceRegistry workspaceRegistry,
@@ -59,12 +61,25 @@ public sealed partial class BrdService
         ICisGraphSnapshotReader graphReader,
         DocumentationCatalogMerger catalogMerger,
         Func<DateTimeOffset>? clock = null)
+        : this(workspaceRegistry, repositoryResolver, graphValidator, graphReader, catalogMerger, [], clock)
+    {
+    }
+
+    public BrdService(
+        ICisWorkspaceRegistry workspaceRegistry,
+        ICisRepositoryContextResolver repositoryResolver,
+        GraphValidator graphValidator,
+        ICisGraphSnapshotReader graphReader,
+        DocumentationCatalogMerger catalogMerger,
+        IEnumerable<ICisBrdSourceEvidenceProvider> sourceEvidenceProviders,
+        Func<DateTimeOffset>? clock = null)
     {
         _workspaceRegistry = workspaceRegistry;
         _repositoryResolver = repositoryResolver;
         _graphValidator = graphValidator;
         _graphReader = graphReader;
         _catalogMerger = catalogMerger;
+        _sourceEvidenceProviders = sourceEvidenceProviders.ToArray();
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
     }
 
@@ -135,8 +150,15 @@ public sealed partial class BrdService
                 .Select(diagnostic => $"[{repository.Id}] {diagnostic.Message}"));
         }
 
-        var candidates = workspace.Repositories
+        var fileCandidates = workspace.Repositories
             .SelectMany(repository => FindCandidates(repository, authority, canonicalPath, warnings))
+            .ToArray();
+        var registeredCandidates = workspace.Repositories
+            .SelectMany(repository => FindRegisteredSourceCandidates(repository, warnings))
+            .ToArray();
+        var candidates = fileCandidates.Concat(registeredCandidates)
+            .GroupBy(candidate => candidate.Id, StringComparer.Ordinal)
+            .Select(group => group.OrderByDescending(candidate => candidate.Kind == "authoring-reference").First())
             .OrderBy(candidate => candidate.RepositoryId, StringComparer.Ordinal)
             .ThenBy(candidate => candidate.Path, StringComparer.Ordinal)
             .Take(100)
@@ -155,6 +177,13 @@ public sealed partial class BrdService
             baselines,
             warnings.Distinct(StringComparer.Ordinal).Order().ToArray(),
             errors.Distinct(StringComparer.Ordinal).Order().ToArray());
+    }
+
+    CisBrdSourceEvidenceReconciliation ICisBrdSourceEvidenceReconciler.ReconcileSourceEvidence(string repositoryPath)
+    {
+        var result = Reconcile(repositoryPath);
+        return new CisBrdSourceEvidenceReconciliation(result.Status, result.Applied,
+            result.Errors.Concat(result.Validation?.Errors ?? []).Concat(result.Warnings).ToArray());
     }
 
     public BrdResult Initialize(string workspacePath, string title)
@@ -328,6 +357,69 @@ public sealed partial class BrdService
 
     public BrdResult Validate(string workspacePath) => ValidateInternal(workspacePath, "validated");
 
+    public BrdQuestionsResult Questions(string workspacePath)
+    {
+        var resolution = ResolveAuthority(workspacePath);
+        if (resolution.Errors.Count > 0 || resolution.Workspace is null || resolution.Authority is null)
+            return QuestionsError("invalid-workspace", workspacePath, null, null, resolution.Errors);
+        var path = CanonicalPath(resolution.Authority);
+        var relative = NormalizePath(Path.GetRelativePath(resolution.Authority.RepositoryPath, path));
+        if (!File.Exists(path))
+            return QuestionsError("missing", resolution.Workspace.WorkspacePath, resolution.Authority.Id, relative,
+                ["Canonical BRD was not found. Run `cis brd init`."]);
+        var errors = new List<string>();
+        var content = File.ReadAllText(path);
+        var section = ExtractSection(content, "Open questions");
+        var questions = ParseQuestions(section, errors);
+        var status = errors.Count > 0 ? "invalid"
+            : questions.Count == 0 ? "none"
+            : questions.Any(item => item.Status == "Unanswered") ? "unanswered"
+            : "answered";
+        return new(status, resolution.Workspace.WorkspacePath, resolution.Authority.Id, relative,
+            questions, errors, Applied: false,
+            AnswerDigest: status == "answered" ? ContentDigest(section.Replace("\r\n", "\n", StringComparison.Ordinal).Trim()) : null);
+    }
+
+    public BrdQuestionsResult AnswerQuestion(string workspacePath, string questionId, string answer, string actor)
+    {
+        var current = Questions(workspacePath);
+        if (current.ExitCode != 0) return current;
+        if (string.IsNullOrWhiteSpace(questionId) || string.IsNullOrWhiteSpace(answer) || string.IsNullOrWhiteSpace(actor))
+            return current with { Status = "invalid", Errors = ["Question ID, answer, and human actor are required."] };
+        if (answer.Length > 16_384 || actor.Length > 256)
+            return current with { Status = "invalid", Errors = ["Answer or actor exceeds the supported bounded length."] };
+        var matches = current.Questions.Where(item => item.Id.Equals(questionId, StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (matches.Length != 1)
+            return current with { Status = "invalid", Errors = [$"Unknown or duplicate BRD question ID '{questionId}'."] };
+        var normalizedAnswer = InlineValue(answer);
+        var normalizedActor = InlineValue(actor);
+        if (string.IsNullOrWhiteSpace(normalizedAnswer) || PlaceholderPattern().IsMatch(normalizedAnswer))
+            return current with { Status = "invalid", Errors = ["A substantive answer is required; TODO and TBD are not answers."] };
+        if (string.Equals(matches[0].Answer, normalizedAnswer, StringComparison.Ordinal)
+            && string.Equals(matches[0].AnsweredBy, normalizedActor, StringComparison.Ordinal))
+            return current with { Status = current.UnansweredCount == 0 ? "answered" : "unanswered", Applied = false };
+        var now = _clock().ToUniversalTime().ToString("O");
+        var nextQuestions = current.Questions.Select(item => item.Id.Equals(matches[0].Id, StringComparison.OrdinalIgnoreCase)
+            ? item with { Answer = normalizedAnswer, AnsweredBy = normalizedActor, AnsweredAtUtc = now, Status = "Answered" }
+            : item).ToArray();
+
+        var workspace = _workspaceRegistry.Resolve(workspacePath).Workspace!;
+        var authority = workspace.AuthorityRepository!;
+        var context = _repositoryResolver.Resolve(authority.RepositoryPath).Context!;
+        var path = CanonicalPath(authority);
+        var content = File.ReadAllText(path);
+        var next = ReplaceSectionContent(content, "Open questions", RenderQuestions(nextQuestions));
+        next = ClearApproval(next);
+        if (Equivalent(content, next))
+            return current with { Status = current.UnansweredCount == 0 ? "answered" : "unanswered" };
+        Write(path, next);
+        var stableId = $"{authority.Id}:spec:business-requirements";
+        Write(context.CatalogPath, UpdateCatalogStatus(File.ReadAllText(context.CatalogPath), stableId, "review-required"));
+        return new(nextQuestions.Any(item => item.Status == "Unanswered") ? "unanswered" : "answered",
+            workspace.WorkspacePath, authority.Id,
+            NormalizePath(Path.GetRelativePath(authority.RepositoryPath, path)), nextQuestions, [], Applied: true);
+    }
+
     public BrdResult Approve(
         string workspacePath,
         string reviewer,
@@ -449,7 +541,14 @@ public sealed partial class BrdService
             }
         }
 
+        var questionErrors = new List<string>();
+        var openQuestions = ParseQuestions(ExtractSection(content, "Open questions"), questionErrors);
+        errors.AddRange(questionErrors);
+        foreach (var question in openQuestions.Where(item => item.Status == "Unanswered"))
+            errors.Add($"BRD open question {question.Id} is unanswered: {question.Question}");
+
         var sources = ParseSourceRows(content);
+        var materialSourceDrift = false;
         foreach (var candidate in discovery.Candidates.Where(candidate => !candidate.Canonical))
         {
             if (!sources.TryGetValue(candidate.Id, out var row))
@@ -480,10 +579,16 @@ public sealed partial class BrdService
                 errors.Add(
                     $"Adopted feature specification must be referenced by source ID in BRD Traceability: {candidate.Id}");
             }
+
+            if (candidate.MaterialSourceDrift)
+            {
+                warnings.Add($"Cited source evidence changed materially after its registered digest: {candidate.Id}. Review the local source diff and reconcile the BRD if required.");
+                materialSourceDrift = true;
+            }
         }
 
         var baselines = ParseBaselineRows(content);
-        var current = true;
+        var current = !materialSourceDrift;
         foreach (var baseline in discovery.Baselines.Where(baseline => baseline.Role == "participant"))
         {
             if (!baselines.TryGetValue(baseline.RepositoryId, out var recorded)
@@ -668,8 +773,8 @@ public sealed partial class BrdService
         builder.AppendLine("| --- | --- | --- | --- | --- | --- | --- |");
         foreach (var candidate in candidates.OrderBy(item => item.Id, StringComparer.Ordinal))
         {
-            var assessment = "Unreviewed";
-            var rationale = "TODO";
+            var assessment = candidate.DefaultAssessment ?? "Unreviewed";
+            var rationale = candidate.DefaultRationale ?? "TODO";
             if (existing.TryGetValue(candidate.Id, out var row)
                 && string.Equals(row.Hash, candidate.ContentHash, StringComparison.Ordinal))
             {
@@ -805,7 +910,7 @@ public sealed partial class BrdService
         ICollection<string> warnings)
     {
         var inspected = 0;
-        foreach (var path in Directory.EnumerateFiles(repository.RepositoryPath, "*.md", SearchOption.AllDirectories))
+        foreach (var path in CisPathSafety.EnumerateFiles(repository.RepositoryPath, "*.md"))
         {
             var normalizedAbsolute = "/" + NormalizePath(path).TrimStart('/') + "/";
             if (ExcludedSegments.Any(segment => normalizedAbsolute.Contains(segment, StringComparison.OrdinalIgnoreCase)))
@@ -855,6 +960,35 @@ public sealed partial class BrdService
                 Hash(content),
                 evidence.Signals.Count == 0 ? ["canonical-path"] : evidence.Signals,
                 isCanonical);
+        }
+    }
+
+    private IEnumerable<BrdCandidate> FindRegisteredSourceCandidates(
+        CisWorkspaceRepository repository,
+        ICollection<string> warnings)
+    {
+        var resolution = _repositoryResolver.Resolve(repository.RepositoryPath);
+        if (!resolution.IsSuccess || resolution.Context is null)
+        {
+            foreach (var error in resolution.Errors)
+                warnings.Add($"Could not inspect registered source evidence for '{repository.Id}': {error}");
+            yield break;
+        }
+
+        foreach (var provider in _sourceEvidenceProviders)
+        {
+            IReadOnlyList<CisBrdSourceEvidence> sources;
+            try { sources = provider.Discover(resolution.Context); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+            {
+                warnings.Add($"Could not inspect registered source evidence for '{repository.Id}': {exception.Message}");
+                continue;
+            }
+
+            foreach (var source in sources)
+                yield return new BrdCandidate(source.Id, source.Kind, source.RepositoryId, source.RepositoryPath,
+                    source.SourcePath, source.RegisteredDigest, source.Signals, false,
+                    source.Assessment, source.Rationale, source.MaterialToBrd);
         }
     }
 
@@ -978,9 +1112,30 @@ public sealed partial class BrdService
     }
 
     private static string[] Cells(string line)
-        => !line.TrimStart().StartsWith('|')
-            ? []
-            : line.Trim().Trim('|').Split('|').Select(cell => cell.Trim().Replace("\\|", "|", StringComparison.Ordinal)).ToArray();
+    {
+        if (!line.TrimStart().StartsWith('|')) return [];
+        var value = line.Trim().Trim('|');
+        var cells = new List<string>();
+        var current = new StringBuilder();
+        for (var index = 0; index < value.Length; index++)
+        {
+            if (value[index] == '\\' && index + 1 < value.Length && value[index + 1] == '|')
+            {
+                current.Append('|');
+                index++;
+                continue;
+            }
+            if (value[index] == '|')
+            {
+                cells.Add(current.ToString().Trim());
+                current.Clear();
+                continue;
+            }
+            current.Append(value[index]);
+        }
+        cells.Add(current.ToString().Trim());
+        return [.. cells];
+    }
 
     private static string ExtractSection(string content, string heading)
     {
@@ -990,6 +1145,85 @@ public sealed partial class BrdService
             RegexOptions.CultureInvariant,
             TimeSpan.FromSeconds(1));
         return match.Success ? match.Groups["body"].Value.Trim() : string.Empty;
+    }
+
+    private static IReadOnlyList<BrdQuestion> ParseQuestions(string section, List<string>? errors = null)
+    {
+        if (string.IsNullOrWhiteSpace(section) || Regex.IsMatch(section.Trim(),
+                @"(?i)^(?:none|none\.|no open questions\.?|not applicable\.?)$", RegexOptions.CultureInvariant,
+                TimeSpan.FromSeconds(1))) return [];
+        var lines = section.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+        var table = lines.Any(line =>
+        {
+            var cells = Cells(line);
+            return cells.Length >= 3 && cells[0].Equals("ID", StringComparison.OrdinalIgnoreCase)
+                && cells[1].Equals("Question", StringComparison.OrdinalIgnoreCase);
+        });
+        var questions = new List<BrdQuestion>();
+        if (table)
+        {
+            foreach (var line in lines)
+            {
+                var cells = Cells(line);
+                if (cells.Length < 5 || cells[0] is "ID" or "---" || cells.All(cell => cell.All(character => character is '-' or ':' or ' '))) continue;
+                if (!Regex.IsMatch(cells[0], "^BRD-Q-[0-9]{3,}$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
+                { errors?.Add($"Invalid BRD open-question identity: {cells[0]}"); continue; }
+                if (string.IsNullOrWhiteSpace(cells[1])) { errors?.Add($"BRD open question {cells[0]} has no question text."); continue; }
+                var answered = !string.IsNullOrWhiteSpace(cells[2])
+                    && cells[2] is not ("-" or "Unanswered" or "TODO" or "TBD");
+                questions.Add(new(cells[0], questions.Count + 1, cells[1], answered ? cells[2] : null,
+                    answered && cells[3] != "-" ? cells[3] : null,
+                    answered && cells[4] != "-" ? cells[4] : null, answered ? "Answered" : "Unanswered"));
+            }
+        }
+        else
+        {
+            foreach (var line in lines)
+            {
+                var match = Regex.Match(line,
+                    "^\\s*(?:(?<number>[0-9]+)[.)]|[-*])\\s+(?<question>.+\\?)\\s*$",
+                    RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+                if (!match.Success) continue;
+                questions.Add(new($"BRD-Q-{questions.Count + 1:000}", questions.Count + 1,
+                    match.Groups["question"].Value.Trim(), null, null, null, "Unanswered"));
+            }
+        }
+        foreach (var duplicate in questions.GroupBy(item => item.Id, StringComparer.OrdinalIgnoreCase).Where(group => group.Count() > 1))
+            errors?.Add($"Duplicate BRD open-question identity: {duplicate.Key}");
+        return questions;
+    }
+
+    internal static string IndependentReviewSurface(string content)
+    {
+        var normalized = content.Replace("\r\n", "\n", StringComparison.Ordinal);
+        var match = Regex.Match(normalized,
+            "(?ms)^## Open questions[ \\t]*$\\n(?<body>.*?)(?=^## |\\z)",
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        if (!match.Success) return normalized;
+        var errors = new List<string>();
+        var questions = ParseQuestions(match.Groups["body"].Value.Trim(), errors);
+        if (errors.Count > 0) return normalized;
+        var surface = "## Open questions\n\n" + string.Join("\n", questions.OrderBy(item => item.Ordinal)
+            .Select(item => item.Id + " | " + item.Question)) + "\n\n";
+        return normalized[..match.Index] + surface + normalized[(match.Index + match.Length)..];
+    }
+
+    private static string RenderQuestions(IReadOnlyList<BrdQuestion> questions)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine("| ID | Question | Answer | Answered by | Answered at UTC |");
+        builder.AppendLine("| --- | --- | --- | --- | --- |");
+        foreach (var question in questions.OrderBy(item => item.Ordinal))
+            builder.AppendLine($"| {Cell(question.Id)} | {Cell(question.Question)} | {Cell(question.Answer ?? "Unanswered")} | {Cell(question.AnsweredBy ?? "-")} | {Cell(question.AnsweredAtUtc ?? "-")} |");
+        return builder.ToString().TrimEnd();
+    }
+
+    private static string ReplaceSectionContent(string content, string heading, string body)
+    {
+        var pattern = $"(?ms)^(?<header>## {Regex.Escape(heading)}\\s*$\\n).*?(?=^## |\\z)";
+        return Regex.Replace(content, pattern,
+            match => match.Groups["header"].Value + "\n" + body.TrimEnd() + "\n\n",
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
     }
 
     private static string ReplaceBlock(string content, string start, string end, string replacement)
@@ -1191,6 +1425,9 @@ public sealed partial class BrdService
     private static string Cell(string value)
         => value.Replace("|", "\\|", StringComparison.Ordinal).Replace('\r', ' ').Replace('\n', ' ').Trim();
 
+    private static string InlineValue(string value)
+        => value.Replace('\r', ' ').Replace('\n', ' ').Trim();
+
     private static void Write(string path, string content)
     {
         var temporary = path + ".tmp";
@@ -1224,6 +1461,10 @@ public sealed partial class BrdService
             discovery.Warnings,
             errors,
             Applied: false);
+
+    private static BrdQuestionsResult QuestionsError(string status, string? workspacePath,
+        string? authorityId, string? canonicalPath, IReadOnlyList<string> errors)
+        => new(status, workspacePath, authorityId, canonicalPath, [], errors, Applied: false);
 
     private sealed record AuthorityResolution(
         CisWorkspace? Workspace,

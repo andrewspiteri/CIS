@@ -9,6 +9,7 @@ public sealed partial class RepositoryClassifier
     private static readonly HashSet<string> ExcludedDirectories = new(StringComparer.OrdinalIgnoreCase)
     {
         ".cis",
+        ".codex-tmp",
         ".git",
         ".idea",
         ".next",

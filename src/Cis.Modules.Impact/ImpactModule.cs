@@ -21,6 +21,7 @@ public sealed class ImpactModule : ICisModule
     public void RegisterServices(IServiceCollection services)
     {
         services.AddSingleton<ImpactAnalysisService>();
+        services.AddSingleton<PolicyImpactService>();
     }
 
     public void RegisterCommands(ICisCommandRegistry commands, IServiceProvider services)
@@ -33,7 +34,26 @@ public sealed class ImpactModule : ICisModule
         impact.Subcommands.Add(CreateDisposition("reject", "rejected", service));
         impact.Subcommands.Add(CreateDisposition("defer", "deferred", service));
         impact.Subcommands.Add(CreateCompleteness(service));
+        impact.Subcommands.Add(CreatePolicy(services.GetRequiredService<PolicyImpactService>()));
         commands.Add(impact);
+    }
+
+    private static Command CreatePolicy(PolicyImpactService service)
+    {
+        var group = new Command("policy", "Analyse the governed repository surfaces affected by a policy document.");
+        var analyse = new Command("analyse", "Generate bounded deterministic policy-impact artifacts.");
+        var policy = new Option<string>("--policy") { Required = true };
+        var strict = new Option<bool>("--strict"); var repo = RepositoryOption(); var format = FormatOption();
+        analyse.Options.Add(policy); analyse.Options.Add(strict); analyse.Options.Add(repo); analyse.Options.Add(format);
+        analyse.SetAction(parse =>
+        {
+            var result = service.Analyse(parse.GetValue(repo)!, parse.GetValue(policy)!, parse.GetValue(strict));
+            if (parse.GetValue(format) == "json") Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+            else if (parse.GetValue(format) == "agent") { Console.WriteLine($"status={result.Status};exitCode={result.ExitCode};targets={result.Targets.Count};candidates={result.Candidates.Count};applied={result.Applied.ToString().ToLowerInvariant()}"); foreach (var diagnostic in result.Diagnostics) Console.WriteLine($"diagnostic={Clean(diagnostic)}"); }
+            else { Console.WriteLine($"Policy impact: {result.Status}; targets={string.Join(", ", result.Targets)}; candidates={result.Candidates.Count}"); Console.WriteLine($"Markdown: {result.MarkdownPath ?? "none"}"); foreach (var diagnostic in result.Diagnostics) Console.WriteLine(diagnostic); }
+            return result.ExitCode;
+        });
+        group.Subcommands.Add(analyse); return group;
     }
 
     private static Command CreateAnalyse(ImpactAnalysisService service)

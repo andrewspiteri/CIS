@@ -7,6 +7,12 @@ using Cis.Abstractions;
 namespace Cis.Modules.Generate;
 
 public sealed record GenerateTemplate(string Id, string Path, string Digest, IReadOnlyList<string> Variables, long Bytes);
+public sealed record GenerateApplicability(GenerateTemplate Template, string Confidence, string Reason, IReadOnlyList<string> RequiredModelFields);
+public sealed record GenerateApplicabilityResult(string Status, string? RepositoryPath, string Decision,
+    IReadOnlyList<GenerateApplicability> Candidates, IReadOnlyList<string> Diagnostics)
+{
+    public int ExitCode => Diagnostics.Any(item => item.StartsWith("ERROR:", StringComparison.Ordinal)) ? 4 : 0;
+}
 public sealed record GenerateResult(string Status, string? RepositoryPath, GenerateTemplate? Template,
     string? OutputPath, string? OutputDigest, IReadOnlyList<GenerateTemplate> Templates,
     IReadOnlyList<string> Diagnostics, bool Applied)
@@ -32,6 +38,39 @@ public sealed partial class GenerateService
     public GenerateResult Describe(string repositoryPath, string id) => Find(repositoryPath, id, "described");
     public GenerateResult Validate(string repositoryPath, string id) => Find(repositoryPath, id, "valid");
 
+    public GenerateApplicabilityResult Applicable(string repositoryPath, string task, IReadOnlyList<string> changedFiles)
+    {
+        var context = Resolve(repositoryPath, out var errors);
+        if (context is null) return new("invalid-repository", null, "unavailable", [], errors);
+        if (string.IsNullOrWhiteSpace(task)) errors.Add("ERROR: A non-empty task description is required.");
+        foreach (var file in changedFiles)
+        {
+            if (!CisPathSafety.TryResolveUnderRoot(context.RepositoryPath, file, out _))
+                errors.Add($"ERROR: Changed file must be a safe repository-relative path: {file}");
+        }
+        if (errors.Count > 0) return new("invalid", context.RepositoryPath, "unavailable", [], errors);
+
+        var terms = Tokenize(task).Concat(changedFiles.SelectMany(Tokenize)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var candidates = Discover(context).Select(template =>
+        {
+            var templateTerms = Tokenize(template.Id).Concat(Tokenize(Path.GetFileNameWithoutExtension(template.Path))).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var overlap = templateTerms.Count(terms.Contains);
+            var extensionMatch = changedFiles.Any(file => Path.GetExtension(file).Equals(Path.GetExtension(template.Path), StringComparison.OrdinalIgnoreCase));
+            var score = overlap * 2 + (extensionMatch ? 1 : 0);
+            var confidence = score >= 4 ? "high" : score >= 2 ? "medium" : score == 1 ? "low" : "none";
+            var reason = overlap > 0
+                ? $"Matched {overlap} task or path term(s){(extensionMatch ? " and the output extension" : string.Empty)}."
+                : extensionMatch ? "Matched the changed-file output extension." : "No deterministic applicability signal matched.";
+            return new { Item = new GenerateApplicability(template, confidence, reason, template.Variables), Score = score };
+        }).Where(item => item.Score > 0).OrderByDescending(item => item.Score).ThenBy(item => item.Item.Template.Id, StringComparer.Ordinal)
+          .Select(item => item.Item).ToArray();
+        var decision = candidates.Length > 0 ? "use-or-record-reason" : "not-applicable";
+        var diagnostics = candidates.Length == 0
+            ? new[] { "INFO: No repository-owned deterministic template matched; record a specific not-applicable reason in tooling evidence." }
+            : new[] { "INFO: Applicability is advisory; validate required model fields before rendering." };
+        return new("evaluated", context.RepositoryPath, decision, candidates, diagnostics);
+    }
+
     public GenerateResult Render(string repositoryPath, string id, string output, IReadOnlyList<string> assignments)
     {
         var context = Resolve(repositoryPath, out var errors);
@@ -45,8 +84,9 @@ public sealed partial class GenerateService
         foreach (var variable in missing) errors.Add($"ERROR: Missing template value '{variable}'.");
         foreach (var pair in values) source = source.Replace("{{" + pair.Key + "}}", pair.Value, StringComparison.Ordinal);
         if (TokenRegex().IsMatch(source)) errors.Add("ERROR: Rendered output still contains unresolved template variables.");
-        var absolute = Path.GetFullPath(Path.Combine(context.RepositoryPath, output.Replace('/', Path.DirectorySeparatorChar)));
-        if (!IsWithin(context.RepositoryPath, absolute)) errors.Add("ERROR: Output must remain inside the repository.");
+        if (!CisPathSafety.TryResolveUnderRoot(context.RepositoryPath, output, out var absolute)
+            || CisPathSafety.ContainsReparsePoint(context.RepositoryPath, Path.GetDirectoryName(absolute) ?? context.RepositoryPath))
+            errors.Add("ERROR: Output must remain inside the repository and cannot cross a symbolic link.");
         if (errors.Count > 0) return Result(context, "invalid", template, output, null, templates, errors, false);
         Directory.CreateDirectory(Path.GetDirectoryName(absolute)!);
         var digest = Sha256(source); var applied = !File.Exists(absolute) || Sha256(File.ReadAllText(absolute)) != digest;
@@ -72,7 +112,7 @@ public sealed partial class GenerateService
     private static IReadOnlyList<GenerateTemplate> Discover(CisRepositoryContext context)
     {
         var root = Path.Combine(context.DocumentationPath, "templates"); if (!Directory.Exists(root)) return [];
-        return Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
+        return CisPathSafety.EnumerateFiles(root)
             .Where(path => Path.GetExtension(path).ToLowerInvariant() is ".md" or ".txt" or ".json" or ".yml" or ".yaml")
             .Select(path => { var text = File.ReadAllText(path); var relative = Relative(context.RepositoryPath, path);
                 return new GenerateTemplate(Relative(root, path), relative, Sha256(text), TokenRegex().Matches(text).Select(match => match.Groups[1].Value).Distinct(StringComparer.Ordinal).Order().ToArray(), new FileInfo(path).Length); })
@@ -89,9 +129,9 @@ public sealed partial class GenerateService
         }
         return values;
     }
-    private static bool IsWithin(string root, string path) => path.Equals(Path.GetFullPath(root), StringComparison.OrdinalIgnoreCase)
-        || path.StartsWith(Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
     private static string Relative(string root, string path) => Path.GetRelativePath(root, path).Replace(Path.DirectorySeparatorChar, '/');
+    private static IEnumerable<string> Tokenize(string value) => Regex.Split(value.ToLowerInvariant(), "[^a-z0-9]+")
+        .Where(item => item.Length >= 3 && item is not "template" and not "docs" and not "file");
     private static string Sha256(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
     private static GenerateResult Result(CisRepositoryContext? context, string status, GenerateTemplate? template, string? output, string? digest,
         IReadOnlyList<GenerateTemplate> templates, IReadOnlyList<string> diagnostics, bool applied)

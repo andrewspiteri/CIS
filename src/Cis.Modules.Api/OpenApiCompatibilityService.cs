@@ -311,7 +311,7 @@ public sealed class OpenApiCompatibilityService(ICisRepositoryContextResolver co
     private ApiGovernanceProfile ReadProfile(CisRepositoryContext context)
         => new ApiGovernanceService(contextResolver).ReadProfile(context);
     private static string? Select(string? option, IReadOnlyList<string> configured) => string.IsNullOrWhiteSpace(option) ? configured.FirstOrDefault() : option;
-    private static string? Resolve(string root, string path) { try { var value = Path.GetFullPath(Path.Combine(root, path.Replace('/', Path.DirectorySeparatorChar))); var prefix = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)) + Path.DirectorySeparatorChar; return value.StartsWith(prefix, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal) ? value : null; } catch { return null; } }
+    private static string? Resolve(string root, string path) { try { return CisPathSafety.TryResolveUnderRoot(root, path, out var value) && !CisPathSafety.ContainsReparsePoint(root, value) ? value : null; } catch { return null; } }
     private static ApiCompatibilityFinding Finding(string code, string severity, string classification, string method, string path, string message, string remediation, params string[] evidence)
         => new(code, severity, classification, method, path, message, remediation, evidence);
 

@@ -260,14 +260,28 @@ public sealed class StrykerJsonResultAdapter : ICisTestResultAdapter
         var noCoverage = statuses.Count(item => item.Equals("NoCoverage", StringComparison.OrdinalIgnoreCase));
         var denominator = killed + survived + timedOut;
         var score = denominator == 0 ? 0 : (killed + timedOut) * 100d / denominator;
+        var root = document.RootElement;
+        var high = Threshold(root, "thresholds", "high");
+        var low = Threshold(root, "thresholds", "low");
+        var @break = Threshold(root, "cisGate", "break");
         var mutation = new TestMutationSummary(score, killed, survived, timedOut, noCoverage,
-            null, null, null, TestResultEvidence.Relative(context.RepositoryPath, context.ResultPath));
-        var status = statuses.Count == 0 ? "invalid-evidence" : survived > 0 || noCoverage > 0 ? "findings" : "passed";
+            high, low, @break, TestResultEvidence.Relative(context.RepositoryPath, context.ResultPath));
+        var gatePassed = @break is not null && score >= @break && noCoverage == 0;
+        var status = statuses.Count == 0 ? "invalid-evidence"
+            : gatePassed || survived == 0 && noCoverage == 0 ? "passed"
+            : "findings";
         return new TestSuiteExecution(context.Suite.Id, context.Suite.Layer, context.Suite.Framework, status,
             statuses.Count == 0 ? TestFailureKind.InvalidEvidence : TestFailureKind.None,
             statuses.Count, killed + timedOut, survived, noCoverage, 0, [], null, mutation,
             [TestResultEvidence.Artifact(context.RepositoryPath, "mutation-result", context.ResultPath)],
             statuses.Count == 0 ? ["Mutation result contains no mutants."] : []);
+    }
+
+    private static double? Threshold(JsonElement root, string container, string name)
+    {
+        if (!root.TryGetProperty(container, out var thresholds) || thresholds.ValueKind != JsonValueKind.Object
+            || !thresholds.TryGetProperty(name, out var value)) return null;
+        return value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var number) ? number : null;
     }
 
     private static void Visit(JsonElement element, ICollection<string> statuses)

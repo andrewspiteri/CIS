@@ -2,11 +2,48 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using Cis.Host;
+using Cis.Abstractions;
 
 namespace Cis.Modules.Brd.Tests;
 
 public sealed class BrdWorkflowTests
 {
+    [Fact]
+    public void BacklogValidation_FailsWhenAnUpstreamGateMakesTheBacklogNonCurrent()
+    {
+        var result = new BrdBacklogResult("validated", "workspace", "authority", "docs/plans/high-level-backlog.md", [],
+            new BrdBacklogValidation(true, false, "Review Required", "Review Required", [],
+                ["The Active solution-design bundle is required."]), [], false);
+
+        Assert.Equal(5, result.ExitCode);
+    }
+
+    [Fact]
+    public void BacklogValidate_ReportsBlockedWhenSolutionDesignReadinessIsLost()
+    {
+        using var environment = WorkspaceEnvironment.Create(participants: 0);
+        Assert.Equal(0, environment.Service.Initialize(environment.Authority.Path, "Product BRD").ExitCode);
+        CompleteHumanReview(environment.CanonicalPath, hasCandidate: false);
+        var content = Regex.Replace(File.ReadAllText(environment.CanonicalPath),
+            "(?ms)^## Functional requirements\\s*$.*?(?=^## )",
+            "## Functional requirements\n\n- **BR-FR-001 — Assess risk:** An analyst shall assess one transaction.\n\n",
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        File.WriteAllText(environment.CanonicalPath, content);
+        Assert.Equal(0, environment.Service.Approve(environment.Authority.Path, "Product owner", "Scope accepted").ExitCode);
+        var readiness = new MutableReadyCheck();
+        var backlog = new BrdBacklogService(environment.Service, environment.Registry,
+            new CisRepositoryContextResolver(), new DocumentationCatalogMerger(), [readiness]);
+        Assert.Equal("built", backlog.Build(environment.Authority.Path).Status);
+
+        readiness.Ready = false;
+        var validation = backlog.Validate(environment.Authority.Path);
+
+        Assert.Equal("blocked", validation.Status);
+        Assert.Equal(5, validation.ExitCode);
+        Assert.True(validation.Validation!.Valid);
+        Assert.False(validation.Validation.Current);
+    }
+
     [Fact]
     public void BrdCommands_AreRegistered()
     {
@@ -23,6 +60,16 @@ public sealed class BrdWorkflowTests
         Assert.Equal(0, application.Invoke(["brd", "reconcile", "--help"]));
         Assert.Equal(0, application.Invoke(["brd", "status", "--help"]));
         Assert.Equal(0, application.Invoke(["brd", "validate", "--help"]));
+        Assert.Equal(0, application.Invoke(["brd", "questions", "list", "--help"]));
+        Assert.Equal(0, application.Invoke(["brd", "questions", "guidance", "--help"]));
+        Assert.Equal(0, application.Invoke(["brd", "questions", "suggest", "--help"]));
+        Assert.Equal(0, application.Invoke(["brd", "questions", "answer", "--help"]));
+        Assert.Equal(0, application.Invoke(["brd", "review", "init", "--help"]));
+        Assert.Equal(0, application.Invoke(["brd", "review", "status", "--help"]));
+        Assert.Equal(0, application.Invoke(["brd", "review", "freshness", "--help"]));
+        Assert.Equal(0, application.Invoke(["brd", "review", "decide", "--help"]));
+        Assert.Equal(0, application.Invoke(["brd", "review", "accept-all", "--help"]));
+        Assert.Equal(0, application.Invoke(["brd", "review", "approve", "--help"]));
         Assert.Equal(0, application.Invoke(["brd", "approve", "--help"]));
         Assert.Equal(0, application.Invoke(["brd", "backlog", "build", "--help"]));
         Assert.Equal(0, application.Invoke(["brd", "backlog", "validate", "--help"]));
@@ -32,6 +79,126 @@ public sealed class BrdWorkflowTests
         Assert.Equal(0, application.Invoke(["brd", "feature", "validate", "--help"]));
         Assert.Equal(0, application.Invoke(["brd", "feature", "status", "--help"]));
         Assert.Equal(0, application.Invoke(["brd", "feature", "approve", "--help"]));
+    }
+
+    [Fact]
+    public void OpenQuestions_AreStructuredAnsweredAndRequiredBeforeApproval()
+    {
+        using var environment = WorkspaceEnvironment.Create(participants: 1);
+        Assert.Equal(0, environment.Service.Initialize(environment.Authority.Path, "Product BRD").ExitCode);
+        CompleteHumanReview(environment.CanonicalPath, hasCandidate: false);
+        var content = File.ReadAllText(environment.CanonicalPath);
+        content = Regex.Replace(content,
+            "(?ms)^## Open questions\\s*$.*?(?=^## |\\z)",
+            "## Open questions\n\n1. Who owns the product outcome?\n2. What launch boundary is accepted?\n",
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        File.WriteAllText(environment.CanonicalPath, content);
+
+        var listed = environment.Service.Questions(environment.Authority.Path);
+        Assert.Equal("unanswered", listed.Status);
+        Assert.Equal(2, listed.UnansweredCount);
+        Assert.Equal("BRD-Q-001", listed.Questions[0].Id);
+        var blocked = environment.Service.Validate(environment.Authority.Path);
+        Assert.False(blocked.Validation!.Valid);
+        Assert.Contains(blocked.Validation.Errors, error => error.Contains("BRD-Q-001 is unanswered", StringComparison.Ordinal));
+
+        var first = environment.Service.AnswerQuestion(environment.Authority.Path, "BRD-Q-001",
+            "The accountable business owner owns the outcome | delegated reviewers advise.", "Andrew Spiteri");
+        Assert.True(first.Applied);
+        Assert.Equal(1, first.UnansweredCount);
+        Assert.Contains("| BRD-Q-001 | Who owns the product outcome? | The accountable business owner owns the outcome \\| delegated reviewers advise. | Andrew Spiteri |",
+            File.ReadAllText(environment.CanonicalPath), StringComparison.Ordinal);
+        Assert.Equal("The accountable business owner owns the outcome | delegated reviewers advise.",
+            environment.Service.Questions(environment.Authority.Path).Questions[0].Answer);
+
+        var second = environment.Service.AnswerQuestion(environment.Authority.Path, "BRD-Q-002",
+            "A reviewed research prototype is the accepted launch boundary.", "Andrew Spiteri");
+        Assert.Equal("answered", second.Status);
+        Assert.Equal(0, second.UnansweredCount);
+        Assert.True(environment.Service.Validate(environment.Authority.Path).Validation!.Valid);
+        var unchanged = environment.Service.AnswerQuestion(environment.Authority.Path, "BRD-Q-002",
+            "A reviewed research prototype is the accepted launch boundary.", "Andrew Spiteri");
+        Assert.False(unchanged.Applied);
+    }
+
+    [Fact]
+    public void QuestionGuidance_ProvidesContextAndRetainsOnlyDigestBoundAdvisorySuggestions()
+    {
+        using var environment = WorkspaceEnvironment.Create(participants: 1);
+        Assert.Equal(0, environment.Service.Initialize(environment.Authority.Path, "Product BRD").ExitCode);
+        CompleteHumanReview(environment.CanonicalPath, hasCandidate: false);
+        var content = File.ReadAllText(environment.CanonicalPath);
+        content = Regex.Replace(content,
+            "(?ms)^## Stakeholders and actors\\s*$.*?(?=^## |\\z)",
+            "## Stakeholders and actors\n\nThe business sponsor is accountable for the product outcome.\n\n",
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        content = Regex.Replace(content,
+            "(?ms)^## Open questions\\s*$.*?(?=^## |\\z)",
+            "## Open questions\n\n1. Who owns the product outcome?\n2. What launch date is accepted?\n",
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        File.WriteAllText(environment.CanonicalPath, content);
+        var generation = new FakeQuestionGenerationService();
+        var service = new BrdQuestionGuidanceService(environment.Service, environment.Registry, generation,
+            () => DateTimeOffset.Parse("2026-09-01T08:00:00Z"));
+
+        var initial = service.Guidance(environment.Authority.Path);
+        var generated = service.Suggest(environment.Authority.Path, null, null, allowRemote: false);
+        environment.Service.AnswerQuestion(environment.Authority.Path, "BRD-Q-001",
+            "The business sponsor owns the product outcome.", "Andrew Spiteri");
+        var afterAnswer = service.Guidance(environment.Authority.Path);
+        File.WriteAllText(environment.CanonicalPath, File.ReadAllText(environment.CanonicalPath)
+            .Replace("business sponsor is accountable", "product council is accountable", StringComparison.Ordinal));
+        var stale = service.Guidance(environment.Authority.Path);
+
+        Assert.Equal("missing", initial.SuggestionStatus);
+        Assert.Contains(initial.Questions[0].Context,
+            item => item.Section == "Stakeholders and actors" && item.Excerpt.Contains("business sponsor", StringComparison.Ordinal));
+        Assert.True(generated.Applied);
+        Assert.Equal("current", generated.SuggestionStatus);
+        Assert.Equal(1, generated.SuggestedCount);
+        Assert.Equal("The business sponsor owns the product outcome.", generated.Questions[0].SuggestedAnswer);
+        Assert.Null(generated.Questions[1].SuggestedAnswer);
+        Assert.Equal("insufficient", generated.Questions[1].SuggestionConfidence);
+        Assert.NotNull(generation.LastRequest);
+        Assert.False(generation.LastRequest!.AllowRemote);
+        Assert.True(generation.LastRequest.JsonMode);
+        Assert.Contains("Do not invent owners, dates, targets", generation.LastRequest.Prompt, StringComparison.Ordinal);
+        Assert.True(File.Exists(Path.Combine(environment.Authority.Path,
+            BrdQuestionGuidanceService.SuggestionPath.Replace('/', Path.DirectorySeparatorChar))));
+        Assert.Equal("current", afterAnswer.SuggestionStatus);
+        Assert.Equal("stale", stale.SuggestionStatus);
+        Assert.All(stale.Questions, question => Assert.Null(question.SuggestedAnswer));
+    }
+
+    [Fact]
+    public void QuestionGuidance_RetriesMalformedMultiQuestionOutputWithoutDiscardingValidSuggestions()
+    {
+        using var environment = WorkspaceEnvironment.Create(participants: 1);
+        Assert.Equal(0, environment.Service.Initialize(environment.Authority.Path, "Product BRD").ExitCode);
+        CompleteHumanReview(environment.CanonicalPath, hasCandidate: false);
+        var content = File.ReadAllText(environment.CanonicalPath);
+        content = Regex.Replace(content,
+            "(?ms)^## Stakeholders and actors\\s*$.*?(?=^## |\\z)",
+            "## Stakeholders and actors\n\nThe business sponsor is accountable for the product outcome.\n\n",
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        content = Regex.Replace(content,
+            "(?ms)^## Open questions\\s*$.*?(?=^## |\\z)",
+            "## Open questions\n\n1. Who owns the product outcome?\n2. What launch date is accepted?\n",
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        File.WriteAllText(environment.CanonicalPath, content);
+        var generation = new BatchRejectingQuestionGenerationService();
+        var service = new BrdQuestionGuidanceService(environment.Service, environment.Registry, generation);
+
+        var generated = service.Suggest(environment.Authority.Path, null, null, allowRemote: false);
+
+        Assert.True(generated.Applied);
+        Assert.Equal("current", generated.SuggestionStatus);
+        Assert.Equal(1, generated.SuggestedCount);
+        Assert.Equal("The business sponsor owns the product outcome.", generated.Questions[0].SuggestedAnswer);
+        Assert.Null(generated.Questions[1].SuggestedAnswer);
+        Assert.Contains("confidence was too low", generated.Questions[1].SuggestionReason, StringComparison.Ordinal);
+        Assert.Equal(3, generation.Requests.Count);
+        Assert.All(generation.Requests, request => Assert.True(request.JsonMode));
     }
 
     [Fact]
@@ -47,6 +214,29 @@ public sealed class BrdWorkflowTests
         Assert.Equal(4, result.Baselines.Count);
         Assert.Single(result.Baselines, baseline => baseline.Role == "authority");
         Assert.Equal(3, result.Baselines.Count(baseline => baseline.Role == "participant"));
+    }
+
+    [Fact]
+    public void RegisteredAuthoringEvidence_ReplacesTheNoSourceSentinelDuringReconciliation()
+    {
+        using var environment = WorkspaceEnvironment.Create(participants: 1,
+            sourceProviders: [new FakeSourceEvidenceProvider()]);
+
+        var result = environment.Service.Initialize(environment.Authority.Path, "Product BRD");
+
+        Assert.Equal(0, result.ExitCode);
+        var content = File.ReadAllText(environment.CanonicalPath);
+        Assert.Contains("| BRD-SRC-001122334455 | authoring-reference |", content, StringComparison.Ordinal);
+        Assert.Contains("| sha256:registered | Reference | Controller-selected proposal evidence |", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("No source evidence exists", content, StringComparison.Ordinal);
+    }
+
+    private sealed class FakeSourceEvidenceProvider : ICisBrdSourceEvidenceProvider
+    {
+        public IReadOnlyList<CisBrdSourceEvidence> Discover(CisRepositoryContext context) =>
+        [new("BRD-SRC-001122334455", "authoring-reference", context.RepositoryId, context.RepositoryPath,
+            "docs/ref/proposal.docx", "sha256:registered", "sha256:registered", "Reference",
+            "Controller-selected proposal evidence", false, ["registered-source-evidence", "docx-projection"])];
     }
 
     [Fact]
@@ -363,6 +553,81 @@ public sealed class BrdWorkflowTests
             "A visitor shall sign in and maintain a renewable session.",
             "A visitor shall sign in through a changed journey.", StringComparison.Ordinal));
         Assert.Equal("Stale", backlog.Status(environment.Authority.Path).Validation!.EffectiveStatus);
+    }
+
+    [Fact]
+    public void Backlog_BuildsFromNarrativeBusinessRequirementsAndPreservesReadableOutcomes()
+    {
+        using var environment = WorkspaceEnvironment.Create(participants: 1);
+        Assert.Equal(0, environment.Service.Initialize(environment.Authority.Path, "Research prototype BRD").ExitCode);
+        CompleteHumanReview(environment.CanonicalPath, hasCandidate: false);
+        var content = File.ReadAllText(environment.CanonicalPath);
+        content = Regex.Replace(content,
+            "(?ms)^## Functional requirements\\s*$.*?(?=^## )",
+            "## Functional requirements\n\n" +
+            "- **BR-FR-001 — Customer risk assessment:** The prototype shall assess a customer using authorized BI data\n" +
+            "  and retain the source correlation for review.\n" +
+            "- **BR-FR-002:** The prototype shall explain the influential relationships to an analyst.\n\n",
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        content = Regex.Replace(content,
+            "(?ms)^## Quality, regulatory, and operational requirements\\s*$.*?(?=^## )",
+            "## Quality, regulatory, and operational requirements\n\n" +
+            "- **BR-NFR-001 — Audit retention:** Assessment evidence shall be retained for ten years.\n\n",
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        File.WriteAllText(environment.CanonicalPath, content);
+        Assert.Equal(0, environment.Service.Approve(
+            environment.Authority.Path,
+            "Product owner",
+            "Narrative requirements accepted").ExitCode);
+        var backlog = new BrdBacklogService(environment.Service, environment.Registry,
+            new CisRepositoryContextResolver(), new DocumentationCatalogMerger(), [new ReadyCheck()],
+            () => new DateTimeOffset(2026, 9, 3, 12, 0, 0, TimeSpan.Zero));
+
+        var built = backlog.Build(environment.Authority.Path);
+
+        Assert.Equal(0, built.ExitCode);
+        Assert.Equal("built", built.Status);
+        Assert.Equal(2, built.Items.Count);
+        Assert.Contains(built.Items, item => item.Id == "HLT-FR-001"
+            && item.RequirementId == "BR-FR-001"
+            && item.Outcome == "Customer risk assessment");
+        Assert.Contains(built.Items, item => item.Id == "HLT-FR-002"
+            && item.RequirementId == "BR-FR-002"
+            && item.Outcome == "The prototype shall explain the influential relationships to an analyst.");
+        var backlogPath = Path.Combine(environment.Authority.Path, "docs", "plans", "high-level-backlog.md");
+        var backlogContent = File.ReadAllText(backlogPath);
+        Assert.Contains("BR-NFR-001", backlogContent, StringComparison.Ordinal);
+        Assert.Contains("Assessment evidence shall be retained for ten years.", backlogContent, StringComparison.Ordinal);
+        Assert.Equal("Ready for Approval", built.Validation!.EffectiveStatus);
+    }
+
+    [Fact]
+    public void Backlog_RoutesGreenfieldAuthorityWhenNoParticipantRepositoryExists()
+    {
+        using var environment = WorkspaceEnvironment.Create(participants: 0);
+        Assert.Equal(0, environment.Service.Initialize(environment.Authority.Path, "Greenfield BRD").ExitCode);
+        CompleteHumanReview(environment.CanonicalPath, hasCandidate: false);
+        var content = Regex.Replace(File.ReadAllText(environment.CanonicalPath),
+            "(?ms)^## Functional requirements\\s*$.*?(?=^## )",
+            "## Functional requirements\n\n" +
+            "- **BR-FR-001 — Create assessment:** An authorized analyst shall create a risk assessment.\n\n",
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        File.WriteAllText(environment.CanonicalPath, content);
+        Assert.Equal(0, environment.Service.Approve(
+            environment.Authority.Path,
+            "Product owner",
+            "Greenfield requirement accepted").ExitCode);
+        var backlog = new BrdBacklogService(environment.Service, environment.Registry,
+            new CisRepositoryContextResolver(), new DocumentationCatalogMerger(), [new ReadyCheck()],
+            () => new DateTimeOffset(2026, 9, 3, 12, 0, 0, TimeSpan.Zero));
+
+        var built = backlog.Build(environment.Authority.Path);
+
+        Assert.Equal(0, built.ExitCode);
+        var item = Assert.Single(built.Items);
+        Assert.Equal([environment.AuthorityId], item.Repositories);
+        Assert.True(built.Validation!.Valid, string.Join(Environment.NewLine, built.Validation.Errors));
+        Assert.Equal("Ready for Approval", built.Validation.EffectiveStatus);
     }
 
     [Fact]
@@ -701,6 +966,51 @@ public sealed class BrdWorkflowTests
             => new("technical-intent", Applicable: true, Ready: true, []);
     }
 
+    private sealed class MutableReadyCheck : Cis.Abstractions.IChangeReadinessCheck
+    {
+        public bool Ready { get; set; } = true;
+
+        public Cis.Abstractions.ChangeReadinessResult Evaluate(string repositoryPath)
+            => new("solution-design", Applicable: true, Ready,
+                Ready ? [] : ["An Active, current overall solution design and component sheet are required."]);
+    }
+
+    private sealed class FakeQuestionGenerationService : ICisTextGenerationService
+    {
+        public CisTextGenerationRequest? LastRequest { get; private set; }
+        public CisAiStatus GetStatus() => new([new("fake", "available", "local", true, [new("small")], null)]);
+        public CisTextGenerationResult Generate(CisTextGenerationRequest request)
+        {
+            LastRequest = request;
+            return new("generated", "fake", "small", """
+                {"suggestions":[
+                  {"questionId":"BRD-Q-001","answer":"The business sponsor owns the product outcome.","confidence":"high","reason":"The stakeholder section assigns accountability.","contextIds":["BRD-Q-001-CTX-1"]},
+                  {"questionId":"BRD-Q-002","answer":null,"confidence":"insufficient","reason":"No accepted launch date appears in the supplied context.","contextIds":[]}
+                ]}
+                """, null, true);
+        }
+    }
+
+    private sealed class BatchRejectingQuestionGenerationService : ICisTextGenerationService
+    {
+        public List<CisTextGenerationRequest> Requests { get; } = [];
+        public CisAiStatus GetStatus() => new([new("fake", "available", "local", true, [new("small")], null)]);
+        public CisTextGenerationResult Generate(CisTextGenerationRequest request)
+        {
+            Requests.Add(request);
+            var ids = Regex.Matches(request.Prompt, "QUESTION (BRD-Q-[0-9]+):",
+                    RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
+                .Select(match => match.Groups[1].Value).ToArray();
+            if (ids.Length != 1)
+                return new("generated", "fake", "small", "The response shape was lost.", null, true);
+            var body = ids[0] == "BRD-Q-001"
+                ? "\"answer\":\"The business sponsor owns the product outcome.\",\"confidence\":\"high\",\"reason\":\"Accountability is explicit.\",\"contextIds\":[\"BRD-Q-001-CTX-1\"]"
+                : "\"answer\":\"Launch next Friday.\",\"confidence\":\"low\",\"reason\":\"A speculative date.\",\"contextIds\":[]";
+            return new("generated", "fake", "small",
+                $"{{\"suggestions\":[{{\"questionId\":\"{ids[0]}\",{body}}}]}}", null, true);
+        }
+    }
+
     private sealed class WorkspaceEnvironment : IDisposable
     {
         private WorkspaceEnvironment(
@@ -738,7 +1048,8 @@ public sealed class BrdWorkflowTests
 
         public static WorkspaceEnvironment Create(
             int participants,
-            Action<TemporaryRepository, int>? configureParticipant = null)
+            Action<TemporaryRepository, int>? configureParticipant = null,
+            IEnumerable<ICisBrdSourceEvidenceProvider>? sourceProviders = null)
         {
             var authority = TemporaryRepository.Create();
             var participantRepositories = Enumerable.Range(1, participants)
@@ -764,14 +1075,17 @@ public sealed class BrdWorkflowTests
                 DryRun: false,
                 Confirmed: true));
             Assert.Equal(0, initialized.ExitCode);
-            var importer = new RepositoryImporter(new RepositoryInitializer(), registry);
-            var imported = importer.Import(new RepositoryImportRequest(
-                authority.Path,
-                "docs/cis",
-                participantRepositories.Select(repository => repository.Path).ToArray(),
-                DryRun: false,
-                Confirmed: true));
-            Assert.Equal(0, imported.ExitCode);
+            if (participantRepositories.Length > 0)
+            {
+                var importer = new RepositoryImporter(new RepositoryInitializer(), registry);
+                var imported = importer.Import(new RepositoryImportRequest(
+                    authority.Path,
+                    "docs/cis",
+                    participantRepositories.Select(repository => repository.Path).ToArray(),
+                    DryRun: false,
+                    Confirmed: true));
+                Assert.Equal(0, imported.ExitCode);
+            }
             var builder = CreateBuilder(resolver);
             foreach (var repository in new[] { authority }.Concat(participantRepositories))
             {
@@ -784,6 +1098,7 @@ public sealed class BrdWorkflowTests
                 new GraphValidator(resolver),
                 new GraphSnapshotReader(resolver),
                 new DocumentationCatalogMerger(),
+                sourceProviders ?? [],
                 () => new DateTimeOffset(2026, 8, 9, 12, 0, 0, TimeSpan.Zero));
             return new WorkspaceEnvironment(
                 authority,

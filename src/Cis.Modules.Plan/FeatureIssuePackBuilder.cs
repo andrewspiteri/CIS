@@ -856,7 +856,7 @@ internal static partial class FeatureIssuePackBuilder
         var explicitNoFrontendChange = ExplicitNoFrontendChange(sections);
         var frontendSignal = !explicitNoFrontendChange && (requirements.Any(requirement => Surface(requirement.Surface, "frontend", "full-stack", "mobile", "native"))
             || targetRoles.Values.SelectMany(value => value).Any(IsFrontendRole));
-        var backend = requirements.Any(requirement => Surface(requirement.Surface, "backend", "full-stack", "api", "data", "contract"))
+        var backend = requirements.Any(requirement => Surface(requirement.Surface, "backend", "full-stack", "api", "data"))
             || targetRoles.Values.SelectMany(value => value).Any(IsBackendRole);
         var data = requirements.Any(IsPositiveDataRequirement);
         if (data && !requirements.Any(requirement => Surface(requirement.Surface, "data"))
@@ -962,12 +962,12 @@ internal static partial class FeatureIssuePackBuilder
         var frontend = Surface(requirement.Surface, "frontend", "full-stack", "mobile", "native")
             || IsFrontendTarget(requirement.Surface ?? string.Empty)
             || ContainsFrontendSignal(requirement.Text);
-        var backend = Surface(requirement.Surface, "backend", "full-stack", "api", "data", "contract")
+        var backend = Surface(requirement.Surface, "backend", "full-stack", "api", "data")
             || (!frontend && ContainsAny(requirement.Text.ToLowerInvariant(), "model", "api", "persist", "service", "event", "permission", "search", "audit"))
             || (!frontend && featureBackend);
         if (!frontend && !backend)
         {
-            frontend = featureFrontend && ContainsAny(requirement.Text.ToLowerInvariant(), "display", "show", "action", "navigate");
+            frontend = featureFrontend && ContainsAnyTerm(requirement.Text.ToLowerInvariant(), "display", "show", "action", "navigate");
         }
         var contract = Surface(requirement.Surface, "api", "contract", "full-stack")
             || ContainsApiRequirementSignal(requirement);

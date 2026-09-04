@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Built-in CIS high-level product-definition wizard and activation coordinator.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Cis.Abstractions\Cis.Abstractions.csproj" />
+    <ProjectReference Include="..\Cis.Modules.Brd\Cis.Modules.Brd.csproj" />
+    <ProjectReference Include="..\Cis.Modules.Graph\Cis.Modules.Graph.csproj" />
+    <ProjectReference Include="..\Cis.Modules.Repository\Cis.Modules.Repository.csproj" />
+    <ProjectReference Include="..\Cis.Modules.SolutionDesign\Cis.Modules.SolutionDesign.csproj" />
+    <ProjectReference Include="..\Cis.Modules.TechnicalIntent\Cis.Modules.TechnicalIntent.csproj" />
+    <ProjectReference Include="..\Cis.Modules.UiDirection\Cis.Modules.UiDirection.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" />
+  </ItemGroup>
+</Project>

@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
     <Description>Public module and command-registration contracts for Change Impact Studio.</Description>
   </PropertyGroup>
   <ItemGroup>

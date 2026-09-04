@@ -26,10 +26,185 @@ public sealed class TechnicalIntentWorkflowTests
             .Build();
 
         Assert.Equal(0, application.Invoke(["technical-intent", "init", "--help"]));
+        Assert.Equal(0, application.Invoke(["technical-intent", "questions", "init", "--help"]));
+        Assert.Equal(0, application.Invoke(["technical-intent", "questions", "status", "--help"]));
+        Assert.Equal(0, application.Invoke(["technical-intent", "questions", "answer", "--help"]));
         Assert.Equal(0, application.Invoke(["technical-intent", "validate", "--help"]));
         Assert.Equal(0, application.Invoke(["technical-intent", "status", "--help"]));
         Assert.Equal(0, application.Invoke(["technical-intent", "refresh", "--help"]));
         Assert.Equal(0, application.Invoke(["technical-intent", "approve", "--help"]));
+    }
+
+    [Fact]
+    public void Questionnaire_CapturesHumanChoicesBeforeGeneratingComponentAndInteractionMaps()
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true);
+
+        var questionnaire = environment.Questionnaire.Status(environment.Authority.Path);
+        Assert.True(questionnaire.Current);
+        Assert.True(questionnaire.Complete);
+        Assert.Equal(16, questionnaire.AnsweredCount);
+        Assert.All(questionnaire.Questions, item => Assert.Equal("Technical owner", item.AnsweredBy));
+
+        var initialized = environment.Intent.Initialize(environment.Authority.Path);
+        var content = File.ReadAllText(environment.TechnicalIntentPath);
+
+        Assert.Equal(0, initialized.ExitCode);
+        Assert.Contains("technical_intent_schema: 4", content, StringComparison.Ordinal);
+        Assert.Contains("## High-level technology and architecture choices", content, StringComparison.Ordinal);
+        Assert.Contains("## Component and interaction map", content, StringComparison.Ordinal);
+        Assert.Contains("## Product module architecture", content, StringComparison.Ordinal);
+        Assert.Contains("## Integration point catalog", content, StringComparison.Ordinal);
+        Assert.Contains("<!-- cis:technical-intent-questionnaire-evidence:start -->", content, StringComparison.Ordinal);
+        Assert.Contains("<!-- cis:technical-intent-component-map:start -->", content, StringComparison.Ordinal);
+        Assert.Contains("| TI-DEC-001 |", content, StringComparison.Ordinal);
+        Assert.Contains("| Accepted |", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Initialize_DerivesDetailedModulesAndIntegrationPointsFromBusinessCapabilities()
+    {
+        using var environment = WorkspaceEnvironment.Create(
+            approveBrd: true,
+            includeImplementation: false,
+            businessCapabilities: """
+                1. **Risk-data preparation (BRD-FR-001):** Receive company-prefiltered data through the company BI system
+                   and validate its source and permitted-use context.
+                2. **Individual risk assessment (BRD-FR-001):** Assess payment transactions with a versioned model and produce an explanation.
+                3. **Threshold handling and human review (BRD-FR-001):** Send the suggestion to the existing rule engine and refer threshold-exceeding activity.
+                4. **Analyst feedback (BRD-FR-001):** Record accountable human outcomes as governed feedback.
+                5. **Performance and drift oversight (BRD-FR-001):** Report classification performance, model drift, and daily operational outcomes.
+                6. **Audit evidence (BRD-FR-001):** Retain immutable audit evidence in blob storage.
+                7. **Customer transaction handling (BRD-FR-001):** Project approved payment transaction state to the customer.
+                """);
+
+        var initialized = environment.Intent.Initialize(environment.Authority.Path);
+        var content = File.ReadAllText(environment.TechnicalIntentPath);
+
+        Assert.Equal(0, initialized.ExitCode);
+        Assert.Contains("technical_intent_schema: 4", content, StringComparison.Ordinal);
+        Assert.Contains("<!-- cis:technical-intent-module-architecture:start -->", content, StringComparison.Ordinal);
+        Assert.Contains("<!-- cis:technical-intent-integration-points:start -->", content, StringComparison.Ordinal);
+        Assert.Contains("TI-MOD-RISK-DATA-PREPARATION", content, StringComparison.Ordinal);
+        Assert.Contains("### Module responsibility profiles", content, StringComparison.Ordinal);
+        Assert.Contains("TI-INT-RISK-DATA-PREPARATION-EXTERNAL-DATA", content, StringComparison.Ordinal);
+        Assert.Contains("TI-INT-THRESHOLD-HANDLING-AND-HUMAN-REVIEW-RULE-ENGINE", content, StringComparison.Ordinal);
+        Assert.Contains("TI-INT-AUDIT-EVIDENCE-EVIDENCE-STORE", content, StringComparison.Ordinal);
+        Assert.Contains("Prepared and validated business facts", content, StringComparison.Ordinal);
+        Assert.True(initialized.Validation!.Valid);
+    }
+
+    [Fact]
+    public void Initialize_UpgradesManagedDraftSchema3WithDetailedArchitectureWithoutTouchingHumanSections()
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true);
+        Assert.Equal(0, environment.Intent.Initialize(environment.Authority.Path).ExitCode);
+        var legacyDraft = File.ReadAllText(environment.TechnicalIntentPath)
+            .Replace("technical_intent_schema: 4", "technical_intent_schema: 3", StringComparison.Ordinal);
+        legacyDraft = Regex.Replace(legacyDraft,
+            "(?ms)^## Product module architecture\\s*$.*?(?=^## )", string.Empty,
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        legacyDraft = Regex.Replace(legacyDraft,
+            "(?ms)^## Integration point catalog\\s*$.*?(?=^## )", string.Empty,
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        legacyDraft = legacyDraft.Replace(
+            "- Preserve the Active BRD as business authority; technical direction may satisfy it but may not silently add product scope.",
+            "- Human refinement: preserve the Active BRD and the explicitly reviewed research boundary.",
+            StringComparison.Ordinal);
+        File.WriteAllText(environment.TechnicalIntentPath, legacyDraft);
+
+        var upgraded = environment.Intent.Initialize(environment.Authority.Path);
+        var content = File.ReadAllText(environment.TechnicalIntentPath);
+
+        Assert.True(upgraded.Applied);
+        Assert.Contains("technical_intent_schema: 4", content, StringComparison.Ordinal);
+        Assert.Contains("## Product module architecture", content, StringComparison.Ordinal);
+        Assert.Contains("## Integration point catalog", content, StringComparison.Ordinal);
+        Assert.Contains("Human refinement: preserve the Active BRD", content, StringComparison.Ordinal);
+        Assert.True(upgraded.Validation!.Valid);
+    }
+
+    [Fact]
+    public void QuestionnaireAnswer_UpdatesOneDecisionWithExactHumanProvenance()
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true);
+
+        var answered = environment.Questionnaire.Answer(environment.Authority.Path, "TI-Q-004",
+            "Use a modular monolith with compiler-enforced module boundaries.", "Andrew Spiteri");
+
+        Assert.Equal(0, answered.ExitCode);
+        Assert.True(answered.Complete);
+        var decision = Assert.Single(answered.Questions, item => item.Id == "TI-Q-004");
+        Assert.Equal("Andrew Spiteri", decision.AnsweredBy);
+        Assert.Equal("Use a modular monolith with compiler-enforced module boundaries.", decision.Answer);
+        Assert.Contains("Use a modular monolith with compiler-enforced module boundaries.",
+            File.ReadAllText(Path.Combine(environment.Authority.Path, "docs", "specs", "technical-intent-questionnaire.md")),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Questionnaire_DerivesSupportedDirectionsFromAnExistingImplementation()
+    {
+        using var environment = WorkspaceEnvironment.Create(
+            approveBrd: true,
+            completeQuestionnaire: false,
+            seedImplementation: repository =>
+            {
+                repository.Write("src/Product.Api/Product.Api.csproj", """
+                    <Project Sdk="Microsoft.NET.Sdk.Web">
+                      <PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup>
+                      <ItemGroup>
+                        <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.0" />
+                        <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.14.0" />
+                      </ItemGroup>
+                    </Project>
+                    """);
+                repository.Write("src/Product.Api/Program.cs", "builder.Services.AddControllers(); builder.Services.AddHealthChecks();");
+                repository.Write("web/package.json", "{\"name\":\"product-web\",\"dependencies\":{\"next\":\"16.0.0\",\"react\":\"19.0.0\"},\"devDependencies\":{\"vitest\":\"4.0.0\",\"@playwright/test\":\"1.58.0\"}}");
+                repository.Write("infra/compose.yml", "services:\n  api:\n    build: ../src/Product.Api\n");
+            });
+
+        var questionnaire = environment.Questionnaire.Status(environment.Authority.Path);
+
+        Assert.True(questionnaire.Current);
+        Assert.False(questionnaire.Complete);
+        Assert.True(questionnaire.AnsweredCount >= 7);
+        Assert.All(new[] { "TI-Q-002", "TI-Q-003", "TI-Q-004", "TI-Q-005", "TI-Q-006", "TI-Q-010", "TI-Q-014" }, id =>
+        {
+            var question = Assert.Single(questionnaire.Questions, item => item.Id == id);
+            Assert.Equal("Derived", question.Status);
+            Assert.Equal("repository-evidence", question.ResolutionSource);
+            Assert.False(string.IsNullOrWhiteSpace(question.Answer));
+            Assert.NotEmpty(question.Evidence ?? []);
+        });
+        Assert.Contains("SQLite", Assert.Single(questionnaire.Questions, item => item.Id == "TI-Q-006").Answer, StringComparison.Ordinal);
+        Assert.Equal("Unanswered", Assert.Single(questionnaire.Questions, item => item.Id == "TI-Q-013").Status);
+        var canonical = File.ReadAllText(Path.Combine(environment.Authority.Path, "docs", "specs", "technical-intent-questionnaire.md"));
+        Assert.Contains("project_mode: existing-project", canonical, StringComparison.Ordinal);
+        Assert.Contains("- Resolution source: repository-evidence", canonical, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Questionnaire_LeavesGreenfieldDirectionsForHumanAnswers()
+    {
+        using var environment = WorkspaceEnvironment.Create(
+            approveBrd: true,
+            includeImplementation: false,
+            completeQuestionnaire: false);
+
+        var questionnaire = environment.Questionnaire.Status(environment.Authority.Path);
+
+        Assert.True(questionnaire.Current);
+        Assert.False(questionnaire.Complete);
+        Assert.Equal(0, questionnaire.AnsweredCount);
+        Assert.Equal(16, questionnaire.UnansweredCount);
+        Assert.All(questionnaire.Questions, question =>
+        {
+            Assert.Equal("Unanswered", question.Status);
+            Assert.Equal("unresolved", question.ResolutionSource);
+        });
+        Assert.Contains("project_mode: greenfield", File.ReadAllText(
+            Path.Combine(environment.Authority.Path, "docs", "specs", "technical-intent-questionnaire.md")), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -40,7 +215,7 @@ public sealed class TechnicalIntentWorkflowTests
         var content = File.ReadAllText(environment.TechnicalIntentPath);
 
         Assert.Contains("scope: Workspace", content, StringComparison.Ordinal);
-        Assert.Contains("technical_intent_schema: 1", content, StringComparison.Ordinal);
+        Assert.Contains("technical_intent_schema: 2", content, StringComparison.Ordinal);
         Assert.Contains("## Open technical decisions", content, StringComparison.Ordinal);
     }
 
@@ -68,11 +243,15 @@ public sealed class TechnicalIntentWorkflowTests
 
         var initialized = environment.Intent.Initialize(environment.Authority.Path);
         Assert.True(initialized.Applied);
-        Assert.False(initialized.Validation!.Valid);
-        Assert.Contains(initialized.Validation.Errors, error => error.Contains("placeholder", StringComparison.OrdinalIgnoreCase));
+        Assert.True(initialized.Validation!.Valid);
+        Assert.Equal("Ready for Approval", initialized.Validation.EffectiveStatus);
+        var scaffold = File.ReadAllText(environment.TechnicalIntentPath);
+        Assert.Contains("technical_intent_schema: 4", scaffold, StringComparison.Ordinal);
+        Assert.Contains("## Architecture guidelines and applicable standards", scaffold, StringComparison.Ordinal);
+        Assert.Contains("BRD-FR-001", scaffold, StringComparison.Ordinal);
+        Assert.DoesNotContain("TODO", scaffold, StringComparison.Ordinal);
         Assert.False(environment.Intent.Evaluate(environment.Authority.Path).Ready);
 
-        CompleteTechnicalReview(environment.TechnicalIntentPath);
         var ready = environment.Intent.Validate(environment.Authority.Path);
         Assert.True(ready.Validation!.Valid);
         Assert.True(ready.Validation.Current);
@@ -98,6 +277,55 @@ public sealed class TechnicalIntentWorkflowTests
     }
 
     [Fact]
+    public void Initialize_UpgradesUntouchedStarterFromBrdClassificationAndStandardsIdempotently()
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true);
+
+        var initialized = environment.Intent.Initialize(environment.Authority.Path);
+        var content = File.ReadAllText(environment.TechnicalIntentPath);
+
+        Assert.Equal("initialized", initialized.Status);
+        Assert.True(initialized.Applied);
+        Assert.Contains("technical_intent_schema: 4", content, StringComparison.Ordinal);
+        Assert.Contains("## Approved business baseline", content, StringComparison.Ordinal);
+        Assert.Contains("## Architecture guidelines and applicable standards", content, StringComparison.Ordinal);
+        Assert.Contains("<!-- cis:technical-intent-business-evidence:start -->", content, StringComparison.Ordinal);
+        Assert.Contains("<!-- cis:technical-intent-surface-evidence:start -->", content, StringComparison.Ordinal);
+        Assert.Contains("<!-- cis:technical-intent-standards-evidence:start -->", content, StringComparison.Ordinal);
+        Assert.Contains("| standard |", content, StringComparison.Ordinal);
+        Assert.Contains("Testing and Verification Standard", content, StringComparison.Ordinal);
+        Assert.Contains("Product", content, StringComparison.Ordinal);
+        Assert.Contains("BRD-FR-001", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("TODO", content, StringComparison.Ordinal);
+
+        var repeated = environment.Intent.Initialize(environment.Authority.Path);
+
+        Assert.Equal("unchanged", repeated.Status);
+        Assert.False(repeated.Applied);
+        Assert.Equal(content, File.ReadAllText(environment.TechnicalIntentPath));
+    }
+
+    [Fact]
+    public void Initialize_PreservesSubstantiveHumanSectionsWhileEnrichingRemainingStarterContent()
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true);
+        var starter = File.ReadAllText(environment.TechnicalIntentPath).Replace(
+            "- TODO: Record the principles that constrain implementation choices.",
+            "- Human-authored principle: keep the research boundary provider neutral.",
+            StringComparison.Ordinal);
+        File.WriteAllText(environment.TechnicalIntentPath, starter);
+
+        var initialized = environment.Intent.Initialize(environment.Authority.Path);
+        var content = File.ReadAllText(environment.TechnicalIntentPath);
+
+        Assert.True(initialized.Applied);
+        Assert.Contains("Human-authored principle: keep the research boundary provider neutral.", content, StringComparison.Ordinal);
+        Assert.Contains("## Architecture guidelines and applicable standards", content, StringComparison.Ordinal);
+        Assert.Contains("BRD-FR-001", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("TODO", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ApprovedIntent_RemainsActiveForBrdProvenanceAndMigratesLegacyBaselineWithoutReapproval()
     {
         using var environment = WorkspaceEnvironment.Create(approveBrd: true);
@@ -118,8 +346,9 @@ public sealed class TechnicalIntentWorkflowTests
         Assert.True(provenanceOnly.Validation.Current);
 
         var intent = File.ReadAllText(environment.TechnicalIntentPath);
-        var legacyHash = "sha256:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(brd))).ToLowerInvariant();
-        intent = Regex.Replace(intent, @"semantic-v1:sha256:[a-f0-9]{64}", legacyHash,
+        var legacyHash = "sha256:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            brd.Replace("\r\n", "\n", StringComparison.Ordinal)))).ToLowerInvariant();
+        intent = Regex.Replace(intent, @"(?m)^(\| brd \| [^|]+ \| )semantic-v1:sha256:[a-f0-9]{64}( \|)", $"$1{legacyHash}$2",
             RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
         File.WriteAllText(environment.TechnicalIntentPath, intent);
         var legacy = environment.Intent.Status(environment.Authority.Path);
@@ -167,6 +396,37 @@ public sealed class TechnicalIntentWorkflowTests
         Assert.Contains("approved_by: \"Architecture owner\"", reconciledContent, StringComparison.Ordinal);
         Assert.Contains("approval_reason: \"The reviewed workspace technical direction is accepted.\"",
             reconciledContent, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ActiveStandardContentDriftRequiresRenewedTechnicalReview()
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true);
+        Assert.Equal(0, environment.Intent.Initialize(environment.Authority.Path).ExitCode);
+        CompleteTechnicalReview(environment.TechnicalIntentPath);
+        Assert.Equal(0, environment.Intent.Approve(environment.Authority.Path, "Architecture owner",
+            "The reviewed workspace technical direction is accepted.").ExitCode);
+        var standardPath = Path.Combine(environment.Participant.Path, "docs", "cis", "standards", "testing-standard.md");
+        Assert.True(File.Exists(standardPath));
+        File.AppendAllText(standardPath, "\n<!-- reviewed standard clarification -->\n");
+        environment.RebuildParticipantGraph();
+        Assert.Equal("Active", environment.Brd.Reconcile(environment.Authority.Path).Validation!.EffectiveStatus);
+
+        var stale = environment.Intent.Status(environment.Authority.Path);
+
+        Assert.Equal("Stale", stale.Validation!.EffectiveStatus);
+        Assert.Contains(stale.Validation.Warnings, warning => warning.Contains("baseline differs from standard", StringComparison.Ordinal));
+
+        var reconciled = environment.Intent.Initialize(environment.Authority.Path);
+
+        Assert.True(reconciled.Applied);
+        Assert.Equal("Ready for Approval", reconciled.Validation!.EffectiveStatus);
+        var reconciledContent = File.ReadAllText(environment.TechnicalIntentPath);
+        Assert.DoesNotContain("approved_by: \"Architecture owner\"", reconciledContent, StringComparison.Ordinal);
+        Assert.Contains("reviewed standard clarification", File.ReadAllText(standardPath), StringComparison.Ordinal);
+        var expectedDigest = "sha256:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            File.ReadAllText(standardPath).Replace("\r\n", "\n", StringComparison.Ordinal)))).ToLowerInvariant();
+        Assert.Contains($"`{expectedDigest}`", reconciledContent, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -220,18 +480,23 @@ public sealed class TechnicalIntentWorkflowTests
         content = content.Replace("| Security | TODO | TODO |", "| Security | Default deny | Authorization tests |", StringComparison.Ordinal);
         content = content.Replace("| TI-DEC-001 | TODO | Change dossier creation | Open | TODO |",
             "| TI-DEC-001 | Contract ownership | Change dossier creation | Resolved | OpenAPI is canonical and drift-tested. |", StringComparison.Ordinal);
+        content = Regex.Replace(content,
+            @"(?m)^\| (?<id>TI-DEC-\d+) \| (?<decision>.+?) \| (?<gate>.+?) \| (?:Open|Proposed) \| .+? \|$",
+            match => $"| {match.Groups["id"].Value} | {match.Groups["decision"].Value} | {match.Groups["gate"].Value} | Resolved | Reviewed direction is recorded in the owning ADR. |",
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
         File.WriteAllText(path, content);
     }
 
     private sealed class WorkspaceEnvironment : IDisposable
     {
         private WorkspaceEnvironment(TemporaryRepository authority, TemporaryRepository participant,
-            TechnicalIntentService intent, BrdService brd, WorkspaceRegistry registry,
+            TechnicalIntentService intent, TechnicalIntentQuestionnaireService questionnaire, BrdService brd, WorkspaceRegistry registry,
             CisRepositoryContextResolver resolver, DocumentationCatalogMerger merger)
         {
             Authority = authority;
             Participant = participant;
             Intent = intent;
+            Questionnaire = questionnaire;
             Brd = brd;
             Registry = registry;
             Resolver = resolver;
@@ -241,29 +506,48 @@ public sealed class TechnicalIntentWorkflowTests
         public TemporaryRepository Authority { get; }
         public TemporaryRepository Participant { get; }
         public TechnicalIntentService Intent { get; }
+        public TechnicalIntentQuestionnaireService Questionnaire { get; }
         public BrdService Brd { get; }
         public WorkspaceRegistry Registry { get; }
         public CisRepositoryContextResolver Resolver { get; }
         public DocumentationCatalogMerger Merger { get; }
         public string TechnicalIntentPath => Path.Combine(Authority.Path, "docs", "specs", "technical-intent-spec.md");
 
-        public static WorkspaceEnvironment Create(bool approveBrd)
+        public static WorkspaceEnvironment Create(
+            bool approveBrd,
+            bool includeImplementation = true,
+            bool completeQuestionnaire = true,
+            Action<TemporaryRepository>? seedImplementation = null,
+            string? businessCapabilities = null)
         {
             var authority = TemporaryRepository.Create();
             var participant = TemporaryRepository.Create();
-            participant.Write("src/Product/Product.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\" />");
-            participant.Write("src/Product/Product.cs", "public sealed class Product { }");
+            if (includeImplementation)
+            {
+                if (seedImplementation is null)
+                {
+                    participant.Write("src/Product/Product.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\" />");
+                    participant.Write("src/Product/Product.cs", "public sealed class Product { }");
+                }
+                else
+                {
+                    seedImplementation(participant);
+                }
+            }
             var resolver = new CisRepositoryContextResolver();
             var registry = new WorkspaceRegistry(resolver);
             var workspaceInit = new WorkspaceInitializer(new RepositoryInitializer(), registry).Initialize(
                 new WorkspaceInitRequest(authority.Path, "docs", false, true));
             Assert.Equal(0, workspaceInit.ExitCode);
-            var imported = new RepositoryImporter(new RepositoryInitializer(), registry).Import(
-                new RepositoryImportRequest(authority.Path, "docs/cis", [participant.Path], false, true));
-            Assert.Equal(0, imported.ExitCode);
+            if (includeImplementation)
+            {
+                var imported = new RepositoryImporter(new RepositoryInitializer(), registry).Import(
+                    new RepositoryImportRequest(authority.Path, "docs/cis", [participant.Path], false, true));
+                Assert.Equal(0, imported.ExitCode);
+            }
             var builder = CreateBuilder(resolver);
             Assert.Equal(0, builder.Build(authority.Path).ExitCode);
-            Assert.Equal(0, builder.Build(participant.Path).ExitCode);
+            if (includeImplementation) Assert.Equal(0, builder.Build(participant.Path).ExitCode);
             var graphReader = new GraphSnapshotReader(resolver);
             var merger = new DocumentationCatalogMerger();
             var brd = new BrdService(registry, resolver, new GraphValidator(resolver), graphReader, merger,
@@ -280,12 +564,29 @@ public sealed class TechnicalIntentWorkflowTests
                     "(?ms)^## Functional requirements\\s*$.*?(?=^## )",
                     "## Functional requirements\n\n| ID | Requirement | Priority | Acceptance intent |\n| --- | --- | --- | --- |\n| BRD-FR-001 | A user shall view the product. | Must | The reviewed product view is available. |\n\n",
                     RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+                if (!string.IsNullOrWhiteSpace(businessCapabilities))
+                    content = Regex.Replace(content,
+                        "(?ms)^## Business capabilities and processes\\s*$.*?(?=^## )",
+                        $"## Business capabilities and processes\n\n{businessCapabilities.Trim()}\n\n",
+                        RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
                 File.WriteAllText(brdPath, content);
                 Assert.Equal(0, brd.Approve(authority.Path, "Product owner", "Requirements accepted.").ExitCode);
             }
+            var questionnaire = new TechnicalIntentQuestionnaireService(registry, resolver, brd, merger,
+                () => new DateTimeOffset(2026, 8, 16, 10, 30, 0, TimeSpan.Zero));
+            if (approveBrd) Assert.Equal(0, questionnaire.Initialize(authority.Path).ExitCode);
+            if (approveBrd && completeQuestionnaire)
+            {
+                foreach (var question in questionnaire.Status(authority.Path).Questions)
+                {
+                    Assert.Equal(0, questionnaire.Answer(authority.Path, question.Id,
+                        question.SuggestedAnswer, "Technical owner").ExitCode);
+                }
+                Assert.True(questionnaire.Status(authority.Path).Complete);
+            }
             var intent = new TechnicalIntentService(registry, resolver, graphReader, brd, merger,
                 () => new DateTimeOffset(2026, 8, 16, 11, 0, 0, TimeSpan.Zero));
-            return new WorkspaceEnvironment(authority, participant, intent, brd, registry, resolver, merger);
+            return new WorkspaceEnvironment(authority, participant, intent, questionnaire, brd, registry, resolver, merger);
         }
 
         public BrdBacklogService CreateBacklog()

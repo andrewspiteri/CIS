@@ -513,12 +513,12 @@ public sealed class PlanningService
     }
 
     private static Dictionary<string, byte[]> SnapshotTree(string root)
-        => Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
+        => CisPathSafety.EnumerateFiles(root)
             .ToDictionary(path => Path.GetRelativePath(root, path), File.ReadAllBytes, StringComparer.OrdinalIgnoreCase);
 
     private static void RestoreTree(string root, IReadOnlyDictionary<string, byte[]> snapshot)
     {
-        foreach (var path in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories).ToArray())
+        foreach (var path in CisPathSafety.EnumerateFiles(root).ToArray())
         {
             var relative = Path.GetRelativePath(root, path);
             if (!snapshot.ContainsKey(relative)) File.Delete(path);
@@ -1035,13 +1035,9 @@ public sealed class PlanningService
     private static IReadOnlyList<string> ValidateSourceCurrency(ChangeDossier change, PlanSource? source)
     {
         if (source is null) return [];
-        var repositoryRoot = Path.GetFullPath(change.RepositoryPath);
-        var sourcePath = Path.GetFullPath(Path.Combine(repositoryRoot,
-            source.Path.Replace('/', Path.DirectorySeparatorChar)));
-        var boundedRoot = repositoryRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-            + Path.DirectorySeparatorChar;
-        if (!sourcePath.StartsWith(boundedRoot, StringComparison.OrdinalIgnoreCase))
-            return [$"Imported feature specification path escapes the repository: {source.Path}"];
+        if (!CisPathSafety.TryResolveUnderRoot(change.RepositoryPath, source.Path, out var sourcePath)
+            || CisPathSafety.ContainsReparsePoint(change.RepositoryPath, sourcePath))
+            return [$"Imported feature specification path escapes the repository or traverses a linked directory: {source.Path}"];
         if (!File.Exists(sourcePath))
             return [$"Imported feature specification no longer exists: {source.Path}"];
 
@@ -1936,7 +1932,7 @@ public sealed class PlanningService
         var fileName = Path.GetFileName(activePath);
         var retiredRoot = Path.Combine(dossier, "agent-tasks", "retired");
         if (!Directory.Exists(retiredRoot)) return false;
-        var candidate = Directory.EnumerateFiles(retiredRoot, fileName, SearchOption.AllDirectories)
+        var candidate = CisPathSafety.EnumerateFiles(retiredRoot, fileName)
             .OrderByDescending(File.GetLastWriteTimeUtc)
             .FirstOrDefault();
         if (candidate is null) return false;

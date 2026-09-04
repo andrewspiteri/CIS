@@ -31,7 +31,8 @@ public sealed record CisTextGenerationRequest(
     string? Model = null,
     bool AllowRemote = false,
     int TimeoutSeconds = 120,
-    int MaxOutputTokens = 2_048);
+    int MaxOutputTokens = 2_048,
+    bool JsonMode = false);
 
 public sealed record CisTextGenerationResult(
     string Status,

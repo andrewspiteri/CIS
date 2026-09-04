@@ -84,6 +84,11 @@ rather than background payload. An unavailable routing index is shown as **not b
 be generated explicitly from the Workspace View. The cancellable foreground build completes
 all pending cards; startup never invokes the model or starts index generation.
 
+High-level architecture diagrams and the one-page visual-system preview remain available after
+the wizard closes. They appear as rendered links in the Workspace product-definition stages and
+Journey Map, and together under **Evidence → Definition visuals**. The complete Architecture,
+Design, and Plans folders are also browsable from Evidence.
+
 For a generated Review Required BRD, **Draft business requirements from reference** lets
 you select one or more non-sensitive plain-text or Word Open XML (`.docx`) files and assign
 a Codex or Claude provider. CIS deterministically extracts bounded readable text from Word

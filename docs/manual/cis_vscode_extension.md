@@ -65,6 +65,11 @@ artifacts, and the focused legacy **Next** actions remain available:
 
 The Workspace tree shows these stages under **Product definition** and exposes one
 prominent **Next** action. Clicking a document stage opens the exact canonical Markdown.
+Architecture diagrams and the one-page visual-system preview are persistent journey artifacts,
+not wizard-only output. Open them from the Workspace **Product definition** group, the Journey
+Map's Technical and Experience sections, or **Evidence → Definition visuals**. These shortcuts
+open rendered Markdown preview so Mermaid diagrams and the generated SVG are visible; the full
+Architecture, Design, and Plans folders remain available in Evidence as canonical sources.
 Validation is mechanical and needs no approval. The wizard's final page shows all page states,
 lets the user return to any page, and records one identity-bound activation without repetitive
 rationale prompts. CIS validates again, protects the exact file set transactionally, and rebuilds

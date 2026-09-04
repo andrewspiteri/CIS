@@ -420,7 +420,9 @@ test('journey map separates product, technical, experience, and feature delivery
     assert.deepEqual(items.map(item => item.label), ['Journey map', 'Product definition', 'Technical definition', 'Experience definition', 'Feature delivery loop']);
     assert.match(items[2].children[0].description, /4\/16 resolved/u);
     assert.equal(items[2].children[0].command.command, 'cis.technicalIntentQuestions');
-    assert.equal(items[3].children.length, 4);
+    assert.ok(items[2].children.some(item => item.label === 'High-level architecture diagrams'));
+    assert.equal(items[3].children.length, 5);
+    assert.ok(items[3].children.some(item => item.label === 'One-page visual system preview'));
     assert.equal(items[4].children.length, 5);
     questionState = { status: 'status', current: true, complete: true, answeredCount: 16, unansweredCount: 0 };
     const completedItems = await provider.getChildren();
@@ -871,8 +873,11 @@ test('journey projection routes every technical-intent, solution-design, backlog
   const docs = path.join(root, 'docs');
   const technical = path.join(docs, 'specs', 'technical-intent-spec.md');
   const overallDesign = path.join(docs, 'architecture', 'overall-solution-design.md');
+  const architectureDiagrams = path.join(docs, 'architecture', 'high-level-architecture-diagrams.md');
   const componentSheet = path.join(docs, 'references', 'component-sheet.md');
   const uiDirection = path.join(docs, 'design', 'ui-direction.md');
+  const uiSystemPreview = path.join(docs, 'design', 'ui-system-preview.md');
+  const uiSystemPreviewSvg = path.join(docs, 'design', 'ui-system-preview.svg');
   const backlog = path.join(docs, 'plans', 'high-level-backlog.md');
   const feature = path.join(docs, 'specs', 'features', 'HLT-FR-001.md');
   let phase = 'unmanaged-technical';
@@ -931,10 +936,14 @@ test('journey projection routes every technical-intent, solution-design, backlog
     fs.mkdirSync(path.dirname(overallDesign), { recursive: true });
     fs.mkdirSync(path.dirname(componentSheet), { recursive: true });
     fs.writeFileSync(overallDesign, '---\nstatus: Review Required\n---\n# Overall solution design\n');
+    fs.writeFileSync(architectureDiagrams, '---\nstatus: Review Required\n---\n# Architecture diagrams\n');
     fs.writeFileSync(componentSheet, '---\nstatus: Review Required\n---\n# Component sheet\n');
     const projectedPaths = productPaths(root, extension.repositoryMetadata(root, 'docs/cis'));
     assert.equal(projectedPaths.overallSolutionDesign, overallDesign);
+    assert.equal(projectedPaths.architectureDiagrams, architectureDiagrams);
     assert.equal(projectedPaths.componentSheet, componentSheet);
+    assert.equal(projectedPaths.uiSystemPreview, uiSystemPreview);
+    assert.equal(projectedPaths.uiSystemPreviewSvg, uiSystemPreviewSvg);
     assert.ok(fs.existsSync(projectedPaths.overallSolutionDesign));
     assert.ok(fs.existsSync(projectedPaths.componentSheet));
     phase = 'solution-review';
@@ -946,10 +955,19 @@ test('journey projection routes every technical-intent, solution-design, backlog
     assert.ok((await nextCommands()).includes('cis.uiDirectionInit'));
     fs.mkdirSync(path.dirname(uiDirection), { recursive: true });
     fs.writeFileSync(uiDirection, '---\nstatus: Review Required\n---\n# High-level UI direction\n');
+    fs.writeFileSync(uiSystemPreview, '---\nstatus: Review Required\n---\n# UI system preview\n\n![Preview](ui-system-preview.svg)\n');
+    fs.writeFileSync(uiSystemPreviewSvg, '<svg xmlns="http://www.w3.org/2000/svg"/>\n');
     phase = 'ui-review';
     assert.ok((await nextCommands()).includes('cis.uiDirectionApprove'));
     phase = 'backlog-missing';
     assert.ok((await nextCommands()).includes('cis.backlogBuild'));
+    const definitionStages = (await provider.getChildren()).find(item => item.label === 'Product definition').children;
+    const diagrams = definitionStages.find(item => item.label === '5b. Architecture diagrams');
+    const preview = definitionStages.find(item => item.label === '6b. One-page visual system preview');
+    assert.equal(diagrams.command.command, 'cis.preview');
+    assert.equal(diagrams.command.arguments[0].file, architectureDiagrams);
+    assert.equal(preview.command.command, 'cis.preview');
+    assert.equal(preview.command.arguments[0].file, uiSystemPreview);
     fs.writeFileSync(backlog, '---\nstatus: Review Required\n---\n');
     phase = 'backlog-review';
     assert.ok((await nextCommands()).includes('cis.backlogApprove'));
@@ -1092,15 +1110,24 @@ test('Evidence view groups canonical Markdown without querying or mutating the r
   try {
     fs.mkdirSync(path.join(root, '.cis'), { recursive: true });
     fs.writeFileSync(path.join(root, '.cis', 'repository.yml'), 'repository:\n  id: evidence\ndocumentation_root: docs\n');
-    for (const folder of ['specs', 'references', 'decisions', 'manual', 'changes']) {
+    for (const folder of ['specs', 'architecture', 'design', 'references', 'plans', 'decisions', 'manual', 'changes']) {
       fs.mkdirSync(path.join(root, 'docs', folder), { recursive: true });
       fs.writeFileSync(path.join(root, 'docs', folder, `${folder}.md`), `# ${folder}\n`);
     }
+    fs.writeFileSync(path.join(root, 'docs', 'architecture', 'high-level-architecture-diagrams.md'), '# Diagrams\n');
+    fs.writeFileSync(path.join(root, 'docs', 'design', 'ui-system-preview.md'), '# Preview\n');
+    fs.writeFileSync(path.join(root, 'docs', 'design', 'ui-system-preview.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>\n');
     const provider = new extension.CisViewProvider(vscode, 'evidence', { root: () => root, needsSelection: () => false }, {});
     const items = await provider.getChildren();
     assert.equal(items[0].command.command, 'cis.contextSearch');
-    assert.deepEqual(items.slice(1).map(item => item.label), ['Specifications', 'References', 'Decisions', 'Manual', 'Changes']);
-    assert.ok(items.slice(1).every(item => item.children.length === 1));
+    assert.equal(items[1].label, 'Definition visuals');
+    assert.deepEqual(items[1].children.map(item => item.label),
+      ['High-level architecture diagrams', 'One-page visual system preview']);
+    assert.ok(items[1].children.every(item => item.command.command === 'cis.preview'));
+    assert.deepEqual(items.slice(2).map(item => item.label),
+      ['Specifications', 'Architecture', 'Design', 'References', 'Plans', 'Decisions', 'Manual', 'Changes']);
+    assert.equal(items.find(item => item.label === 'Architecture').children.length, 2);
+    assert.equal(items.find(item => item.label === 'Design').children.length, 2);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 

@@ -12,9 +12,12 @@ function productPaths(root, metadata) {
     technicalQuestionnaire: path.join(documentation, 'specs', 'technical-intent-questionnaire.md'),
     technicalIntent: path.join(documentation, 'specs', 'technical-intent-spec.md'),
     overallSolutionDesign: path.join(documentation, 'architecture', 'overall-solution-design.md'),
+    architectureDiagrams: path.join(documentation, 'architecture', 'high-level-architecture-diagrams.md'),
     componentSheet: path.join(documentation, 'references', 'component-sheet.md'),
     uiDirectionQuestionnaire: path.join(documentation, 'specs', 'ui-direction-questionnaire.md'),
     uiDirection: path.join(documentation, 'design', 'ui-direction.md'),
+    uiSystemPreview: path.join(documentation, 'design', 'ui-system-preview.md'),
+    uiSystemPreviewSvg: path.join(documentation, 'design', 'ui-system-preview.svg'),
     backlog: path.join(documentation, 'plans', 'high-level-backlog.md'),
   };
 }

@@ -360,8 +360,12 @@ class CisViewProvider {
     const solutionResult = await this.workspaceQuery(['solution-design', 'status'], root);
     const solution = stateOf(solutionResult, paths.overallSolutionDesign);
     const componentStatus = solutionResult?.validation?.componentSheetStatus || documentStatus(paths.componentSheet);
+    const diagramsPresent = fs.existsSync(paths.architectureDiagrams);
+    const diagramsStatus = diagramsPresent ? titleCase(documentStatus(paths.architectureDiagrams)) : 'Not prepared';
     stage('5. Overall solution design', solution.status, stateIcon(solution.status), paths.overallSolutionDesign);
     stage('5a. Component sheet', titleCase(componentStatus), stateIcon(componentStatus), paths.componentSheet);
+    stage('5b. Architecture diagrams', diagramsStatus, diagramsPresent ? stateIcon(diagramsStatus) : 'circle-outline',
+      diagramsPresent ? paths.architectureDiagrams : undefined, diagramsPresent ? 'cis.preview' : undefined);
     if (!isActiveCurrent(solution)) {
       const next = isReadyForApproval(solution)
         ? action('Approve solution-design bundle', 'Record one human approval for the exact overall design and component sheet.', 'cis.solutionDesignApprove')
@@ -396,7 +400,11 @@ class CisViewProvider {
 
     const uiDirectionResult = await this.workspaceQuery(['ui-direction', 'status'], root);
     const uiDirection = stateOf(uiDirectionResult, paths.uiDirection);
+    const previewPresent = fs.existsSync(paths.uiSystemPreview);
+    const previewStatus = previewPresent ? titleCase(documentStatus(paths.uiSystemPreview)) : 'Not prepared';
     stage('6a. High-level UI direction', uiDirection.status, stateIcon(uiDirection.status), paths.uiDirection);
+    stage('6b. One-page visual system preview', previewStatus, previewPresent ? stateIcon(previewStatus) : 'circle-outline',
+      previewPresent ? paths.uiSystemPreview : undefined, previewPresent ? 'cis.preview' : undefined);
     if (!isActiveCurrent(uiDirection)) {
       const next = isReadyForApproval(uiDirection)
         ? action('Approve high-level UI direction', 'Record explicit human approval of the exact workspace-level look and feel.', 'cis.uiDirectionApprove')
@@ -539,6 +547,10 @@ class CisViewProvider {
           ? titleCase(solutionResult?.validation?.componentSheetStatus || documentStatus(paths.componentSheet))
           : intentReady ? 'Waiting for solution design' : 'Waiting for technical intent',
         intentReady ? paths.componentSheet : undefined),
+        stateNode('High-level architecture diagrams', exists(paths.architectureDiagrams)
+          ? titleCase(documentStatus(paths.architectureDiagrams))
+          : solutionReady ? 'Not prepared' : 'Waiting for solution design',
+        paths.architectureDiagrams, exists(paths.architectureDiagrams) ? 'cis.preview' : undefined),
         stateNode('Architecture decisions and standards', exists(paths.technicalIntent) ? 'Bound to technical authority' : 'Waiting for technical intent', paths.technicalIntent),
       ],
     });
@@ -555,6 +567,10 @@ class CisViewProvider {
           solutionReady && uiQuestions.complete === true ? paths.uiDirection : undefined),
         stateNode('Design guidelines and UI framework', solutionReady ? 'Bound to UI direction' : 'Waiting for solution design',
           solutionReady ? paths.uiDirection : undefined),
+        stateNode('One-page visual system preview', exists(paths.uiSystemPreview)
+          ? titleCase(documentStatus(paths.uiSystemPreview))
+          : uiReady ? 'Not prepared' : 'Waiting for UI direction',
+        paths.uiSystemPreview, exists(paths.uiSystemPreview) ? 'cis.preview' : undefined),
         stateNode('Feature wireframes and rendered designs', uiReady ? 'Defined per UI-bearing feature' : 'Waiting for UI direction', undefined),
       ],
     });
@@ -607,10 +623,21 @@ class CisViewProvider {
   evidence(root) {
     const metadata = repositoryMetadata(root, this.vscode.workspace.getConfiguration('cis').get('documentationRoot', 'docs/cis'));
     const docs = metadata.documentationPath;
+    const paths = productPaths(root, metadata);
     const groups = [
-      ['Specifications', 'specs'], ['References', 'references'], ['Decisions', 'decisions'], ['Manual', 'manual'], ['Changes', 'changes'],
+      ['Specifications', 'specs'], ['Architecture', 'architecture'], ['Design', 'design'], ['References', 'references'],
+      ['Plans', 'plans'], ['Decisions', 'decisions'], ['Manual', 'manual'], ['Changes', 'changes'],
     ];
     const nodes = [this.node('Search bounded context', { command: 'cis.contextSearch', icon: 'search' })];
+    const definitionVisuals = [
+      ['High-level architecture diagrams', paths.architectureDiagrams, 'type-hierarchy-sub'],
+      ['One-page visual system preview', paths.uiSystemPreview, 'preview'],
+    ].filter(([, file]) => fs.existsSync(file)).map(([label, file, icon]) => this.node(label, {
+      description: titleCase(documentStatus(file)), file, preview: true, icon,
+    }));
+    if (definitionVisuals.length) nodes.push(this.node('Definition visuals', {
+      description: `${definitionVisuals.length} rendered artifacts`, children: definitionVisuals, icon: 'preview',
+    }));
     for (const [label, relative] of groups) {
       const folder = resolveWithin(docs, relative);
       const files = folder ? markdownFiles(this.vscode, folder, true, 300) : [];

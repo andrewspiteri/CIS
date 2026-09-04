@@ -18,7 +18,7 @@ public sealed class WorkspaceGraphService
         _validator = validator;
     }
 
-    public WorkspaceGraphBuildResult Build(string workspacePath)
+    public WorkspaceGraphBuildResult Build(string workspacePath, bool refresh = false)
     {
         var resolution = _registry.Resolve(workspacePath);
         if (!resolution.IsSuccess || resolution.Workspace is null)
@@ -31,7 +31,7 @@ public sealed class WorkspaceGraphService
                 repository.Id,
                 repository.RepositoryPath,
                 repository.Role,
-                _builder.Build(repository.RepositoryPath)))
+                _builder.Build(repository.RepositoryPath, refresh)))
             .ToArray();
         var status = results.Any(result => result.Result.ExitCode != 0)
             ? "failed"
@@ -70,5 +70,26 @@ public sealed class WorkspaceGraphService
             resolution.Workspace.WorkspacePath,
             results,
             []);
+    }
+
+    public WorkspaceGraphValidationResult Status(string workspacePath)
+    {
+        var resolution = _registry.Resolve(workspacePath);
+        if (!resolution.IsSuccess || resolution.Workspace is null)
+        {
+            return new WorkspaceGraphValidationResult("invalid", null, [], resolution.Errors);
+        }
+
+        var results = resolution.Workspace.Repositories
+            .Select(repository => new WorkspaceGraphValidationEntry(
+                repository.Id,
+                repository.RepositoryPath,
+                repository.Role,
+                _validator.Status(repository.RepositoryPath)))
+            .ToArray();
+        var status = results.Any(result => result.Result.ExitCode != 0)
+            ? "failed"
+            : results.Any(result => result.Result.WarningCount > 0) ? "warnings" : "valid";
+        return new WorkspaceGraphValidationResult(status, resolution.Workspace.WorkspacePath, results, []);
     }
 }

@@ -35,6 +35,9 @@ public sealed class GraphModule : ICisModule
         graph.Subcommands.Add(CreateValidateCommand(
             services.GetRequiredService<GraphValidator>(),
             workspaceGraphs));
+        graph.Subcommands.Add(CreateStatusCommand(
+            services.GetRequiredService<GraphValidator>(),
+            workspaceGraphs));
         var queryService = services.GetRequiredService<ICisGraphQueryService>();
         graph.Subcommands.Add(CreateFindCommand(queryService));
         graph.Subcommands.Add(CreateRelatedCommand(queryService));
@@ -146,6 +149,40 @@ public sealed class GraphModule : ICisModule
                 parseResult.GetValue(strict));
             RenderValidation(repositoryResult, selectedFormat);
             return repositoryResult.ExitCode;
+        });
+        return command;
+    }
+
+    private static Command CreateStatusCommand(
+        GraphValidator validator,
+        WorkspaceGraphService workspaceGraphs)
+    {
+        var command = new Command("status", "Read cached graph metadata and check input freshness without loading every node and edge.");
+        var repo = CreateRepositoryOption();
+        var format = CreateFormatOption();
+        var workspace = new Option<string?>("--workspace")
+        {
+            Description = "Inspect every registered repository graph in this CIS workspace instead of one --repo.",
+        };
+        command.Options.Add(repo);
+        command.Options.Add(format);
+        command.Options.Add(workspace);
+        command.SetAction(parseResult =>
+        {
+            var selectedFormat = GetFormat(parseResult.GetValue(format));
+            if (selectedFormat is null) return 2;
+
+            var workspacePath = parseResult.GetValue(workspace);
+            if (!string.IsNullOrWhiteSpace(workspacePath))
+            {
+                var workspaceResult = workspaceGraphs.Status(workspacePath);
+                RenderWorkspaceValidation(workspaceResult, selectedFormat);
+                return workspaceResult.ExitCode;
+            }
+
+            var result = validator.Status(parseResult.GetValue(repo) ?? Directory.GetCurrentDirectory());
+            RenderValidation(result, selectedFormat);
+            return result.ExitCode;
         });
         return command;
     }
@@ -370,9 +407,14 @@ public sealed class GraphModule : ICisModule
         {
             Description = "Build every registered repository graph in this CIS workspace instead of one --repo.",
         };
+        var refresh = new Option<bool>("--refresh")
+        {
+            Description = "Force full extraction even when the content-addressed graph status cache is current.",
+        };
         command.Options.Add(repo);
         command.Options.Add(format);
         command.Options.Add(workspace);
+        command.Options.Add(refresh);
         command.SetAction(parseResult =>
         {
             var selectedFormat = (parseResult.GetValue(format) ?? "human").ToLowerInvariant();
@@ -386,13 +428,14 @@ public sealed class GraphModule : ICisModule
             var workspacePath = parseResult.GetValue(workspace);
             if (!string.IsNullOrWhiteSpace(workspacePath))
             {
-                var workspaceResult = workspaceGraphs.Build(workspacePath);
+                var workspaceResult = workspaceGraphs.Build(workspacePath, parseResult.GetValue(refresh));
                 RenderWorkspaceBuild(workspaceResult, selectedFormat);
                 return workspaceResult.ExitCode;
             }
 
             var repositoryResult = builder.Build(
-                parseResult.GetValue(repo) ?? Directory.GetCurrentDirectory());
+                parseResult.GetValue(repo) ?? Directory.GetCurrentDirectory(),
+                parseResult.GetValue(refresh));
             Render(repositoryResult, selectedFormat);
             return repositoryResult.ExitCode;
         });

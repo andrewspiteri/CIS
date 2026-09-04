@@ -6,7 +6,7 @@ description: Build, validate, search, traverse, trace, and package the CIS repos
 # CIS Graph and Context
 
 1. Resolve the repository from `.cis/repository.yml`.
-2. Run `cis graph validate --format agent`. If the graph is missing or stale, run `cis graph build --format agent`, then validate again.
+2. Run `cis graph status --format agent`. If the graph is missing or stale, run `cis graph build --format agent`, then check status again. Use `cis graph validate` only when deep structural assurance is required.
 3. Locate exact roots with `cis graph find` or `cis context search`; disambiguate with full IDs and kinds.
 4. Use `cis graph related` or `cis graph trace` for evidence paths.
 5. Use focused `cis context contract|symbol|references|callers|tests-for` queries or `cis context pack` for bounded source evidence.

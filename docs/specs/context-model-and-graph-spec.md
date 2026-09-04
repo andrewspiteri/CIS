@@ -380,6 +380,13 @@ artifacts are tracked. `buildId` derives from schema version, normalized input h
 and extractor versions. Nodes/edges use stable key ordering; timestamps do not affect
 semantic comparison.
 
+`cis graph status` reads only the SQLite build header, input manifest, and stored
+diagnostics before checking current input hashes. Repository Doctor uses this bounded
+path and does not deserialize or traverse every graph row. `cis graph validate` remains
+the explicit deep-integrity command. An unchanged `cis graph build` returns from the
+content-addressed header before compiler and graph extraction; `--refresh` forces a full
+disposable regeneration when toolchain or diagnostic investigation requires it.
+
 SQLite is the operational derived store. It is never canonical and deleting
 `.cis/local/` must remain safe. Markdown, repository configuration, and governed
 reference files remain authoritative. Portable JSON is an explicit export rather

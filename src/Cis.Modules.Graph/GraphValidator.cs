@@ -223,6 +223,91 @@ public sealed partial class GraphValidator
             GraphAvailable: true);
     }
 
+    public GraphValidationResult Status(string repositoryPath)
+    {
+        var resolution = _repositoryContextResolver.Resolve(repositoryPath);
+        if (!resolution.IsSuccess)
+        {
+            return new GraphValidationResult(
+                "invalid-repository", null, null, null, "unknown", 0, 0,
+                resolution.Errors.Select(error => Diagnostic(
+                    "CIS-GRAPH-STATUS-REPO-001", "error", error)).ToArray(),
+                Strict: false, RepositoryConfigurationValid: false, GraphAvailable: false);
+        }
+
+        var context = resolution.Context!;
+        var graphPath = AbsolutePath(context.RepositoryPath, GraphRelativePath);
+        if (!File.Exists(graphPath))
+        {
+            return Unavailable(context.RepositoryPath, strict: false,
+                "Graph generation is missing. Run `cis graph build` first.", graphPath);
+        }
+
+        var stored = _store.ReadHeader(context.RepositoryPath);
+        if (!stored.Success || stored.Build is null || stored.Manifest is null)
+        {
+            return Unavailable(context.RepositoryPath, strict: false,
+                $"SQLite graph status cache is empty or incompatible: {stored.Error}. Run `cis graph build`.", graphPath);
+        }
+
+        var diagnostics = new List<CisGraphDiagnostic>(stored.Diagnostics);
+        ValidateStatusMetadata(context, stored.Build, stored.Manifest, diagnostics);
+        ValidateManifest(context.RepositoryPath, stored.Manifest, diagnostics);
+        ValidateGitTracking(context.RepositoryPath, diagnostics);
+        var ordered = diagnostics
+            .GroupBy(DiagnosticKey, StringComparer.Ordinal)
+            .Select(group => group.First())
+            .OrderBy(diagnostic => SeverityOrder(diagnostic.Severity))
+            .ThenBy(diagnostic => diagnostic.Code, StringComparer.Ordinal)
+            .ThenBy(diagnostic => diagnostic.Message, StringComparer.Ordinal)
+            .ToArray();
+        var freshness = ordered.Any(diagnostic => diagnostic.Code.StartsWith(
+            "CIS-GRAPH-VALIDATE-STALE-", StringComparison.Ordinal)) ? "stale" : "fresh";
+        var status = ordered.Any(diagnostic => diagnostic.Severity == "error")
+            ? "invalid"
+            : ordered.Any(diagnostic => diagnostic.Severity == "warning") ? "warnings" : "valid";
+        return new GraphValidationResult(
+            status, context.RepositoryPath, GraphRelativePath, stored.Build.Id, freshness,
+            stored.NodeCount, stored.EdgeCount, ordered, Strict: false,
+            RepositoryConfigurationValid: true, GraphAvailable: true);
+    }
+
+    private void ValidateStatusMetadata(
+        CisRepositoryContext context,
+        CisGraphBuildMetadata build,
+        CisGraphManifest manifest,
+        ICollection<CisGraphDiagnostic> diagnostics)
+    {
+        if (manifest.SchemaVersion != GraphBuilder.GraphSchemaVersion)
+        {
+            diagnostics.Add(Diagnostic("CIS-GRAPH-VALIDATE-SCHEMA-001", "error",
+                $"Unsupported cached graph schema: manifest={manifest.SchemaVersion}.", GraphRelativePath));
+        }
+
+        if (!string.Equals(build.Id, manifest.BuildId, StringComparison.Ordinal)
+            || (manifest.Extractors.SequenceEqual(_expectedExtractors, StringComparer.Ordinal)
+                && !string.Equals(build.Id, GraphBuilder.CreateBuildId(manifest.Inputs, _expectedExtractors), StringComparison.Ordinal)))
+        {
+            diagnostics.Add(Diagnostic("CIS-GRAPH-VALIDATE-BUILD-002", "error",
+                "Cached graph build metadata is not content-addressed to its manifest inputs and extractor contract.", build.Id));
+        }
+
+        if (!string.Equals(build.RepositoryId, context.RepositoryId, StringComparison.Ordinal)
+            || !string.Equals(manifest.RepositoryId, context.RepositoryId, StringComparison.Ordinal))
+        {
+            diagnostics.Add(Diagnostic("CIS-GRAPH-VALIDATE-REPO-002", "error",
+                "Graph repository identity does not match `.cis/repository.yml`.", context.RepositoryId,
+                build.RepositoryId, manifest.RepositoryId));
+        }
+
+        if (!manifest.Extractors.SequenceEqual(_expectedExtractors, StringComparer.Ordinal))
+        {
+            diagnostics.Add(Diagnostic("CIS-GRAPH-VALIDATE-STALE-001", "warning",
+                "Graph extractor versions differ from the current CLI. Run `cis graph build`.",
+                string.Join(", ", manifest.Extractors)));
+        }
+    }
+
     private void ValidateGenerationMetadata(
         CisRepositoryContext context,
         CisGraphDocument graph,

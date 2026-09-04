@@ -99,6 +99,25 @@ public sealed class GraphBuilderTests
     }
 
     [Fact]
+    public void Build_UsesContentAddressedStatusCacheAndRefreshForcesReExtraction()
+    {
+        using var repository = TemporaryRepository.CreateInitializedApi();
+        var builder = CreateBuilder();
+
+        var first = builder.Build(repository.Path);
+        var cached = builder.Build(repository.Path);
+        var refreshed = builder.Build(repository.Path, refresh: true);
+
+        Assert.Equal("built", first.Status);
+        Assert.Equal("unchanged", cached.Status);
+        Assert.False(cached.Applied);
+        Assert.Equal("built", refreshed.Status);
+        Assert.True(refreshed.Applied);
+        Assert.Equal(first.BuildId, cached.BuildId);
+        Assert.Equal(first.BuildId, refreshed.BuildId);
+    }
+
+    [Fact]
     public void Build_PersistsVersionedNormalizedSQLiteStateWithoutDefaultJson()
     {
         using var repository = TemporaryRepository.CreateInitializedApiWithDeliveryEvidence();
@@ -947,6 +966,24 @@ public sealed class GraphBuilderTests
         Assert.Equal("stale", normal.Freshness);
         Assert.Equal(5, strict.ExitCode);
         Assert.Contains(normal.Diagnostics, diagnostic => diagnostic.Code == "CIS-GRAPH-VALIDATE-STALE-003");
+    }
+
+    [Fact]
+    public void Status_UsesCachedGraphHeaderWhilePreservingInputFreshness()
+    {
+        using var repository = TemporaryRepository.CreateInitializedApiWithDeliveryEvidence();
+        Assert.Equal(0, CreateBuilder().Build(repository.Path).ExitCode);
+        var validator = CreateValidator();
+
+        var fresh = validator.Status(repository.Path);
+        File.AppendAllText(Path.Combine(repository.Path, "src", "Orders.Api", "Program.cs"), " // status change");
+        var stale = validator.Status(repository.Path);
+
+        Assert.Equal("fresh", fresh.Freshness);
+        Assert.True(fresh.NodeCount > 0);
+        Assert.True(fresh.EdgeCount > 0);
+        Assert.Equal("stale", stale.Freshness);
+        Assert.Contains(stale.Diagnostics, diagnostic => diagnostic.Code == "CIS-GRAPH-VALIDATE-STALE-003");
     }
 
     [Fact]

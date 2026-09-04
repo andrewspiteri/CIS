@@ -8,7 +8,8 @@ public sealed record RepositoryDoctorResult(
     string? DocumentationRoot,
     OllamaProbeResult Ollama,
     IReadOnlyList<CisRepositoryDoctorFinding> Findings,
-    bool RepositoryConfigurationValid)
+    bool RepositoryConfigurationValid,
+    bool InitializationStatusCached = false)
 {
     public int ErrorCount => Findings.Count(finding => finding.Severity == "error");
 

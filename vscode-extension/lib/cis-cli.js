@@ -5,7 +5,7 @@ const { bound, redact, validateArgument, validateExecutable } = require('./secur
 const { openCommandProgressPanel } = require('./webview');
 
 const OUTPUT_LIMIT = 4 * 1024 * 1024;
-const QUERY_CACHE_TTL_MS = 5_000;
+const QUERY_CACHE_TTL_MS = 30_000;
 const COMPATIBLE_CLI = Object.freeze({ major: 0, minimumMinor: 3 });
 
 class CisCliError extends Error {

@@ -15,7 +15,7 @@ public sealed class GraphDoctorCheck : ICisRepositoryDoctorCheck
 
     public IReadOnlyList<CisRepositoryDoctorFinding> Inspect(CisRepositoryContext context)
     {
-        var validation = _validator.Validate(context.RepositoryPath, strict: false);
+        var validation = _validator.Status(context.RepositoryPath);
         if (!validation.GraphAvailable)
         {
             return

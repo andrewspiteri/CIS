@@ -16,7 +16,7 @@ Builds a deterministic, disposable local context graph from the configured repos
 ## Synopsis
 
 ```text
-cis graph build [--repo <path> | --workspace <path>]
+cis graph build [--repo <path> | --workspace <path>] [--refresh]
   [--format <human|json|agent>]
 ```
 
@@ -26,8 +26,15 @@ cis graph build [--repo <path> | --workspace <path>]
 | --- | --- | --- | --- |
 | `--repo <path>` | No | Current directory | Selects an initialized target repository. |
 | `--workspace <path>` | No | — | Builds every repository registered in `.cis/workspace.yml` instead of one repository. |
+| `--refresh` | No | `false` | Forces full extraction even when the content-addressed graph status cache is current. |
 | `--format <format>` | No | `human` | Selects `human`, `json`, or `agent` output. |
 | `-?`, `-h`, `--help` | No | — | Shows command help without building the graph. |
+
+After documentation inventory and input hashing, an unchanged build reads node/edge counts
+and diagnostics from the SQLite header and returns `unchanged` without repeating compiler
+analysis or graph extraction. Extractor versions and exact input hashes remain part of the
+build identity. Use `--refresh` for an intentional deep regeneration; it rewrites only
+disposable `.cis/local/graph/` state.
 
 ## Current extraction scope
 

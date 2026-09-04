@@ -63,7 +63,8 @@ public sealed record FileIndexStatusResult(
     int Removed,
     IReadOnlyList<string> Errors,
     bool RepositoryConfigurationValid,
-    bool IndexAvailable)
+    bool IndexAvailable,
+    bool Cached = false)
 {
     public int ExitCode => !RepositoryConfigurationValid
         ? 2

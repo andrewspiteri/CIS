@@ -142,6 +142,7 @@ Each loaded module owns one top-level command group. The following leaf commands
 | [`cis feedback usage`](cis_feedback_usage.md) | List recent sanitized per-invocation usage evidence. |
 | [`cis feedback opportunities`](cis_feedback_opportunities.md) | Find repeated failures and compact-output opportunities. |
 | [`cis graph build`](cis_graph_build.md) | Build the deterministic disposable local context graph. |
+| [`cis graph status`](cis_graph_status.md) | Read cached graph metadata and verify input freshness without loading all nodes and edges. |
 | [`cis graph validate`](cis_graph_validate.md) | Validate graph integrity, evidence, freshness, and local-artifact safety. |
 | [`cis graph find`](cis_graph_find.md) | Find graph nodes by identity, type, facet, or bounded text. |
 | [`cis graph related`](cis_graph_related.md) | Traverse an evidence-preserving bounded graph neighbourhood. |

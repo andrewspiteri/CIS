@@ -2670,7 +2670,7 @@ internal sealed class RepositoryStarterBinder
         # CIS Graph and Context
 
         1. Resolve the repository from `.cis/repository.yml`.
-        2. Run `cis graph validate --format agent`. If the graph is missing or stale, run `cis graph build --format agent`, then validate again.
+        2. Run `cis graph status --format agent`. If the graph is missing or stale, run `cis graph build --format agent`, then check status again. Use `cis graph validate` only when deep structural assurance is required.
         3. Locate exact roots with `cis graph find` or `cis context search`; disambiguate with full IDs and kinds.
         4. Use `cis graph related` or `cis graph trace` for evidence paths.
         5. Use focused `cis context contract|symbol|references|callers|tests-for` queries or `cis context pack` for bounded source evidence.
@@ -3323,7 +3323,7 @@ internal sealed class RepositoryStarterBinder
         3. If any repository cannot initialize, run `cis repo doctor` for that repository with the same root and report the evidence before retrying the batch.
         4. After explicit authorization, repeat import with `--yes`; never add `--yes` to the first run.
         5. Run `cis repo list --workspace <workspace> --format agent` and verify all expected repository IDs and paths.
-        6. Run `cis graph build --workspace <workspace> --format agent`, followed by `cis graph validate --workspace <workspace> --format agent`.
+        6. Run `cis graph build --workspace <workspace> --format agent`, followed by `cis graph status --workspace <workspace> --format agent`. Use `cis graph validate --workspace <workspace>` at an assurance gate, not as a routine freshness probe.
         7. Use registered repository paths as explicit roots when producing federated context packs. Treat each local graph identity, freshness, diagnostics, and omissions independently.
 
         ## Guardrails
@@ -3342,7 +3342,7 @@ internal sealed class RepositoryStarterBinder
         ## Workflow
 
         1. Confirm `.cis/workspace.yml` identifies exactly one `authority` repository. If not, dry-run `cis workspace init --root <documentation-root>` and request review before using `--yes`.
-        2. Run `cis graph build --workspace <workspace>` and `cis graph validate --workspace <workspace>` before intake.
+        2. Run `cis graph build --workspace <workspace>` and `cis graph status --workspace <workspace>` before intake. Reserve `cis graph validate --workspace <workspace>` for deep structural assurance.
         3. Run `cis brd discover --workspace <workspace> --format agent`. Treat every found BRD, product-design document such as a GDD, or feature specification as unverified source evidence; absence creates no implied requirements.
         4. Run `cis brd init --workspace <workspace> --title <title>`. Preserve the authority repository's canonical document and catalog entry.
         5. To delegate the initial draft, select explicit non-sensitive plain-text or Word Open XML (`.docx`) references and run `cis agent author brd --reference <file> --provider <provider> --actor <human>`. Word text extraction is bounded and does not execute embedded content. Review the one-file result; agent drafting cannot alter frontmatter or managed blocks and grants no approval.

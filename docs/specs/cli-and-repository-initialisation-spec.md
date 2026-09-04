@@ -321,6 +321,12 @@ Disposable local state:
 
 Disposable state is reproducible and excluded from Git. The documentation root remains the human-reviewable source of truth.
 
+Repository Doctor caches only deterministic initialization reconciliation beneath
+`.cis/local/status/`. The cache key binds relevant repository file metadata, the selected
+documentation root, and the executing repository module. It is invalidated by repository
+or tool changes and may be bypassed with `cis repo doctor --refresh`. Environment probes
+and contributed health checks are not replaced by this initialization cache.
+
 ## 9. Change dossiers
 
 ```text

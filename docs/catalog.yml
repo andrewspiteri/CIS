@@ -971,6 +971,11 @@ documents:
     type: command-reference
     status: active
     authority: canonical
+  - id: change-impact-studio:manual:cis-graph-status
+    path: docs/manual/cis_graph_status.md
+    type: command-reference
+    status: active
+    authority: canonical
   - id: change-impact-studio:manual:cis-graph-validate
     path: docs/manual/cis_graph_validate.md
     type: command-reference

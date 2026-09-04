@@ -231,9 +231,14 @@ public sealed class RepositoryModule : ICisModule
             Description = "Output format: human, json, or agent.",
             DefaultValueFactory = _ => "human",
         };
+        var refresh = new Option<bool>("--refresh")
+        {
+            Description = "Bypass the content-aware initialization reconciliation cache; live Doctor checks always run.",
+        };
         command.Options.Add(repo);
         command.Options.Add(root);
         command.Options.Add(format);
+        command.Options.Add(refresh);
         command.SetAction(parseResult =>
         {
             var selectedFormat = (parseResult.GetValue(format) ?? "human").ToLowerInvariant();
@@ -246,7 +251,8 @@ public sealed class RepositoryModule : ICisModule
 
             var result = doctor.Inspect(
                 parseResult.GetValue(repo) ?? Directory.GetCurrentDirectory(),
-                parseResult.GetValue(root));
+                parseResult.GetValue(root),
+                parseResult.GetValue(refresh));
             RenderDoctor(result, selectedFormat);
             return result.ExitCode;
         });
@@ -491,7 +497,8 @@ public sealed class RepositoryModule : ICisModule
         {
             Console.WriteLine(
                 $"status={result.Status};exitCode={result.ExitCode};errors={result.ErrorCount};" +
-                $"warnings={result.WarningCount};information={result.InformationCount}");
+                $"warnings={result.WarningCount};information={result.InformationCount};" +
+                $"initializationStatusCached={result.InitializationStatusCached.ToString().ToLowerInvariant()}");
             Console.WriteLine($"repository={result.RepositoryPath ?? string.Empty}");
             Console.WriteLine($"documentationRoot={result.DocumentationRoot ?? string.Empty}");
             Console.WriteLine(
@@ -536,6 +543,7 @@ public sealed class RepositoryModule : ICisModule
         Console.WriteLine(
             $"Summary: {result.ErrorCount} error(s), {result.WarningCount} warning(s), " +
             $"{result.InformationCount} information item(s)");
+        Console.WriteLine($"Initialization status: {(result.InitializationStatusCached ? "cached" : "recomputed")}");
         foreach (var finding in result.Findings)
         {
             Console.WriteLine();

@@ -239,13 +239,15 @@ public sealed class IndexModule : ICisModule
         {
             Console.WriteLine(
                 $"status={result.Status};exitCode={result.ExitCode};candidates={result.Candidates};indexed={result.Indexed};" +
-                $"fresh={result.Fresh};stale={result.Stale};missing={result.Missing};removed={result.Removed}");
+                $"fresh={result.Fresh};stale={result.Stale};missing={result.Missing};removed={result.Removed};" +
+                $"cached={result.Cached.ToString().ToLowerInvariant()}");
             WriteDetails(result.OutputPath, [], result.Errors);
             return;
         }
 
         Console.WriteLine($"File index: {result.Status}");
         Console.WriteLine($"Candidates: {result.Candidates}; indexed: {result.Indexed}; fresh: {result.Fresh}; stale: {result.Stale}; missing: {result.Missing}; removed: {result.Removed}");
+        Console.WriteLine($"Status source: {(result.Cached ? "cache" : "filesystem scan")}");
         WriteHumanDetails(result.OutputPath, [], result.Errors);
     }
 

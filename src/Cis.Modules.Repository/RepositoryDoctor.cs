@@ -8,6 +8,7 @@ public sealed class RepositoryDoctor
     private readonly RepositoryInitializer _initializer;
     private readonly IOllamaProbe _ollamaProbe;
     private readonly ICisRepositoryContextResolver _repositoryContextResolver;
+    private readonly RepositoryStatusCache _statusCache = new();
 
     public RepositoryDoctor(
         ICisRepositoryContextResolver repositoryContextResolver,
@@ -21,7 +22,10 @@ public sealed class RepositoryDoctor
         _ollamaProbe = ollamaProbe;
     }
 
-    public RepositoryDoctorResult Inspect(string repositoryPath, string? documentationRoot = null)
+    public RepositoryDoctorResult Inspect(
+        string repositoryPath,
+        string? documentationRoot = null,
+        bool refresh = false)
     {
         var ollama = _ollamaProbe.Probe();
         var findings = new List<CisRepositoryDoctorFinding>();
@@ -53,14 +57,28 @@ public sealed class RepositoryDoctor
         }
 
         var context = resolution.Context!;
-        AddReconciliationFindings(context.RepositoryPath, context.DocumentationRoot, findings);
+        IReadOnlyList<CisRepositoryDoctorFinding> reconciliationFindings = [];
+        var cached = !refresh && _statusCache.TryRead(
+            context.RepositoryPath, context.DocumentationRoot, out reconciliationFindings);
+        if (cached)
+        {
+            foreach (var finding in reconciliationFindings) findings.Add(finding);
+        }
+        else
+        {
+            var generated = new List<CisRepositoryDoctorFinding>();
+            AddReconciliationFindings(context.RepositoryPath, context.DocumentationRoot, generated);
+            foreach (var finding in generated) findings.Add(finding);
+            _statusCache.Write(context.RepositoryPath, context.DocumentationRoot, generated);
+        }
         RunContributedChecks(context, findings);
         return CreateResult(
             context.RepositoryPath,
             context.DocumentationRoot,
             ollama,
             findings,
-            repositoryConfigurationValid: true);
+            repositoryConfigurationValid: true,
+            initializationStatusCached: cached);
     }
 
     private void AddReconciliationFindings(
@@ -218,7 +236,8 @@ public sealed class RepositoryDoctor
         string? documentationRoot,
         OllamaProbeResult ollama,
         IReadOnlyList<CisRepositoryDoctorFinding> findings,
-        bool repositoryConfigurationValid)
+        bool repositoryConfigurationValid,
+        bool initializationStatusCached = false)
     {
         var ordered = findings
             .OrderBy(finding => SeverityOrder(finding.Severity))
@@ -236,7 +255,8 @@ public sealed class RepositoryDoctor
             documentationRoot,
             ollama,
             ordered,
-            repositoryConfigurationValid);
+            repositoryConfigurationValid,
+            initializationStatusCached);
     }
 
     private static int SeverityOrder(string severity) => severity switch

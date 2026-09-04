@@ -68,7 +68,7 @@ public sealed class GraphBuilder
         _augmenters = (augmenters ?? []).OrderBy(item => item.Name, StringComparer.Ordinal).ToArray();
     }
 
-    public GraphBuildResult Build(string repositoryPath)
+    public GraphBuildResult Build(string repositoryPath, bool refresh = false)
     {
         var resolution = _repositoryContextResolver.Resolve(repositoryPath);
         if (!resolution.IsSuccess)
@@ -128,6 +128,13 @@ public sealed class GraphBuilder
         foreach (var duplicate in _augmenters.GroupBy(item => item.Name, StringComparer.OrdinalIgnoreCase).Where(group => group.Count() > 1))
             diagnostics.Add(Diagnostic("CIS-GRAPH-AUGMENTER-001", "error", $"Graph augmenter is registered more than once: {duplicate.Key}", duplicate.Key));
         var buildId = CreateBuildId(inputs, activeExtractors);
+        if (!refresh
+            && !diagnostics.Any(diagnostic => diagnostic.Severity == "error")
+            && TryReadCurrentBuild(context, git, buildId, inputs, activeExtractors, out var current))
+        {
+            return current!;
+        }
+
         var nodes = new Dictionary<string, CisGraphNode>(StringComparer.Ordinal);
         var edges = new Dictionary<string, CisGraphEdge>(StringComparer.Ordinal);
         var hashes = inputs.ToDictionary(input => input.Path, input => input.Hash, StringComparer.OrdinalIgnoreCase);
@@ -243,7 +250,7 @@ public sealed class GraphBuilder
             inputs,
             activeExtractors);
 
-        return Persist(context, graph, manifest, orderedDiagnostics);
+        return Persist(context, graph, manifest, orderedDiagnostics, refresh);
     }
 
     private static IReadOnlyList<CisGraphInput> ReadInputs(
@@ -1720,11 +1727,70 @@ public sealed class GraphBuilder
             && (path.EndsWith(".yml", StringComparison.OrdinalIgnoreCase)
                 || path.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase));
 
+    private bool TryReadCurrentBuild(
+        CisRepositoryContext context,
+        GitState git,
+        string buildId,
+        IReadOnlyList<CisGraphInput> inputs,
+        IReadOnlyList<string> extractors,
+        out GraphBuildResult? result)
+    {
+        result = null;
+        GraphStoreHeaderResult header;
+        try
+        {
+            header = _store.ReadHeader(context.RepositoryPath);
+        }
+        catch (Exception exception) when (exception is IOException
+            or UnauthorizedAccessException
+            or InvalidDataException
+            or SqliteException)
+        {
+            return false;
+        }
+
+        if (!header.Success || header.Build is null || header.Manifest is null
+            || !string.Equals(header.Build.Id, buildId, StringComparison.Ordinal)
+            || !string.Equals(header.Build.RepositoryId, context.RepositoryId, StringComparison.Ordinal)
+            || !string.Equals(header.Build.Head, git.Head, StringComparison.Ordinal)
+            || header.Build.Dirty != git.Dirty
+            || !string.Equals(header.Manifest.DocumentationRoot, context.DocumentationRoot, StringComparison.Ordinal)
+            || !header.Manifest.Inputs.SequenceEqual(inputs)
+            || !header.Manifest.Extractors.SequenceEqual(extractors, StringComparer.Ordinal))
+        {
+            return false;
+        }
+
+        var manifestPath = Path.Combine(context.RepositoryPath, ".cis", "local", "graph", "manifest.json");
+        var diagnosticsPath = Path.Combine(context.RepositoryPath, ".cis", "local", "graph", "diagnostics.json");
+        if (!FileContentMatches(manifestPath, JsonSerializer.Serialize(header.Manifest, JsonOptions))
+            || !FileContentMatches(diagnosticsPath, JsonSerializer.Serialize(header.Diagnostics, JsonOptions)))
+        {
+            return false;
+        }
+
+        result = new GraphBuildResult(
+            "unchanged",
+            context.RepositoryPath,
+            context.DocumentationRoot,
+            header.Build.Id,
+            SqliteGraphStore.DatabaseRelativePath,
+            ".cis/local/graph/manifest.json",
+            ".cis/local/graph/diagnostics.json",
+            header.NodeCount,
+            header.EdgeCount,
+            header.Diagnostics,
+            Applied: false,
+            RepositoryConfigurationValid: true);
+        return true;
+    }
+
     private GraphBuildResult Persist(
         CisRepositoryContext context,
         CisGraphDocument graph,
         CisGraphManifest manifest,
-        IReadOnlyList<CisGraphDiagnostic> diagnostics)
+        IReadOnlyList<CisGraphDiagnostic> diagnostics,
+        bool force)
     {
         const string graphRelativePath = SqliteGraphStore.DatabaseRelativePath;
         const string manifestRelativePath = ".cis/local/graph/manifest.json";
@@ -1737,7 +1803,8 @@ public sealed class GraphBuilder
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or SqliteException)
         {
         }
-        if (existing is not null
+        if (!force
+            && existing is not null
             && string.Equals(existing.BuildId, graph.Build.Id, StringComparison.Ordinal)
             && string.Equals(existing.Head, graph.Build.Head, StringComparison.Ordinal)
             && existing.Dirty == graph.Build.Dirty

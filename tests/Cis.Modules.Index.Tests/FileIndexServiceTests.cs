@@ -175,6 +175,27 @@ public sealed class FileIndexServiceTests
     }
 
     [Fact]
+    public void Status_ReusesMetadataCacheAndReconcilesTimestampOnlyChanges()
+    {
+        using var repository = TemporaryRepository.Create();
+        repository.Write("src/Orders.cs", "public sealed class Orders { }");
+        var service = CreateService(new FakeGenerationService(local: true));
+        Assert.Equal(0, service.Build(Request(repository.Path) with { Path = null }).ExitCode);
+
+        var cached = service.Status(repository.Path, null);
+        var source = Path.Combine(repository.Path, "src", "Orders.cs");
+        File.SetLastWriteTimeUtc(source, File.GetLastWriteTimeUtc(source).AddSeconds(2));
+        var reconciled = service.Status(repository.Path, null);
+        var cachedAgain = service.Status(repository.Path, null);
+
+        Assert.Equal("fresh", cached.Status);
+        Assert.True(cached.Cached);
+        Assert.Equal("fresh", reconciled.Status);
+        Assert.False(reconciled.Cached);
+        Assert.True(cachedAgain.Cached);
+    }
+
+    [Fact]
     public void Build_ReusesFreshCardsWhenProviderIsOffline()
     {
         using var repository = TemporaryRepository.Create();

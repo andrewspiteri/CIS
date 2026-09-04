@@ -350,6 +350,28 @@ public sealed class RepositoryInitializerTests
     }
 
     [Fact]
+    public void Doctor_CachesInitializationStatusAndInvalidatesItOnRepositoryChange()
+    {
+        using var repository = TemporaryRepository.Create();
+        var initializer = new RepositoryInitializer();
+        initializer.Initialize(new RepositoryInitRequest(repository.Path, "docs/cis", DryRun: false, Confirmed: false));
+        var doctor = CreateDoctor(initializer,
+            new OllamaProbeResult("available", "http://127.0.0.1:11434", ["qwen3:8b"], null));
+
+        var first = doctor.Inspect(repository.Path);
+        var cached = doctor.Inspect(repository.Path);
+        repository.Write("src/NewService.cs", "public sealed class NewService { }");
+        var invalidated = doctor.Inspect(repository.Path);
+        var forced = doctor.Inspect(repository.Path, refresh: true);
+
+        Assert.False(first.InitializationStatusCached);
+        Assert.True(cached.InitializationStatusCached);
+        Assert.False(invalidated.InitializationStatusCached);
+        Assert.False(forced.InitializationStatusCached);
+        Assert.True(File.Exists(Path.Combine(repository.Path, ".cis", "local", "status", "repository-initialization.json")));
+    }
+
+    [Fact]
     public void Doctor_CountsBothInformationSeveritySpellings()
     {
         var findings = new[]

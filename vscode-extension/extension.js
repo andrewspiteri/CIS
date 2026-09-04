@@ -27,12 +27,12 @@ function activate(context, overrides = {}) {
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   status.command = authority.needsSelection() ? 'cis.selectAuthority' : 'cis.repoDoctor';
   status.text = '$(pulse) CIS'; status.tooltip = 'Change Impact Studio'; status.show(); context.subscriptions.push(status);
-  const refresh = debounce(async (stale = false) => {
+  const refresh = debounce(async (stale = false, invalidate = false) => {
     if (stale) {
       for (const provider of providers.values()) provider.markStale();
       status.text = '$(history) CIS'; status.tooltip = 'CIS evidence changed; refresh required.'; return;
     }
-    cli.clearQueryCache?.();
+    if (invalidate) cli.clearQueryCache?.();
     for (const provider of providers.values()) provider.refresh(false);
     status.text = '$(sync~spin) CIS';
     try {
@@ -55,9 +55,9 @@ function activate(context, overrides = {}) {
     }
   }));
 
-  command('cis.refresh', () => refresh(false));
-  command('cis.selectAuthority', async () => { if (await authority.choose()) await refresh(false); });
-  command('cis.clearAuthority', async () => { await authority.clear(); await refresh(false); });
+  command('cis.refresh', () => refresh(false, true));
+  command('cis.selectAuthority', async () => { if (await authority.choose()) await refresh(false, true); });
+  command('cis.clearAuthority', async () => { await authority.clear(); await refresh(false, true); });
   command('cis.open', item => openCanonical(authority, item?.file, false));
   command('cis.preview', item => openCanonical(authority, item?.file, true));
   command('cis.repoInit', async () => {
@@ -889,8 +889,8 @@ function activate(context, overrides = {}) {
     controller = openDoctorPanel(vscode, current, async (action, value) => {
       try {
         if (action === 'refresh') {
-          current = await cli.query(['repo', 'doctor'], { acceptStructuredFailure: true });
-          controller.update(current); await refresh(false); return;
+          current = await cli.query(['repo', 'doctor', '--refresh'], { acceptStructuredFailure: true });
+          controller.update(current); await refresh(false, true); return;
         }
         if (action !== 'copy-fix') return;
         const finding = (current.findings || []).find(item => item.code === value);
@@ -1304,7 +1304,10 @@ function installWatchers(context, authority, markStale) {
       const root = folder.uri.fsPath;
       const metadata = repositoryMetadata(root, vscode.workspace.getConfiguration('cis').get('documentationRoot', 'docs/cis'));
       const documentationPattern = `${metadata.documentationRoot.replaceAll('\\', '/')}/**/*.md`;
-      const patterns = ['.cis/repository.yml', '.cis/workspace.yml', documentationPattern, '.cis/local/agents/runs/**/*.json', '.cis/local/testing/runs/**/*.json',
+      const patterns = ['.cis/repository.yml', '.cis/workspace.yml', documentationPattern,
+        '**/*.{cs,fs,vb,ts,tsx,js,jsx,mjs,cjs,swift,kt,kts,py,sql,tf,go,rs,java,cpp,c,h,hpp,gd}',
+        '**/*.{csproj,fsproj,vbproj,sln,slnx,gradle}', '**/package.json', '**/Package.swift',
+        '.cis/local/agents/runs/**/*.json', '.cis/local/testing/runs/**/*.json',
         '.cis/local/security/runs/**/*.json', '.cis/local/workflows/**/*.json'];
       for (const pattern of patterns) {
         const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(root, pattern));

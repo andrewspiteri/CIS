@@ -16,7 +16,7 @@ Obtain the workspace path, every source repository path, and one explicit reposi
 3. If any repository cannot initialize, run `cis repo doctor` for that repository with the same root and report the evidence before retrying the batch.
 4. After explicit authorization, repeat import with `--yes`; never add `--yes` to the first run.
 5. Run `cis repo list --workspace <workspace> --format agent` and verify all expected repository IDs and paths.
-6. Run `cis graph build --workspace <workspace> --format agent`, followed by `cis graph validate --workspace <workspace> --format agent`.
+6. Run `cis graph build --workspace <workspace> --format agent`, followed by `cis graph status --workspace <workspace> --format agent`. Use `cis graph validate --workspace <workspace>` at an assurance gate, not as a routine freshness probe.
 7. Use registered repository paths as explicit roots when producing federated context packs. Treat each local graph identity, freshness, diagnostics, and omissions independently.
 
 ## Guardrails

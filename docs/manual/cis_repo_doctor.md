@@ -16,7 +16,8 @@ Inspects a repository for CIS readiness problems and reports evidence-backed sug
 ## Synopsis
 
 ```text
-cis repo doctor [--repo <path>] [--root <repository-relative-path>] [--format <human|json|agent>]
+cis repo doctor [--repo <path>] [--root <repository-relative-path>] [--refresh]
+  [--format <human|json|agent>]
 ```
 
 ## Options
@@ -25,10 +26,19 @@ cis repo doctor [--repo <path>] [--root <repository-relative-path>] [--format <h
 | --- | --- | --- | --- |
 | `--repo <path>` | No | Current directory | Selects the target repository. |
 | `--root <path>` | No | Configured root | Supplies the documentation root attempted by a failed init when no valid repository configuration exists yet. |
+| `--refresh` | No | `false` | Bypasses the content-aware initialization reconciliation cache; live Doctor checks always run. |
 | `--format <format>` | No | `human` | Selects `human`, `json`, or `agent` output. Values are case-insensitive. |
 | `-?`, `-h`, `--help` | No | — | Shows command help without running checks. |
 
 There is no LLM-enablement option. Doctor always probes Ollama and warns when it is unavailable.
+
+The expensive initialization reconciliation is cached under
+`.cis/local/status/repository-initialization.json`. The entry binds the repository file
+metadata, documentation root, and current CIS repository module. Ordinary relevant create,
+edit, delete, or CIS binary changes invalidate it. Environment and contributed checks,
+including Ollama, graph, and index status, still run on each Doctor invocation. JSON and
+agent output expose `initializationStatusCached`; use `--refresh` when an explicit full
+reassessment is required.
 
 After a failed initialization, reuse the same repository and root:
 
@@ -60,14 +70,17 @@ may still work; its suggested fix starts `cis agent provider authenticate <provi
 when the provider exposes a native authentication capability. Doctor never receives a
 credential and does not start an authentication flow itself.
 
-The graph module contributes:
+The graph module contributes lightweight cached-header and input-freshness checks for:
 
 - missing local graph generation reporting;
-- structural, identity, endpoint, evidence, and sensitive-property diagnostics;
+- stored build diagnostics and incompatible cached metadata;
 - stale manifest/input reporting; and
 - accidental Git tracking of `.cis/local/` artifacts.
 
-The index module contributes file-card availability and source-hash freshness checks.
+Deep structural, identity, endpoint, evidence, and sensitive-property assurance remains
+the responsibility of `cis graph validate`.
+
+The index module contributes cached file-card availability and source-hash freshness checks.
 It suggests bounded `cis index build --limit 100` batches when coverage is missing or
 stale. Doctor never invokes a model; it only inspects derived card metadata and source
 hashes.

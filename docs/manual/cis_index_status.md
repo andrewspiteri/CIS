@@ -14,6 +14,12 @@ cis:
 Reports indexed, fresh, stale, missing, and removed file-card coverage without
 invoking a model.
 
+Whole-repository status uses `.cis/local/index-cards/status.json`. The cache binds the
+index manifest and every eligible source path to its length and last-write timestamp.
+When metadata changes, CIS rechecks content hashes and refreshes the disposable cache;
+therefore a timestamp-only change is reconciled as fresh instead of remaining falsely
+stale. Path-scoped status always performs the bounded filesystem assessment.
+
 ```text
 cis index status [--repo <path>] [--path <relative-file-or-directory>]
   [--format <human|json|agent>]

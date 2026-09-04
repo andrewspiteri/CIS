@@ -10,6 +10,8 @@ public sealed partial class FileIndexService
 {
     private const string PromptVersion = "cis-file-index-card-v3";
     private const string IndexRoot = ".cis/local/index-cards";
+    private const string StatusCacheName = "status.json";
+    private const int StatusCacheSchemaVersion = 1;
     private const int ManifestCheckpointInterval = 10;
     private static readonly StringComparison PathComparison = OperatingSystem.IsWindows()
         ? StringComparison.OrdinalIgnoreCase
@@ -224,6 +226,12 @@ public sealed partial class FileIndexService
         var cards = retained.Values.OrderBy(card => card.Path, StringComparer.OrdinalIgnoreCase).ToArray();
         applied |= WriteIfChanged(manifestPath, JsonSerializer.Serialize(cards, JsonOptions) + Environment.NewLine);
         applied |= WriteIfChanged(Path.Combine(outputRoot, "README.md"), RenderIndex(cards));
+        if (string.IsNullOrWhiteSpace(request.Path))
+        {
+            var statusResult = CreateStatusResult(
+                context.RepositoryPath, outputRoot, candidates, cards, sourceHashes, cached: false);
+            WriteStatusCache(outputRoot, manifestPath, candidates, statusResult);
+        }
         var status = errors.Count > 0 ? "partial" : pending > 0 ? "incomplete" : applied ? "built" : "unchanged";
         return new FileIndexBuildResult(
             status, context.RepositoryPath, ToRelative(context.RepositoryPath, outputRoot), route.Provider, route.Model,
@@ -258,6 +266,12 @@ public sealed partial class FileIndexService
 
         var candidates = DiscoverFiles(context.RepositoryPath, selection.AbsolutePath).ToArray();
         var cards = ReadCards(manifestPath);
+        if (string.IsNullOrWhiteSpace(path)
+            && TryReadStatusCache(outputRoot, manifestPath, candidates, out var cached))
+        {
+            return cached! with { Cached = true };
+        }
+
         var byPath = cards.ToDictionary(card => card.Path, StringComparer.OrdinalIgnoreCase);
         var fresh = 0;
         var stale = 0;
@@ -283,8 +297,10 @@ public sealed partial class FileIndexService
             IsWithinSelection(context.RepositoryPath, card.Path, selection.AbsolutePath)
             && !paths.Contains(card.Path));
         var status = stale == 0 && missing == 0 && removed == 0 ? "fresh" : "stale";
-        return new(status, context.RepositoryPath, ToRelative(context.RepositoryPath, outputRoot), candidates.Length,
+        var result = new FileIndexStatusResult(status, context.RepositoryPath, ToRelative(context.RepositoryPath, outputRoot), candidates.Length,
             cards.Count, fresh, stale, missing, removed, [], true, true);
+        if (string.IsNullOrWhiteSpace(path)) WriteStatusCache(outputRoot, manifestPath, candidates, result);
+        return result;
     }
 
     public FileIndexFindResult Find(string repositoryPath, string query, int limit)
@@ -603,6 +619,101 @@ public sealed partial class FileIndexService
         }
     }
 
+    private static FileIndexStatusResult CreateStatusResult(
+        string repositoryPath,
+        string outputRoot,
+        IReadOnlyList<FileCandidate> candidates,
+        IReadOnlyList<FileIndexCard> cards,
+        IReadOnlyDictionary<string, string> sourceHashes,
+        bool cached)
+    {
+        var byPath = cards.ToDictionary(card => card.Path, StringComparer.OrdinalIgnoreCase);
+        var fresh = candidates.Count(candidate => byPath.TryGetValue(candidate.RelativePath, out var card)
+            && string.Equals(card.SourceHash, sourceHashes[candidate.RelativePath], StringComparison.Ordinal));
+        var stale = candidates.Count(candidate => byPath.TryGetValue(candidate.RelativePath, out var card)
+            && !string.Equals(card.SourceHash, sourceHashes[candidate.RelativePath], StringComparison.Ordinal));
+        var missing = candidates.Count - fresh - stale;
+        var paths = candidates.Select(candidate => candidate.RelativePath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var removed = cards.Count(card => !paths.Contains(card.Path));
+        return new FileIndexStatusResult(
+            stale == 0 && missing == 0 && removed == 0 ? "fresh" : "stale",
+            repositoryPath,
+            ToRelative(repositoryPath, outputRoot),
+            candidates.Count,
+            cards.Count,
+            fresh,
+            stale,
+            missing,
+            removed,
+            [],
+            RepositoryConfigurationValid: true,
+            IndexAvailable: true,
+            Cached: cached);
+    }
+
+    private static bool TryReadStatusCache(
+        string outputRoot,
+        string manifestPath,
+        IReadOnlyList<FileCandidate> candidates,
+        out FileIndexStatusResult? result)
+    {
+        result = null;
+        var cachePath = Path.Combine(outputRoot, StatusCacheName);
+        if (!File.Exists(cachePath)) return false;
+        try
+        {
+            var cache = JsonSerializer.Deserialize<FileIndexStatusCache>(File.ReadAllText(cachePath), JsonOptions);
+            if (cache is null || cache.SchemaVersion != StatusCacheSchemaVersion
+                || cache.Manifest != Snapshot(manifestPath)
+                || !cache.Sources.SequenceEqual(candidates.Select(Snapshot)))
+            {
+                return false;
+            }
+
+            result = cache.Result;
+            return result is not null;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static void WriteStatusCache(
+        string outputRoot,
+        string manifestPath,
+        IReadOnlyList<FileCandidate> candidates,
+        FileIndexStatusResult result)
+    {
+        try
+        {
+            var cache = new FileIndexStatusCache(
+                StatusCacheSchemaVersion,
+                DateTimeOffset.UtcNow,
+                Snapshot(manifestPath),
+                candidates.Select(Snapshot).ToArray(),
+                result with { Cached = false });
+            var path = Path.Combine(outputRoot, StatusCacheName);
+            var content = JsonSerializer.Serialize(cache, JsonOptions) + Environment.NewLine;
+            if (File.Exists(path) && string.Equals(File.ReadAllText(path), content, StringComparison.Ordinal)) return;
+            var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            File.WriteAllText(temporary, content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            File.Move(temporary, path, overwrite: true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // A missing cache only makes the next status calculation slower.
+        }
+    }
+
+    private static FileStatusSnapshot Snapshot(FileCandidate candidate) => Snapshot(candidate.AbsolutePath, candidate.RelativePath);
+
+    private static FileStatusSnapshot Snapshot(string path, string? identity = null)
+    {
+        var info = new FileInfo(path);
+        return new FileStatusSnapshot(identity ?? info.Name, info.Length, info.LastWriteTimeUtc.Ticks);
+    }
+
     private static bool WriteIfChanged(string path, string content)
     {
         if (File.Exists(path) && string.Equals(File.ReadAllText(path), content, StringComparison.Ordinal))
@@ -677,6 +788,15 @@ public sealed partial class FileIndexService
             false, repositoryConfigurationValid, status != "invalid-request", false);
 
     private sealed record FileCandidate(string AbsolutePath, string RelativePath);
+
+    private sealed record FileStatusSnapshot(string Path, long Length, long LastWriteUtcTicks);
+
+    private sealed record FileIndexStatusCache(
+        int SchemaVersion,
+        DateTimeOffset GeneratedAt,
+        FileStatusSnapshot Manifest,
+        IReadOnlyList<FileStatusSnapshot> Sources,
+        FileIndexStatusResult Result);
 
     private sealed record TextPrefix(string Text, bool Truncated, bool Binary);
 

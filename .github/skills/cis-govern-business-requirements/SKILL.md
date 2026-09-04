@@ -8,7 +8,7 @@ description: Discover possible BRDs, domain-equivalent product-design documents 
 ## Workflow
 
 1. Confirm `.cis/workspace.yml` identifies exactly one `authority` repository. If not, dry-run `cis workspace init --root <documentation-root>` and request review before using `--yes`.
-2. Run `cis graph build --workspace <workspace>` and `cis graph validate --workspace <workspace>` before intake.
+2. Run `cis graph build --workspace <workspace>` and `cis graph status --workspace <workspace>` before intake. Reserve `cis graph validate --workspace <workspace>` for deep structural assurance.
 3. Run `cis brd discover --workspace <workspace> --format agent`. Treat every found BRD, product-design document such as a GDD, or feature specification as unverified source evidence; absence creates no implied requirements.
 4. Run `cis brd init --workspace <workspace> --title <title>`. Preserve the authority repository's canonical document and catalog entry.
 5. After implementation graph rebuilds, run `cis technical-intent refresh --workspace <workspace> --format agent` before starting the next feature. Do not request renewed BRD, technical-intent, or backlog approval when this safe refresh succeeds. If its BRD stage blocks on new or materially changed source evidence, use `cis brd reconcile --workspace <workspace> --format agent`, review the exact semantic delta, and request only the authority that delta requires.

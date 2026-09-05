@@ -284,6 +284,53 @@ public sealed class AgentExecutionTests
     }
 
     [Fact]
+    public void Run_RejectsWorkspaceWriteAgainstDependencyRepository()
+    {
+        using var repository = AgentRepository.Create();
+        repository.AddEligibleChange();
+        repository.Write("dependency/.cis/repository.yml", "schema_version: 1\nrepository:\n  id: core-banking\ndocumentation_root: docs/cis\n");
+        repository.Write("dependency/docs/cis/catalog.yml", "schema_version: 1\nrepository: core-banking\ndocuments: []\n");
+        repository.Write("docs/cis/changes/CIS-0001/agent-tasks/WORK-090.md",
+            "---\ntask_status: Ready\ntargets: [\"core-banking\"]\n---\n# Integration\nInspect the dependency contract.\n");
+        repository.Write(".cis/workspace.yml", """
+            schema_version: 2
+            ecosystem:
+              id: banking
+              name: Banking
+            product:
+              id: cards
+              name: Cards
+            repositories:
+            - id: agent-fixture
+              path: .
+              documentation_root: docs/cis
+              role: authority
+              participation: owned
+              relationship: none
+              components: []
+            - id: core-banking
+              path: dependency
+              documentation_root: docs/cis
+              role: participant
+              participation: dependency
+              relationship: producer
+              components: [accounts-api]
+            """);
+        var provider = new FakeProvider();
+        var resolver = new CisRepositoryContextResolver();
+        var service = new AgentService(resolver, [provider], new WorkspaceRegistry(resolver), clock: Clock);
+
+        var result = service.Run(repository.Path, "CIS-0001", "WORK-090", "fake", CisAgentRunModes.Implement,
+            CisAgentPermissions.WorkspaceWrite, "core-banking", null, 60, false, "Andrew Spiteri",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(4, result.ExitCode);
+        Assert.Equal(0, provider.ExecuteCalls);
+        Assert.Contains(result.Diagnostics, item => item.Contains(
+            "cannot receive product implementation writes", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void AuthorBrd_UsesDigestBoundReferenceAndAppliesOnlyTheProtectedDraft()
     {
         using var repository = AgentRepository.Create(git: false);
@@ -1601,7 +1648,7 @@ The owner evaluates one customer using authorized BI evidence and relevant relat
         }
         public void AddBrd(string status = "Review Required")
         {
-            Write(".cis/workspace.yml", "schema_version: 1\nauthority_repository_id: agent-fixture\n");
+            Write(".cis/workspace.yml", "schema_version: 2\necosystem:\n  id: fixture\n  name: Fixture\nproduct:\n  id: fixture\n  name: Fixture\nrepositories:\n- id: agent-fixture\n  path: .\n  documentation_root: docs/cis\n  role: authority\n  participation: owned\n  relationship: none\n  components: []\n");
             Write("docs/cis/specs/business-requirements.md", $"""
                 ---
                 title: "Agent Fixture BRD"
@@ -1640,7 +1687,7 @@ The owner evaluates one customer using authorized BI evidence and relevant relat
         }
         public void AddFeature()
         {
-            Write(".cis/workspace.yml", "schema_version: 1\nrepositories:\n- id: agent-fixture\n  path: .\n  documentation_root: docs/cis\n  role: authority\n");
+            Write(".cis/workspace.yml", "schema_version: 2\necosystem:\n  id: fixture\n  name: Fixture\nproduct:\n  id: fixture\n  name: Fixture\nrepositories:\n- id: agent-fixture\n  path: .\n  documentation_root: docs/cis\n  role: authority\n  participation: owned\n  relationship: none\n  components: []\n");
             Write("docs/cis/specs/business-requirements.md", "---\nstatus: Active\n---\n# BRD\n\n## Functional requirements\n\n| ID | Outcome | Requirement | Priority |\n| --- | --- | --- | --- |\n| BR-FR-001 | Customer risk assessment | Assess one customer. | Must |\n");
             Write("docs/cis/specs/technical-intent-spec.md", "---\nstatus: Active\n---\n# Technical intent\n\nUse bounded components and explicit contracts.\n");
             Write("docs/cis/architecture/overall-solution-design.md", "---\nstatus: Active\n---\n# Overall solution design\n\nRisk assessment is separated from data preparation.\n");

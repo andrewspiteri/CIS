@@ -39,7 +39,9 @@ public sealed class DefinitionWizardTests
         using var application = CreateApplication();
 
         var workspace = Invoke(application,
-            ["workspace", "init", "--repo", repository.Path, "--root", "docs/cis", "--yes", "--format", "json"]);
+            ["workspace", "init", "--repo", repository.Path, "--root", "docs/cis",
+                "--ecosystem", "sample", "--product", "sample", "--ecosystem-name", "Sample", "--product-name", "Sample",
+                "--yes", "--format", "json"]);
         Assert.Equal(0, workspace.ExitCode);
         var technicalIntent = Path.Combine(repository.Path, "docs", "cis", "specs", "technical-intent-spec.md");
         File.AppendAllText(technicalIntent, "\nHuman-managed technical direction.\n");
@@ -75,7 +77,9 @@ public sealed class DefinitionWizardTests
         using var repository = TemporaryRepository.Create();
         using var application = CreateApplication();
         Assert.Equal(0, Invoke(application,
-            ["workspace", "init", "--repo", repository.Path, "--root", "docs/cis", "--yes", "--format", "json"]).ExitCode);
+            ["workspace", "init", "--repo", repository.Path, "--root", "docs/cis",
+                "--ecosystem", "sample", "--product", "sample", "--ecosystem-name", "Sample", "--product-name", "Sample",
+                "--yes", "--format", "json"]).ExitCode);
         Assert.Equal(0, Invoke(application,
             ["definition", "init", "--workspace", repository.Path, "--format", "json"]).ExitCode);
         var authority = new ProductDefinitionAuthority(new CisRepositoryContextResolver());

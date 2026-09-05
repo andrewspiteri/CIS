@@ -61,9 +61,7 @@ public sealed class BrdBacklogService
         var existing = existingContent is not null
             ? ParseItems(existingContent).ToDictionary(item => item.RequirementId, StringComparer.Ordinal)
             : new Dictionary<string, BrdBacklogItem>(StringComparer.Ordinal);
-        var routableRepositories = state.Workspace!.Repositories
-            .Where(repository => repository.Role == "participant")
-            .ToArray();
+        var routableRepositories = state.Workspace!.DeliveryRepositories.ToArray();
         if (routableRepositories.Length == 0 && state.Workspace.AuthorityRepository is { } authorityRepository)
             routableRepositories = [authorityRepository];
         var repositoryRoles = routableRepositories
@@ -289,10 +287,22 @@ public sealed class BrdBacklogService
         foreach (var unknown in items.Select(item => item.RequirementId).Except(requiredIds, StringComparer.Ordinal))
             errors.Add($"High-level item references an unknown BRD requirement: {unknown}");
         var ids = items.Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
+        var deliveryRepositoryIds = state.Workspace!.DeliveryRepositories
+            .Select(repository => repository.Id)
+            .ToHashSet(StringComparer.Ordinal);
+        if (deliveryRepositoryIds.Count == 0 && state.Workspace.AuthorityRepository is { } deliveryAuthority)
+            deliveryRepositoryIds.Add(deliveryAuthority.Id);
+        var dependencyRepositoryIds = state.Workspace.DependencyRepositories
+            .Select(repository => repository.Id)
+            .ToHashSet(StringComparer.Ordinal);
         foreach (var item in items)
         {
             if (string.IsNullOrWhiteSpace(item.Outcome) || Placeholder(item.Outcome)) errors.Add($"High-level item outcome is incomplete: {item.Id}");
             if (item.Repositories.Count == 0) errors.Add($"High-level item has no affected repository: {item.Id}");
+            foreach (var repository in item.Repositories.Where(repository => !deliveryRepositoryIds.Contains(repository)))
+                errors.Add(dependencyRepositoryIds.Contains(repository)
+                    ? $"High-level item cannot route implementation to dependency repository '{repository}': {item.Id}"
+                    : $"High-level item references a repository outside the product delivery boundary: {repository} ({item.Id})");
             if (item.FrontendTypes.Any(value => value is not ("public" or "customer" or "backoffice")))
                 errors.Add($"High-level item has invalid frontend type: {item.Id}");
             foreach (var dependency in item.DependsOn.Where(dependency => !ids.Contains(dependency)))

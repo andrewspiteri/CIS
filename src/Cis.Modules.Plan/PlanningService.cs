@@ -22,6 +22,7 @@ public sealed class PlanningService
     private readonly IReadOnlyList<IChangeReadinessCheck> _readinessChecks;
     private readonly IReadOnlyList<ICisFeatureApprovalAuthority> _featureAuthorities;
     private readonly ManualTestAutomationScanner _automationScanner;
+    private readonly ICisWorkspaceRegistry? _workspaceRegistry;
     private readonly Func<DateTimeOffset> _clock;
 
     public PlanningService(
@@ -47,6 +48,7 @@ public sealed class PlanningService
         _readinessChecks = (readinessChecks ?? []).ToArray();
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
         _featureAuthorities = (featureAuthorities ?? []).ToArray();
+        _workspaceRegistry = workspaceRegistry;
         _automationScanner = new ManualTestAutomationScanner(resolver, workspaceRegistry);
     }
 
@@ -785,6 +787,20 @@ public sealed class PlanningService
 
         if (source is not null)
         {
+            var workspace = _workspaceRegistry?.Resolve(change.RepositoryPath);
+            if (workspace is { IsSuccess: true, Workspace: not null })
+            {
+                var deliveryIds = workspace.Workspace.DeliveryRepositories.Select(repository => repository.Id)
+                    .ToHashSet(StringComparer.Ordinal);
+                if (deliveryIds.Count == 0 && workspace.Workspace.AuthorityRepository is { } authority)
+                    deliveryIds.Add(authority.Id);
+                var dependencyIds = workspace.Workspace.DependencyRepositories.Select(repository => repository.Id)
+                    .ToHashSet(StringComparer.Ordinal);
+                foreach (var target in source.Targets.Where(target => !deliveryIds.Contains(target)))
+                    errors.Add(dependencyIds.Contains(target)
+                        ? $"Feature delivery cannot target dependency repository '{target}'; create a separately governed dependency change or coordination record."
+                        : $"Feature delivery target is outside the product boundary: {target}");
+            }
             errors.AddRange(ValidateSourceCurrency(change, source));
             var coveredRequirements = workItems.SelectMany(item => item.RequirementIds)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);

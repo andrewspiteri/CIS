@@ -48,9 +48,11 @@ implementation and observes all affected repositories.
 
 ## Route work to repository owners
 
-In a workspace, participant roles route tasks to frontend, backend, database, and
-infrastructure repositories. Cross-cutting coordination remains workspace-wide. When
-classification evidence is absent, the plan conservatively retains declared targets.
+In a workspace, product-owned repository roles route tasks to frontend, backend,
+database, and infrastructure repositories. Dependencies remain read-only context;
+their implementation requires a separately governed product change. Cross-cutting
+coordination remains workspace-wide. When classification evidence is absent, the plan
+conservatively retains declared owned targets.
 
 ## Cross-surface signals increase assurance
 
@@ -70,4 +72,3 @@ their dependencies, and route them to the right owners.
 - [Core task-type catalogue](../specs/core-task-type-catalog.md)
 - [Task-type contract](../specs/task-type-contract-spec.md)
 - [Module ownership map](../references/module-ownership-map.md)
-

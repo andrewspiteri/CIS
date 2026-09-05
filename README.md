@@ -151,17 +151,18 @@ ownership, collision, and recoverable-quarantine behavior.
 
 ### 2.4. Initializing a multi-repository workspace
 
-Use one documentation repository as the workspace authority when business requirements,
-technical direction, and cross-repository changes span several repositories. Product
-repositories are imported as participants and retain ownership of their local facts.
+Use one documentation repository as the workspace authority when one product spans
+several repositories. The workspace records a stable product identity inside its wider
+software ecosystem. Product-owned repositories can receive implementation work;
+external producer or consumer repositories are bounded read context only.
 
 Initialize the authority repository first:
 
 ```powershell
 Set-Location C:\work\commerce-docs
 
-cis workspace init --root docs --dry-run --format agent
-cis workspace init --root docs --yes
+cis workspace init --root docs --ecosystem commerce --product ordering --dry-run --format agent
+cis workspace init --root docs --ecosystem commerce --product ordering --yes
 ```
 
 Then import the participant repositories. Import records their locations and initializes
@@ -172,12 +173,14 @@ cis repo import `
   --workspace C:\work\commerce-docs `
   --source C:\work\orders-api C:\work\orders-web C:\work\orders-infra `
   --root docs\cis `
+  --participation owned --relationship none `
   --dry-run --format agent
 
 cis repo import `
   --workspace C:\work\commerce-docs `
   --source C:\work\orders-api C:\work\orders-web C:\work\orders-infra `
   --root docs\cis `
+  --participation owned --relationship none `
   --yes
 
 cis repo list --workspace C:\work\commerce-docs
@@ -185,9 +188,12 @@ cis graph build --workspace C:\work\commerce-docs --format agent
 cis graph validate --workspace C:\work\commerce-docs --strict
 ```
 
-The authority repository owns the workspace-scoped business requirements and technical
-intent. Those documents must be current and approved before governed workspace changes
-can be planned.
+Import a repository owned by another product with `--participation dependency` and an
+explicit `producer`, `consumer`, or `bidirectional` relationship. Its contracts and
+components can inform technical intent, but its implementation is governed by its own
+product workspace. The authority repository owns this product's business requirements
+and technical intent. Those documents must be current and approved before governed
+product changes can be planned.
 
 Continue with the [workspace initialization](docs/manual/cis_workspace_init.md),
 [repository import](docs/manual/cis_repo_import.md), and

@@ -25,6 +25,7 @@ public sealed class RepositoryModule : ICisModule
         services.AddSingleton<ICisRepositoryDoctorCheck, JavaScriptToolingDoctorCheck>();
         services.AddSingleton<ICisRepositoryDoctorCheck, TestSuiteProfileDoctorCheck>();
         services.AddSingleton<ICisRepositoryDoctorCheck, SecuritySuiteProfileDoctorCheck>();
+        services.AddSingleton<ICisRepositoryDoctorCheck, WorkspaceBoundaryDoctorCheck>();
         services.AddSingleton<RepositoryDoctor>();
     }
 
@@ -120,7 +121,7 @@ public sealed class RepositoryModule : ICisModule
     {
         var command = new Command(
             "import",
-            "Initialize and register one or more existing repositories in a CIS workspace.");
+            "Register existing repositories as product-owned implementation or directional dependency context.");
         var workspace = new Option<string>("--workspace")
         {
             Description = "Workspace path. Defaults to the current directory.",
@@ -138,6 +139,32 @@ public sealed class RepositoryModule : ICisModule
             Description = "Required repository-relative documentation root used for every imported repository.",
             Required = true,
         };
+        var participation = new Option<string>("--participation")
+        {
+            Description = "Required product participation: owned or dependency.",
+            Required = true,
+        };
+        var relationship = new Option<string>("--relationship")
+        {
+            Description = "Required direction relative to the product: none, producer, consumer, or bidirectional.",
+            Required = true,
+        };
+        var components = new Option<string[]>("--component")
+        {
+            Description = "Optional component identity limiting dependency scope. Repeat as needed.",
+            Arity = ArgumentArity.ZeroOrMore,
+            AllowMultipleArgumentsPerToken = true,
+        };
+        var ecosystem = new Option<string?>("--ecosystem")
+        {
+            Description = "Ecosystem identity required only when self-import bootstraps a workspace authority.",
+        };
+        var product = new Option<string?>("--product")
+        {
+            Description = "Product identity required only when self-import bootstraps a workspace authority.",
+        };
+        var ecosystemName = new Option<string?>("--ecosystem-name");
+        var productName = new Option<string?>("--product-name");
         var dryRun = new Option<bool>("--dry-run")
         {
             Description = "Plan initialization and workspace registration without writing files.",
@@ -154,6 +181,13 @@ public sealed class RepositoryModule : ICisModule
         command.Options.Add(workspace);
         command.Options.Add(source);
         command.Options.Add(root);
+        command.Options.Add(participation);
+        command.Options.Add(relationship);
+        command.Options.Add(components);
+        command.Options.Add(ecosystem);
+        command.Options.Add(product);
+        command.Options.Add(ecosystemName);
+        command.Options.Add(productName);
         command.Options.Add(dryRun);
         command.Options.Add(yes);
         command.Options.Add(format);
@@ -172,7 +206,14 @@ public sealed class RepositoryModule : ICisModule
                 parseResult.GetValue(root) ?? string.Empty,
                 parseResult.GetValue(source) ?? [],
                 parseResult.GetValue(dryRun),
-                parseResult.GetValue(yes)));
+                parseResult.GetValue(yes),
+                parseResult.GetValue(participation) ?? string.Empty,
+                parseResult.GetValue(relationship) ?? string.Empty,
+                parseResult.GetValue(components) ?? [],
+                parseResult.GetValue(ecosystem),
+                parseResult.GetValue(product),
+                parseResult.GetValue(ecosystemName),
+                parseResult.GetValue(productName)));
             RenderImport(result, selectedFormat);
             return result.ExitCode;
         });
@@ -402,7 +443,8 @@ public sealed class RepositoryModule : ICisModule
             {
                 Console.WriteLine(
                     $"repository={repository.Id};path={NormalizeAgentValue(repository.RepositoryPath)};" +
-                    $"documentationRoot={repository.DocumentationRoot};status={repository.Status}");
+                    $"documentationRoot={repository.DocumentationRoot};participation={repository.Participation};" +
+                    $"relationship={repository.Relationship};components={string.Join(',', repository.ComponentScope)};status={repository.Status}");
                 RenderAgentItems($"createFile.{repository.Id}", repository.FilesToCreate);
                 RenderAgentItems($"updateFile.{repository.Id}", repository.FilesToUpdate);
             }
@@ -420,7 +462,8 @@ public sealed class RepositoryModule : ICisModule
         {
             Console.WriteLine(
                 $"Repository: {repository.Id} [{repository.Status}] {repository.RepositoryPath} " +
-                $"(docs: {repository.DocumentationRoot})");
+                $"(docs: {repository.DocumentationRoot}; participation: {repository.Participation}; " +
+                $"relationship: {repository.Relationship}; components: {string.Join(", ", repository.ComponentScope)})");
         }
 
         RenderHumanItems("Warning", result.Warnings);
@@ -453,11 +496,15 @@ public sealed class RepositoryModule : ICisModule
                 $"repositories={result.Workspace?.Repositories.Count ?? 0}");
             Console.WriteLine($"workspace={result.Workspace?.WorkspacePath ?? string.Empty}");
             Console.WriteLine($"configuration={result.Workspace?.ConfigurationPath ?? string.Empty}");
+            Console.WriteLine($"ecosystem={result.Workspace?.Ecosystem?.Id ?? string.Empty};name={NormalizeAgentValue(result.Workspace?.Ecosystem?.Name ?? string.Empty)}");
+            Console.WriteLine($"product={result.Workspace?.Product?.Id ?? string.Empty};name={NormalizeAgentValue(result.Workspace?.Product?.Name ?? string.Empty)}");
             foreach (var repository in result.Workspace?.Repositories ?? [])
             {
                 Console.WriteLine(
                     $"repository={repository.Id};path={NormalizeAgentValue(repository.RepositoryPath)};" +
-                    $"documentationRoot={repository.DocumentationRoot};role={repository.Role}");
+                    $"documentationRoot={repository.DocumentationRoot};role={repository.Role};" +
+                    $"participation={repository.Participation};relationship={repository.Relationship};" +
+                    $"components={string.Join(',', repository.Components)}");
             }
 
             RenderAgentItems("error", result.Errors.Select(NormalizeAgentValue));
@@ -468,11 +515,15 @@ public sealed class RepositoryModule : ICisModule
         if (result.Workspace is not null)
         {
             Console.WriteLine($"Workspace: {result.Workspace.WorkspacePath}");
+            Console.WriteLine($"Ecosystem: {result.Workspace.Ecosystem?.Name} [{result.Workspace.Ecosystem?.Id}]");
+            Console.WriteLine($"Product: {result.Workspace.Product?.Name} [{result.Workspace.Product?.Id}]");
             foreach (var repository in result.Workspace.Repositories)
             {
                 Console.WriteLine(
                     $"Repository: {repository.Id} - {repository.RepositoryPath} " +
-                    $"(docs: {repository.DocumentationRoot}; role: {repository.Role})");
+                    $"(docs: {repository.DocumentationRoot}; role: {repository.Role}; " +
+                    $"participation: {repository.Participation}; relationship: {repository.Relationship}; " +
+                    $"components: {string.Join(", ", repository.Components)})");
             }
         }
 

@@ -4,8 +4,9 @@ applyTo: "docs/specs/technical-intent-*.md"
 
 # CIS technical intent authority
 
-- The workspace authority owns one canonical workspace-scoped technical intent; participant repositories retain repository-scoped supporting intent documents.
-- An Active/current BRD, completed/current governed technical questionnaire, and fresh participant graphs are required before technical-intent initialization or approval.
+- The workspace authority owns one canonical product-scoped technical intent; participant repositories retain repository-scoped supporting intent documents.
+- An Active/current BRD, completed/current governed technical questionnaire, and fresh product-owned participant graphs are required before technical-intent initialization or approval. Dependency graph drift is visible integration context, not product-authority evidence.
+- Infer product frameworks, architecture, databases, and modules only from product-owned repositories. Record dependency repositories as directional integration points with their declared component scope; never absorb their implementation choices as product direction.
 - Existing implementations derive only evidence-supported technical facts with confidence and repository provenance; ambiguous choices remain human questions. Greenfield projects require human answers for every direction. Advisory starting directions become authority only through an explicit human answer.
 - Initialization creates a Draft from questionnaire answers, the BRD, classifications, graph, and Active standards, including logical components, BRD-derived product modules, detailed responsibility profiles, and stable integration points.
 - Review every `TI-MOD-*` candidate against the module completeness fields: purpose, BRD authority, ownership and exclusions, inputs, outputs, data/state, security/policy, failure/recovery, and verification. Do not equate a module with a deployable unless topology requires it.

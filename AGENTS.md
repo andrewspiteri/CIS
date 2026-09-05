@@ -19,16 +19,16 @@
 
 ## Repository bootstrap
 
-- Run `cis workspace init --root <docs-root>` first when creating the authority documentation repository for a multi-repository workspace.
+- Run `cis workspace init --root <docs-root> --ecosystem <ecosystem-id> --product <product-id>` first when creating the authority documentation repository. One workspace governs one product.
 - Run `cis repo init` with an explicit maintainer-selected documentation root when onboarding or reconciling a target repository.
 - Treat confirmation-required status as a review gate. Do not pass `--yes` until the plan has been reviewed and authorization is clear.
 - If init returns an error or collision, run `cis repo doctor` with the same `--repo` and `--root`, then report its evidence and suggested fixes before retrying.
-- Import participant repositories with `cis repo import`, then build the workspace graph before starting governed documentation work.
+- Import product-owned participants with `cis repo import --participation owned --relationship none`. Import external producer/consumer repositories with `--participation dependency`, an explicit directional relationship, and optional component scope. Then build the workspace graph before starting governed documentation work.
 
 ## Business requirements
 
 - Use `.github/skills/cis-govern-business-requirements/SKILL.md` for BRD discovery, reconciliation, validation, status, and approval work.
-- Treat BRDs found in participant repositories as source evidence, never as proof that requirements are current.
+- Treat BRDs found in product-owned participant repositories as source evidence, never as proof that requirements are current. Dependency-repository documents belong to another product authority and must not enter this product's BRD.
 - Agents may discover, draft, reconcile, and validate. They must not invent stakeholder decisions, assess sources on a human's behalf, or approve a BRD without explicit authorization, reviewer identity, and reason.
 - After a development feature specification is created or changed, rebuild its repository graph and run `cis brd reconcile`; an Adopted feature specification must update the relevant BRD sections and be cited by source ID in Traceability.
 - Run `cis graph build --workspace <workspace>` after BRD approval so derived context reflects the new canonical state.
@@ -36,7 +36,7 @@
 ## Technical intent
 
 - Use `.github/skills/cis-govern-technical-intent/SKILL.md` after BRD approval and before creating a workspace change dossier.
-- Treat the authority repository's workspace-scoped technical intent as distinct from participant repository intent documents.
+- Treat the authority repository's product-scoped technical intent as distinct from participant repository intent documents. Dependency technology is integration context, not inferred product direction.
 - Agents may draft direction and options, but must not resolve or defer `TI-DEC-*` choices or approve technical intent without explicit human identity and rationale.
 - `cis change create`, `cis plan build`, and `cis plan import-spec` require Active, current technical intent in a workspace authority.
 - Rebuild the workspace graph after technical-intent approval.

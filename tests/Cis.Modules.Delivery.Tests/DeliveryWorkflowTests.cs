@@ -1104,14 +1104,28 @@ feature_spec_sha256: "{featureSha}"
     {
         using var repository = TemporaryRepository.Create();
         repository.Write(".cis/workspace.yml", """
-            schema_version: 1
+            schema_version: 2
+            ecosystem:
+              id: fixture
+              name: Fixture
+            product:
+              id: fixture
+              name: Fixture
             repositories:
             - id: docs
               path: .
+              documentation_root: docs/cis
               role: authority
+              participation: owned
+              relationship: none
+              components: []
             - id: web
               path: targets/web
+              documentation_root: docs/cis
               role: participant
+              participation: owned
+              relationship: none
+              components: []
             """);
         repository.Write("targets/web/node_modules/sharp/package.json", "{\"name\":\"sharp\"}");
         repository.Write("docs/changes/CIS-0001/assets/render.mjs", "// renderer");
@@ -1515,6 +1529,70 @@ status: Draft
     }
 
     [Fact]
+    public void PlanImportSpec_RejectsDependencyRepositoryAsAnImplementationTarget()
+    {
+        using var repository = TemporaryRepository.Create();
+        var services = CreateServices();
+        var authorityId = new CisRepositoryContextResolver().Resolve(repository.Path).Context!.RepositoryId;
+        repository.Write("dependency/.cis/repository.yml",
+            "schema_version: 1\nrepository:\n  id: core-banking\ndocumentation_root: docs/cis\n");
+        repository.Write("dependency/docs/cis/catalog.yml",
+            "schema_version: 1\nrepository: core-banking\ndocuments: []\n");
+        repository.Write(".cis/workspace.yml", $$"""
+            schema_version: 2
+            ecosystem:
+              id: banking
+              name: Banking
+            product:
+              id: cards
+              name: Cards
+            repositories:
+            - id: {{authorityId}}
+              path: .
+              documentation_root: docs/cis
+              role: authority
+              participation: owned
+              relationship: none
+              components: []
+            - id: core-banking
+              path: dependency
+              documentation_root: docs/cis
+              role: participant
+              participation: dependency
+              relationship: producer
+              components: [accounts-api]
+            """);
+        var change = Assert.IsType<ChangeDossier>(services.Changes.Create(new ChangeCreateRequest(
+            repository.Path, "Cards integration", "Cards consume the account contract.",
+            [new ChangeRoot("orders-api", "component")])).Change);
+        var analysis = services.Impacts.Analyse(new ImpactAnalyseRequest(repository.Path, change.Id, [], 1, 100, false));
+        foreach (var finding in analysis.Findings)
+            services.Impacts.Disposition(repository.Path, change.Id, finding.Id, "accepted", "Reviewed scope.");
+        DefineAcceptanceCriteria(services.Changes.DossierFile(change, "proposal.md"));
+        repository.Write("docs/cis/specs/dependency-target.md", """
+            ---
+            title: Dependency target
+            type: feature-specification
+            targets:
+              - core-banking
+            ---
+
+            ## Functional requirements
+
+            | ID | Surface | Frontend type | Requirement | Acceptance criteria |
+            |---|---|---|---|---|
+            | CARD-001 | backend | not-applicable | Cards shall consume the governed accounts contract. | Contract compatibility is verified. |
+            """);
+
+        var result = services.Plans.ImportSpec(new FeatureSpecImportRequest(
+            repository.Path, change.Id, "docs/cis/specs/dependency-target.md"));
+
+        Assert.NotEqual(0, result.ExitCode);
+        Assert.Contains(Assert.IsType<PlanValidation>(result.Validation).Errors, error => error.Contains(
+            "Feature delivery cannot target dependency repository 'core-banking'", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void PlanImportSpec_UsesPositiveTaskSignalsAndClassificationBasedRepositoryRouting()
     {
         using var repository = TemporaryRepository.Create();
@@ -1527,21 +1605,44 @@ status: Draft
             services.Impacts.Disposition(repository.Path, change.Id, finding.Id, "accepted", "Reviewed scope.");
         DefineAcceptanceCriteria(services.Changes.DossierFile(change, "proposal.md"));
 
-        repository.Write(".cis/workspace.yml", """
-            schema_version: 1
+        var authorityId = new CisRepositoryContextResolver().Resolve(repository.Path).Context!.RepositoryId;
+        repository.Write(".cis/workspace.yml", $$"""
+            schema_version: 2
+            ecosystem:
+              id: fixture
+              name: Fixture
+            product:
+              id: fixture
+              name: Fixture
             repositories:
+            - id: {{authorityId}}
+              path: .
+              documentation_root: docs/cis
+              role: authority
+              participation: owned
+              relationship: none
+              components: []
             - id: api
               path: targets/api
               documentation_root: docs
               role: participant
+              participation: owned
+              relationship: none
+              components: []
             - id: web
               path: targets/web
               documentation_root: docs
               role: participant
+              participation: owned
+              relationship: none
+              components: []
             - id: infra
               path: targets/infra
               documentation_root: docs
               role: participant
+              participation: owned
+              relationship: none
+              components: []
             """);
         repository.Write("targets/api/.cis/starter-manifest.yml", """
             schema_version: 1
@@ -2191,7 +2292,8 @@ status: Draft
             () => DateTimeOffset.Parse("2026-08-09T10:00:00Z"));
         var plans = new PlanningService(changes, impacts, decisions, resolver,
             taskTypes: taskTypes, toolUsage: usage, capabilities: capabilityStore,
-            featureAuthorities: featureAuthorities, readinessChecks: readinessChecks);
+            featureAuthorities: featureAuthorities, readinessChecks: readinessChecks,
+            workspaceRegistry: new WorkspaceRegistry(resolver));
         var designs = new DesignService(changes, new DesignTemplateCatalog(), featureAuthorities ?? [],
             () => DateTimeOffset.Parse("2026-08-09T10:00:00Z"), designRunner);
         return new Services(changes, decisions, impacts, plans, designs, usage, graph, docsValidation);

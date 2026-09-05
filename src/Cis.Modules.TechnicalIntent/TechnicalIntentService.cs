@@ -422,15 +422,23 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck
             {
                 var classification = classifier.Classify(repository.RepositoryPath);
                 warnings.AddRange(classification.Warnings.Select(warning => $"Repository '{repository.Id}' classification: {warning}"));
-                if (classification.Components.Count == 0)
+                var classifiedComponents = repository.Components.Count == 0
+                    ? classification.Components
+                    : classification.Components.Where(component => repository.Components.Contains(component.Id, StringComparer.OrdinalIgnoreCase)).ToArray();
+                if (repository.Components.Count > 0 && classifiedComponents.Count == 0)
+                    readinessErrors.Add($"Repository '{repository.Id}' declares component scope {string.Join(", ", repository.Components)}, but none matched its current classification.");
+                if (classifiedComponents.Count == 0)
                 {
-                    surfaces.Add(new TechnicalSurface(repository.Id, repository.Role, "unclassified", ".", [], [], [], [], "unknown"));
+                    surfaces.Add(new TechnicalSurface(repository.Id, repository.Role, repository.Participation,
+                        repository.Relationship, "unclassified", ".", [], [], [], [], "unknown"));
                 }
                 else
                 {
-                    surfaces.AddRange(classification.Components.Select(component => new TechnicalSurface(
+                    surfaces.AddRange(classifiedComponents.Select(component => new TechnicalSurface(
                         repository.Id,
                         repository.Role,
+                        repository.Participation,
+                        repository.Relationship,
                         component.Id,
                         component.Root,
                         component.Languages,
@@ -443,7 +451,8 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
                 warnings.Add($"Repository '{repository.Id}' could not be classified for the technical-intent scaffold: {exception.Message}");
-                surfaces.Add(new TechnicalSurface(repository.Id, repository.Role, "unclassified", ".", [], [], [], [], "unknown"));
+                surfaces.Add(new TechnicalSurface(repository.Id, repository.Role, repository.Participation,
+                    repository.Relationship, "unclassified", ".", [], [], [], [], "unknown"));
             }
 
             standards.AddRange(DiscoverStandards(repository, warnings));
@@ -918,7 +927,7 @@ cis:
         else if (state.Brd is { Outcomes.Count: > 0 } outcomes)
             candidates.AddRange(outcomes.Outcomes.Select(item => (CapabilityName(item), item, RequirementIds(item), "BRD Business outcomes")));
         else
-            candidates.AddRange(state.Surfaces.Where(item => item.Component != "unclassified")
+            candidates.AddRange(state.Surfaces.Where(item => item.Participation == "owned" && item.Component != "unclassified")
                 .Select(item => (item.Component, $"Preserve the detected {item.Component} implementation boundary in {item.RepositoryId}.",
                     (IReadOnlyList<string>)(state.Brd?.RequirementIds ?? []), $"Repository classification: {item.RepositoryId}/{item.Root}")));
 
@@ -1023,6 +1032,27 @@ cis:
                 Add($"TI-INT-{Slug(module.Name)}-SEARCH", module.Name, "Approved authoritative content changes or a scoped retrieval is requested.", "Search and retrieval boundary",
                     "Pointer-based projection or security-scoped query with source version and rebuild identity.", asyncDirection,
                     identity, "Search remains derived and rebuildable; stale, missing, or unauthorized results never change the system of record.", requirements);
+        }
+
+        foreach (var dependency in state.Surfaces.Where(item => item.Participation == "dependency")
+                     .GroupBy(item => new { item.RepositoryId, item.Relationship }))
+        {
+            var componentNames = dependency.Where(item => item.Component != "unclassified")
+                .Select(item => item.Component).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            var boundary = componentNames.Length == 0
+                ? dependency.Key.RepositoryId
+                : $"{dependency.Key.RepositoryId} ({string.Join(", ", componentNames)})";
+            const string payload = "Versioned dependency contract, correlation identity, compatibility evidence, and bounded failure result.";
+            if (dependency.Key.Relationship is "producer" or "bidirectional")
+                Add($"TI-INT-{Slug(dependency.Key.RepositoryId)}-PRODUCT", boundary,
+                    "The dependency produces a capability, contract, event, or data result consumed by this product.",
+                    "Owning product module", payload, contract, identity,
+                    "Dependency unavailability or incompatibility is isolated, diagnosed, and recovered without silently changing product authority.", allRequirements);
+            if (dependency.Key.Relationship is "consumer" or "bidirectional")
+                Add($"TI-INT-PRODUCT-{Slug(dependency.Key.RepositoryId)}", "Owning product module",
+                    "The product produces a capability, contract, event, or data result consumed by the dependency.",
+                    boundary, payload, contract, identity,
+                    "Consumer compatibility is retained or migrated explicitly; delivery does not modify the dependency without separate authority.", allRequirements);
         }
 
         return points;
@@ -1150,7 +1180,7 @@ cis:
             "Trace durable choices to BRD requirement IDs, applicable standard rule IDs, and an ADR where the choice has meaningful alternatives or long-lived consequences.",
             "Prefer deterministic verification and observable evidence for architecture constraints; model output is advisory evidence only.",
         };
-        if (state.Surfaces.All(item => item.Component == "unclassified"))
+        if (state.Surfaces.Where(item => item.Participation == "owned").All(item => item.Component == "unclassified"))
             goals.Add("Retain technology neutrality until the runtime shape and repository boundaries are explicitly selected; repository initialization found no implementation component.");
         return string.Join('\n', goals.Select(goal => "- " + goal));
     }
@@ -1160,11 +1190,11 @@ cis:
         var builder = new StringBuilder()
             .AppendLine("Repository classifications are deterministic routing evidence, not an architecture decision.")
             .AppendLine()
-            .AppendLine("| Repository | Workspace role | Component | Root | Languages and frameworks | Roles | Capabilities | Confidence |")
-            .AppendLine("| --- | --- | --- | --- | --- | --- | --- | --- |");
+            .AppendLine("| Repository | Workspace role | Product participation | Relationship | Component | Root | Languages and frameworks | Roles | Capabilities | Confidence |")
+            .AppendLine("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
         foreach (var item in surfaces)
         {
-            builder.AppendLine($"| {Cell(item.RepositoryId)} | {Cell(item.WorkspaceRole)} | {Cell(item.Component)} | `{Cell(item.Root)}` | " +
+            builder.AppendLine($"| {Cell(item.RepositoryId)} | {Cell(item.WorkspaceRole)} | {Cell(item.Participation)} | {Cell(item.Relationship)} | {Cell(item.Component)} | `{Cell(item.Root)}` | " +
                                $"{Cell(JoinOrNone(item.Languages.Concat(item.Frameworks)))} | {Cell(JoinOrNone(item.Roles))} | " +
                                $"{Cell(JoinOrNone(item.Capabilities))} | {Cell(item.Confidence)} |");
         }
@@ -1193,17 +1223,19 @@ cis:
             return "No Active standards were discovered in the registered repositories. Seed or import the applicable standards, or record the bounded governance gap before implementation.";
 
         var builder = new StringBuilder()
-            .AppendLine("| Repository | Standard | Digest | Targets or stacks | Rules | Path |")
-            .AppendLine("| --- | --- | --- | --- | --- | --- |");
+            .AppendLine("Product-owned standards are architectural constraints. Dependency standards are context for contract reconciliation and are not silently adopted by this product.")
+            .AppendLine()
+            .AppendLine("| Repository | Participation | Standard | Digest | Targets or stacks | Rules | Path |")
+            .AppendLine("| --- | --- | --- | --- | --- | --- | --- |");
         foreach (var standard in state.Standards.Where(item => item.Status.Equals("Active", StringComparison.OrdinalIgnoreCase)))
-            builder.AppendLine($"| {Cell(standard.RepositoryId)} | `{Cell(standard.Id)}` — {Cell(standard.Title)} | `{Cell(standard.Digest)}` | " +
+            builder.AppendLine($"| {Cell(standard.RepositoryId)} | {Cell(standard.Participation)} | `{Cell(standard.Id)}` — {Cell(standard.Title)} | `{Cell(standard.Digest)}` | " +
                                $"{Cell(JoinOrNone(standard.Targets.Concat(standard.Stacks)))} | {Cell(JoinOrNone(standard.RuleIds))} | `{Cell(standard.Path)}` |");
         return builder.ToString().TrimEnd();
     }
 
     private static IReadOnlyList<ArchitectureGuideline> BuildArchitectureGuidelines(State state)
     {
-        var surfaces = state.Surfaces;
+        var surfaces = state.Surfaces.Where(item => item.Participation == "owned").ToArray();
         var guidelines = new List<ArchitectureGuideline>
         {
             new("Keep business rules and policy ownership inside an explicit domain or application boundary; transport, persistence, model, UI, and infrastructure concerns depend on that boundary rather than owning it.", Basis(state, "architecture", "application", "backend", "frontend")),
@@ -1228,7 +1260,7 @@ cis:
 
     private static string RenderRuntimeArchitecture(State state)
     {
-        var unclassified = state.Surfaces.Where(item => item.Component == "unclassified").Select(item => item.RepositoryId).Distinct().ToArray();
+        var unclassified = state.Surfaces.Where(item => item.Participation == "owned" && item.Component == "unclassified").Select(item => item.RepositoryId).Distinct().ToArray();
         var builder = new StringBuilder()
             .AppendLine("- Use the component and repository table above as discovery evidence; the approved component model must be recorded here or in linked ADRs.")
             .AppendLine("- Identify process, network, identity, model/provider, persistence, operator, and external-system trust boundaries before implementation.")
@@ -1248,7 +1280,7 @@ cis:
 
     private static string RenderIntegrationIntent(State state)
     {
-        var frameworks = state.Surfaces.SelectMany(item => item.Frameworks).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var frameworks = state.Surfaces.Where(item => item.Participation == "owned").SelectMany(item => item.Frameworks).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var contractDirection = frameworks.Length == 0
             ? "No repository framework was detected; select and record the applicable contract standards with the runtime architecture."
             : $"Prefer repository-supported contract standards for {RenderInlineCodes(frameworks)}; where no standard applies, make the choice explicit in a `TI-DEC-*` record.";
@@ -1285,7 +1317,7 @@ cis:
 
     private static string RenderQualityIntent(State state)
     {
-        var hasFrontend = state.Surfaces.Any(item => item.Roles.Any(role => role is "frontend-consumer" or "mobile-client" or "native-frontend"));
+        var hasFrontend = state.Surfaces.Any(item => item.Participation == "owned" && item.Roles.Any(role => role is "frontend-consumer" or "mobile-client" or "native-frontend"));
         return $"""
 | Attribute | Draft requirement | Verification direction |
 | --- | --- | --- |
@@ -1300,7 +1332,7 @@ cis:
 
     private static string RenderDeliveryConstraints(State state)
         => $"""
-- The Active BRD and {state.Standards.Count(item => item.Status.Equals("Active", StringComparison.OrdinalIgnoreCase))} Active standards are upstream constraints; a conflict is surfaced for human resolution rather than silently bypassed.
+- The Active BRD and {state.Standards.Count(item => item.Participation == "owned" && item.Status.Equals("Active", StringComparison.OrdinalIgnoreCase))} Active product-owned standards are upstream constraints; dependency standards remain contract context, and any conflict is surfaced for human resolution rather than silently bypassed.
 - Durable choices with meaningful alternatives or consequences are recorded as ADRs and linked to the affected `TI-DEC-*`, BRD requirements, standards, contracts, and repositories.
 - A Draft technical intent authorizes no implementation, provider disclosure, deployment, or release. Detailed planning begins only after all required decisions are resolved or validly deferred and this document is explicitly approved.
 - Delivery must preserve exact build, test, security, architecture, operational, and independent-assurance evidence; unavailable checks remain visible.
@@ -1333,7 +1365,7 @@ cis:
         }
 
         var decisions = new List<string>();
-        var noImplementation = state.Surfaces.All(item => item.Component == "unclassified");
+        var noImplementation = state.Surfaces.Where(item => item.Participation == "owned").All(item => item.Component == "unclassified");
         decisions.Add(noImplementation
             ? "Select the implementation shape, bounded components, repository ownership, runtime processes, and dependency direction."
             : "Confirm the bounded components, repository ownership, runtime processes, and dependency direction for the detected technical surfaces.");
@@ -1464,7 +1496,7 @@ cis:
                 var id = ReadNestedFrontMatter(content, "stable_id");
                 var type = ReadFrontMatter(content, "type");
                 if (string.IsNullOrWhiteSpace(id) || !string.Equals(type, "standard", StringComparison.OrdinalIgnoreCase)) continue;
-                standards.Add(new KnownStandard(repository.Id, id, ReadFrontMatter(content, "title") ?? Path.GetFileNameWithoutExtension(path),
+                standards.Add(new KnownStandard(repository.Id, repository.Participation, id, ReadFrontMatter(content, "title") ?? Path.GetFileNameWithoutExtension(path),
                     ReadFrontMatter(content, "status") ?? "Unknown", ReadFrontMatterSequence(content, "targets"),
                     ReadFrontMatterSequence(content, "stacks").Concat(ReadFrontMatterSequence(content, "stack")).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
                     StandardRuleIdPattern().Matches(content).Select(match => match.Groups["id"].Value).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToArray(),
@@ -1516,7 +1548,8 @@ cis:
     }
 
     private static IReadOnlyList<string> StandardsFor(State state, params string[] targets)
-        => state.Standards.Where(item => item.Status.Equals("Active", StringComparison.OrdinalIgnoreCase)
+        => state.Standards.Where(item => item.Participation == "owned"
+                                         && item.Status.Equals("Active", StringComparison.OrdinalIgnoreCase)
                                          && item.Targets.Concat(item.Stacks).Any(value => targets.Contains(value, StringComparer.OrdinalIgnoreCase)))
             .Select(item => item.Id).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToArray();
 
@@ -1773,10 +1806,10 @@ cis:
         string DataOwnership, string FailureAndRecovery);
     private sealed record IntegrationPoint(string Id, string Source, string Flow, string Target, string Contract,
         string Delivery, string Trust, string FailureAndRecovery, IReadOnlyList<string> RequirementIds);
-    private sealed record TechnicalSurface(string RepositoryId, string WorkspaceRole, string Component, string Root,
+    private sealed record TechnicalSurface(string RepositoryId, string WorkspaceRole, string Participation, string Relationship, string Component, string Root,
         IReadOnlyList<string> Languages, IReadOnlyList<string> Frameworks, IReadOnlyList<string> Roles,
         IReadOnlyList<string> Capabilities, string Confidence);
-    private sealed record KnownStandard(string RepositoryId, string Id, string Title, string Status,
+    private sealed record KnownStandard(string RepositoryId, string Participation, string Id, string Title, string Status,
         IReadOnlyList<string> Targets, IReadOnlyList<string> Stacks, IReadOnlyList<string> RuleIds,
         string Path, string Digest);
     private sealed record ArchitectureGuideline(string Direction, string Basis);

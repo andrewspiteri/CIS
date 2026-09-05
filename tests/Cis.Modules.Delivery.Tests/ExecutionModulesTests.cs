@@ -259,7 +259,7 @@ public sealed class ExecutionModulesTests
     public void AgentImport_AcceptsOnlyRegisteredWorkspaceQualifiedChangedFiles()
     {
         using var repository = ExecutionRepository.Create();
-        repository.Write(".cis/workspace.yml", "schema_version: 1\nrepositories:\n- id: api\n  path: ../api\n  documentation_root: docs/cis\n  role: participant\n");
+        repository.Write(".cis/workspace.yml", "schema_version: 2\necosystem:\n  id: fixture\n  name: Fixture\nproduct:\n  id: fixture\n  name: Fixture\nrepositories:\n- id: execution-fixture\n  path: .\n  documentation_root: docs/cis\n  role: authority\n  participation: owned\n  relationship: none\n  components: []\n- id: api\n  path: ../api\n  documentation_root: docs/cis\n  role: participant\n  participation: owned\n  relationship: none\n  components: []\n");
         repository.Write("docs/cis/changes/CIS-0001/agent-tasks/WORK-001.md", "---\ntask_status: Ready\n---\n# Work\n");
         var service = new AgentService(new CisRepositoryContextResolver(), Clock);
         var prepared = service.Prepare(repository.Path, "CIS-0001", "WORK-001", "portable");
@@ -532,16 +532,28 @@ public sealed class ExecutionModulesTests
         var authorityBaseline = authority.Head();
         var participantBaseline = participant.Head();
         authority.Write(".cis/workspace.yml", $"""
-            schema_version: 1
+            schema_version: 2
+            ecosystem:
+              id: fixture
+              name: Fixture
+            product:
+              id: fixture
+              name: Fixture
             repositories:
             - id: authority
               path: .
               documentation_root: docs/cis
               role: authority
+              participation: owned
+              relationship: none
+              components: []
             - id: participant
               path: "{participant.Path.Replace('\\', '/')}"
               documentation_root: docs/cis
               role: participant
+              participation: owned
+              relationship: none
+              components: []
             """);
         var baselines = JsonSerializer.Serialize(new[]
         {
@@ -586,16 +598,28 @@ public sealed class ExecutionModulesTests
         using var authority = ExecutionRepository.Create(git: true, id: "authority");
         using var participant = ExecutionRepository.Create(git: true, id: "participant");
         authority.Write(".cis/workspace.yml", $"""
-            schema_version: 1
+            schema_version: 2
+            ecosystem:
+              id: fixture
+              name: Fixture
+            product:
+              id: fixture
+              name: Fixture
             repositories:
             - id: authority
               path: .
               documentation_root: docs/cis
               role: authority
+              participation: owned
+              relationship: none
+              components: []
             - id: participant
               path: "{participant.Path.Replace('\\', '/')}"
               documentation_root: docs/cis
               role: participant
+              participation: owned
+              relationship: none
+              components: []
             """);
         participant.Write("src/preexisting.txt", "present before the change\n");
         authority.Write(".cis/local/graph/manifest.json", JsonSerializer.Serialize(new CisGraphManifest(

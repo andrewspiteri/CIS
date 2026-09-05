@@ -250,14 +250,18 @@ public sealed class TechnicalIntentQuestionnaireService
     private static WorkspaceAnalysis AnalyzeWorkspace(CisWorkspace workspace)
     {
         var evidence = new List<(CisWorkspaceRepository Repository, RepositoryClassification Classification, RepositoryComponentClassification Component)>();
+        var dependencyEvidence = new List<(CisWorkspaceRepository Repository, RepositoryClassification Classification, RepositoryComponentClassification Component)>();
         var classifier = new RepositoryClassifier();
         foreach (var repository in workspace.Repositories)
         {
             try
             {
                 var classification = classifier.Classify(repository.RepositoryPath);
-                evidence.AddRange(classification.Components
-                    .Select(component => (repository, classification, component)));
+                var components = repository.Components.Count == 0
+                    ? classification.Components
+                    : classification.Components.Where(component => repository.Components.Contains(component.Id, StringComparer.OrdinalIgnoreCase)).ToArray();
+                var target = repository.IsDependency ? dependencyEvidence : evidence;
+                target.AddRange(components.Select(component => (repository, classification, component)));
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
@@ -328,17 +332,18 @@ public sealed class TechnicalIntentQuestionnaireService
             detected["TI-Q-003"] = $"Prefer the detected backend runtime unless an evidenced migration is intended: {backends}.";
             Derive("TI-Q-003", $"Preserve the existing backend runtime and framework stack(s): {backends}.", "high", Cite(backendItems));
         }
-        if (workspace.Repositories.Count > 1)
-            detected["TI-Q-005"] = $"The workspace already registers {workspace.Repositories.Count} repositories ({string.Join(", ", workspace.Repositories.Select(item => item.Id))}); confirm their ownership and deployable boundaries before adding another split.";
+        var productRepositories = workspace.Repositories.Where(repository => repository.IsProductOwned).ToArray();
+        if (productRepositories.Length > 1)
+            detected["TI-Q-005"] = $"The product boundary already owns {productRepositories.Length} repositories ({string.Join(", ", productRepositories.Select(item => item.Id))}); confirm their ownership and deployable boundaries before adding another split.";
         if (evidence.Count > 0)
         {
-            var repositorySummary = string.Join("; ", workspace.Repositories.Select(repository =>
+            var repositorySummary = string.Join("; ", productRepositories.Select(repository =>
             {
                 var items = evidence.Where(item => item.Repository.Id == repository.Id).ToArray();
                 return $"{repository.Id} ({items.Length} classified component{(items.Length == 1 ? string.Empty : "s")}: {string.Join(", ", items.Select(item => item.Component.Id))})";
             }));
-            var style = workspace.Repositories.Count > 1
-                ? $"Extend the existing multi-repository architecture across {workspace.Repositories.Count} registered repositories. Repository evidence establishes current boundaries but does not by itself justify reclassifying them as microservices."
+            var style = productRepositories.Length > 1
+                ? $"Extend the existing multi-repository product architecture across {productRepositories.Length} owned repositories. Repository evidence establishes current boundaries but does not by itself justify reclassifying them as microservices."
                 : evidence.Select(item => item.Classification.Shape).Contains("monorepo", StringComparer.OrdinalIgnoreCase)
                     ? "Extend the existing monorepo architecture and preserve its classified component boundaries; do not introduce independently deployed services without an evidenced ownership, scale, security, or release need."
                     : "Extend the existing single-repository application architecture; no repository evidence currently justifies introducing microservices.";
@@ -371,6 +376,15 @@ public sealed class TechnicalIntentQuestionnaireService
             if (evidence.GroupBy(item => item.Repository.Id).Any(group => group.Count() > 1)) styles.Add("in-process component contracts");
             Derive("TI-Q-008", $"Preserve the detected interaction styles: {string.Join(", ", styles.Distinct(StringComparer.OrdinalIgnoreCase))}. Maintain explicit compatibility, authentication, failure, idempotency, and test contracts at every cross-component boundary.",
                 "medium", Cite(integrationItems));
+        }
+        if (dependencyEvidence.Count > 0)
+        {
+            var dependencies = dependencyEvidence.GroupBy(item => new { item.Repository.Id, item.Repository.Relationship })
+                .Select(group => $"{group.Key.Id} ({group.Key.Relationship}; {string.Join(", ", group.Select(item => item.Component.Id).Distinct(StringComparer.OrdinalIgnoreCase))})")
+                .ToArray();
+            detected["TI-Q-008"] = $"The product has registered directional dependencies: {string.Join("; ", dependencies)}. Define their exact contracts and compatibility boundaries without treating their implementations as product-owned scope.";
+            Derive("TI-Q-008", $"Preserve the registered producer/consumer directions for {string.Join("; ", dependencies)}. Dependency repositories provide context and contract evidence only; modifying them requires separately governed product authority.",
+                "high", Cite(dependencyEvidence));
         }
         var identities = MarkerLabels(markerEvidence, "identity");
         if (authItems.Length > 0 || identities.Length > 0)
@@ -446,7 +460,7 @@ public sealed class TechnicalIntentQuestionnaireService
             $"{item.Repository.Id}:{item.Component.Root}",
             string.Join(' ', item.Component.Languages.Concat(item.Component.Frameworks).Concat(item.Component.Roles)
                 .Concat(item.Component.Capabilities).Concat(item.Component.Evidence)))));
-        foreach (var repository in workspace.Repositories)
+        foreach (var repository in workspace.Repositories.Where(repository => repository.IsProductOwned))
         {
             foreach (var path in EnumerateTechnicalMetadata(repository.RepositoryPath))
             {

@@ -123,6 +123,8 @@ output, canonical Markdown, and `.cis/local/` state remain authoritative for dis
 ## Authority repository
 
 The extension operates against one explicit authority repository per VS Code workspace.
+Creating that authority captures a stable product and ecosystem identity. The Workspace
+view displays both so the operator can see which product's authority is active.
 
 Before authority metadata exists, the Welcome View performs a bounded, read-only evidence scan.
 A repository containing recognized project manifests or implementation source is offered
@@ -130,6 +132,12 @@ A repository containing recognized project manifests or implementation source is
 operation, bootstraps that source as authority, and builds context. A genuinely empty project is
 offered **Create CIS project** instead. `.git`, generated output, dependencies, documentation,
 and CIS metadata alone do not cause an empty project to be treated as an existing implementation.
+
+After authority creation, **Import existing repository** selects one or more folders and
+requires an explicit boundary. An owned import becomes a product implementation target and
+uses relationship `none`. A dependency import requires producer, consumer, or bidirectional
+direction and may include comma-separated component scope. The extension never infers
+ownership from source layout or framework detection.
 
 - With one eligible folder, that folder may be selected automatically and shown as the
   current authority.

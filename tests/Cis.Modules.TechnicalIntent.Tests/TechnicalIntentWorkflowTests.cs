@@ -95,6 +95,27 @@ public sealed class TechnicalIntentWorkflowTests
     }
 
     [Fact]
+    public void Initialize_RecordsDependencyAsDirectionalIntegrationWithoutOwningItsTechnology()
+    {
+        using var environment = WorkspaceEnvironment.Create(
+            approveBrd: true,
+            seedDependency: repository =>
+            {
+                repository.Write("package.json", "{\"dependencies\":{\"express\":\"5.1.0\",\"pg\":\"8.0.0\"}}");
+                repository.Write("src/core-api.ts", "export const coreApi = true;\n");
+            });
+
+        var initialized = environment.Intent.Initialize(environment.Authority.Path);
+        var content = File.ReadAllText(environment.TechnicalIntentPath);
+        var dependency = Assert.Single(environment.Registry.Resolve(environment.Authority.Path).Workspace!.DependencyRepositories);
+
+        Assert.Equal(0, initialized.ExitCode);
+        Assert.Contains($"| {dependency.Id} | participant | dependency | producer |", content, StringComparison.Ordinal);
+        Assert.Contains("The dependency produces a capability, contract, event, or data result consumed by this product.", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("Prefer repository-supported contract standards for `express`", content, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Initialize_UpgradesManagedDraftSchema3WithDetailedArchitectureWithoutTouchingHumanSections()
     {
         using var environment = WorkspaceEnvironment.Create(approveBrd: true);
@@ -489,12 +510,13 @@ public sealed class TechnicalIntentWorkflowTests
 
     private sealed class WorkspaceEnvironment : IDisposable
     {
-        private WorkspaceEnvironment(TemporaryRepository authority, TemporaryRepository participant,
+        private WorkspaceEnvironment(TemporaryRepository authority, TemporaryRepository participant, TemporaryRepository? dependency,
             TechnicalIntentService intent, TechnicalIntentQuestionnaireService questionnaire, BrdService brd, WorkspaceRegistry registry,
             CisRepositoryContextResolver resolver, DocumentationCatalogMerger merger)
         {
             Authority = authority;
             Participant = participant;
+            Dependency = dependency;
             Intent = intent;
             Questionnaire = questionnaire;
             Brd = brd;
@@ -505,6 +527,7 @@ public sealed class TechnicalIntentWorkflowTests
 
         public TemporaryRepository Authority { get; }
         public TemporaryRepository Participant { get; }
+        public TemporaryRepository? Dependency { get; }
         public TechnicalIntentService Intent { get; }
         public TechnicalIntentQuestionnaireService Questionnaire { get; }
         public BrdService Brd { get; }
@@ -518,10 +541,13 @@ public sealed class TechnicalIntentWorkflowTests
             bool includeImplementation = true,
             bool completeQuestionnaire = true,
             Action<TemporaryRepository>? seedImplementation = null,
-            string? businessCapabilities = null)
+            string? businessCapabilities = null,
+            Action<TemporaryRepository>? seedDependency = null)
         {
             var authority = TemporaryRepository.Create();
             var participant = TemporaryRepository.Create();
+            var dependency = seedDependency is null ? null : TemporaryRepository.Create();
+            seedDependency?.Invoke(dependency!);
             if (includeImplementation)
             {
                 if (seedImplementation is null)
@@ -537,17 +563,27 @@ public sealed class TechnicalIntentWorkflowTests
             var resolver = new CisRepositoryContextResolver();
             var registry = new WorkspaceRegistry(resolver);
             var workspaceInit = new WorkspaceInitializer(new RepositoryInitializer(), registry).Initialize(
-                new WorkspaceInitRequest(authority.Path, "docs", false, true));
+                new WorkspaceInitRequest(authority.Path, "docs", false, true,
+                    "fixture", "fixture", "Fixture", "Fixture"));
             Assert.Equal(0, workspaceInit.ExitCode);
             if (includeImplementation)
             {
                 var imported = new RepositoryImporter(new RepositoryInitializer(), registry).Import(
-                    new RepositoryImportRequest(authority.Path, "docs/cis", [participant.Path], false, true));
+                    new RepositoryImportRequest(authority.Path, "docs/cis", [participant.Path], false, true,
+                        "owned", "none"));
+                Assert.Equal(0, imported.ExitCode);
+            }
+            if (dependency is not null)
+            {
+                var imported = new RepositoryImporter(new RepositoryInitializer(), registry).Import(
+                    new RepositoryImportRequest(authority.Path, "docs/cis", [dependency.Path], false, true,
+                        "dependency", "producer"));
                 Assert.Equal(0, imported.ExitCode);
             }
             var builder = CreateBuilder(resolver);
             Assert.Equal(0, builder.Build(authority.Path).ExitCode);
             if (includeImplementation) Assert.Equal(0, builder.Build(participant.Path).ExitCode);
+            if (dependency is not null) Assert.Equal(0, builder.Build(dependency.Path).ExitCode);
             var graphReader = new GraphSnapshotReader(resolver);
             var merger = new DocumentationCatalogMerger();
             var brd = new BrdService(registry, resolver, new GraphValidator(resolver), graphReader, merger,
@@ -586,7 +622,7 @@ public sealed class TechnicalIntentWorkflowTests
             }
             var intent = new TechnicalIntentService(registry, resolver, graphReader, brd, merger,
                 () => new DateTimeOffset(2026, 8, 16, 11, 0, 0, TimeSpan.Zero));
-            return new WorkspaceEnvironment(authority, participant, intent, questionnaire, brd, registry, resolver, merger);
+            return new WorkspaceEnvironment(authority, participant, dependency, intent, questionnaire, brd, registry, resolver, merger);
         }
 
         public BrdBacklogService CreateBacklog()
@@ -598,6 +634,7 @@ public sealed class TechnicalIntentWorkflowTests
 
         public void Dispose()
         {
+            Dependency?.Dispose();
             Participant.Dispose();
             Authority.Dispose();
         }

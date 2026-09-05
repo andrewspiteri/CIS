@@ -1,6 +1,11 @@
 schema_version: 1
 repository: change-impact-studio
 documents:
+  - id: change-impact-studio:spec:product-and-ecosystem-boundary
+    path: docs/specs/product-and-ecosystem-boundary-spec.md
+    type: specification
+    status: active
+    authority: canonical
   - id: change-impact-studio:spec:ci-investigation-operations
     path: docs/specs/ci-investigation-and-operations-spec.md
     type: specification

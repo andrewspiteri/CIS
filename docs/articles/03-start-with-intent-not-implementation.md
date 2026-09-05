@@ -73,10 +73,11 @@ specification can be current for one repository and incomplete at the workspace 
 A business requirements document copied into several repositories can leave the team
 without a clear authority when the copies diverge.
 
-CIS treats discovered business documents as source evidence. A human classifies them
-as Adopted, Reference, or Rejected and records the rationale. One authority repository
-owns the canonical workspace business requirements. Participant repositories retain
-their local documents without competing for workspace authority.
+CIS treats discovered business documents in product-owned repositories as source
+evidence. A human classifies them as Adopted, Reference, or Rejected and records the
+rationale. One authority repository owns the canonical product business requirements.
+Dependency repositories remain separately governed context and do not silently become
+product requirements.
 
 This preserves useful history while avoiding a dangerous shortcut:
 
@@ -92,7 +93,7 @@ baselines. The system can therefore detect:
 
 - edits to approved meaning;
 - changes in assessed source evidence;
-- participant-set changes;
+- product-owned repository-set changes;
 - incompatible baseline drift;
 - missing required sections; and
 - unresolved decisions.

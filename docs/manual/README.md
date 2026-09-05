@@ -99,14 +99,14 @@ Each loaded module owns one top-level command group. The following leaf commands
 | [`cis learn history`](cis_learn_history.md) | Governed learning command. |
 | [`cis host modules`](cis_host_modules.md) | List the modules explicitly loaded by the host. |
 | [`cis repo init`](cis_repo_init.md) | Classify a repository and initialize or reconcile its CIS documentation workspace. |
-| [`cis repo import`](cis_repo_import.md) | Initialize and register several existing repositories in one CIS workspace. |
+| [`cis repo import`](cis_repo_import.md) | Register existing repositories as product-owned implementation or directional dependency context. |
 | [`cis repo list`](cis_repo_list.md) | Validate and list repositories registered in a CIS workspace. |
 | [`cis repo doctor`](cis_repo_doctor.md) | Inspect repository readiness, detect Ollama, and report evidence-backed suggested fixes. |
 | [`cis skills inventory`](cis_skills_inventory.md) | List portable repository skills and detect structural errors. |
 | [`cis skills validate`](cis_skills_validate.md) | Validate skill names, metadata, bodies, duplicates, and local resource links. |
 | [`cis skills import`](cis_skills_import.md) | Import validated skill bundles from local paths, ZIP archives, or GitHub repositories. |
 | [`cis skills audit`](cis_skills_audit.md) | Isolate duplicate, overlapping, and conflicting skills with local-first model review and optional quarantine. |
-| [`cis workspace init`](cis_workspace_init.md) | Initialize the canonical documentation authority for a multi-repository workspace. |
+| [`cis workspace init`](cis_workspace_init.md) | Initialize one product authority with explicit product and ecosystem identities. |
 | [`cis ai status`](cis_ai_status.md) | Report local and explicitly configured remote model providers without invoking generation. |
 | [`cis api discover`](cis_api_discover.md) | Correlate source, API dictionary rows, and OpenAPI into normalized local state. |
 | [`cis api inventory`](cis_api_inventory.md) | Read and filter the normalized API inventory without rescanning. |

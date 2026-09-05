@@ -3,7 +3,7 @@ title: "cis repo list"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-09"
+last_reviewed: "2026-09-05"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-repo-list
@@ -33,8 +33,9 @@ The command resolves relative registry paths, verifies each source directory and
 and rejects duplicate IDs or paths. It is read-only and does not initialize, repair,
 or graph a repository.
 
-Human output lists repository ID, absolute resolved path, documentation root, and
-`authority` or `participant` role.
+Human output first identifies the ecosystem and governed product, then lists repository
+ID, absolute resolved path, documentation root, structural role, owned/dependency
+participation, producer/consumer direction, and component scope.
 JSON emits the workspace resolution. Agent output emits one stable `repository=` line
 per entry.
 

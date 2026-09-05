@@ -12,7 +12,7 @@ public sealed class WorkspaceModule : ICisModule
 
     public string Name => "workspace";
 
-    public string Description => "Initialize a documentation-authority workspace for multiple repositories.";
+    public string Description => "Initialize one product authority inside a named software ecosystem.";
 
     public void RegisterServices(IServiceCollection services)
     {
@@ -36,7 +36,7 @@ public sealed class WorkspaceModule : ICisModule
     {
         var command = new Command(
             "init",
-            "Initialize the current repository as the canonical documentation authority for a CIS workspace.");
+            "Initialize the current repository as the canonical documentation authority for one CIS product workspace.");
         var repo = new Option<string>("--repo")
         {
             Description = "Documentation-authority repository path. Defaults to the current directory.",
@@ -46,6 +46,24 @@ public sealed class WorkspaceModule : ICisModule
         {
             Description = "Required repository-relative documentation root.",
             Required = true,
+        };
+        var ecosystem = new Option<string>("--ecosystem")
+        {
+            Description = "Required software-ecosystem identity.",
+            Required = true,
+        };
+        var product = new Option<string>("--product")
+        {
+            Description = "Required product identity governed by this workspace.",
+            Required = true,
+        };
+        var ecosystemName = new Option<string?>("--ecosystem-name")
+        {
+            Description = "Optional ecosystem display name; defaults to the ecosystem identity.",
+        };
+        var productName = new Option<string?>("--product-name")
+        {
+            Description = "Optional product display name; defaults to the product identity.",
         };
         var dryRun = new Option<bool>("--dry-run")
         {
@@ -62,6 +80,10 @@ public sealed class WorkspaceModule : ICisModule
         };
         command.Options.Add(repo);
         command.Options.Add(root);
+        command.Options.Add(ecosystem);
+        command.Options.Add(product);
+        command.Options.Add(ecosystemName);
+        command.Options.Add(productName);
         command.Options.Add(dryRun);
         command.Options.Add(yes);
         command.Options.Add(format);
@@ -79,7 +101,11 @@ public sealed class WorkspaceModule : ICisModule
                 parseResult.GetValue(repo) ?? Directory.GetCurrentDirectory(),
                 parseResult.GetValue(root) ?? string.Empty,
                 parseResult.GetValue(dryRun),
-                parseResult.GetValue(yes)));
+                parseResult.GetValue(yes),
+                parseResult.GetValue(ecosystem) ?? string.Empty,
+                parseResult.GetValue(product) ?? string.Empty,
+                parseResult.GetValue(ecosystemName),
+                parseResult.GetValue(productName)));
             Render(result, selectedFormat);
             return result.ExitCode;
         });
@@ -113,6 +139,8 @@ public sealed class WorkspaceModule : ICisModule
         Console.WriteLine($"Workspace initialization: {result.Status}");
         Console.WriteLine($"Workspace: {result.WorkspacePath ?? string.Empty}");
         Console.WriteLine($"Authority: {result.AuthorityRepositoryId ?? string.Empty}");
+        Console.WriteLine($"Ecosystem: {result.Ecosystem?.Id ?? string.Empty} ({result.Ecosystem?.Name ?? string.Empty})");
+        Console.WriteLine($"Product: {result.Product?.Id ?? string.Empty} ({result.Product?.Name ?? string.Empty})");
         Console.WriteLine($"Documentation root: {result.DocumentationRoot ?? string.Empty}");
         foreach (var warning in result.Warnings)
         {
@@ -144,6 +172,8 @@ public sealed class WorkspaceModule : ICisModule
             $"workspace={Clean(result.WorkspacePath)}",
             $"configuration={Clean(result.ConfigurationPath)}",
             $"authority={Clean(result.AuthorityRepositoryId)}",
+            $"ecosystem={Clean(result.Ecosystem?.Id)};name={Clean(result.Ecosystem?.Name)}",
+            $"product={Clean(result.Product?.Id)};name={Clean(result.Product?.Name)}",
             $"documentationRoot={Clean(result.DocumentationRoot)}",
         };
 

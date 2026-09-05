@@ -1,4 +1,5 @@
 using Cis.Abstractions;
+using System.Text.RegularExpressions;
 using YamlDotNet.Core;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
@@ -32,11 +33,17 @@ public sealed class WorkspaceRegistry : ICisWorkspaceRegistry
     internal CisWorkspaceResolution ReadForImport(string workspacePath)
         => Read(workspacePath, requireConfiguration: false);
 
-    internal string Serialize(string workspacePath, IReadOnlyList<CisWorkspaceRepository> repositories)
+    internal string Serialize(
+        string workspacePath,
+        CisEcosystem ecosystem,
+        CisProduct product,
+        IReadOnlyList<CisWorkspaceRepository> repositories)
     {
         var source = new WorkspaceFile
         {
-            SchemaVersion = 1,
+            SchemaVersion = 2,
+            Ecosystem = new WorkspaceIdentityFile { Id = ecosystem.Id, Name = ecosystem.Name },
+            Product = new WorkspaceIdentityFile { Id = product.Id, Name = product.Name },
             Repositories = repositories
                 .OrderBy(repository => repository.Id, StringComparer.Ordinal)
                 .Select(repository => new WorkspaceRepositoryFile
@@ -45,6 +52,9 @@ public sealed class WorkspaceRegistry : ICisWorkspaceRegistry
                     Path = StorePath(workspacePath, repository.RepositoryPath),
                     DocumentationRoot = repository.DocumentationRoot,
                     Role = repository.Role,
+                    Participation = repository.Participation,
+                    Relationship = repository.Relationship,
+                    Components = repository.Components.Order(StringComparer.Ordinal).ToList(),
                 })
                 .ToList(),
         };
@@ -96,10 +106,13 @@ public sealed class WorkspaceRegistry : ICisWorkspaceRegistry
             return Failure("CIS workspace configuration is empty.");
         }
 
-        if (source.SchemaVersion != 1)
+        if (source.SchemaVersion != 2)
         {
-            errors.Add($"Unsupported workspace schema version '{source.SchemaVersion}'.");
+            errors.Add($"Unsupported workspace schema version '{source.SchemaVersion}'. Reinitialize the workspace with explicit ecosystem and product identities.");
         }
+
+        var ecosystem = ReadEcosystem(source.Ecosystem, errors);
+        var product = ReadProduct(source.Product, errors);
 
         if (source.Repositories is null || source.Repositories.Count == 0)
         {
@@ -118,13 +131,45 @@ public sealed class WorkspaceRegistry : ICisWorkspaceRegistry
             }
 
             var role = string.IsNullOrWhiteSpace(entry.Role)
-                ? "participant"
+                ? string.Empty
                 : entry.Role.Trim().ToLowerInvariant();
             if (role is not ("authority" or "participant"))
             {
                 errors.Add($"Workspace repository '{entry.Id}' has unsupported role '{entry.Role}'.");
                 continue;
             }
+            var participation = string.IsNullOrWhiteSpace(entry.Participation)
+                ? string.Empty
+                : entry.Participation.Trim().ToLowerInvariant();
+            if (participation is not ("owned" or "dependency"))
+            {
+                errors.Add($"Workspace repository '{entry.Id}' has unsupported participation '{entry.Participation}'. Expected owned or dependency.");
+                continue;
+            }
+            var relationship = string.IsNullOrWhiteSpace(entry.Relationship)
+                ? string.Empty
+                : entry.Relationship.Trim().ToLowerInvariant();
+            if (relationship is not ("none" or "producer" or "consumer" or "bidirectional"))
+            {
+                errors.Add($"Workspace repository '{entry.Id}' has unsupported relationship '{entry.Relationship}'.");
+                continue;
+            }
+            if (participation == "owned" && relationship != "none")
+                errors.Add($"Product-owned repository '{entry.Id}' must use relationship 'none'.");
+            if (participation == "dependency" && relationship == "none")
+                errors.Add($"Dependency repository '{entry.Id}' must declare producer, consumer, or bidirectional relationship.");
+            if (role == "authority" && (participation != "owned" || relationship != "none"))
+                errors.Add($"Workspace authority repository '{entry.Id}' must be product-owned with relationship 'none'.");
+            if (role == "authority" && participation == "dependency")
+                errors.Add($"Dependency repository '{entry.Id}' cannot own product documentation authority.");
+            var components = (entry.Components ?? [])
+                .Select(component => component?.Trim() ?? string.Empty)
+                .Where(component => component.Length > 0)
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal)
+                .ToArray();
+            foreach (var component in components.Where(component => !ValidIdentity(component)))
+                errors.Add($"Workspace repository '{entry.Id}' has invalid component scope '{component}'.");
 
             string repositoryPath;
             try
@@ -166,7 +211,10 @@ public sealed class WorkspaceRegistry : ICisWorkspaceRegistry
                 resolution.Context.RepositoryId,
                 resolution.Context.RepositoryPath,
                 resolution.Context.DocumentationRoot,
-                role));
+                role,
+                participation,
+                relationship,
+                components));
         }
 
         foreach (var duplicate in repositories.GroupBy(repository => repository.Id, StringComparer.Ordinal)
@@ -181,9 +229,9 @@ public sealed class WorkspaceRegistry : ICisWorkspaceRegistry
             errors.Add($"Workspace repository path is duplicated: {duplicate.Key}");
         }
 
-        if (repositories.Count(repository => repository.Role == "authority") > 1)
+        if (repositories.Count(repository => repository.Role == "authority") != 1)
         {
-            errors.Add("Workspace configuration may define only one authority repository.");
+            errors.Add("Workspace configuration must define exactly one product documentation authority repository.");
         }
 
         return errors.Count > 0
@@ -192,7 +240,9 @@ public sealed class WorkspaceRegistry : ICisWorkspaceRegistry
                 new CisWorkspace(
                     resolvedWorkspace!,
                     configurationPath,
-                    repositories.OrderBy(repository => repository.Id, StringComparer.Ordinal).ToArray()),
+                    repositories.OrderBy(repository => repository.Id, StringComparer.Ordinal).ToArray(),
+                    ecosystem,
+                    product),
                 []);
     }
 
@@ -235,13 +285,51 @@ public sealed class WorkspaceRegistry : ICisWorkspaceRegistry
 
     private static string Normalize(string value) => value.Replace('\\', '/').TrimEnd('/');
 
+    private static CisEcosystem? ReadEcosystem(WorkspaceIdentityFile? source, ICollection<string> errors)
+    {
+        if (source is null || string.IsNullOrWhiteSpace(source.Id) || string.IsNullOrWhiteSpace(source.Name))
+        {
+            errors.Add("Workspace configuration must define ecosystem.id and ecosystem.name.");
+            return null;
+        }
+        var id = source.Id.Trim().ToLowerInvariant();
+        if (!ValidIdentity(id)) errors.Add($"Workspace ecosystem id is invalid: {source.Id}");
+        return new CisEcosystem(id, source.Name.Trim());
+    }
+
+    private static CisProduct? ReadProduct(WorkspaceIdentityFile? source, ICollection<string> errors)
+    {
+        if (source is null || string.IsNullOrWhiteSpace(source.Id) || string.IsNullOrWhiteSpace(source.Name))
+        {
+            errors.Add("Workspace configuration must define product.id and product.name.");
+            return null;
+        }
+        var id = source.Id.Trim().ToLowerInvariant();
+        if (!ValidIdentity(id)) errors.Add($"Workspace product id is invalid: {source.Id}");
+        return new CisProduct(id, source.Name.Trim());
+    }
+
+    private static bool ValidIdentity(string value)
+        => Regex.IsMatch(value, "^[a-z0-9][a-z0-9._-]{0,127}$", RegexOptions.CultureInvariant);
+
     private static CisWorkspaceResolution Failure(string error) => new(null, [error]);
 
     private sealed class WorkspaceFile
     {
         public int SchemaVersion { get; set; }
 
+        public WorkspaceIdentityFile? Ecosystem { get; set; }
+
+        public WorkspaceIdentityFile? Product { get; set; }
+
         public List<WorkspaceRepositoryFile>? Repositories { get; set; }
+    }
+
+    private sealed class WorkspaceIdentityFile
+    {
+        public string? Id { get; set; }
+
+        public string? Name { get; set; }
     }
 
     private sealed class WorkspaceRepositoryFile
@@ -253,5 +341,11 @@ public sealed class WorkspaceRegistry : ICisWorkspaceRegistry
         public string? DocumentationRoot { get; set; }
 
         public string? Role { get; set; }
+
+        public string? Participation { get; set; }
+
+        public string? Relationship { get; set; }
+
+        public List<string>? Components { get; set; }
     }
 }

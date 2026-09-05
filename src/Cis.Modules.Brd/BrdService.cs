@@ -126,7 +126,7 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
             baselines.Add(new BrdRepositoryBaseline(
                 repository.Id,
                 repository.RepositoryPath,
-                repository.Role,
+                repository.IsDependency ? "dependency" : repository.Role,
                 graph.Build.Id,
                 graph.Build.Head,
                 graph.Build.Dirty,
@@ -135,9 +135,11 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
             if (!string.Equals(validation.Freshness, "fresh", StringComparison.Ordinal))
             {
                 var message = $"Repository '{repository.Id}' graph is {validation.Freshness}.";
-                if (repository.Role == "authority")
+                if (repository.Role == "authority" || repository.IsDependency)
                 {
-                    warnings.Add(message + " Rebuild it before producing downstream context packs.");
+                    warnings.Add(message + (repository.IsDependency
+                        ? " Dependency evidence remains unavailable until its graph is rebuilt."
+                        : " Rebuild it before producing downstream context packs."));
                 }
                 else
                 {
@@ -150,10 +152,11 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
                 .Select(diagnostic => $"[{repository.Id}] {diagnostic.Message}"));
         }
 
-        var fileCandidates = workspace.Repositories
+        var productRepositories = workspace.Repositories.Where(repository => repository.IsProductOwned).ToArray();
+        var fileCandidates = productRepositories
             .SelectMany(repository => FindCandidates(repository, authority, canonicalPath, warnings))
             .ToArray();
-        var registeredCandidates = workspace.Repositories
+        var registeredCandidates = productRepositories
             .SelectMany(repository => FindRegisteredSourceCandidates(repository, warnings))
             .ToArray();
         var candidates = fileCandidates.Concat(registeredCandidates)

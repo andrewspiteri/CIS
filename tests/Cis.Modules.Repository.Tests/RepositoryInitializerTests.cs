@@ -59,7 +59,8 @@ public sealed class RepositoryInitializerTests
             workspace.Path,
             "docs",
             DryRun: false,
-            Confirmed: false));
+            Confirmed: false,
+            "retail-banking", "cards", "Retail Banking", "Cards"));
         Assert.Equal(3, confirmation.ExitCode);
         Assert.False(File.Exists(Path.Combine(workspace.Path, ".cis", "workspace.yml")));
 
@@ -67,19 +68,25 @@ public sealed class RepositoryInitializerTests
             workspace.Path,
             "docs",
             DryRun: false,
-            Confirmed: true));
+            Confirmed: true,
+            "retail-banking", "cards", "Retail Banking", "Cards"));
         Assert.Equal(0, initialized.ExitCode);
         Assert.Equal("initialized", initialized.Status);
         var resolved = registry.Resolve(workspace.Path);
         Assert.True(resolved.IsSuccess);
         Assert.Equal(workspace.Path, resolved.Workspace!.AuthorityRepository!.RepositoryPath);
         Assert.Equal("authority", resolved.Workspace.AuthorityRepository.Role);
+        Assert.Equal("retail-banking", resolved.Workspace.Ecosystem!.Id);
+        Assert.Equal("cards", resolved.Workspace.Product!.Id);
+        Assert.Equal("owned", resolved.Workspace.AuthorityRepository.Participation);
+        Assert.Equal("none", resolved.Workspace.AuthorityRepository.Relationship);
 
         var repeated = initializer.Initialize(new WorkspaceInitRequest(
             workspace.Path,
             "docs",
             DryRun: false,
-            Confirmed: true));
+            Confirmed: true,
+            "retail-banking", "cards", "Retail Banking", "Cards"));
         Assert.Equal(0, repeated.ExitCode);
         Assert.Equal("unchanged", repeated.Status);
         Assert.False(repeated.Applied);
@@ -104,7 +111,8 @@ public sealed class RepositoryInitializerTests
             workspace.Path,
             "docs",
             DryRun: true,
-            Confirmed: false));
+            Confirmed: false,
+            "retail-banking", "cards", "Retail Banking", "Cards"));
         var repository = Assert.IsType<RepositoryInitResult>(result.RepositoryInitialization);
         var classification = Assert.IsType<RepositoryClassification>(repository.Classification);
 
@@ -132,19 +140,24 @@ public sealed class RepositoryInitializerTests
         var resolver = new CisRepositoryContextResolver();
         var registry = new WorkspaceRegistry(resolver);
         var importer = new RepositoryImporter(new RepositoryInitializer(), registry);
+        var initializer = new WorkspaceInitializer(new RepositoryInitializer(), registry);
+        Assert.Equal(0, initializer.Initialize(new WorkspaceInitRequest(
+            workspace.Path, "docs", false, true,
+            "retail-banking", "cards", "Retail Banking", "Cards")).ExitCode);
         Assert.Equal(0, importer.Import(new RepositoryImportRequest(
             workspace.Path,
             "docs/cis",
             [participant.Path],
             DryRun: false,
-            Confirmed: true)).ExitCode);
-        var initializer = new WorkspaceInitializer(new RepositoryInitializer(), registry);
+            Confirmed: true,
+            "owned", "none")).ExitCode);
 
         var result = initializer.Initialize(new WorkspaceInitRequest(
             workspace.Path,
             "docs",
             DryRun: false,
-            Confirmed: true));
+            Confirmed: true,
+            "retail-banking", "cards", "Retail Banking", "Cards"));
 
         Assert.Equal(0, result.ExitCode);
         var resolved = registry.Resolve(workspace.Path).Workspace!;
@@ -160,20 +173,22 @@ public sealed class RepositoryInitializerTests
         using var first = TemporaryRepository.Create();
         using var second = TemporaryRepository.Create();
         var importer = CreateImporter();
+        InitializeWorkspace(workspace);
 
         var result = importer.Import(new RepositoryImportRequest(
             workspace.Path,
             "docs/cis",
             [first.Path, second.Path],
             DryRun: true,
-            Confirmed: false));
+            Confirmed: false,
+            "owned", "none"));
 
         Assert.Equal(0, result.ExitCode);
         Assert.Equal("dry-run", result.Status);
         Assert.Equal(2, result.Repositories.Count);
         Assert.False(Directory.Exists(Path.Combine(first.Path, ".cis")));
         Assert.False(Directory.Exists(Path.Combine(second.Path, ".cis")));
-        Assert.False(File.Exists(Path.Combine(workspace.Path, ".cis", "workspace.yml")));
+        Assert.True(File.Exists(Path.Combine(workspace.Path, ".cis", "workspace.yml")));
     }
 
     [Fact]
@@ -183,19 +198,21 @@ public sealed class RepositoryInitializerTests
         using var first = TemporaryRepository.Create();
         using var second = TemporaryRepository.Create();
         var importer = CreateImporter();
+        InitializeWorkspace(workspace);
 
         var result = importer.Import(new RepositoryImportRequest(
             workspace.Path,
             "docs/cis",
             [first.Path, second.Path],
             DryRun: false,
-            Confirmed: false));
+            Confirmed: false,
+            "owned", "none"));
 
         Assert.Equal(3, result.ExitCode);
         Assert.True(result.ConfirmationRequired);
         Assert.False(result.Applied);
         Assert.False(Directory.Exists(Path.Combine(first.Path, ".cis")));
-        Assert.False(File.Exists(Path.Combine(workspace.Path, ".cis", "workspace.yml")));
+        Assert.True(File.Exists(Path.Combine(workspace.Path, ".cis", "workspace.yml")));
     }
 
     [Fact]
@@ -205,13 +222,15 @@ public sealed class RepositoryInitializerTests
         using var first = TemporaryRepository.Create();
         using var second = TemporaryRepository.Create();
         var importer = CreateImporter();
+        InitializeWorkspace(workspace);
 
         var imported = importer.Import(new RepositoryImportRequest(
             workspace.Path,
             "docs/cis",
             [first.Path, second.Path],
             DryRun: false,
-            Confirmed: true));
+            Confirmed: true,
+            "owned", "none"));
 
         Assert.Equal(0, imported.ExitCode);
         Assert.Equal("imported", imported.Status);
@@ -221,23 +240,134 @@ public sealed class RepositoryInitializerTests
         var configurationPath = Path.Combine(workspace.Path, ".cis", "workspace.yml");
         Assert.True(File.Exists(configurationPath));
         var configuration = File.ReadAllText(configurationPath);
-        Assert.Contains("schema_version: 1", configuration, StringComparison.Ordinal);
+        Assert.Contains("schema_version: 2", configuration, StringComparison.Ordinal);
+        Assert.Contains("ecosystem:", configuration, StringComparison.Ordinal);
+        Assert.Contains("product:", configuration, StringComparison.Ordinal);
         Assert.DoesNotContain(first.Path.Replace('\\', '/'), configuration, StringComparison.OrdinalIgnoreCase);
 
         var resolver = new WorkspaceRegistry(new CisRepositoryContextResolver())
             .Resolve(workspace.Path);
         Assert.True(resolver.IsSuccess);
-        Assert.Equal(2, resolver.Workspace!.Repositories.Count);
+        Assert.Equal(3, resolver.Workspace!.Repositories.Count);
 
         var repeated = importer.Import(new RepositoryImportRequest(
             workspace.Path,
             "docs/cis",
             [first.Path, second.Path],
             DryRun: false,
-            Confirmed: true));
+            Confirmed: true,
+            "owned", "none"));
         Assert.Equal(0, repeated.ExitCode);
         Assert.Equal("unchanged", repeated.Status);
         Assert.False(repeated.Applied);
+    }
+
+    [Fact]
+    public void Import_RegistersDirectionalDependencyWithBoundedComponentScope()
+    {
+        using var workspace = TemporaryRepository.Create();
+        using var dependency = TemporaryRepository.Create();
+        InitializeWorkspace(workspace);
+        var importer = CreateImporter();
+
+        var imported = importer.Import(new RepositoryImportRequest(
+            workspace.Path,
+            "docs/cis",
+            [dependency.Path],
+            DryRun: false,
+            Confirmed: true,
+            "dependency",
+            "producer",
+            ["accounts-api", "customer-events"]));
+
+        Assert.Equal(0, imported.ExitCode);
+        var entry = Assert.Single(imported.Repositories);
+        Assert.Equal("dependency", entry.Participation);
+        Assert.Equal("producer", entry.Relationship);
+        Assert.Equal(["accounts-api", "customer-events"], entry.ComponentScope);
+        var resolved = new WorkspaceRegistry(new CisRepositoryContextResolver()).Resolve(workspace.Path);
+        Assert.True(resolved.IsSuccess, string.Join(" | ", resolved.Errors));
+        var registered = Assert.Single(resolved.Workspace!.DependencyRepositories);
+        Assert.Equal("producer", registered.Relationship);
+        Assert.Equal(["accounts-api", "customer-events"], registered.Components);
+        Assert.DoesNotContain(registered, resolved.Workspace.DeliveryRepositories);
+    }
+
+    [Fact]
+    public void Import_ReclassifiesExistingRepositoryWithoutDuplicatingIt()
+    {
+        using var workspace = TemporaryRepository.Create();
+        using var importedRepository = TemporaryRepository.Create();
+        InitializeWorkspace(workspace);
+        var importer = CreateImporter();
+        Assert.Equal(0, importer.Import(new RepositoryImportRequest(
+            workspace.Path, "docs/cis", [importedRepository.Path], false, true, "owned", "none")).ExitCode);
+
+        var reclassified = importer.Import(new RepositoryImportRequest(
+            workspace.Path, "docs/cis", [importedRepository.Path], false, true,
+            "dependency", "consumer", ["cards-events"]));
+        var repeated = importer.Import(new RepositoryImportRequest(
+            workspace.Path, "docs/cis", [importedRepository.Path], false, true,
+            "dependency", "consumer", ["cards-events"]));
+
+        Assert.Equal("imported", reclassified.Status);
+        Assert.Equal("unchanged", repeated.Status);
+        var resolved = new WorkspaceRegistry(new CisRepositoryContextResolver()).Resolve(workspace.Path).Workspace!;
+        Assert.Equal(2, resolved.Repositories.Count);
+        var dependency = Assert.Single(resolved.DependencyRepositories);
+        Assert.Equal("consumer", dependency.Relationship);
+        Assert.Equal(["cards-events"], dependency.Components);
+    }
+
+    [Theory]
+    [InlineData("owned", "producer")]
+    [InlineData("dependency", "none")]
+    public void Import_RejectsInvalidParticipationAndRelationshipPair(string participation, string relationship)
+    {
+        using var workspace = TemporaryRepository.Create();
+        using var source = TemporaryRepository.Create();
+        InitializeWorkspace(workspace);
+
+        var result = CreateImporter().Import(new RepositoryImportRequest(
+            workspace.Path, "docs/cis", [source.Path], false, true, participation, relationship));
+
+        Assert.Equal(2, result.ExitCode);
+        Assert.Equal("invalid", result.Status);
+        Assert.NotEmpty(result.Errors);
+        Assert.False(Directory.Exists(Path.Combine(source.Path, ".cis")));
+    }
+
+    [Fact]
+    public void WorkspaceRegistry_RejectsLegacySchemaWithoutCompatibilityFallback()
+    {
+        using var workspace = TemporaryRepository.Create();
+        InitializeWorkspace(workspace);
+        workspace.Write(".cis/workspace.yml", "schema_version: 1\nrepositories: []\n");
+
+        var result = new WorkspaceRegistry(new CisRepositoryContextResolver()).Resolve(workspace.Path);
+
+        Assert.False(result.IsSuccess);
+        Assert.Contains(result.Errors, error => error.Contains("Unsupported workspace schema version '1'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void WorkspaceBoundaryDoctor_ExplainsRequiredExplicitReinitialization()
+    {
+        using var workspace = TemporaryRepository.Create();
+        new RepositoryInitializer().Initialize(new RepositoryInitRequest(
+            workspace.Path, "docs/cis", false, true, WorkspaceAuthority: true));
+        workspace.Write(".cis/workspace.yml", "schema_version: 1\nrepositories: []\n");
+        var registry = new WorkspaceRegistry(new CisRepositoryContextResolver());
+        var context = new CisRepositoryContextResolver().Resolve(workspace.Path).Context!;
+
+        var finding = Assert.Single(new WorkspaceBoundaryDoctorCheck(registry).Inspect(context));
+
+        Assert.Equal("CIS-WORKSPACE-001", finding.Code);
+        Assert.Equal("error", finding.Severity);
+        Assert.Contains("--ecosystem", finding.SuggestedFix, StringComparison.Ordinal);
+        Assert.Contains(
+            finding.Evidence,
+            evidence => evidence.Contains("Unsupported workspace schema version '1'", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -255,7 +385,8 @@ public sealed class RepositoryInitializerTests
             "docs/cis",
             [repository.Path],
             DryRun: false,
-            Confirmed: true));
+            Confirmed: true,
+            "owned", "none", [], "retail-banking", "cards", "Retail Banking", "Cards"));
 
         Assert.Equal(0, imported.ExitCode);
         Assert.Equal("imported", imported.Status);
@@ -279,7 +410,8 @@ public sealed class RepositoryInitializerTests
             "docs/cis",
             [repository.Path],
             DryRun: false,
-            Confirmed: true));
+            Confirmed: true,
+            "owned", "none", [], "retail-banking", "cards", "Retail Banking", "Cards"));
         Assert.Equal(0, repeated.ExitCode);
         Assert.Equal("unchanged", repeated.Status);
         Assert.False(repeated.Applied);
@@ -292,17 +424,19 @@ public sealed class RepositoryInitializerTests
         using var valid = TemporaryRepository.Create();
         var missing = Path.Combine(workspace.Path, "missing");
         var importer = CreateImporter();
+        InitializeWorkspace(workspace);
 
         var result = importer.Import(new RepositoryImportRequest(
             workspace.Path,
             "docs/cis",
             [valid.Path, missing],
             DryRun: false,
-            Confirmed: true));
+            Confirmed: true,
+            "owned", "none"));
 
         Assert.Equal(2, result.ExitCode);
         Assert.False(Directory.Exists(Path.Combine(valid.Path, ".cis")));
-        Assert.False(File.Exists(Path.Combine(workspace.Path, ".cis", "workspace.yml")));
+        Assert.True(File.Exists(Path.Combine(workspace.Path, ".cis", "workspace.yml")));
     }
 
     [Fact]
@@ -2645,6 +2779,23 @@ public sealed class RepositoryInitializerTests
         var findings = new TestSuiteProfileDoctorCheck().Inspect(context);
 
         Assert.DoesNotContain(findings, finding => finding.Code == "CIS-TEST-DOCTOR-007");
+    }
+
+    private static void InitializeWorkspace(TemporaryRepository workspace)
+    {
+        var registry = new WorkspaceRegistry(new CisRepositoryContextResolver());
+        var result = new WorkspaceInitializer(new RepositoryInitializer(), registry).Initialize(
+            new WorkspaceInitRequest(
+                workspace.Path,
+                "docs/cis",
+                DryRun: false,
+                Confirmed: true,
+                "retail-banking",
+                "cards",
+                "Retail Banking",
+                "Cards"));
+
+        Assert.Equal(0, result.ExitCode);
     }
 
     private sealed class TemporaryRepository : IDisposable

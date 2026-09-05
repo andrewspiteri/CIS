@@ -108,7 +108,7 @@ public sealed class UiDirectionWorkflowTests
             var root = Path.Combine(Path.GetTempPath(), "cis-ui-direction-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(Path.Combine(root, ".cis")); Directory.CreateDirectory(Path.Combine(root, "docs", "architecture"));
             Directory.CreateDirectory(Path.Combine(root, "docs", "references")); Directory.CreateDirectory(Path.Combine(root, "docs", "specs"));
-            File.WriteAllText(Path.Combine(root, ".cis", "workspace.yml"), "authority: product\n");
+            File.WriteAllText(Path.Combine(root, ".cis", "workspace.yml"), "schema_version: 2\necosystem:\n  id: product\n  name: Product\nproduct:\n  id: product\n  name: Product\nrepositories:\n- id: product\n  path: .\n  documentation_root: docs\n  role: authority\n  participation: owned\n  relationship: none\n  components: []\n");
             File.WriteAllText(Path.Combine(root, ".cis", "repository.yml"), "repository:\n  id: product\ndocumentation_root: docs\n");
             File.WriteAllText(Path.Combine(root, "docs", "catalog.yml"), "schema_version: 1\nrepository: product\ndocuments: []\n");
             File.WriteAllText(Path.Combine(root, "docs", "architecture", "overall-solution-design.md"), SourceDocument("overall-solution-design", "product:architecture:overall-solution-design", "## UI design handoff\n\nCustomer web uses a compact task-oriented surface."));

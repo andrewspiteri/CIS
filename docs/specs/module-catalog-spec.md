@@ -171,8 +171,8 @@ command is:
 
 ```text
 cis repo init --root <repository-relative-path>
-cis repo import --workspace <workspace> --source <repository>... --root <repository-relative-path>
-cis workspace init --root <repository-relative-path>
+cis repo import --workspace <workspace> --source <repository>... --root <repository-relative-path> --participation <owned|dependency> --relationship <none|producer|consumer|bidirectional>
+cis workspace init --root <repository-relative-path> --ecosystem <ecosystem-id> --product <product-id>
 cis brd discover --workspace <workspace>
 ```
 

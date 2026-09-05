@@ -1145,13 +1145,19 @@ public sealed class GraphBuilderTests
         second.Write("src/Second/Second.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\" />");
         var resolver = new CisRepositoryContextResolver();
         var registry = new WorkspaceRegistry(resolver);
+        var initialized = new WorkspaceInitializer(new RepositoryInitializer(), registry).Initialize(
+            new WorkspaceInitRequest(workspace.Path, "docs/cis", false, true,
+                "fixture", "fixture", "Fixture", "Fixture"));
+        Assert.Equal(0, initialized.ExitCode);
         var importer = new RepositoryImporter(new RepositoryInitializer(), registry);
         var imported = importer.Import(new RepositoryImportRequest(
             workspace.Path,
             "docs/cis",
             [first.Path, second.Path],
             DryRun: false,
-            Confirmed: true));
+            Confirmed: true,
+            "owned",
+            "none"));
         Assert.Equal(0, imported.ExitCode);
         var graphs = new WorkspaceGraphService(registry, CreateBuilder(), CreateValidator());
 
@@ -1159,11 +1165,11 @@ public sealed class GraphBuilderTests
         var validated = graphs.Validate(workspace.Path, strict: false);
 
         Assert.Equal(0, built.ExitCode);
-        Assert.Equal(2, built.Repositories.Count);
+        Assert.Equal(3, built.Repositories.Count);
         Assert.All(built.Repositories, repository => Assert.True(repository.Result.Applied));
         Assert.True(built.NodeCount > 0);
         Assert.Equal(0, validated.ExitCode);
-        Assert.Equal(2, validated.Repositories.Count);
+        Assert.Equal(3, validated.Repositories.Count);
         Assert.All(validated.Repositories, repository =>
             Assert.Equal("fresh", repository.Result.Freshness));
     }
@@ -1195,13 +1201,19 @@ public sealed class GraphBuilderTests
         using var second = TemporaryRepository.CreateInitializedApi();
         var resolver = new CisRepositoryContextResolver();
         var registry = new WorkspaceRegistry(resolver);
+        var initialized = new WorkspaceInitializer(new RepositoryInitializer(), registry).Initialize(
+            new WorkspaceInitRequest(workspace.Path, "docs/cis", false, true,
+                "fixture", "fixture", "Fixture", "Fixture"));
+        Assert.Equal(0, initialized.ExitCode);
         var importer = new RepositoryImporter(new RepositoryInitializer(), registry);
         var imported = importer.Import(new RepositoryImportRequest(
             workspace.Path,
             "docs/cis",
             [first.Path, second.Path],
             DryRun: false,
-            Confirmed: true));
+            Confirmed: true,
+            "owned",
+            "none"));
         Assert.Equal(0, imported.ExitCode);
         Assert.Equal(0, CreateBuilder().Build(first.Path).ExitCode);
         Assert.Equal(0, CreateBuilder().Build(second.Path).ExitCode);

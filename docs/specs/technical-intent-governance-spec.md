@@ -3,7 +3,7 @@ title: "Workspace Technical Intent Governance"
 type: governance-specification
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-03"
+last_reviewed: "2026-09-05"
 review_cadence: "on technical-intent lifecycle change"
 cis:
   stable_id: change-impact-studio:spec:technical-intent-governance
@@ -13,9 +13,11 @@ cis:
 
 ## Authority and sequence
 
-A multi-repository workspace has one canonical, workspace-scoped technical intent at
+A product workspace has one canonical, workspace-scoped technical intent at
 `<authority-documentation-root>/specs/technical-intent-spec.md`. Participant repositories
-retain repository-scoped intent documents as supporting evidence. Technical intent follows
+retain repository-scoped intent documents as supporting evidence. Product-owned
+participants supply implementation evidence; dependencies supply only bounded integration
+context. Technical intent follows
 an Active/current BRD and a governed high-level technical questionnaire, and precedes
 change-dossier creation, impact analysis, and planning. The canonical questionnaire lives at
 `<authority-documentation-root>/specs/technical-intent-questionnaire.md`.
@@ -32,6 +34,13 @@ decisions and all other human-authored technical sections remain canonical outsi
 Initialization is idempotent, preserves those sections, and refreshes managed evidence. Semantic
 BRD or standard drift, or a change to the registered participant/standard set, resets approval.
 New build IDs for the same participants update provenance without invalidating approved direction.
+
+Product-owned surfaces determine product modules, frameworks, persistence choices, and
+architecture direction. Dependency surfaces are recorded with their declared producer,
+consumer, or bidirectional relationship and optional component scope. They generate
+explicit integration points but never cause a dependency's framework, database, or
+architecture to be inferred as the product's direction. Modifying a dependency requires a
+separate change under its owning product workspace.
 
 The questionnaire contains 16 stable `TI-Q-*` decisions covering product surfaces, frontend and
 backend technology, architecture and repository topology, primary/supporting data stores,

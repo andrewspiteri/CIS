@@ -305,6 +305,37 @@ test('tree honors the initialized documentation root', () => {
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test('workspace boundary helpers preserve explicit ecosystem and product identity', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cis-vscode-boundary-'));
+  try {
+    fs.mkdirSync(path.join(root, '.cis'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.cis', 'repository.yml'),
+      'repository:\n  id: cards-docs\ndocumentation_root: docs/cis\n');
+    fs.writeFileSync(path.join(root, '.cis', 'workspace.yml'),
+      'schema_version: 2\necosystem:\n  id: retail-banking\n  name: Retail Banking\nproduct:\n  id: cards\n  name: Cards\nrepositories: []\n');
+
+    assert.deepEqual(extension.readWorkspaceBoundary(root), {
+      ecosystem: { id: 'retail-banking', name: 'Retail Banking' },
+      product: { id: 'cards', name: 'Cards' },
+    });
+    const metadata = repositoryMetadata(root, 'docs/cis');
+    assert.equal(metadata.product.id, 'cards');
+    assert.equal(metadata.ecosystem.name, 'Retail Banking');
+    assert.equal(extension.slugIdentity('Cards & Payments'), 'cards-payments');
+    assert.equal(extension.validateIdentity('cards'), undefined);
+    assert.match(extension.validateIdentity('Cards and Payments'), /lowercase/u);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('workspace boundary helper rejects an unqualified legacy registry', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cis-vscode-boundary-'));
+  try {
+    fs.mkdirSync(path.join(root, '.cis'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.cis', 'workspace.yml'), 'schema_version: 1\nrepositories: []\n');
+    assert.throws(() => extension.readWorkspaceBoundary(root), /schema version 2/u);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test('product journey helpers preserve lifecycle authority and dependency order', () => {
   const ready = stateOf({ validation: { valid: true, current: true, effectiveStatus: 'Ready for Approval', errors: [], warnings: [] } });
   const active = stateOf({ validation: { valid: true, current: true, effectiveStatus: 'Active', errors: [], warnings: [] } });
@@ -1919,7 +1950,7 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
     fs.mkdirSync(path.dirname(image), { recursive: true });
     fs.mkdirSync(path.join(root, '.cis'), { recursive: true });
     fs.writeFileSync(path.join(root, '.cis', 'repository.yml'), 'repository:\n  id: fixture\ndocumentation_root: docs\n');
-    fs.writeFileSync(path.join(root, '.cis', 'workspace.yml'), 'authority: fixture\n');
+    fs.writeFileSync(path.join(root, '.cis', 'workspace.yml'), 'schema_version: 2\necosystem:\n  id: fixture\n  name: Fixture\nproduct:\n  id: fixture\n  name: Fixture\nrepositories:\n- id: fixture\n  path: .\n  documentation_root: docs\n  role: authority\n  participation: owned\n  relationship: none\n  components: []\n');
     fs.writeFileSync(proposal, '# Proposal\n');
     fs.mkdirSync(path.dirname(brd), { recursive: true });
     fs.writeFileSync(brd, '---\nstatus: Review Required\n---\n# BRD\n');
@@ -1971,7 +2002,10 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
       registerTreeDataProvider: (id, provider) => { treeProviders.set(id, provider); return { dispose() {} }; },
       createStatusBarItem: () => ({ show() { this.visible = true; }, dispose() {} }),
       showInputBox: async options => promptValue(options.prompt || ''),
-      showOpenDialog: async options => { openDialogOptions = options; return [vscode.Uri.file(reference)]; },
+      showOpenDialog: async options => {
+        openDialogOptions = options;
+        return options.canSelectFiles === false ? [vscode.Uri.file(root)] : [vscode.Uri.file(reference)];
+      },
       showQuickPick: async items => Array.isArray(items) && items.includes('Complete') ? 'Complete' : items[0],
       showWarningMessage: async (_message, _options, action) => action,
       showInformationMessage: async () => undefined,
@@ -2112,7 +2146,7 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
       runForeground: async (title, args, options) => {
         foreground.push({ title, args, options });
         if (args[0] === 'definition' && args[1] === 'activate') definitionSession = false;
-        if (args[0] === 'workspace' && args[1] === 'init') fs.writeFileSync(path.join(root, '.cis', 'workspace.yml'), 'authority: fixture\n');
+        if (args[0] === 'workspace' && args[1] === 'init') fs.writeFileSync(path.join(root, '.cis', 'workspace.yml'), 'schema_version: 2\necosystem:\n  id: fixture\n  name: fixture\nproduct:\n  id: fixture\n  name: fixture\nrepositories:\n- id: fixture\n  path: .\n  documentation_root: docs\n  role: authority\n  participation: owned\n  relationship: none\n  components: []\n');
         if (args[0] === 'brd' && args[1] === 'init') fs.writeFileSync(brd, '---\nstatus: Review Required\n---\n# BRD\n');
         if (args[0] === 'brd' && args[1] === 'questions' && args[2] === 'answer') brdQuestionAnswered = true;
         if (args[0] === 'brd' && args[1] === 'review' && args[2] === 'decide') reviewDecision = 'accepted';
@@ -2268,7 +2302,8 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
     assert.deepEqual(clipboardWrites, ['cis index build --limit 100']);
     assert.ok(queries.includes('context search --text agent provider --limit 100'));
     assert.ok(foreground.some(item => item.args.join(' ') === 'repo init --root docs/cis --yes'));
-    assert.ok(foreground.some(item => item.args.join(' ') === `repo import --workspace ${root} --source ${root} --root docs/cis --yes`));
+    assert.ok(foreground.some(item => item.args.join(' ') === `repo import --workspace ${root} --source ${root} --root docs/cis --participation owned --relationship none --yes`));
+    assert.ok(foreground.some(item => item.args.join(' ') === 'workspace init --root docs --ecosystem fixture --product fixture --ecosystem-name fixture --product-name fixture --yes'));
     assert.ok(foreground.some(item => item.args.join(' ') === `graph build --workspace ${root}`));
     assert.ok(foreground.some(item => item.args.join(' ') === 'index build' && item.options.cancellable === true));
     assert.ok(foreground.some(item => item.args.join(' ') === `agent author brd --provider codex --transport app-server --actor Andrew Spiteri --reference ${reference}`));

@@ -2936,7 +2936,7 @@ internal sealed class RepositoryStarterBinder
 
     # CIS agent execution
 
-    1. For an existing implementation, dry-run `cis repo import --workspace <repository> --source <repository> --root <documentation-root>` and confirm the self-import; use `cis repo init` only for a genuinely new empty project or later reconciliation. If onboarding or command discovery fails, run `cis repo doctor` before retrying.
+    1. For an existing implementation, dry-run `cis repo import --workspace <repository> --source <repository> --root <documentation-root> --participation owned --relationship none --ecosystem <id> --product <id>` and confirm the self-import; use `cis repo init` only for a genuinely new empty project or later reconciliation. If onboarding or command discovery fails, run `cis repo doctor` before retrying.
     2. For pre-change BRD drafting, explicitly select non-sensitive repository-owned plain-text or Word Open XML (`.docx`) reference files and run `cis agent author brd --reference <file> --provider <provider> --actor <human>`. CIS registers each source, builds stable local Markdown anchors, and reconciles the managed BRD source assessment before authoring. Then use `cis agent review brd` with a different provider, review mode, and read-only isolation; include extracted authoring evidence only after explicit disclosure authority. CIS preserves human review and approval. For delivery work, read `{{documentationRoot}}/references/agent-provider-profile.md`, the approved change plan, the selected ready task, and repository delivery policy.
     3. Run `cis agent providers --format agent` and `cis agent provider diagnose <provider> --format agent`; provider availability never grants authority.
     4. Run `cis agent prepare <change-id> <task-id> --provider <provider> --mode <plan|implement|review> --permission <read-only|workspace-write> --format agent` and inspect the bound digest and permission ceiling.
@@ -3239,11 +3239,11 @@ internal sealed class RepositoryStarterBinder
 
         ## Inputs
 
-        Obtain the target repository path and an explicit repository-relative documentation root chosen by the maintainer.
+        Obtain the target repository path, explicit repository-relative documentation root, product identity, ecosystem identity, and owned/dependency participation chosen by the maintainer.
 
         ## Workflow
 
-        1. Inspect the target without mutation. If recognized project manifests or implementation source already exist, run `cis repo import --workspace <repository> --source <repository> --root <documentation-root> --dry-run --format agent`. For a genuinely empty new project, run `cis repo init --repo <repository> --root <documentation-root> --dry-run --format agent`.
+        1. Inspect the target without mutation. If recognized project manifests or implementation source already exist, run `cis repo import --workspace <repository> --source <repository> --root <documentation-root> --participation owned --relationship none --ecosystem <id> --product <id> --dry-run --format agent`. For a genuinely empty new project, run `cis repo init --repo <repository> --root <documentation-root> --dry-run --format agent`, then create its product authority with `cis workspace init --root <documentation-root> --ecosystem <id> --product <id>`.
         2. Review the selected create/import mode, classification evidence, planned creates and updates, warnings, and collisions.
         3. For obsolete managed artifacts, keep the default retention unless the maintainer explicitly requests recoverable cleanup. Preview that cleanup with `--quarantine-obsolete --dry-run`; only unchanged CIS-managed files are eligible, while edited or human-owned files remain in place.
         4. Treat exit code `3` as a confirmation gate, not a failure. After maintainer review and authorization, rerun the same create/import command with `--yes`; include `--quarantine-obsolete` only for init reconciliation when its moves were also reviewed.
@@ -3314,21 +3314,21 @@ internal sealed class RepositoryStarterBinder
 
         ## Inputs
 
-        Obtain the workspace path, every source repository path, and one explicit repository-relative documentation root approved for the import batch.
+        Obtain the workspace path, every source repository path, one explicit repository-relative documentation root, product and ecosystem identities, and the explicit owned/dependency boundary approved for the import batch.
 
         ## Workflow
 
-        1. Run `cis repo import --workspace <workspace> --source <repository>... --root <documentation-root> --dry-run --format agent`. For a standalone existing repository, use that same path for workspace and source so import bootstraps it as authority.
+        1. Run `cis repo import --workspace <workspace> --source <repository>... --root <documentation-root> --participation <owned|dependency> --relationship <none|producer|consumer|bidirectional> --dry-run --format agent`. For a standalone existing repository, use that same path for workspace and source and include `--ecosystem <id> --product <id>` so import bootstraps it as authority.
         2. Review every classification, planned initialization change, warning, collision, and workspace registry entry.
         3. If any repository cannot initialize, run `cis repo doctor` for that repository with the same root and report the evidence before retrying the batch.
         4. After explicit authorization, repeat import with `--yes`; never add `--yes` to the first run.
-        5. Run `cis repo list --workspace <workspace> --format agent` and verify all expected repository IDs and paths.
+        5. Run `cis repo list --workspace <workspace> --format agent` and verify product, ecosystem, repository identities, paths, participation, direction, and component scope.
         6. Run `cis graph build --workspace <workspace> --format agent`, followed by `cis graph status --workspace <workspace> --format agent`. Use `cis graph validate --workspace <workspace>` at an assurance gate, not as a routine freshness probe.
         7. Use registered repository paths as explicit roots when producing federated context packs. Treat each local graph identity, freshness, diagnostics, and omissions independently.
 
         ## Guardrails
 
-        Treat import as registration and initialization, not source copying. Do not silently choose a documentation root, import more than 20 repositories in one batch, hand-edit derived `.cis/local/` graph state, invent cross-repository edges, or hide a partial repository result behind an aggregate success claim.
+        Treat import as registration and initialization, not source copying. Never infer product ownership or route writes to a dependency. Do not silently choose a documentation root, import more than 20 repositories in one batch, hand-edit derived `.cis/local/` graph state, invent cross-repository edges, or hide a partial repository result behind an aggregate success claim.
         """;
 
     private static string CreateGovernBusinessRequirementsSkill() => """
@@ -3341,9 +3341,9 @@ internal sealed class RepositoryStarterBinder
 
         ## Workflow
 
-        1. Confirm `.cis/workspace.yml` identifies exactly one `authority` repository. If not, dry-run `cis workspace init --root <documentation-root>` and request review before using `--yes`.
+        1. Confirm `.cis/workspace.yml` identifies one ecosystem, one product, and exactly one product-owned `authority` repository. If not, dry-run `cis workspace init --root <documentation-root> --ecosystem <id> --product <id>` and request review before using `--yes`.
         2. Run `cis graph build --workspace <workspace>` and `cis graph status --workspace <workspace>` before intake. Reserve `cis graph validate --workspace <workspace>` for deep structural assurance.
-        3. Run `cis brd discover --workspace <workspace> --format agent`. Treat every found BRD, product-design document such as a GDD, or feature specification as unverified source evidence; absence creates no implied requirements.
+        3. Run `cis brd discover --workspace <workspace> --format agent`. Treat every found BRD, product-design document such as a GDD, or feature specification in product-owned repositories as unverified source evidence; absence creates no implied requirements. Exclude dependency repositories because their requirements belong to another product authority.
         4. Run `cis brd init --workspace <workspace> --title <title>`. Preserve the authority repository's canonical document and catalog entry.
         5. To delegate the initial draft, select explicit non-sensitive plain-text or Word Open XML (`.docx`) references and run `cis agent author brd --reference <file> --provider <provider> --actor <human>`. Word text extraction is bounded and does not execute embedded content. Review the one-file result; agent drafting cannot alter frontmatter or managed blocks and grants no approval.
         6. After implementation graph rebuilds, run `cis technical-intent refresh --workspace <workspace> --format agent` before starting the next feature. Do not request renewed BRD, technical-intent, or backlog approval when this safe refresh succeeds. If its BRD stage blocks on new or materially changed source evidence, use `cis brd reconcile --workspace <workspace> --format agent`, review the exact semantic delta, and request only the authority that delta requires.
@@ -3357,7 +3357,7 @@ internal sealed class RepositoryStarterBinder
         14. Present validation errors, warnings, participant baseline drift, unresolved sources, unanswered questions, independent-review findings, and approval readiness to the user.
         15. Run `cis brd approve --reviewer <human> --reason <rationale>` only after the user explicitly authorizes that exact approval. Rebuild the authority graph after approval.
         16. After technical intent is Active/current, run `cis solution-design init`. Review and approve the overall architecture and component sheet as one bundle; UI-facing design follows as a distinct stage within those boundaries.
-        17. After the solution-design bundle is Active/current, capture and approve high-level UI direction through `cis ui-direction questions init`, `cis ui-direction init`, validation, and explicit human approval. Then run `cis brd backlog build`. Accept governed functional requirements expressed as canonical `BRD-FR-*` table rows or bold `BR-FR-*` narrative bullets; do not rewrite or reapprove the BRD solely to change between those presentation forms. Route to participants in a multi-repository workspace and to the authority repository when it is the only greenfield repository. Review one-to-one functional-requirement coverage, normalized `HLT-FR-*` identities, repository routing, frontend types, dependencies, and global obligations, then validate and present approval readiness.
+        17. After the solution-design bundle is Active/current, capture and approve high-level UI direction through `cis ui-direction questions init`, `cis ui-direction init`, validation, and explicit human approval. Then run `cis brd backlog build`. Accept governed functional requirements expressed as canonical `BRD-FR-*` table rows or bold `BR-FR-*` narrative bullets; do not rewrite or reapprove the BRD solely to change between those presentation forms. Route only to product-owned participants, or to the authority when it is the sole owned greenfield repository. Never route implementation to dependencies. Review one-to-one functional-requirement coverage, normalized `HLT-FR-*` identities, repository routing, frontend types, dependencies, and global obligations, then validate and present approval readiness.
         18. Run `cis brd backlog approve --reviewer <human> --reason <rationale>` only with explicit authority. An approved high-level item may then become a feature specification; it is not an implementation task.
         19. Start only a dependency-ready item with `cis brd backlog start --item <HLT-ID>`. Expand the generated scaffold manually or through `cis agent author feature --item <HLT-ID> --provider <provider> --actor <human>`, then run `cis brd feature validate --item <HLT-ID>` until it is Ready for Approval.
         20. Present the exact feature scope, validation result, and approval rationale. Run `cis brd feature approve --item <HLT-ID> --reviewer <human> --reason <rationale>` only with explicit human authority.
@@ -3868,10 +3868,10 @@ internal sealed class RepositoryStarterBinder
         "---\napplyTo: \"**\"\n---\n\n" +
         "# CIS repository guidance\n\n" +
         "- When onboarding or reconciling a repository, use `.github/skills/cis-repository-bootstrap/SKILL.md`; import existing source and initialize only a genuinely new empty project.\n" +
-        "- When importing one or several existing repositories, use `.github/skills/cis-import-repositories/SKILL.md`; dry-run the complete selection before confirmation.\n" +
+        "- When importing one or several existing repositories, use `.github/skills/cis-import-repositories/SKILL.md`; declare product ownership or directional dependency scope and dry-run the complete selection before confirmation.\n" +
         "- For BRD intake or currency review, use `.github/skills/cis-govern-business-requirements/SKILL.md`; discovery never proves currency and approval is human-only.\n" +
         "- After BRD approval and before change dossiers, use `.github/skills/cis-govern-technical-intent/SKILL.md`; technical decisions and approval remain human-authority actions.\n" +
-        "- Run `cis repo import` for existing source or `cis repo init` for a new empty project with an explicit maintainer-selected `--root`; if onboarding returns an error or collision, run `cis repo doctor` with the same `--repo` and `--root`.\n" +
+        "- Run `cis repo import` for existing source or `cis repo init` for a new empty project with an explicit maintainer-selected `--root`; product authority also requires explicit `--ecosystem` and `--product`, while imports require `--participation` and `--relationship`. If onboarding returns an error or collision, run `cis repo doctor` with the same `--repo` and `--root`.\n" +
         "- Read `.cis/repository.yml` before repository-wide work.\n" +
         $"- Start with `{documentationRoot}/README.md`, `{documentationRoot}/catalog.yml`, and the repository profile before broad searches.\n" +
         $"- Treat `{documentationRoot}/specs/product-intent-spec.md` and `{documentationRoot}/specs/technical-intent-spec.md` as foundational intent documents.\n" +
@@ -3953,7 +3953,7 @@ internal sealed class RepositoryStarterBinder
         # CIS business requirements authority
 
         - The canonical BRD belongs only to the repository registered with workspace role `authority`.
-        - Treat BRDs, domain-equivalent product-design documents such as GDDs, and development feature specifications found in authority or participant repositories as source evidence until a human assesses each source row.
+        - Treat BRDs, domain-equivalent product-design documents such as GDDs, and development feature specifications found in product-owned repositories as source evidence until a human assesses each source row. Dependency documents belong to another product authority and are excluded.
         - File existence, deterministic extraction, graph freshness, or agent review never proves business currency.
         - Complete business outcomes, scope, actors, capabilities, requirements, constraints, success measures, traceability, and open questions through human review.
         - A controller may delegate a Review Required draft with `cis agent author brd --reference <file> --provider <provider> --actor <human>`. CIS reads bounded plain text or extracts bounded text from Word Open XML (`.docx`), binds the original selected evidence by digest, runs in an isolated scratch repository, and applies only an exact one-file BRD diff whose frontmatter and managed blocks remain unchanged.
@@ -3997,8 +3997,9 @@ internal sealed class RepositoryStarterBinder
 
         # CIS technical intent authority
 
-        - The workspace authority owns one canonical workspace-scoped technical intent; participant repositories retain repository-scoped supporting intent documents.
-        - An Active/current BRD, completed/current governed technical questionnaire, and fresh participant graphs are required before technical-intent initialization or approval.
+        - The workspace authority owns one canonical product-scoped technical intent; participant repositories retain repository-scoped supporting intent documents.
+        - An Active/current BRD, completed/current governed technical questionnaire, and fresh product-owned participant graphs are required before technical-intent initialization or approval.
+        - Infer product frameworks, architecture, databases, and modules only from product-owned repositories. Record dependency repositories as directional integration points with declared component scope; never absorb their implementation choices as product direction or route writes to them.
         - Existing implementations derive only evidence-supported technical facts with confidence and repository provenance; ambiguous choices remain human questions. Greenfield projects require human answers for every direction. Advisory starting directions become authority only through an explicit human answer.
         - Initialization creates a Draft from questionnaire answers, the BRD, classifications, graph, and Active standards, including logical components, BRD-derived product modules, detailed responsibility profiles, and stable integration points.
         - Review every `TI-MOD-*` candidate against the module completeness fields: purpose, BRD authority, ownership and exclusions, inputs, outputs, data/state, security/policy, failure/recovery, and verification. Do not equate a module with a deployable unless topology requires it.

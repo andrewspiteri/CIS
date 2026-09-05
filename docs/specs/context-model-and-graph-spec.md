@@ -513,8 +513,11 @@ and registry membership without copying sources. `cis graph build --workspace` a
 `cis graph validate --workspace` apply the graph lifecycle independently to every
 registered repository and expose every partial or failed result. The registry is a
 selection and identity boundary, not a merged graph and not evidence for an edge.
-`cis workspace init` assigns exactly one documentation repository the `authority` role;
-imports use `participant`. Legacy entries without a role remain compatible participants.
+`cis workspace init` assigns exactly one product-owned documentation repository the
+`authority` role. Imports use `participant` plus explicit `owned` or `dependency`
+participation, a producer/consumer relationship, and optional bounded component scope.
+Workspace graph lifecycle output exposes those fields together with ecosystem and product
+identity. Legacy unqualified workspace registries are rejected rather than interpreted.
 Repository roles describe canonical ownership and never create graph relationships.
 
 ## 12. Validation and health

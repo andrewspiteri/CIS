@@ -3,7 +3,7 @@ title: "Change Impact Studio for Visual Studio Code"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-03"
+last_reviewed: "2026-09-05"
 review_cadence: "on VSIX or consumed CLI contract change"
 cis:
   stable_id: change-impact-studio:manual:vscode-extension
@@ -32,11 +32,17 @@ ready repository.
 
 - Trust only a workspace you control before running CIS processes.
 - For a new empty project, choose the required repository-relative documentation root and
-  run **CIS: Initialize Repository**.
+  run **CIS: Initialize Repository**. Starting product definition then captures the product
+  name/ID and ecosystem name/ID before creating authority.
 - When source manifests or implementation files already exist, the Welcome View instead
   offers **CIS: Import Existing Repository**. CIS dry-runs the bounded self-import, asks for
   one confirmation, registers the repository as workspace authority, and builds its context
-  graph without copying or rewriting the implementation.
+  graph without copying or rewriting the implementation. The self-import captures explicit
+  product and ecosystem identity.
+- After authority exists, **CIS: Import Existing Repository** selects additional folders.
+  Choose **Owned product repository** for implementation governed here, or **External
+  dependency repository** plus producer/consumer direction and optional component scope.
+  Dependency source is visible context but cannot receive product implementation work.
 - Once initialized, open **High-level product definition wizard** in the Workspace View or
   run **CIS: Open High-Level Product Definition Wizard**. The retained eight-page surface
   coordinates foundation, BRD, technical direction, architecture and diagrams, dictionaries,
@@ -44,6 +50,8 @@ ready repository.
   alone does not invent product requirements.
 - For a multi-root workspace, select the authority repository explicitly. The extension
   persists that choice for the workspace and never silently switches it.
+- Confirm the product and ecosystem identity shown at the top of the Workspace View before
+  authoring requirements or assigning work.
 - Run Repository Doctor, then refresh the Workspace View.
 
 ### Specify a new product or project

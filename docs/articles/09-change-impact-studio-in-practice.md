@@ -38,18 +38,19 @@ The product spans three repositories:
 - `todo-api` owns application behavior, authorization, and persistence; and
 - `todo-infra` owns deployment and supporting infrastructure.
 
-A separate documentation repository acts as the workspace authority. It owns the
-canonical business requirements and workspace technical intent. The three product
-repositories remain participants and retain their local specifications, source, tests,
-and implementation references.
+A separate documentation repository acts as the workspace authority for the Friends
+Todo product inside its sample ecosystem. It owns the canonical business requirements
+and workspace technical intent. The three product repositories are owned participants
+and retain their local specifications, source, tests, and implementation references.
 
 ```powershell
-cis workspace init --root docs --dry-run
-cis workspace init --root docs --yes
+cis workspace init --root docs --ecosystem friends-todo --product friends-todo --dry-run
+cis workspace init --root docs --ecosystem friends-todo --product friends-todo --yes
 
 cis repo import `
   --source C:\work\todo-web C:\work\todo-api C:\work\todo-infra `
   --root cisdocs `
+  --participation owned --relationship none `
   --dry-run
 ```
 

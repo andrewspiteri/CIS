@@ -19,7 +19,11 @@ execute source repositories.
 
 ```text
 cis repo import --source <path> [<path>...] --root <repository-relative-path>
+  --participation <owned|dependency>
+  --relationship <none|producer|consumer|bidirectional>
   [--workspace <path>] [--dry-run] [--yes]
+  [--component <id>...] [--ecosystem <id>] [--product <id>]
+  [--ecosystem-name <name>] [--product-name <name>]
   [--format <human|json|agent>]
 ```
 
@@ -32,14 +36,17 @@ an initialization collision. It then merges the repositories into
 possible.
 
 For an existing standalone repository, set both `--workspace` and `--source` to that
-repository. If no workspace configuration exists, the import initializes the existing
-source in place and registers it as the workspace `authority` in one transaction. This
+repository. If no workspace configuration exists, the import requires explicit
+`--ecosystem` and `--product` identities, initializes the existing source in place, and
+registers it as the workspace `authority` in one transaction. This
 is the preferred existing-repository onboarding flow; it does not copy or rewrite source
 implementation files.
 
-Run `cis workspace init` first when a separate documentation repository will own
-cross-repository canonical documents such as the BRD. Other imported repositories use
-role `participant`; importing the authority repository again never downgrades its role.
+Run `cis workspace init` first when a separate documentation repository will own the
+product's canonical documents. Other imports use role `participant`. `owned` imports are
+implementation targets governed by this product. `dependency` imports are bounded read
+context owned elsewhere and require a directional producer, consumer, or bidirectional
+relationship. Importing the authority repository again never downgrades its role.
 
 Without `--yes`, a non-empty plan returns a confirmation-required result and changes
 nothing. With `--yes`, every source is initialized using the selected documentation
@@ -57,6 +64,13 @@ entries.
 | `--source <path>` | Yes | — | Selects existing repository paths; repeat or provide several values, up to 20. |
 | `--root <path>` | Yes | — | Selects the repository-relative documentation root used to initialize every source. |
 | `--workspace <path>` | No | Current directory | Selects the directory that owns `.cis/workspace.yml`. |
+| `--participation <value>` | Yes | — | Selects `owned` product scope or external `dependency` context. |
+| `--relationship <value>` | Yes | — | Uses `none` for owned repositories; dependencies require `producer`, `consumer`, or `bidirectional`. |
+| `--component <id>` | No | None | Limits dependency context to a named component; repeat as needed. |
+| `--ecosystem <id>` | Bootstrap only | — | Sets the ecosystem when self-import creates the authority. |
+| `--product <id>` | Bootstrap only | — | Sets the product when self-import creates the authority. |
+| `--ecosystem-name <name>` | No | Ecosystem ID | Sets its display name during bootstrap. |
+| `--product-name <name>` | No | Product ID | Sets its display name during bootstrap. |
 | `--dry-run` | No | `false` | Plans the complete batch and registry without writing. |
 | `--yes` | No | `false` | Confirms the reviewed batch initialization and registry changes. |
 | `--format <format>` | No | `human` | Selects `human`, `json`, or `agent` output. |
@@ -64,16 +78,36 @@ entries.
 ## Canonical registry
 
 ```yaml
-schema_version: 1
+schema_version: 2
+ecosystem:
+  id: commerce
+  name: Commerce
+product:
+  id: ordering
+  name: Ordering
 repositories:
+  - id: ordering-docs
+    path: .
+    documentation_root: docs/cis
+    role: authority
+    participation: owned
+    relationship: none
+    components: []
   - id: orders-api
     path: ../orders-api
     documentation_root: docs/cis
     role: participant
-  - id: orders-web
-    path: ../orders-web
+    participation: owned
+    relationship: none
+    components: []
+  - id: customer-profile
+    path: ../customer-profile
     documentation_root: docs/cis
     role: participant
+    participation: dependency
+    relationship: producer
+    components:
+      - customer-api
 ```
 
 Repository IDs must be unique. Every entry must agree with the repository's own
@@ -87,6 +121,8 @@ configuration, and mismatched documentation roots invalidate the workspace.
 - Bootstraps a missing workspace authority only when the workspace directory is itself
   one of the explicitly selected existing sources.
 - Plans the complete batch before changing the first repository.
+- Re-importing an existing identity explicitly reclassifies its boundary and remains
+  idempotent; it never creates a duplicate entry.
 - Never removes an earlier registry entry merely because it was omitted from a later
   import.
 - Never builds graphs implicitly; use workspace graph build after import.
@@ -107,11 +143,11 @@ same root, resolve its evidence-backed findings, and retry the complete import.
 ## Examples
 
 ```powershell
-cis repo import --workspace C:\work\existing-api --source C:\work\existing-api --root docs/cis --dry-run --format agent
-cis repo import --workspace C:\work\existing-api --source C:\work\existing-api --root docs/cis --yes
-cis repo import --workspace C:\work\commerce --source C:\work\orders-api C:\work\orders-web --root docs/cis --dry-run --format agent
-cis repo import --workspace C:\work\commerce --source C:\work\orders-api C:\work\orders-web --root docs/cis --yes
-cis graph build --workspace C:\work\commerce --format agent
+cis repo import --workspace C:\work\existing-api --source C:\work\existing-api --root docs/cis --participation owned --relationship none --ecosystem commerce --product ordering --dry-run --format agent
+cis repo import --workspace C:\work\existing-api --source C:\work\existing-api --root docs/cis --participation owned --relationship none --ecosystem commerce --product ordering --yes
+cis repo import --workspace C:\work\ordering-docs --source C:\work\orders-api C:\work\orders-web --root docs/cis --participation owned --relationship none --yes
+cis repo import --workspace C:\work\ordering-docs --source C:\work\core-banking --root docs/cis --participation dependency --relationship producer --component accounts-api --yes
+cis graph build --workspace C:\work\ordering-docs --format agent
 ```
 
 ## Related commands

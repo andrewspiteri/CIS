@@ -3,7 +3,7 @@ title: "Business Requirements Governance"
 type: specification
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-03"
+last_reviewed: "2026-09-05"
 review_cadence: "on BRD workflow change"
 cis:
   stable_id: change-impact-studio:spec:business-requirements-governance
@@ -20,13 +20,16 @@ evidence. Discovery never proves currency or semantic absorption.
 
 ## Authority model
 
-`cis workspace init` registers exactly one documentation repository with role
-`authority`. Imported product repositories have role `participant`. The canonical BRD
-lives at `<authority-documentation-root>/specs/business-requirements.md`; BRDs elsewhere
-remain candidate evidence even when they are detailed or appear current.
+`cis workspace init` binds one workspace to one product in one ecosystem and registers
+exactly one documentation repository with role `authority`. Other repositories have role
+`participant` and explicit `owned` or `dependency` participation. The canonical BRD
+lives at `<authority-documentation-root>/specs/business-requirements.md`. BRDs and feature
+specifications in other product-owned repositories remain candidate evidence even when
+they are detailed or appear current. Dependency-repository documents belong to another
+product authority and are excluded from BRD discovery.
 
-Legacy registries without roles remain readable and treat entries as participants.
-BRD commands require an explicit authority.
+Legacy unqualified registries are rejected. BRD commands require an explicit product
+identity and authority.
 
 ## Intake states
 
@@ -119,12 +122,14 @@ all findings are rejected, no synthetic revision or secondary review is required
 
 ## Currency and baselines
 
-The canonical BRD records participant graph builds. The authority graph is deliberately
+The canonical BRD records product-owned participant graph builds. Dependency graph
+freshness is reported as integration-context warning rather than a blocker to product
+business authority. The authority graph is deliberately
 excluded from the embedded baseline because the BRD is itself an authority-graph input;
 including it would create a self-referential build identity. Candidate documents in the
 authority repository remain content-hashed source evidence.
 
-Approval captures the current participant baselines and a normalized digest of the
+Approval captures the current product-owned participant baselines and a normalized digest of the
 approved canonical content excluding approval metadata. Later canonical content edits,
 participant build changes, candidate changes, missing evidence, or validation gaps make
 an approved BRD effectively `Stale`. Deterministic checks may detect staleness but may
@@ -161,10 +166,11 @@ Validation enforces one-to-one functional-requirement coverage, stable identitie
 routing, supported frontend classifications, and acyclic dependencies. Derivation is a
 mechanical transformation and grants no backlog approval.
 
-Participant repositories are the normal implementation-routing candidates. A greenfield
+Product-owned participant repositories are the normal implementation-routing candidates. A greenfield
 workspace containing only its authority repository uses that repository as the deterministic
-implementation target; an empty repository list is invalid. Once participants are imported,
-subsequent idempotent builds route against those participants instead.
+implementation target; an empty repository list is invalid. Once owned participants are
+imported, subsequent idempotent builds route against them. Dependency repositories are
+never implementation targets; changes to them require their own product authority.
 
 ## Human authority
 

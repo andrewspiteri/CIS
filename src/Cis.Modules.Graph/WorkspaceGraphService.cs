@@ -31,6 +31,9 @@ public sealed class WorkspaceGraphService
                 repository.Id,
                 repository.RepositoryPath,
                 repository.Role,
+                repository.Participation,
+                repository.Relationship,
+                repository.Components,
                 _builder.Build(repository.RepositoryPath, refresh)))
             .ToArray();
         var status = results.Any(result => result.Result.ExitCode != 0)
@@ -42,7 +45,9 @@ public sealed class WorkspaceGraphService
             status,
             resolution.Workspace.WorkspacePath,
             results,
-            []);
+            [],
+            resolution.Workspace.Ecosystem,
+            resolution.Workspace.Product);
     }
 
     public WorkspaceGraphValidationResult Validate(string workspacePath, bool strict)
@@ -58,6 +63,9 @@ public sealed class WorkspaceGraphService
                 repository.Id,
                 repository.RepositoryPath,
                 repository.Role,
+                repository.Participation,
+                repository.Relationship,
+                repository.Components,
                 _validator.Validate(repository.RepositoryPath, strict)))
             .ToArray();
         var status = results.Any(result => result.Result.ExitCode != 0)
@@ -69,7 +77,9 @@ public sealed class WorkspaceGraphService
             status,
             resolution.Workspace.WorkspacePath,
             results,
-            []);
+            [],
+            resolution.Workspace.Ecosystem,
+            resolution.Workspace.Product);
     }
 
     public WorkspaceGraphValidationResult Status(string workspacePath)
@@ -85,11 +95,15 @@ public sealed class WorkspaceGraphService
                 repository.Id,
                 repository.RepositoryPath,
                 repository.Role,
+                repository.Participation,
+                repository.Relationship,
+                repository.Components,
                 _validator.Status(repository.RepositoryPath)))
             .ToArray();
         var status = results.Any(result => result.Result.ExitCode != 0)
             ? "failed"
             : results.Any(result => result.Result.WarningCount > 0) ? "warnings" : "valid";
-        return new WorkspaceGraphValidationResult(status, resolution.Workspace.WorkspacePath, results, []);
+        return new WorkspaceGraphValidationResult(status, resolution.Workspace.WorkspacePath, results, [],
+            resolution.Workspace.Ecosystem, resolution.Workspace.Product);
     }
 }

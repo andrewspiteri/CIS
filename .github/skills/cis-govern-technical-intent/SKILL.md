@@ -5,6 +5,11 @@ description: Capture high-level technical choices, then initialize, review, appr
 
 # Govern Technical Intent
 
+Treat the workspace as authority for exactly one product. Derive product technology and
+module direction only from owned repositories. Record producer, consumer, and
+bidirectional dependency repositories as bounded integration evidence; never infer their
+technology as product direction or plan writes against them.
+
 ## Workflow
 
 1. Confirm `cis brd status --workspace <workspace>` reports Active, valid, and current.

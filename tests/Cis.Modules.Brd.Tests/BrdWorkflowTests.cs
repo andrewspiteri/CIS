@@ -285,6 +285,24 @@ public sealed class BrdWorkflowTests
     }
 
     [Fact]
+    public void Discover_DoesNotAbsorbBusinessAuthorityFromDependencyRepository()
+    {
+        using var environment = WorkspaceEnvironment.Create(
+            participants: 1,
+            configureParticipant: (repository, _) => repository.Write(
+                "legacy/BRD.md",
+                "# Core Banking Business Requirements\n\nRequirements owned by another product.\n"),
+            dependencyIndexes: new HashSet<int> { 1 });
+
+        var result = environment.Service.Discover(environment.Authority.Path);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal("missing", result.Status);
+        Assert.Empty(result.Candidates);
+        Assert.Single(result.Baselines, baseline => baseline.Role == "dependency");
+    }
+
+    [Fact]
     public void Discover_FindsGameDesignDocumentAsProductDesignEvidence()
     {
         using var environment = WorkspaceEnvironment.Create(
@@ -1081,7 +1099,8 @@ public sealed class BrdWorkflowTests
         public static WorkspaceEnvironment Create(
             int participants,
             Action<TemporaryRepository, int>? configureParticipant = null,
-            IEnumerable<ICisBrdSourceEvidenceProvider>? sourceProviders = null)
+            IEnumerable<ICisBrdSourceEvidenceProvider>? sourceProviders = null,
+            IReadOnlySet<int>? dependencyIndexes = null)
         {
             var authority = TemporaryRepository.Create();
             var participantRepositories = Enumerable.Range(1, participants)
@@ -1105,18 +1124,29 @@ public sealed class BrdWorkflowTests
                 authority.Path,
                 "docs",
                 DryRun: false,
-                Confirmed: true));
+                Confirmed: true,
+                "fixture",
+                "fixture",
+                "Fixture",
+                "Fixture"));
             Assert.Equal(0, initialized.ExitCode);
             if (participantRepositories.Length > 0)
             {
                 var importer = new RepositoryImporter(new RepositoryInitializer(), registry);
-                var imported = importer.Import(new RepositoryImportRequest(
-                    authority.Path,
-                    "docs/cis",
-                    participantRepositories.Select(repository => repository.Path).ToArray(),
-                    DryRun: false,
-                    Confirmed: true));
-                Assert.Equal(0, imported.ExitCode);
+                foreach (var pair in participantRepositories.Select((repository, index) => (Repository: repository, Index: index + 1)))
+                {
+                    var dependency = dependencyIndexes?.Contains(pair.Index) == true;
+                    var imported = importer.Import(new RepositoryImportRequest(
+                        authority.Path,
+                        "docs/cis",
+                        [pair.Repository.Path],
+                        DryRun: false,
+                        Confirmed: true,
+                        dependency ? "dependency" : "owned",
+                        dependency ? "producer" : "none",
+                        dependency ? ["core-api"] : []));
+                    Assert.Equal(0, imported.ExitCode);
+                }
             }
             var builder = CreateBuilder(resolver);
             foreach (var repository in new[] { authority }.Concat(participantRepositories))

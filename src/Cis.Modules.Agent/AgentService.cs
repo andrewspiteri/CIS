@@ -2022,6 +2022,11 @@ public sealed partial class AgentService
     private (string Path, bool Isolated)? ResolveWorkingDirectory(CisRepositoryContext authority, CisWorkspaceRepository target, string runId, string permission, List<string> diagnostics)
     {
         if (permission == CisAgentPermissions.ReadOnly) return (target.RepositoryPath, false);
+        if (target.IsDependency)
+        {
+            diagnostics.Add($"ERROR: Repository '{target.Id}' is registered as a {target.Relationship} dependency and cannot receive product implementation writes. Create a separately governed change under the owning product workspace.");
+            return null;
+        }
         var gitRepository = IsGitRepository(target.RepositoryPath);
         if (AllowsDirectWorkingTree(authority)) return (target.RepositoryPath, false);
         if (!gitRepository)

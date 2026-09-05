@@ -77,7 +77,51 @@ function activate(context, overrides = {}) {
       validateInput: value => resolveWithin(repository, value) ? undefined : 'Enter a contained repository-relative path.',
     });
     if (!documentationRoot) return;
-    const args = ['repo', 'import', '--workspace', repository, '--source', repository, '--root', documentationRoot];
+    const workspaceBoundary = readWorkspaceBoundary(repository);
+    let sources = [repository];
+    let participation = 'owned';
+    let relationship = 'none';
+    let components = [];
+    let identityArgs = [];
+    if (!workspaceBoundary) {
+      const identity = await promptProductIdentity(repository);
+      if (!identity) return;
+      identityArgs = productIdentityArgs(identity);
+    } else {
+      const selected = await vscode.window.showOpenDialog({
+        canSelectFiles: false,
+        canSelectFolders: true,
+        canSelectMany: true,
+        title: `Select repositories to import into ${workspaceBoundary.product.name}`,
+      });
+      if (!selected?.length) return;
+      sources = selected.map(item => item.fsPath);
+      const selectedParticipation = await vscode.window.showQuickPick([
+        { label: 'Owned product repository', description: 'Implementation is governed by this product workspace.', value: 'owned' },
+        { label: 'External dependency repository', description: 'Imported for producer/consumer context; implementation remains outside this product.', value: 'dependency' },
+      ], { placeHolder: 'How do these repositories participate in this product?' });
+      if (!selectedParticipation) return;
+      participation = selectedParticipation.value;
+      if (participation === 'dependency') {
+        const selectedRelationship = await vscode.window.showQuickPick([
+          { label: 'Producer', description: 'The dependency provides capabilities or contracts consumed by this product.', value: 'producer' },
+          { label: 'Consumer', description: 'The dependency consumes capabilities or contracts provided by this product.', value: 'consumer' },
+          { label: 'Bidirectional', description: 'Capabilities or contracts flow in both directions.', value: 'bidirectional' },
+        ], { placeHolder: 'Direction relative to this product' });
+        if (!selectedRelationship) return;
+        relationship = selectedRelationship.value;
+        const scope = await vscode.window.showInputBox({
+          prompt: 'Optional comma-separated component scope within the dependency',
+          placeHolder: 'payments-api, customer-events',
+        });
+        components = String(scope || '').split(',').map(value => value.trim()).filter(Boolean);
+      }
+    }
+    const args = ['repo', 'import', '--workspace', repository];
+    for (const source of sources) args.push('--source', source);
+    args.push('--root', documentationRoot, '--participation', participation, '--relationship', relationship);
+    for (const component of components) args.push('--component', component);
+    args.push(...identityArgs);
     const plan = await cli.query([...args, '--dry-run'], { repository: false });
     const imported = Array.isArray(plan.repositories) ? plan.repositories.length : 1;
     const confirmed = await vscode.window.showWarningMessage(
@@ -97,12 +141,14 @@ function activate(context, overrides = {}) {
     if (!metadata.initialized) throw new Error('Initialize the repository before starting product definition.');
     const paths = productPaths(root, metadata);
     if (!fs.existsSync(paths.workspace)) {
+      const identity = await promptProductIdentity(root);
+      if (!identity) return;
       const confirmed = await vscode.window.showWarningMessage(
-        `Create the CIS workspace authority in ${metadata.documentationRoot} and build its context graph?`,
+        `Create the ${identity.productName} product workspace in the ${identity.ecosystemName} ecosystem and build its context graph?`,
         { modal: true }, 'Start product definition');
       if (confirmed !== 'Start product definition') return;
       await cli.runForeground('Create CIS workspace authority',
-        ['workspace', 'init', '--root', metadata.documentationRoot, '--yes'], { repository: false });
+        ['workspace', 'init', '--root', metadata.documentationRoot, ...productIdentityArgs(identity), '--yes'], { repository: false });
       await cli.runForeground('Build CIS workspace graph', ['graph', 'build', '--workspace', root], { repository: false });
     }
     if (!fs.existsSync(paths.brd)) {
@@ -126,12 +172,14 @@ function activate(context, overrides = {}) {
     if (!metadata.initialized) throw new Error('Initialize the repository before starting high-level product definition.');
     const paths = productPaths(root, metadata);
     if (!fs.existsSync(paths.workspace)) {
+      const identity = await promptProductIdentity(root);
+      if (!identity) return;
       const confirmed = await vscode.window.showWarningMessage(
-        `Create the CIS workspace authority in ${metadata.documentationRoot} and start the product-definition wizard?`,
+        `Create the ${identity.productName} product workspace in the ${identity.ecosystemName} ecosystem and start the product-definition wizard?`,
         { modal: true }, 'Start wizard');
       if (confirmed !== 'Start wizard') return;
       await cli.runForeground('Create CIS workspace authority',
-        ['workspace', 'init', '--root', metadata.documentationRoot, '--yes'], { repository: false });
+        ['workspace', 'init', '--root', metadata.documentationRoot, ...productIdentityArgs(identity), '--yes'], { repository: false });
       await cli.runForeground('Build CIS workspace graph', ['graph', 'build', '--workspace', root], { repository: false });
     }
     let model = await definitionWizardModel(cli, root);
@@ -1353,6 +1401,70 @@ async function actorIdentity() {
   return vscode.window.showInputBox({ prompt: 'Human actor identity recorded by CIS', validateInput: value => value.trim() ? undefined : 'Identity is required.' });
 }
 
+async function promptProductIdentity(root) {
+  const repositoryId = repositoryMetadata(root, 'docs/cis').id || path.basename(root);
+  const productName = await vscode.window.showInputBox({
+    prompt: 'Product name governed by this CIS workspace',
+    value: repositoryId,
+    validateInput: value => value.trim() ? undefined : 'A product name is required.',
+  });
+  if (!productName) return undefined;
+  const productId = await vscode.window.showInputBox({
+    prompt: 'Stable product ID',
+    value: slugIdentity(productName),
+    validateInput: validateIdentity,
+  });
+  if (!productId) return undefined;
+  const ecosystemName = await vscode.window.showInputBox({
+    prompt: 'Software ecosystem name',
+    value: productName,
+    validateInput: value => value.trim() ? undefined : 'An ecosystem name is required.',
+  });
+  if (!ecosystemName) return undefined;
+  const ecosystemId = await vscode.window.showInputBox({
+    prompt: 'Stable ecosystem ID',
+    value: slugIdentity(ecosystemName),
+    validateInput: validateIdentity,
+  });
+  if (!ecosystemId) return undefined;
+  return { ecosystemId: ecosystemId.trim(), ecosystemName: ecosystemName.trim(), productId: productId.trim(), productName: productName.trim() };
+}
+
+function productIdentityArgs(identity) {
+  return ['--ecosystem', identity.ecosystemId, '--product', identity.productId,
+    '--ecosystem-name', identity.ecosystemName, '--product-name', identity.productName];
+}
+
+function slugIdentity(value) {
+  return String(value || '').trim().toLowerCase().replace(/[^a-z0-9._-]+/gu, '-').replace(/^[^a-z0-9]+|[^a-z0-9]+$/gu, '') || 'product';
+}
+
+function validateIdentity(value) {
+  return /^[a-z0-9][a-z0-9._-]{0,127}$/u.test(String(value || '').trim())
+    ? undefined
+    : 'Use 1-128 lowercase letters, numbers, dots, underscores, or hyphens; start with a letter or number.';
+}
+
+function readWorkspaceBoundary(root) {
+  const workspacePath = path.join(root, '.cis', 'workspace.yml');
+  if (!fs.existsSync(workspacePath)) return undefined;
+  const lines = fs.readFileSync(workspacePath, 'utf8').split(/\r?\n/u);
+  const sections = {};
+  let section;
+  for (const line of lines) {
+    const header = /^([a-z_]+):\s*$/u.exec(line);
+    if (header) { section = header[1]; sections[section] ||= {}; continue; }
+    const value = /^\s{2}(id|name):\s*['"]?([^'"\r\n]+?)['"]?\s*$/u.exec(line);
+    if (section && value) sections[section][value[1]] = value[2].trim();
+  }
+  if (!sections.ecosystem?.id || !sections.product?.id)
+    throw new Error('The workspace registry is not schema version 2. Reinitialize it with explicit ecosystem and product identity.');
+  return {
+    ecosystem: { id: sections.ecosystem.id, name: sections.ecosystem.name || sections.ecosystem.id },
+    product: { id: sections.product.id, name: sections.product.name || sections.product.id },
+  };
+}
+
 function installWatchers(context, authority, markStale) {
   const active = [];
   const reset = () => {
@@ -1447,5 +1559,6 @@ module.exports = {
   activate, actorIdentity, agentStateCommand, brdRecommendationAcceptAllArgs, brdRecommendationDecisionArgs, brdRecommendationProgress, conciseError, deactivate, debounce, installWatchers,
   approveProductDocument, compactValidationResult, continueApprovedFeatureDelivery, currentProductPaths, definitionWizardModel, ensureSolutionDesignReady, ensureUiDirectionReady, markdownFiles, queryWorkspace, repositoryMetadata,
   refreshAfterReviewCompletion, requestAgentWork, resolveWithin, resumeAgent, runIdentity, selectBacklogItem, taskTransition, validateProductDocument,
+  promptProductIdentity, productIdentityArgs, readWorkspaceBoundary, slugIdentity, validateIdentity,
   AuthoritySelector, CisCli, CisViewProvider,
 };

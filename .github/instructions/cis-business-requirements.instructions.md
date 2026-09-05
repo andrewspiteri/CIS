@@ -5,7 +5,7 @@ applyTo: "docs/specs/business-requirements.md"
 # CIS business requirements authority
 
 - The canonical BRD belongs only to the repository registered with workspace role `authority`.
-- Treat BRDs, domain-equivalent product-design documents such as GDDs, and development feature specifications found in authority or participant repositories as source evidence until a human assesses each source row.
+- Treat BRDs, domain-equivalent product-design documents such as GDDs, and development feature specifications found in product-owned repositories as source evidence until a human assesses each source row. Dependency-repository documents belong to another product authority and are excluded.
 - File existence, deterministic extraction, graph freshness, or agent review never proves business currency.
 - Complete business outcomes, scope, actors, capabilities, requirements, constraints, success measures, traceability, and open questions through human review.
 - After an agent-authored draft, prefer a different review-capable provider through `cis agent review brd`. Keep the run read-only and isolated, disclose extracted authoring references only with explicit authority, and treat every finding as advisory evidence rather than approval or stakeholder fact.

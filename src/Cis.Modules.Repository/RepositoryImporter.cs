@@ -1,4 +1,5 @@
 using Cis.Abstractions;
+using System.Text.RegularExpressions;
 
 namespace Cis.Modules.Repository;
 
@@ -25,6 +26,24 @@ public sealed class RepositoryImporter
         var warnings = new List<string>();
         var collisions = new List<string>();
         var sources = ResolveSources(request.SourcePaths, errors);
+        var participation = request.Participation.Trim().ToLowerInvariant();
+        var relationship = request.Relationship.Trim().ToLowerInvariant();
+        var components = (request.ComponentScope ?? [])
+            .Select(component => component.Trim().ToLowerInvariant())
+            .Where(component => component.Length > 0)
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        if (participation is not ("owned" or "dependency"))
+            errors.Add("Participation must be owned or dependency.");
+        if (relationship is not ("none" or "producer" or "consumer" or "bidirectional"))
+            errors.Add("Relationship must be none, producer, consumer, or bidirectional.");
+        if (participation == "owned" && relationship != "none")
+            errors.Add("Product-owned repositories must use relationship 'none'.");
+        if (participation == "dependency" && relationship == "none")
+            errors.Add("Dependency repositories must declare a producer, consumer, or bidirectional relationship.");
+        foreach (var component in components.Where(component => !ValidIdentity(component)))
+            errors.Add($"Component scope is invalid: {component}");
         if (sources.Count is < 1 or > 20)
         {
             errors.Add("Import requires between 1 and 20 distinct repository paths.");
@@ -44,6 +63,22 @@ public sealed class RepositoryImporter
         var workspace = workspaceResolution.Workspace!;
         var bootstrappingAuthority = workspace.Repositories.Count == 0
             && sources.Any(source => PathComparer.Equals(source, workspace.WorkspacePath));
+        if (workspace.Repositories.Count == 0 && !bootstrappingAuthority)
+            errors.Add("Initialize the product workspace authority before importing other repositories.");
+        CisEcosystem? ecosystem = workspace.Ecosystem;
+        if (ecosystem is null && Identity(request.EcosystemId, request.EcosystemName, "ecosystem", errors) is { } ecosystemIdentity)
+            ecosystem = new CisEcosystem(ecosystemIdentity.Id, ecosystemIdentity.Name);
+        CisProduct? product = workspace.Product;
+        if (product is null && Identity(request.ProductId, request.ProductName, "product", errors) is { } productIdentity)
+            product = new CisProduct(productIdentity.Id, productIdentity.Name);
+        if (workspace.Ecosystem is not null && !string.IsNullOrWhiteSpace(request.EcosystemId)
+            && !string.Equals(workspace.Ecosystem.Id, request.EcosystemId.Trim(), StringComparison.OrdinalIgnoreCase))
+            errors.Add($"Workspace belongs to ecosystem '{workspace.Ecosystem.Id}', not '{request.EcosystemId}'.");
+        if (workspace.Product is not null && !string.IsNullOrWhiteSpace(request.ProductId)
+            && !string.Equals(workspace.Product.Id, request.ProductId.Trim(), StringComparison.OrdinalIgnoreCase))
+            errors.Add($"Workspace governs product '{workspace.Product.Id}', not '{request.ProductId}'.");
+        if (errors.Count > 0 || ecosystem is null || product is null)
+            return Invalid(request, errors);
         bool IsAuthoritySource(string source) =>
             bootstrappingAuthority && PathComparer.Equals(source, workspace.WorkspacePath)
             || workspace.Repositories.Any(repository => repository.Role == "authority"
@@ -73,6 +108,9 @@ public sealed class RepositoryImporter
                 id,
                 source,
                 request.DocumentationRoot.Replace('\\', '/').Trim('/'),
+                isAuthoritySource ? "owned" : participation,
+                isAuthoritySource ? "none" : relationship,
+                isAuthoritySource ? [] : components,
                 hasInitializationChanges ? "initialize" : "unchanged",
                 plan.FilesToCreate,
                 plan.FilesToUpdate,
@@ -81,7 +119,10 @@ public sealed class RepositoryImporter
                 id,
                 source,
                 request.DocumentationRoot.Replace('\\', '/').Trim('/'),
-                isAuthoritySource ? "authority" : "participant"));
+                isAuthoritySource ? "authority" : "participant",
+                isAuthoritySource ? "owned" : participation,
+                isAuthoritySource ? "none" : relationship,
+                isAuthoritySource ? [] : components));
         }
 
         DetectImportCollisions(workspace.Repositories, plannedRepositories, collisions);
@@ -99,15 +140,13 @@ public sealed class RepositoryImporter
                 Applied: false);
         }
 
+        var plannedIds = plannedRepositories.Select(repository => repository.Id).ToHashSet(StringComparer.Ordinal);
         var merged = workspace.Repositories
+            .Where(repository => !plannedIds.Contains(repository.Id))
             .Concat(plannedRepositories)
-            .GroupBy(repository => repository.Id, StringComparer.Ordinal)
-            .Select(group => group
-                .OrderByDescending(repository => repository.Role == "authority")
-                .First())
             .OrderBy(repository => repository.Id, StringComparer.Ordinal)
             .ToArray();
-        var registryContent = _registry.Serialize(workspace.WorkspacePath, merged);
+        var registryContent = _registry.Serialize(workspace.WorkspacePath, ecosystem, product, merged);
         var registryChanged = !File.Exists(workspace.ConfigurationPath)
             || !Equivalent(File.ReadAllText(workspace.ConfigurationPath), registryContent);
         var initializationChanged = entries.Any(entry => entry.Status == "initialize");
@@ -152,6 +191,9 @@ public sealed class RepositoryImporter
                 RepositoryInitializer.CreateRepositoryId(plan.Source),
                 plan.Source,
                 request.DocumentationRoot.Replace('\\', '/').Trim('/'),
+                isAuthoritySource ? "owned" : participation,
+                isAuthoritySource ? "none" : relationship,
+                isAuthoritySource ? [] : components,
                 result.Applied ? "initialized" : "unchanged",
                 result.FilesToCreate,
                 result.FilesToUpdate,
@@ -266,6 +308,24 @@ public sealed class RepositoryImporter
             left.Replace("\r\n", "\n", StringComparison.Ordinal).TrimEnd(),
             right.Replace("\r\n", "\n", StringComparison.Ordinal).TrimEnd(),
             StringComparison.Ordinal);
+
+    private static (string Id, string Name)? Identity(
+        string? requestedId,
+        string? requestedName,
+        string kind,
+        ICollection<string> errors)
+    {
+        var id = requestedId?.Trim().ToLowerInvariant() ?? string.Empty;
+        if (!ValidIdentity(id))
+        {
+            errors.Add($"A valid {kind} identity is required when bootstrapping a product workspace.");
+            return null;
+        }
+        return (id, string.IsNullOrWhiteSpace(requestedName) ? id : requestedName.Trim());
+    }
+
+    private static bool ValidIdentity(string value)
+        => Regex.IsMatch(value, "^[a-z0-9][a-z0-9._-]{0,127}$", RegexOptions.CultureInvariant);
 
     private static RepositoryImportResult Invalid(
         RepositoryImportRequest request,

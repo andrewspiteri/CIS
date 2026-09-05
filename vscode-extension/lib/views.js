@@ -127,6 +127,10 @@ class CisViewProvider {
     const readme = resolveWithin(metadata.documentationPath, 'README.md');
     const product = active ? undefined : await this.productJourney(root, metadata);
     return [
+      ...(metadata.product ? [this.node(metadata.product.name, {
+        description: `Product · ${metadata.product.id} · ${metadata.ecosystem?.name || metadata.ecosystem?.id || 'ecosystem unavailable'}`,
+        icon: 'symbol-class',
+      })] : []),
       this.node(metadata.id || path.basename(root), { description: 'Authority repository', icon: 'repo' }),
       this.node(`CIS ${version.raw}`, { description: 'Compatible CLI', icon: 'terminal' }),
       this.node('Documentation', { description: metadata.documentationRoot, file: readme && fs.existsSync(readme) ? readme : undefined, icon: 'book' }),
@@ -728,7 +732,27 @@ function repositoryMetadata(root, fallback) {
   const id = /^\s*id:\s*['"]?([^'"\r\n]+)['"]?\s*$/mu.exec(text)?.[1]?.trim();
   const declared = /^documentation_root:\s*['"]?([^'"\r\n]+)['"]?\s*$/mu.exec(text)?.[1]?.trim() || fallback;
   const documentationPath = resolveWithin(root, declared) || safeFallback;
-  return { initialized: true, onboardingMode: 'configured', id, documentationRoot: path.relative(root, documentationPath).replaceAll('\\', '/'), documentationPath };
+  const boundary = workspaceBoundaryMetadata(root);
+  return { initialized: true, onboardingMode: 'configured', id, documentationRoot: path.relative(root, documentationPath).replaceAll('\\', '/'), documentationPath,
+    ecosystem: boundary?.ecosystem, product: boundary?.product };
+}
+
+function workspaceBoundaryMetadata(root) {
+  const workspace = path.join(root, '.cis', 'workspace.yml');
+  if (!fs.existsSync(workspace)) return undefined;
+  const sections = {};
+  let section;
+  for (const line of fs.readFileSync(workspace, 'utf8').split(/\r?\n/u)) {
+    const header = /^([a-z_]+):\s*$/u.exec(line);
+    if (header) { section = header[1]; sections[section] ||= {}; continue; }
+    const value = /^\s{2}(id|name):\s*['"]?([^'"\r\n]+?)['"]?\s*$/u.exec(line);
+    if (section && value) sections[section][value[1]] = value[2].trim();
+  }
+  if (!sections.ecosystem?.id || !sections.product?.id) return undefined;
+  return {
+    ecosystem: { id: sections.ecosystem.id, name: sections.ecosystem.name || sections.ecosystem.id },
+    product: { id: sections.product.id, name: sections.product.name || sections.product.id },
+  };
 }
 
 function isProblemFinding(finding) {

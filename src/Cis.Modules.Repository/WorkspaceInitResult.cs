@@ -11,7 +11,9 @@ public sealed record WorkspaceInitResult(
     IReadOnlyList<string> Collisions,
     IReadOnlyList<string> Errors,
     bool ConfirmationRequired,
-    bool Applied)
+    bool Applied,
+    Cis.Abstractions.CisEcosystem? Ecosystem = null,
+    Cis.Abstractions.CisProduct? Product = null)
 {
     public int ExitCode => Errors.Count > 0
         ? 2

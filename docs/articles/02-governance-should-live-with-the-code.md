@@ -371,11 +371,11 @@ service, mobile, data, and infrastructure repositories. Copying the same intent 
 standards into every repository creates drift. Centralizing every local fact in one
 governance repository creates stale shadows of participant code.
 
-A better model separates cross-product authority from participant ownership:
+A better model separates product authority from repository ownership:
 
-- a workspace authority can own shared business requirements, technical direction,
+- a workspace authority can own one product's business requirements, technical direction,
   cross-repository decisions, and change dossiers;
-- each participant repository owns its local components, contracts, standards,
+- each owned or dependency repository retains its local components, contracts, standards,
   implementation facts, and validation;
 - repository-qualified stable identities prevent two local records from becoming one
   accidental fact;

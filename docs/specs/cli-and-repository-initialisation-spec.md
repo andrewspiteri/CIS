@@ -19,6 +19,7 @@ This specification records the agreed direction for:
 - assembly-based module registration;
 - the boundary between the CLI engine and user interfaces;
 - target-repository initialisation;
+- explicit ecosystem, product, owned-repository, and directional-dependency boundaries;
 - the required documentation-root parameter;
 - the minimum structure inside the selected root;
 - canonical and derived repository state.
@@ -27,6 +28,13 @@ It refines the Change Impact Studio BRD without replacing its business requireme
 
 Classification, starter binding, and repeatable reconciliation are further defined in
 `classification-driven-initialisation-spec.md`.
+
+One workspace governs one product. Repositories outside that product may be imported only
+as explicit producer, consumer, or bidirectional dependencies with optional component
+scope. Their source informs integration context but remains outside this workspace's BRD,
+implementation routing, write-capable agent work, and approval authority. Workspace schema
+version 2 is required; CIS intentionally provides no implicit compatibility inference for
+unqualified registries.
 
 ## 2. CLI architecture
 
@@ -40,9 +48,9 @@ Examples:
 
 ```bash
 cis repo init --root docs/cis
-cis repo import --workspace C:\work\commerce --source C:\work\api C:\work\web --root docs/cis --dry-run
+cis repo import --workspace C:\work\commerce --source C:\work\api C:\work\web --root docs/cis --participation owned --relationship none --dry-run
 cis repo list --workspace C:\work\commerce
-cis workspace init --root docs --dry-run
+cis workspace init --root docs --ecosystem commerce --product ordering --dry-run
 cis repo doctor
 cis docs inventory
 cis docs validate

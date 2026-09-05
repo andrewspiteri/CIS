@@ -462,10 +462,12 @@ public sealed class GraphModule : ICisModule
                 $"status={result.Status};exitCode={result.ExitCode};repositories={result.Repositories.Count};" +
                 $"nodes={result.NodeCount};edges={result.EdgeCount}");
             Console.WriteLine($"workspace={Normalize(result.WorkspacePath)}");
+            Console.WriteLine($"ecosystem={Normalize(result.Ecosystem?.Id)};product={Normalize(result.Product?.Id)}");
             foreach (var repository in result.Repositories)
             {
                 Console.WriteLine(
                     $"repository={Normalize(repository.Id)};path={Normalize(repository.RepositoryPath)};role={repository.Role};" +
+                    $"participation={repository.Participation};relationship={repository.Relationship};components={Normalize(string.Join(',', repository.ComponentScope))};" +
                     $"status={repository.Result.Status};exitCode={repository.Result.ExitCode};" +
                     $"nodes={repository.Result.NodeCount};edges={repository.Result.EdgeCount};" +
                     $"warnings={repository.Result.WarningCount};errors={repository.Result.ErrorCount};" +
@@ -482,10 +484,11 @@ public sealed class GraphModule : ICisModule
 
         Console.WriteLine($"Workspace graph build: {result.Status}");
         Console.WriteLine($"Workspace: {result.WorkspacePath ?? string.Empty}");
+        Console.WriteLine($"Product: {result.Product?.Name ?? string.Empty} [{result.Product?.Id ?? string.Empty}] in {result.Ecosystem?.Name ?? string.Empty} [{result.Ecosystem?.Id ?? string.Empty}]");
         foreach (var repository in result.Repositories)
         {
             Console.WriteLine(
-                $"Repository: {repository.Id} [{repository.Result.Status}] " +
+                $"Repository: {repository.Id} [{repository.Participation}/{repository.Relationship}; {repository.Result.Status}] " +
                 $"{repository.Result.NodeCount} nodes, {repository.Result.EdgeCount} edges");
         }
 
@@ -517,10 +520,12 @@ public sealed class GraphModule : ICisModule
                 $"status={result.Status};exitCode={result.ExitCode};repositories={result.Repositories.Count};" +
                 $"nodes={result.NodeCount};edges={result.EdgeCount}");
             Console.WriteLine($"workspace={Normalize(result.WorkspacePath)}");
+            Console.WriteLine($"ecosystem={Normalize(result.Ecosystem?.Id)};product={Normalize(result.Product?.Id)}");
             foreach (var repository in result.Repositories)
             {
                 Console.WriteLine(
                     $"repository={Normalize(repository.Id)};path={Normalize(repository.RepositoryPath)};role={repository.Role};" +
+                    $"participation={repository.Participation};relationship={repository.Relationship};components={Normalize(string.Join(',', repository.ComponentScope))};" +
                     $"status={repository.Result.Status};exitCode={repository.Result.ExitCode};" +
                     $"freshness={repository.Result.Freshness};nodes={repository.Result.NodeCount};" +
                     $"edges={repository.Result.EdgeCount};warnings={repository.Result.WarningCount};" +
@@ -537,10 +542,11 @@ public sealed class GraphModule : ICisModule
 
         Console.WriteLine($"Workspace graph validation: {result.Status}");
         Console.WriteLine($"Workspace: {result.WorkspacePath ?? string.Empty}");
+        Console.WriteLine($"Product: {result.Product?.Name ?? string.Empty} [{result.Product?.Id ?? string.Empty}] in {result.Ecosystem?.Name ?? string.Empty} [{result.Ecosystem?.Id ?? string.Empty}]");
         foreach (var repository in result.Repositories)
         {
             Console.WriteLine(
-                $"Repository: {repository.Id} [{repository.Result.Status}] " +
+                $"Repository: {repository.Id} [{repository.Participation}/{repository.Relationship}; {repository.Result.Status}] " +
                 $"freshness={repository.Result.Freshness}; " +
                 $"{repository.Result.NodeCount} nodes, {repository.Result.EdgeCount} edges");
         }

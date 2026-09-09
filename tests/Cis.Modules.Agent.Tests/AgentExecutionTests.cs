@@ -1248,8 +1248,10 @@ public sealed partial class AgentExecutionTests
             CisAgentPermissions.WorkspaceWrite, null, null, 60, false, "Andrew Spiteri", TestContext.Current.CancellationToken);
 
         Assert.Equal(0, result.ExitCode);
-        Assert.Equal("current working tree\n", File.ReadAllText(System.IO.Path.Combine(result.Run!.Manifest.WorkingDirectory, "tracked-baseline.txt")));
-        Assert.Equal("approved uncommitted plan\n", File.ReadAllText(System.IO.Path.Combine(result.Run.Manifest.WorkingDirectory, "untracked-planning-baseline.txt")));
+        Assert.Equal("current working tree\n", File.ReadAllText(System.IO.Path.Combine(
+            result.Run!.Manifest.WorkingDirectory, "tracked-baseline.txt")).ReplaceLineEndings("\n"));
+        Assert.Equal("approved uncommitted plan\n", File.ReadAllText(System.IO.Path.Combine(
+            result.Run.Manifest.WorkingDirectory, "untracked-planning-baseline.txt")).ReplaceLineEndings("\n"));
         Assert.Equal(["generated.txt"], result.Run.Result!.ChangedFiles);
         Assert.Equal("current working tree\n", repository.Read("tracked-baseline.txt"));
     }

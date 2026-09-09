@@ -38,7 +38,7 @@ cis repo init --root <repository-relative-path> [options]
 The command performs these steps in order:
 
 1. Resolves the repository and documentation-root paths and rejects missing, absolute, escaping, or structurally conflicting paths.
-2. Scans repository evidence and classifies components by language, framework, role, capabilities, and confidence. Supported evidence includes .NET and ASP.NET Core, JavaScript frontends such as Angular, Next.js, React, and Vue, native Swift and Kotlin products, Terraform, messaging, and persistence technologies.
+2. Scans repository evidence and classifies components by language, framework, role, capabilities, and confidence. Supported evidence includes .NET and ASP.NET Core, JavaScript frontends such as Angular, Next.js, React, and Vue, Node Azure Functions workers with evidence-backed HTTP/event triggers, native Swift and Kotlin products, Terraform, messaging, and persistence technologies.
 3. Adds the always-seeded CIS baseline: repository, change-delivery, and business-requirements guidance;
    curated workflow skills including bounded planning and design review; product-intent,
    technical-intent, system-context, delivery-and-assurance, public-endpoint caching,
@@ -52,6 +52,16 @@ The command performs these steps in order:
 9. Optionally plans recoverable quarantine moves for obsolete, unchanged CIS-managed artifacts. Human-owned or edited artifacts are never moved.
 10. Reports all creates, updates, quarantine moves, retained paths, warnings, and collisions. When review is required, it stops with exit code `3` unless `--yes` or `--dry-run` was supplied.
 11. Applies the plan only after all validation, collision, and confirmation checks pass.
+
+When relationship evidence is available, the ERD starter includes local SVG entity diagrams
+alongside its canonical relationship table. These render in ordinary Markdown preview;
+no additional diagram extension is required. Subsequent `cis definition prepare` runs for
+business, technical or contracts refresh the diagrams in Draft ERDs from the preserved table.
+
+Angular route seeds identify each relative path declaration by source file and ordinal.
+Parent and lazy-module prefixes remain unresolved; these entries are not final URLs.
+Test fixtures do not become route seeds, and Next.js page seeding requires a component
+classified as Next.js.
 
 The standard documentation structure contains:
 

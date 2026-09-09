@@ -54,6 +54,24 @@ container, service, or independently deployed unit. Deployment decisions must be
 
 ## Generation and editing
 
+Existing-system inference is an explicit alternative to projection. `cis agent discover solution-design`
+prepares owned implementation/test snapshots, refreshed dictionary projections and a Review Required
+bundle locally. `cis agent author solution-design` sends selected evidence to an explicitly selected
+provider in an isolated workspace. It may draft while upstream documents are under review; ordinary
+initialization, approval and downstream gates remain unchanged. Canonical technical intent with
+structured component identities is required. Active architecture files are protected.
+
+CIS verifies both originals, immutable evidence, lifecycle metadata, component identities, required
+sections, implementation-area coverage, human notes outside managed blocks and the diagram model
+before applying either file. Four bounded views cover context, components, integration/trust and
+deployment/operations. Nodes and relationships are observed, proposed or unresolved. CIS renders
+passive SVGs for the wizard and Markdown preview. Citations stay in comments. Excluded deployment
+configuration, manifests and migrations cannot establish production topology or operational guarantees.
+
+Ordinary preparation preserves inferred narrative and exposes upstream drift until explicit
+reinference/reconciliation. Retained runs resume only while both originals and source bindings match.
+Inference never selects technical decisions or approves the bundle.
+
 Initialization requires an Active, valid, current technical intent with a structured product
 module table. CIS deterministically projects relevant technical-intent sections and component
 rows into managed blocks. Human design decisions and accepted exceptions outside those blocks

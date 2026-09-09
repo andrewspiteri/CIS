@@ -5,6 +5,7 @@ applyTo: "docs/specs/technical-intent-*.md"
 # CIS technical intent authority
 
 - The workspace authority owns one canonical product-scoped technical intent; participant repositories retain repository-scoped supporting intent documents.
+- Existing-system discovery may prepare a review-only draft through `cis agent discover technical-intent` / `cis agent author technical-intent` while the BRD is under review. Inspect the selected owned implementation snapshots, distinguish observed behavior from future direction, retain hidden citations and exact coverage, and never invent human decisions. This exception does not weaken initialization, approval or downstream gates.
 - An Active/current BRD, completed/current governed technical questionnaire, and fresh product-owned participant graphs are required before technical-intent initialization or approval. Dependency graph drift is visible integration context, not product-authority evidence.
 - Infer product frameworks, architecture, databases, and modules only from product-owned repositories. Record dependency repositories as directional integration points with their declared component scope; never absorb their implementation choices as product direction.
 - Existing implementations derive only evidence-supported technical facts with confidence and repository provenance; ambiguous choices remain human questions. Greenfield projects require human answers for every direction. Advisory starting directions become authority only through an explicit human answer.

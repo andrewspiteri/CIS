@@ -84,10 +84,12 @@ internal sealed class ReactNextFrontendProvider : FrontendProviderBase, ICisFron
 internal sealed class AngularFrontendProvider : FrontendProviderBase, ICisFrontendContextProvider
 {
     private static readonly Regex Component = Pattern("""@Component\s*\([\s\S]*?(?:selector\s*:\s*['\"](?<selector>[^'\"]+)['\"])?[\s\S]*?\)\s*(?:export\s+)?class\s+(?<name>[A-Za-z0-9_]+)""");
-    private static readonly Regex Route = Pattern("""path\s*:\s*['\"](?<path>[^'\"]*)['\"][\s\S]{0,300}?(?:component|loadComponent)\s*:\s*(?<target>[A-Za-z0-9_]+)""");
+    private static readonly Regex Route = Pattern("""\bpath\s*:\s*['\"](?<path>[^'\"]*)['\"][^{}]{0,300}?\bcomponent\s*:\s*(?<target>[A-Za-z0-9_]+)""");
     private static readonly Regex Api = Pattern("""\bhttp\.(?:get|post|put|patch|delete)\s*\(\s*['\"](?<target>[^'\"]+)""");
-    public string Name => "frontend.angular/1";
+    public string Name => "frontend.angular/2";
     public bool CanInspect(CisFrontendSourceFile source) => source.Path.EndsWith(".ts", StringComparison.OrdinalIgnoreCase)
+        && !source.Path.EndsWith(".spec.ts", StringComparison.OrdinalIgnoreCase)
+        && !source.Path.EndsWith(".test.ts", StringComparison.OrdinalIgnoreCase)
         && (source.Content.Contains("@angular/", StringComparison.OrdinalIgnoreCase) || source.Content.Contains("@Component", StringComparison.Ordinal));
     public IReadOnlyList<CisFrontendObservation> Discover(CisFrontendDiscoveryContext context, CisFrontendSourceFile source)
     {
@@ -95,10 +97,14 @@ internal sealed class AngularFrontendProvider : FrontendProviderBase, ICisFronte
         foreach (Match match in Component.Matches(source.Content))
             results.Add(Observation(Name, "angular", "component", match.Groups["name"].Value, source, match.Index,
                 properties: new Dictionary<string, string> { ["selector"] = match.Groups["selector"].Value }));
-        foreach (Match match in Route.Matches(source.Content))
+        var declaration = 0;
+        foreach (Match match in Route.Matches(source.Content.Contains("@angular/router", StringComparison.Ordinal) ? source.Content : string.Empty))
         {
             var route = NormalizeRoute(match.Groups["path"].Value);
-            results.Add(Observation(Name, "angular", "route", route, source, match.Index, route, Slug("angular-component-" + match.Groups["target"].Value)));
+            var observation = Observation(Name, "angular", "route", route, source, match.Index, route,
+                Slug("angular-component-" + match.Groups["target"].Value),
+                new Dictionary<string, string> { ["routeResolution"] = "relative-declaration", ["declaredPath"] = match.Groups["path"].Value });
+            results.Add(observation with { Id = observation.Id + "/declaration/" + (++declaration).ToString(System.Globalization.CultureInfo.InvariantCulture) });
         }
         foreach (Match match in Api.Matches(source.Content)) results.Add(Observation(Name, "angular", "api-call", "http call", source, match.Index, target: match.Groups["target"].Value));
         return results;

@@ -14,9 +14,46 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Cis.Modules.Agent.Tests;
 
-public sealed class AgentExecutionTests
+public sealed partial class AgentExecutionTests
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void StreamingJournal_PreservesAllEventsAndSequenceAcrossResumption(bool newController)
+    {
+        using var repository = AgentRepository.Create();
+        repository.AddEligibleChange();
+        var provider = new FakeProvider(burstEvents: 750);
+        var service = new AgentService(new CisRepositoryContextResolver(), [provider], clock: Clock);
+        var originalController = service;
+        var timer = Stopwatch.StartNew();
+        var first = service.Run(repository.Path, "CIS-0001", "WORK-090", "fake", CisAgentRunModes.Review,
+            CisAgentPermissions.ReadOnly, null, "fake-json", 60, false, "Andrew",
+            TestContext.Current.CancellationToken);
+        Assert.Equal(0, first.ExitCode);
+        if (newController) service = new AgentService(new CisRepositoryContextResolver(), [provider], clock: Clock);
+        var resumed = service.Resume(repository.Path, first.Run!.Manifest.RunId, "Continue review", "Andrew", "Review continuation", false,
+            TestContext.Current.CancellationToken);
+        Assert.Equal(0, resumed.ExitCode);
+        if (newController)
+        {
+            // Another controller appended to this journal. The original controller must
+            // invalidate its cached count before it continues the same run.
+            resumed = originalController.Resume(repository.Path, first.Run.Manifest.RunId, "Continue review", "Andrew", "Review continuation", false,
+                TestContext.Current.CancellationToken);
+            Assert.Equal(0, resumed.ExitCode);
+        }
+        var events = resumed.Run!.Events;
+        var expected = newController ? 2250 : 1500;
+        Assert.Equal(expected, events.Count(item => item.ProviderEventType == "fixture/output"));
+        Assert.Equal(Enumerable.Range(1, events.Count).Select(value => (long)value), events.Select(item => item.Sequence));
+        Assert.Equal("fake-session", resumed.Run.Manifest.ProviderSessionId);
+        Assert.Equal(CisAgentRunStates.Succeeded, resumed.Run.Manifest.Status);
+        Assert.All(resumed.Run.Artifacts, item => Assert.True(item.Valid));
+        TestContext.Current.TestOutputHelper!.WriteLine($"{expected} streamed events across resumption: {timer.Elapsed.TotalSeconds:0.00}s");
+    }
 
     // Trace: TC-AGENT-001-001, TC-AGENT-002-001, TC-AGENT-022-001, TC-AGENT-024-001.
     [Fact(DisplayName = "TC-AGENT-001-001 TC-AGENT-002-001 TC-AGENT-022-001 TC-AGENT-024-001 agent lifecycle commands and provider discovery")]
@@ -356,6 +393,359 @@ public sealed class AgentExecutionTests
     }
 
     [Fact]
+    public void AuthorBrd_InfersObservedBusinessBehaviorFromProjectedRepositoryEvidence()
+    {
+        using var repository = AgentRepository.Create(git: false);
+        repository.AddBrd();
+        repository.Write(".cis/local/test-source/content.md", "# Existing workflows\nStaff manage the shared planning board.\n");
+        var provider = new FakeProvider(draftBrd: true);
+        var service = new AgentService(new CisRepositoryContextResolver(), [provider], clock: Clock,
+            sourceEvidenceRegistrars: [new ProjectedRepositoryEvidence()]);
+        var result = service.AuthorBrd(repository.Path, [repository.Path], "fake", "fake-json", 60, false,
+            "Andrew Spiteri", TestContext.Current.CancellationToken);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("Infer the existing product's actors", provider.LastRequest!.Prompt, StringComparison.Ordinal);
+        Assert.Contains("Distinguish observed implementation behavior from intended business policy", provider.LastRequest.Prompt, StringComparison.Ordinal);
+        var snapshot = Assert.Single(result.Envelope!.ImplementationEvidence!);
+        Assert.Contains("Staff manage the shared planning board", repository.Read(snapshot.RootPath + "/projection.md"), StringComparison.Ordinal);
+        Assert.DoesNotContain("Staff manage the shared planning board", provider.LastRequest.Prompt, StringComparison.Ordinal);
+        Assert.Equal("Review Required", FrontMatter(repository.Read("docs/cis/specs/business-requirements.md"), "status"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AuthorBrd_AppliesHiddenEvidenceAndRejectsVisibleReferences(bool visibleReferences)
+    {
+        using var repository = AgentRepository.Create(git: false);
+        repository.AddBrd();
+        repository.Write("reference.md", "Customers use a shared planning board.\n");
+        var original = repository.Read("docs/cis/specs/business-requirements.md");
+        var provider = new FakeProvider(draftBrd: true, brdEvidence: visibleReferences
+            ? "\n\nSee [source](reference.md). BRD-SRC-EXISTING#board\n"
+            : "\n\n<!-- Evidence: [source](reference.md); BRD-SRC-EXISTING#board -->\n");
+        var service = new AgentService(new CisRepositoryContextResolver(), [provider], clock: Clock);
+
+        var result = service.AuthorBrd(repository.Path, ["reference.md"], "fake", null, 60, false,
+            "Andrew Spiteri", TestContext.Current.CancellationToken);
+
+        if (visibleReferences)
+        {
+            Assert.Equal("rejected", result.Status);
+            Assert.False(result.Applied);
+            Assert.Equal(original, repository.Read("docs/cis/specs/business-requirements.md"));
+            Assert.Contains(result.Diagnostics, item => item.Contains("exposes links or source IDs", StringComparison.Ordinal));
+        }
+        else
+        {
+            Assert.True(result.Applied);
+            var applied = repository.Read("docs/cis/specs/business-requirements.md");
+            Assert.Contains("<!-- Evidence: [source](reference.md); BRD-SRC-EXISTING#board -->", applied, StringComparison.Ordinal);
+            Assert.Contains("<!-- cis:brd-evidence", applied, StringComparison.Ordinal);
+            Assert.False(CisBrdPresentation.HasVisibleLinksOrSourceIds(applied));
+            var scratch = File.ReadAllText(System.IO.Path.Combine(result.Run!.Manifest.WorkingDirectory,
+                "docs", "cis", "specs", "business-requirements.md"));
+            Assert.Equal(scratch, CisBrdPresentation.RestoreManagedEvidence(applied));
+        }
+        Assert.Contains("including readers with no technical background", provider.LastRequest!.Prompt, StringComparison.Ordinal);
+        Assert.Contains("coherent narrative of how the product works", provider.LastRequest.Prompt, StringComparison.Ordinal);
+        Assert.Contains("inside HTML comments", provider.LastRequest.Prompt, StringComparison.Ordinal);
+    }
+
+    private sealed class ProjectedRepositoryEvidence(Action? beforeRegister = null) : ICisSourceEvidenceRegistrar
+    {
+        public CisSourceEvidenceRegistration Register(CisSourceEvidenceRegistrationRequest request)
+        {
+            beforeRegister?.Invoke();
+            return new("registered", "BRD-SRC-EXISTING", request.SourcePath, "sha256:fixture", "sha256:fixture",
+                null, ".cis/local/test-source", []);
+        }
+    }
+
+    private sealed class ObservedReferences(bool fail = false) : ICisObservedReferencePreparer
+    {
+        public int Calls { get; private set; }
+        public IReadOnlyList<CisReferencePreparationResult> PrepareWorkspaceObservedReferences(string workspacePath, bool apply = true)
+        { Calls++; return [new(workspacePath, [], [], fail ? ["Reference preparation failed"] : [], !fail)]; }
+    }
+
+    private sealed class ExistingTechnicalDraft : ICisTechnicalIntentDraftPreparer
+    {
+        public CisTechnicalIntentDraftPreparation PrepareExistingDraft(string workspacePath) => new([]);
+    }
+
+    [Theory]
+    [InlineData("success")]
+    [InlineData("coverage")]
+    [InlineData("protected")]
+    [InlineData("decision")]
+    [InlineData("brd-drift")]
+    [InlineData("snapshot")]
+    [InlineData("extra-file")]
+    [InlineData("resume")]
+    public void TechnicalIntent_InfersFromImmutableImplementationWithoutGrantingAuthority(string scenario)
+    {
+        using var repository = AgentRepository.Create(git: false);
+        repository.AddBrd();
+        repository.Write(".cis/local/test-source/content.md", "# Declared API\nPurchase a deposit.\n");
+        repository.Write("src/modules/deposits/purchase.controller.ts", "export const purchase = () => purchaseService.initiate();\n");
+        repository.Write("src/modules/deposits/purchase.service.ts", "const maximumDeposit = 42;\n");
+        const string target = "docs/cis/specs/technical-intent-spec.md";
+        var original = "---\nstatus: Draft\nscope: Workspace\n---\n# Technical intent\n\n## Runtime architecture\nTODO: Complete executive summary through human review of workspace evidence.\n";
+        foreach (var block in new[] { "baseline", "business-evidence", "questionnaire-evidence", "surface-evidence", "standards-evidence", "decision-evidence", "component-map", "module-architecture", "integration-points" })
+            original += $"\n<!-- cis:technical-intent-{block}:start -->\nRecorded {block}.\n<!-- cis:technical-intent-{block}:end -->\n";
+        original += "\n## Open technical decisions\n| TI-DEC-001 | Recovery target | Change dossier creation | Open | Requires human choice. |\n";
+        repository.Write(target, original);
+        var brd = repository.Read("docs/cis/specs/business-requirements.md");
+        var provider = new FakeProvider(draftTechnicalIntent: true, omitImplementationCoverage: scenario == "coverage",
+            alterProtected: scenario == "protected", mutateImplementation: scenario == "snapshot", extraFile: scenario == "extra-file",
+            omitCoverageOnFirstExecution: scenario == "resume",
+            brdEvidence: scenario == "decision" ? "\n| TI-DEC-002 | Adopt new database | Change dossier creation | Accepted | Agent preference. |\n" : null,
+            duringExecution: scenario == "brd-drift" ? _ => repository.Write("docs/cis/specs/business-requirements.md", brd + "\nHuman changed business scope.\n") : null);
+        var service = new AgentService(new CisRepositoryContextResolver(), [provider], clock: Clock,
+            sourceEvidenceRegistrars: [new ProjectedRepositoryEvidence()], technicalIntentDraftPreparer: new ExistingTechnicalDraft());
+        var result = service.AuthorTechnicalIntent(repository.Path, [repository.Path], "fake", null, 60, false,
+            "Andrew", TestContext.Current.CancellationToken);
+        if (scenario == "resume")
+        {
+            Assert.False(result.Applied);
+            result = service.Resume(repository.Path, result.Run!.Manifest.RunId, "Repair coverage.", "Andrew", "Complete draft", false, TestContext.Current.CancellationToken);
+            Assert.Equal(2, result.Run!.Manifest.Attempt);
+        }
+        if (scenario is "success" or "resume")
+        {
+            Assert.True(result.Applied, string.Join("\n", result.Diagnostics));
+            Assert.Equal("TECHNICAL-INTENT-DRAFT", result.Run!.Manifest.TaskId);
+            Assert.Single(result.Envelope!.ImplementationEvidence!);
+            Assert.Equal("Draft", FrontMatter(repository.Read(target), "status"));
+            Assert.Contains("cis:technical-intent-implementation-authored", repository.Read(target), StringComparison.Ordinal);
+            Assert.Contains("review-only draft", provider.LastRequest!.Prompt, StringComparison.Ordinal);
+            Assert.Contains("deployment configuration", provider.LastRequest.Prompt, StringComparison.Ordinal);
+            Assert.Equal(brd, repository.Read("docs/cis/specs/business-requirements.md"));
+        }
+        else
+        {
+            Assert.False(result.Applied);
+            Assert.Equal(original, repository.Read(target));
+            Assert.Contains(result.Diagnostics, item => item.StartsWith("ERROR:", StringComparison.Ordinal));
+        }
+        using var application = new CisHostBuilder().AddModule(new RepositoryModule()).AddModule(new AgentModule()).Build();
+        Assert.Equal(0, application.Invoke(["agent", "author", "technical-intent", "--help"]));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void DiscoverBrd_PreparesLocalEvidenceWithoutContactingProviderOrChangingBrd(bool preparationFails)
+    {
+        using var repository = AgentRepository.Create(git: false);
+        repository.AddBrd();
+        repository.Write(".cis/local/test-source/content.md", "# Declared API\nPurchase a deposit.\n");
+        repository.Write("src/modules/deposits/purchase.service.ts", "const maximumDeposit = 42;\n");
+        var original = repository.Read("docs/cis/specs/business-requirements.md");
+        var provider = new FakeProvider(throwDiagnosis: true, throwExecution: true);
+        var references = new ObservedReferences(preparationFails);
+        var registrations = 0;
+        var service = new AgentService(new CisRepositoryContextResolver(), [provider], new WorkspaceRegistry(new CisRepositoryContextResolver()), clock: Clock,
+            sourceEvidenceRegistrars: [new ProjectedRepositoryEvidence(() => { Assert.Equal(1, references.Calls); registrations++; })],
+            observedReferencePreparer: references);
+
+        var result = service.DiscoverBrdImplementation(repository.Path, [repository.Path], "Andrew", TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, references.Calls);
+        if (preparationFails)
+        {
+            Assert.Equal("blocked", result.Status);
+            Assert.Equal(0, registrations);
+            Assert.Equal(0, provider.ExecuteCalls);
+            Assert.Equal(original, repository.Read("docs/cis/specs/business-requirements.md"));
+            return;
+        }
+        Assert.Equal(1, registrations);
+
+        Assert.Equal("prepared", result.Status);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Single(result.Envelope!.ImplementationEvidence!);
+        Assert.Equal("portable", result.Envelope.Provider);
+        Assert.Equal(0, provider.ExecuteCalls);
+        Assert.Equal(original, repository.Read("docs/cis/specs/business-requirements.md"));
+        Assert.Contains("BRD-EVIDENCE", repository.Read(".cis/local/agents/implementation/selection.json"), StringComparison.Ordinal);
+        using var application = new CisHostBuilder().AddModule(new RepositoryModule()).AddModule(new AgentModule()).Build();
+        Assert.Equal(0, application.Invoke(["agent", "discover", "brd", "--help"]));
+    }
+
+    [Fact]
+    public void AuthorBrd_CachesImplementationWithRedactionAndInvalidatesOnBodyChanges()
+    {
+        using var repository = AgentRepository.Create(git: false);
+        repository.AddBrd();
+        repository.Write(".cis/local/test-source/content.md", "# Declared API\nPurchase a deposit.\n");
+        repository.Write("src/modules/deposits/purchase.controller.ts", "export const purchase = () => purchaseService.initiate();\n");
+        repository.Write("src/modules/deposits/purchase.service.ts", "const maximumDeposit = 42;\nconst apiKey = 'private-credential-fixture';\n");
+        repository.Write("src/environments/environment.ts", "export const password = 'private-environment-fixture';\n");
+        repository.Write("node_modules/vendor/index.js", "const excludedDependency = true;\n");
+        var provider = new FakeProvider(draftBrd: true, brdEvidence: "\nA product narrative.\n");
+        var service = new AgentService(new CisRepositoryContextResolver(), [provider], clock: Clock,
+            sourceEvidenceRegistrars: [new ProjectedRepositoryEvidence()]);
+
+        var first = service.AuthorBrd(repository.Path, [repository.Path], "fake", null, 60, false,
+            "Andrew", TestContext.Current.CancellationToken);
+        Assert.Equal("succeeded", first.Status);
+        var snapshot = Assert.Single(first.Envelope!.ImplementationEvidence!);
+        var sourcePath = snapshot.RootPath + "/files/src/modules/deposits/purchase.service.ts";
+        var cached = repository.Read(sourcePath);
+        Assert.Contains("maximumDeposit = 42", cached, StringComparison.Ordinal);
+        Assert.DoesNotContain("private-credential-fixture", cached, StringComparison.Ordinal);
+        Assert.Contains("[REDACTED]", cached, StringComparison.Ordinal);
+        Assert.DoesNotContain(first.Envelope.ContextArtifacts, path => path.Contains("/node_modules/", StringComparison.Ordinal)
+            || path.EndsWith("/environment.ts", StringComparison.Ordinal));
+        Assert.Contains("generated-or-sensitive-file", repository.Read(snapshot.RootPath + "/manifest.json"), StringComparison.Ordinal);
+        var timestamp = File.GetLastWriteTimeUtc(System.IO.Path.Combine(repository.Path, sourcePath));
+
+        var second = service.AuthorBrd(repository.Path, [repository.Path], "fake", null, 60, false,
+            "Andrew", TestContext.Current.CancellationToken);
+        Assert.Equal("succeeded", second.Status);
+        Assert.Equal(snapshot, Assert.Single(second.Envelope!.ImplementationEvidence!));
+        Assert.Equal(timestamp, File.GetLastWriteTimeUtc(System.IO.Path.Combine(repository.Path, sourcePath)));
+        Assert.Contains(second.Diagnostics, item => item.Contains("cache reused", StringComparison.Ordinal));
+
+        repository.Write("src/modules/deposits/purchase.service.ts", "const maximumDeposit = 43;\n");
+        var third = service.AuthorBrd(repository.Path, [repository.Path], "fake", null, 60, false,
+            "Andrew", TestContext.Current.CancellationToken);
+        Assert.Equal("succeeded", third.Status);
+        Assert.NotEqual(snapshot.SnapshotDigest, Assert.Single(third.Envelope!.ImplementationEvidence!).SnapshotDigest);
+        Assert.Equal(cached, repository.Read(sourcePath));
+    }
+
+    [Theory]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(false, false, true)]
+    public void AuthorBrd_RejectsMissingCoverageInventedEvidenceAndImplementationMutation(bool omitCoverage,
+        bool inventEvidence, bool mutateImplementation)
+    {
+        using var repository = AgentRepository.Create(git: false);
+        repository.AddBrd();
+        repository.Write(".cis/local/test-source/content.md", "# Declared API\nPurchase a deposit.\n");
+        repository.Write("src/modules/deposits/purchase.service.ts", "const maximumDeposit = 42;\n");
+        var original = repository.Read("docs/cis/specs/business-requirements.md");
+        var provider = new FakeProvider(draftBrd: true, omitImplementationCoverage: omitCoverage,
+            inventImplementationEvidence: inventEvidence, mutateImplementation: mutateImplementation);
+        var service = new AgentService(new CisRepositoryContextResolver(), [provider], clock: Clock,
+            sourceEvidenceRegistrars: [new ProjectedRepositoryEvidence()]);
+
+        var result = service.AuthorBrd(repository.Path, [repository.Path], "fake", null, 60, false,
+            "Andrew", TestContext.Current.CancellationToken);
+
+        Assert.False(result.Applied);
+        Assert.Contains(result.Diagnostics, item => item.StartsWith("ERROR:", StringComparison.Ordinal));
+        Assert.Equal(original, repository.Read("docs/cis/specs/business-requirements.md"));
+    }
+
+    [Fact]
+    public void ReviewBrd_UsesExactAuthoringImplementationAndRejectsTamperedCache()
+    {
+        using var repository = AgentRepository.Create(git: false);
+        repository.AddBrd();
+        repository.Write(".cis/local/test-source/content.md", "# Declared API\nPurchase a deposit.\n");
+        repository.Write("src/modules/deposits/purchase.service.ts", "const maximumDeposit = 42;\n");
+        var author = new FakeProvider(draftBrd: true, id: "author");
+        var reviewer = new FakeProvider(reviewBrd: true, id: "reviewer");
+        var service = new AgentService(new CisRepositoryContextResolver(), [author, reviewer], clock: Clock,
+            sourceEvidenceRegistrars: [new ProjectedRepositoryEvidence()]);
+        var authored = service.AuthorBrd(repository.Path, [repository.Path], "author", null, 60, false,
+            "Andrew", TestContext.Current.CancellationToken);
+        Assert.True(authored.Applied);
+        var snapshot = Assert.Single(authored.Envelope!.ImplementationEvidence!);
+        repository.Write("src/modules/deposits/purchase.service.ts", "const maximumDeposit = 99;\n");
+
+        var reviewed = service.ReviewBrd(repository.Path, "reviewer", null, 60, true, "Andrew", TestContext.Current.CancellationToken);
+        Assert.Equal(0, reviewed.ExitCode);
+        var copied = System.IO.Path.Combine(reviewed.Run!.Manifest.WorkingDirectory,
+            snapshot.RootPath, "files/src/modules/deposits/purchase.service.ts");
+        Assert.Contains("maximumDeposit = 42", File.ReadAllText(copied), StringComparison.Ordinal);
+        Assert.Contains("exact authoring implementation snapshots", reviewer.LastRequest!.Prompt, StringComparison.Ordinal);
+
+        repository.Write(snapshot.RootPath + "/files/src/modules/deposits/purchase.service.ts", "tampered\n");
+        var blocked = service.ReviewBrd(repository.Path, "reviewer", null, 60, true, "Andrew", TestContext.Current.CancellationToken);
+        Assert.Equal("blocked", blocked.Status);
+        Assert.Equal(1, reviewer.ExecuteCalls);
+        Assert.Contains(blocked.Diagnostics, item => item.Contains("evidence is missing or changed", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ResumeBrd_RepairsRejectedCoverageAgainstTheSameBoundEvidence()
+    {
+        using var repository = AgentRepository.Create(git: false);
+        repository.AddBrd();
+        repository.Write(".cis/local/test-source/content.md", "# Declared API\nPurchase a deposit.\n");
+        repository.Write("src/modules/deposits/purchase.service.ts", "const maximumDeposit = 42;\n");
+        var original = repository.Read("docs/cis/specs/business-requirements.md");
+        var provider = new FakeProvider(draftBrd: true, omitCoverageOnFirstExecution: true);
+        var service = new AgentService(new CisRepositoryContextResolver(), [provider], clock: Clock,
+            sourceEvidenceRegistrars: [new ProjectedRepositoryEvidence()]);
+        var first = service.AuthorBrd(repository.Path, [repository.Path], "fake", null, 60, false,
+            "Andrew", TestContext.Current.CancellationToken);
+        Assert.False(first.Applied);
+        Assert.Equal(original, repository.Read("docs/cis/specs/business-requirements.md"));
+
+        var resumed = service.Resume(repository.Path, first.Run!.Manifest.RunId, "Repair the hidden coverage record only.",
+            "Andrew", "Complete the original bounded draft", false, TestContext.Current.CancellationToken);
+
+        Assert.Equal(0, resumed.ExitCode);
+        Assert.True(resumed.Applied);
+        Assert.Equal(2, resumed.Run!.Manifest.Attempt);
+        Assert.Equal(first.Envelope!.ImplementationEvidence, resumed.Envelope!.ImplementationEvidence);
+        Assert.Equal(2, provider.ExecuteCalls);
+        Assert.Contains("Repair the hidden coverage record only.", provider.LastRequest!.Prompt, StringComparison.Ordinal);
+        Assert.Contains("cis-implementation-coverage", repository.Read("docs/cis/specs/business-requirements.md"), StringComparison.Ordinal);
+        Assert.Equal("Review Required", FrontMatter(repository.Read("docs/cis/specs/business-requirements.md"), "status"));
+        Assert.True(File.Exists(System.IO.Path.Combine(repository.Path, AgentService.RootPath, "runs",
+            first.Run.Manifest.RunId, "attempts", "1", "result.json")));
+    }
+
+    [Theory]
+    [InlineData("canonical")]
+    [InlineData("context")]
+    [InlineData("snapshot")]
+    [InlineData("scratch-snapshot")]
+    [InlineData("extra-file")]
+    public void ResumeBrd_RejectsChangedBindingsBeforeContactingProvider(string change)
+    {
+        using var repository = AgentRepository.Create(git: false);
+        repository.AddBrd();
+        repository.Write(".cis/local/test-source/content.md", "# Declared API\nPurchase a deposit.\n");
+        repository.Write("src/modules/deposits/purchase.service.ts", "const maximumDeposit = 42;\n");
+        var provider = new FakeProvider(draftBrd: true, omitCoverageOnFirstExecution: true);
+        var service = new AgentService(new CisRepositoryContextResolver(), [provider], clock: Clock,
+            sourceEvidenceRegistrars: [new ProjectedRepositoryEvidence()]);
+        var first = service.AuthorBrd(repository.Path, [repository.Path], "fake", null, 60, false,
+            "Andrew", TestContext.Current.CancellationToken);
+        Assert.False(first.Applied);
+        const string target = "docs/cis/specs/business-requirements.md";
+        var snapshot = Assert.Single(first.Envelope!.ImplementationEvidence!);
+        var evidenceFile = snapshot.RootPath + "/files/src/modules/deposits/purchase.service.ts";
+        switch (change)
+        {
+            case "canonical": repository.Write(target, repository.Read(target) + "\nHuman edit.\n"); break;
+            case "context": repository.Write(first.Envelope.ContextArtifacts.First(path => path != target), "changed\n"); break;
+            case "snapshot": repository.Write(evidenceFile, "changed\n"); break;
+            case "scratch-snapshot": File.AppendAllText(System.IO.Path.Combine(first.Run!.Manifest.WorkingDirectory, evidenceFile), "changed\n"); break;
+            case "extra-file": File.WriteAllText(System.IO.Path.Combine(first.Run!.Manifest.WorkingDirectory, "unexpected.md"), "extra\n"); break;
+        }
+        var canonical = repository.Read(target);
+
+        var resumed = service.Resume(repository.Path, first.Run!.Manifest.RunId, "Repair coverage.", "Andrew",
+            "Complete draft", false, TestContext.Current.CancellationToken);
+
+        Assert.Equal("blocked", resumed.Status);
+        Assert.False(resumed.Applied);
+        Assert.Equal(1, provider.ExecuteCalls);
+        Assert.Equal(canonical, repository.Read(target));
+        Assert.Contains(resumed.Diagnostics, item => item.StartsWith("ERROR:", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void AuthorFeature_UsesGovernedProductContextAndAppliesOnlyACompleteOneFileDraft()
     {
         using var repository = AgentRepository.Create(git: false);
@@ -535,7 +925,12 @@ public sealed class AgentExecutionTests
         Assert.Equal(4, result.ExitCode);
         Assert.Equal(0, provider.ExecuteCalls);
         Assert.Contains(result.Diagnostics, item => item.Contains("Review Required or Draft", StringComparison.Ordinal));
-        Assert.Contains(result.Diagnostics, item => item.Contains("Secret-shaped", StringComparison.Ordinal));
+        repository.AddBrd();
+        var secret = service.AuthorBrd(repository.Path, ["secret-notes.md"], "fake", null, 60, false,
+            "Andrew Spiteri", TestContext.Current.CancellationToken);
+        Assert.Equal(4, secret.ExitCode);
+        Assert.Equal(0, provider.ExecuteCalls);
+        Assert.Contains(secret.Diagnostics, item => item.Contains("Secret-shaped", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -670,6 +1065,8 @@ public sealed class AgentExecutionTests
         Assert.Single(result.Run.Result.Review.Findings);
         Assert.Equal(canonical, repository.Read("docs/cis/specs/business-requirements.md"));
         Assert.Contains("BRD-DRAFT.json", reviewer.LastRequest!.Prompt, StringComparison.Ordinal);
+        Assert.Contains("major finding requiring revision in this pass", reviewer.LastRequest.Prompt, StringComparison.Ordinal);
+        Assert.Contains("All links, URLs, source IDs", reviewer.LastRequest.Prompt, StringComparison.Ordinal);
         var sourceEnvelope = System.IO.Path.Combine(result.Run.Manifest.WorkingDirectory, ".cis", "local", "agents",
             "envelopes", "PRODUCT", "BRD-DRAFT.json");
         Assert.Contains("Users need a shared planning board", File.ReadAllText(sourceEnvelope), StringComparison.Ordinal);
@@ -1069,6 +1466,41 @@ public sealed class AgentExecutionTests
     }
 
     [Fact]
+    public void CodexAppServer_CompactionActivityEndsOnlyWithItsMatchingCompletion()
+    {
+        using var started = JsonDocument.Parse("""{"method":"item/started","params":{"item":{"type":"contextCompaction"}}}""");
+        using var otherItem = JsonDocument.Parse("""{"method":"item/completed","params":{"item":{"type":"agentMessage"}}}""");
+        using var notification = JsonDocument.Parse("""{"method":"skills/changed","params":{}}""");
+        using var completed = JsonDocument.Parse("""{"method":"item/completed","params":{"item":{"type":"contextCompaction"}}}""");
+
+        Assert.True(CodexAgentProvider.ContextCompactionActivity(started.RootElement));
+        Assert.Null(CodexAgentProvider.ContextCompactionActivity(otherItem.RootElement));
+        Assert.Null(CodexAgentProvider.ContextCompactionActivity(notification.RootElement));
+        Assert.False(CodexAgentProvider.ContextCompactionActivity(completed.RootElement));
+    }
+
+    [Fact]
+    public void CodexAppServer_RetryNoticeCanRecoverToSuccessfulCompletion()
+    {
+        using var retry = JsonDocument.Parse("""{"method":"error","params":{"willRetry":true,"error":{"message":"Reconnecting... 2/2","additionalDetails":"idle timeout waiting for websocket"}}}""");
+        using var completed = JsonDocument.Parse("""{"method":"turn/completed","params":{"turn":{"status":"completed"}}}""");
+
+        Assert.Null(CodexAgentProvider.AppServerTerminalState(retry.RootElement));
+        Assert.Equal(CisAgentRunStates.Succeeded, CodexAgentProvider.AppServerTerminalState(completed.RootElement));
+    }
+
+    [Theory]
+    [InlineData("{\"willRetry\":false}")]
+    [InlineData("{}")]
+    [InlineData("null")]
+    [InlineData("{\"willRetry\":\"true\"}")]
+    public void CodexAppServer_ErrorWithoutExplicitRetryIsTerminal(string parameters)
+    {
+        using var error = JsonDocument.Parse("{\"method\":\"error\",\"params\":" + parameters + "}");
+        Assert.Equal(CisAgentRunStates.Failed, CodexAgentProvider.AppServerTerminalState(error.RootElement));
+    }
+
+    [Fact]
     public void CodexAppServer_UsesTheSupportedHyphenatedApprovalPolicy()
     {
         using var parameters = JsonDocument.Parse(JsonSerializer.Serialize(
@@ -1366,7 +1798,10 @@ public sealed class AgentExecutionTests
         bool invalidReviewEvidence = false, bool sourceRationaleReview = false,
         bool reviseSourceRationale = false, bool alterSourceIdentity = false,
         bool incorporateQuestions = false, bool alterQuestions = false,
-        string id = "fake") : ICisAgentProvider, ICisAgentProviderAuthenticator
+        string id = "fake", string? brdEvidence = null, bool omitImplementationCoverage = false,
+        bool inventImplementationEvidence = false, bool mutateImplementation = false,
+        bool omitCoverageOnFirstExecution = false, bool draftTechnicalIntent = false, bool draftSolutionDesign = false,
+        Action<CisAgentExecutionRequest>? duringExecution = null, int burstEvents = 0) : ICisAgentProvider, ICisAgentProviderAuthenticator
     {
         public int ExecuteCalls { get; private set; }
         public CisAgentExecutionRequest? LastRequest { get; private set; }
@@ -1391,23 +1826,59 @@ public sealed class AgentExecutionTests
         {
             ExecuteCalls++;
             LastRequest = request;
+            duringExecution?.Invoke(request);
             if (throwExecution) throw new InvalidOperationException("execution failed");
             cancellationToken.ThrowIfCancellationRequested();
             onEvent(new("provider-event", "Halfway", "fake/progress", "fake-session"));
+            for (var index = 0; index < burstEvents; index++)
+                onEvent(new("provider-event", new string('x', 1024), "fixture/output", "fake-session"));
             if (rawSecret) onEvent(new("provider-event", "Secret-shaped structured event", "fake/raw", "fake-session",
                 "{\"token\":\"super-secret-value\"}"));
             if (invalidReviewEvidence)
                 onEvent(new("invalid-provider-event", "Claude streaming event exceeded the size limit."));
             if (writeFile) File.WriteAllText(System.IO.Path.Combine(request.WorkingDirectory, "generated.txt"), "generated\n");
             var draftedFiles = new List<string>();
-            if (draftBrd)
+            if (draftBrd || draftTechnicalIntent || draftSolutionDesign)
             {
-                var brd = System.IO.Path.Combine(request.WorkingDirectory, "docs", "cis", "specs", "business-requirements.md");
+                var filename = draftTechnicalIntent ? "technical-intent-spec.md" : "business-requirements.md";
+                var target = draftSolutionDesign ? "docs/cis/architecture/overall-solution-design.md" : "docs/cis/specs/" + filename;
+                var brd = System.IO.Path.Combine(request.WorkingDirectory, target);
                 var content = File.ReadAllText(brd).Replace("TODO: Complete executive summary through human review of workspace evidence.",
                     "Users coordinate a shared planning board.", StringComparison.Ordinal);
                 if (alterProtected) content = content.Replace("status: Review Required", "status: Active", StringComparison.Ordinal);
+                if (alterProtected && draftTechnicalIntent) content = content.Replace("status: Draft", "status: Active", StringComparison.Ordinal);
+                if (brdEvidence is not null) content += brdEvidence;
+                var implementationRoot = System.IO.Path.Combine(request.WorkingDirectory, ".cis/local/agents/implementation");
+                if (Directory.Exists(implementationRoot))
+                {
+                    content = Regex.Replace(content, @"<!-- cis-implementation-coverage\s*\n.*?\n-->", string.Empty, RegexOptions.Singleline);
+                    var rows = new List<object>();
+                    foreach (var manifestPath in Directory.EnumerateFiles(implementationRoot, "manifest.json", SearchOption.AllDirectories))
+                    {
+                        using var manifest = JsonDocument.Parse(File.ReadAllText(manifestPath));
+                        var root = manifest.RootElement;
+                        foreach (var area in root.GetProperty("areas").EnumerateArray())
+                            rows.Add(new { sourceId = root.GetProperty("sourceId").GetString(), areaId = area.GetProperty("id").GetString(),
+                                status = "inspected", evidence = inventImplementationEvidence ? ["outside/snapshot.ts"] : root.GetProperty("files").EnumerateArray()
+                                    .Where(file => file.GetProperty("area").GetString() == area.GetProperty("path").GetString())
+                                    .Select(file => file.GetProperty("path").GetString()!).ToArray(), summary = "Observed product behaviour." });
+                        if (mutateImplementation)
+                        {
+                            var file = root.GetProperty("files").EnumerateArray().First();
+                            File.AppendAllText(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(manifestPath)!, "files", file.GetProperty("path").GetString()!), "changed\n");
+                        }
+                    }
+                    if (!omitImplementationCoverage && !(omitCoverageOnFirstExecution && ExecuteCalls == 1))
+                        content += "\n<!-- cis-implementation-coverage\n" + JsonSerializer.Serialize(rows) + "\n-->\n";
+                }
                 File.WriteAllText(brd, content);
-                draftedFiles.Add("docs/cis/specs/business-requirements.md");
+                draftedFiles.Add(target);
+                if (draftSolutionDesign)
+                {
+                    const string sheet = "docs/cis/references/component-sheet.md";
+                    File.AppendAllText(System.IO.Path.Combine(request.WorkingDirectory, sheet), "\nObserved component responsibility.\n");
+                    draftedFiles.Add(sheet);
+                }
                 if (extraFile) { File.WriteAllText(System.IO.Path.Combine(request.WorkingDirectory, "unexpected.md"), "unexpected\n"); draftedFiles.Add("unexpected.md"); }
             }
             if (draftFeature)

@@ -170,12 +170,14 @@ public sealed class CodexAgentProvider : ICisAgentProvider, ICisAgentProviderAut
         using var linkedSource = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken, totalSource.Token, startupSource.Token, idleSource.Token);
         var firstActivity = 0;
+        var compacting = 0;
 
         void RecordActivity()
         {
             if (Interlocked.Exchange(ref firstActivity, 1) == 0)
                 startupSource.CancelAfter(Timeout.InfiniteTimeSpan);
-            idleSource.CancelAfter(request.IdleTimeout ?? TimeSpan.FromMinutes(5));
+            idleSource.CancelAfter(Volatile.Read(ref compacting) == 1
+                ? Timeout.InfiniteTimeSpan : request.IdleTimeout ?? TimeSpan.FromMinutes(5));
         }
 
         var session = request.ResumeSessionId;
@@ -225,6 +227,11 @@ public sealed class CodexAgentProvider : ICisAgentProvider, ICisAgentProviderAut
                     if (rawEventTruncated)
                         onEvent(new("provider-output-truncated", "Codex App Server event was parsed but its retained raw payload was truncated."));
                     var root = document.RootElement;
+                    if (ContextCompactionActivity(root) is { } consolidating)
+                    {
+                        Interlocked.Exchange(ref compacting, consolidating ? 1 : 0);
+                        RecordActivity();
+                    }
                     if (root.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.Number)
                     {
                         if (root.TryGetProperty("method", out var requestMethod))
@@ -259,8 +266,7 @@ public sealed class CodexAgentProvider : ICisAgentProvider, ICisAgentProviderAut
                     }
                     var normalized = ParseAppServerEvent(root, line, session, ref summary, ref input, ref output);
                     onEvent(normalized);
-                    if (normalized.ProviderEventType == "turn/completed") terminal.TrySetResult(TerminalState(root));
-                    if (normalized.ProviderEventType == "error") terminal.TrySetResult(CisAgentRunStates.Failed);
+                    if (AppServerTerminalState(root) is { } terminalState) terminal.TrySetResult(terminalState);
                 }
             }
             if (!terminal.Task.IsCompleted) terminal.TrySetResult(CisAgentRunStates.Interrupted);
@@ -378,6 +384,31 @@ public sealed class CodexAgentProvider : ICisAgentProvider, ICisAgentProviderAut
             && request.Permission == CisAgentPermissions.WorkspaceWrite
             && IsContained(request.WorkingDirectory, target);
         return new(approved, method == "item/fileChange/requestApproval" ? "filesystem-write" : "command-execution", target);
+    }
+
+    internal static bool? ContextCompactionActivity(JsonElement root)
+    {
+        var method = Text(root, "method");
+        if (method is not ("item/started" or "item/completed")) return null;
+        if (!root.TryGetProperty("params", out var parameters) || parameters.ValueKind != JsonValueKind.Object
+            || !parameters.TryGetProperty("item", out var item) || item.ValueKind != JsonValueKind.Object
+            || Text(item, "type") != "contextCompaction") return null;
+        // Context consolidation is a known active provider operation that may emit
+        // no tokens. The total run deadline still bounds it; ordinary idle checks resume afterward.
+        return method == "item/started";
+    }
+
+    internal static string? AppServerTerminalState(JsonElement root)
+    {
+        var method = Text(root, "method");
+        if (method == "turn/completed") return TerminalState(root);
+        if (method != "error") return null;
+        // Reconnection notices are streamed as errors while the provider is still
+        // recovering. Keep journaling them and let its terminal event or our timeout decide.
+        return root.TryGetProperty("params", out var parameters)
+            && parameters.ValueKind == JsonValueKind.Object
+            && parameters.TryGetProperty("willRetry", out var retry)
+            && retry.ValueKind == JsonValueKind.True ? null : CisAgentRunStates.Failed;
     }
 
     private static string TerminalState(JsonElement root)

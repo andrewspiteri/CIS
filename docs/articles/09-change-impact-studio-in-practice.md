@@ -5,7 +5,7 @@ status: Draft
 series: "Governed Software Change"
 series_order: 9
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-25"
+last_reviewed: "2026-09-08"
 review_cadence: on golden-path or product change
 summary: "A worked example of governing a cross-repository feature from product intent through independent verification and reviewed learning."
 cis:
@@ -39,8 +39,9 @@ The product spans three repositories:
 - `todo-infra` owns deployment and supporting infrastructure.
 
 A separate documentation repository acts as the workspace authority for the Friends
-Todo product inside its sample ecosystem. It owns the canonical business requirements
-and workspace technical intent. The three product repositories are owned participants
+Todo product inside its sample ecosystem. It owns the canonical product business
+requirements, workspace-scoped technical intent, solution definition, and shared delivery
+map. The three product repositories are owned participants
 and retain their local specifications, source, tests, and implementation references.
 
 ```powershell
@@ -55,14 +56,34 @@ cis repo import `
 ```
 
 The dry run exposes classification, generated documentation, standards, skills, and
-collisions before any repository changes. After review and import, a workspace graph is
-built from the registered repositories.
+collisions before any repository changes. After review and confirmed import, a workspace
+graph is built from the registered repositories. Dependencies owned by another product
+would be imported separately with `--participation dependency`, a directional
+relationship, and optional component scope; they would not become Friends Todo
+implementation targets.
 
-## 2. Confirm intent before creating the change
+## 2. Define and activate the product baseline
 
 The business requirements establish the actors, sharing outcome, access constraints,
 and success measures. Technical intent establishes ownership, API boundaries, identity,
 data consistency, security, observability, and compatibility direction.
+
+CIS coordinates that work through the product-definition journey:
+
+```powershell
+cis definition init --workspace C:\work\friends-todo-docs
+cis definition status --workspace C:\work\friends-todo-docs
+cis definition prepare --page business --workspace C:\work\friends-todo-docs
+```
+
+The eight pages cover foundation, business, technical direction, architecture, contracts,
+experience direction, delivery, and consolidated review. Existing-system inference may
+use bounded evidence from the owned product repositories, but observed code is not treated
+as stakeholder intent. Dependency repositories are excluded from product inference.
+
+The final activation binds the exact business, technical, architecture, dictionary,
+experience, preview, and backlog artifacts. It does not collapse their ownership or turn
+an inferred draft into approval.
 
 This prevents the feature from beginning as “add an invite table and endpoint.” The
 implementation shape remains open until the required behavior is clear.
@@ -160,13 +181,23 @@ are decomposed before execution.
 
 ## 7. Prepare execution without transferring authority
 
-Approved tasks can be prepared for a human or coding agent. The envelope contains the
-task contract and bounded context. It does not allow the executor to approve design,
-expand scope silently, or mark the task complete.
+Approved tasks can be prepared for a human or coding agent. The portable envelope contains
+the task contract and bounded context. CIS can also coordinate an explicit foreground
+provider run with a declared mode, permission ceiling, transport, actor, and target
+repository. Neither route allows the executor to approve design, expand scope silently,
+or mark the task complete.
 
 ```powershell
 cis agent prepare CIS-0001 WORK-005
+cis agent run CIS-0001 WORK-005 `
+  --provider codex --transport app-server `
+  --mode implement --permission workspace-write `
+  --actor "Andrew Spiteri"
 ```
+
+Workspace-write runs use an isolated Git worktree by default. Provider events and results
+remain derived under `.cis/local/`; an explicit import validates the result before it can
+become canonical evidence, and imported evidence still does not grant completion.
 
 If implementation discovers a missing repository or migration, the executor reports
 the evidence and proposed expansion. The impact and plan return to review rather than
@@ -225,6 +256,8 @@ That is governed software change in practice.
 - [Product intent](../specs/product-intent-spec.md)
 - [Business requirements governance](../specs/business-requirements-governance-spec.md)
 - [Technical-intent governance](../specs/technical-intent-governance-spec.md)
+- [High-level product-definition wizard](../specs/high-level-product-definition-wizard-spec.md)
+- [Provider-neutral agent execution](../specs/features/agent-execution-coordination-feature.md)
 - [Change impact and bounded planning](../specs/change-impact-and-planning-spec.md)
 - [Execution, assurance, diagnostics, and learning](../specs/execution-assurance-and-learning-spec.md)
 - [Delivery and assurance](../specs/delivery-and-assurance-spec.md)

@@ -18,7 +18,7 @@ class CisTreeItem {
     if (options.file) {
       item.contextValue = options.contextValue || 'cis.file';
       item.resourceUri = vscode.Uri.file(options.file);
-      item.command = { command: options.preview ? 'cis.preview' : 'cis.open', title: 'Open', arguments: [item] };
+      item.command = { command: options.preview || path.basename(options.file).toLowerCase() === 'erd.md' ? 'cis.preview' : 'cis.open', title: 'Open', arguments: [item] };
       item.iconPath = options.iconPath || new vscode.ThemeIcon('markdown');
     }
     return item;
@@ -44,16 +44,19 @@ class CisViewProvider {
   getTreeItem(item) { return item; }
   async getChildren(item) {
     if (item) return item.children || [];
+    const entry = items => this.id === 'workspace' ? [this.node('Getting Started', {
+      description: 'Set up CIS and find your next step', command: 'cis.gettingStarted', icon: 'book',
+    }), ...items] : items;
     try {
       const items = await this.load();
       this.last = items; this.stale = false;
-      return items;
+      return entry(items);
     } catch (error) {
       if (this.last) {
         this.stale = true;
-        return [this.node('Results are stale', { description: concise(error.message), icon: 'warning' }), ...this.last];
+        return entry([this.node('Results are stale', { description: concise(error.message), icon: 'warning' }), ...this.last]);
       }
-      return [this.node('Unavailable', { description: concise(error.message), icon: 'error' })];
+      return entry([this.node('Unavailable', { description: concise(error.message), icon: 'error' })]);
     }
   }
 

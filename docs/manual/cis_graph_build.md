@@ -3,7 +3,7 @@ title: "cis graph build"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-16"
+last_reviewed: "2026-09-08"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-graph-build
@@ -67,6 +67,11 @@ TypeScript/JavaScript, Swift, Kotlin, and Python. Test adapters recognize xUnit/
 MSTest-style C# attributes, JavaScript `it`/`test`, XCTest naming, Kotlin `@Test`,
 and pytest naming.
 
+JavaScript test names preserve embedded and escaped quotes. Repeated lexical test
+names within a file remain separate nodes using a deterministic occurrence suffix;
+this does not claim runtime suite or parameterized-case resolution. Inserting unrelated
+lines does not change those identities.
+
 C# sources additionally use Roslyn semantic binding. The compiler adapter creates
 stable type, method, constructor, property, accessor, and local-function symbols with
 qualified signatures. It records attributes, effective interfaces, base types, generated-source
@@ -84,6 +89,12 @@ Dependency extraction supports `.csproj`, `package.json`, Gradle build files, an
 verification. `verified-by` is emitted only when a recognized test contains the exact
 stable identity of a governed reference item. A reference item's explicit `Evidence`
 path may create `implemented-by` to an exact source file.
+
+The lexical adapter searches all reference identities together in one pass per test file.
+Every recognized test declaration in a matching file retains its existing file-scoped
+verification links and provenance. Matching remains ordinal and case-sensitive, including
+overlapping identities; this optimization does not imply test execution or finer test-body
+coverage.
 
 ## Build pipeline
 
@@ -206,6 +217,21 @@ Build every imported repository graph:
 
 ```powershell
 cis graph build --workspace C:\work\commerce --format agent
+```
+
+## Local performance tracing
+
+Set `CIS_PERF_TRACE=1` to emit phase timings on standard error. This works for graph builds
+and definition status/preparation, including nested graph and repository reads. Each line
+starts with `cis.perf ` followed by JSON containing `operation` and `milliseconds`.
+Parent timings include their children; do not add nested totals together. Read operations
+may include relative file paths, but source contents are not logged. Standard output retains
+the selected output format. Tracing is disabled by default.
+
+```powershell
+$env:CIS_PERF_TRACE = '1'
+cis graph build --repo C:\work\orders --refresh --format json 1> graph-result.json 2> graph-timings.log
+Remove-Item Env:CIS_PERF_TRACE
 ```
 
 ## Related commands

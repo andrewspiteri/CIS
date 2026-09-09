@@ -82,11 +82,18 @@ public sealed class TechnicalIntentQuestionnaireService
     }
 
     public TechnicalIntentQuestionnaireResult Initialize(string workspacePath)
+        => InitializeCore(workspacePath, discoveryOnly: false);
+
+    internal TechnicalIntentQuestionnaireResult InitializeForDiscovery(string workspacePath)
+        => InitializeCore(workspacePath, discoveryOnly: true);
+
+    private TechnicalIntentQuestionnaireResult InitializeCore(string workspacePath, bool discoveryOnly)
     {
         var state = Resolve(workspacePath);
         if (state.Errors.Count > 0) return Result("invalid", state, [], false);
-        if (!state.BrdReady) return Result("blocked", state, [], false,
+        if (!state.BrdReady && !discoveryOnly) return Result("blocked", state, [], false,
             "An Active, current BRD is required before the technical questionnaire. Run `cis brd status`.");
+        if (state.BrdVersion is null) return Result("blocked", state, [], false, "A canonical BRD is required for discovery.");
 
         var existing = File.Exists(state.Path!) ? File.ReadAllText(state.Path) : null;
         var previous = existing is null ? new Dictionary<string, TechnicalIntentQuestion>(StringComparer.Ordinal) : ParseQuestions(existing);
@@ -111,7 +118,7 @@ public sealed class TechnicalIntentQuestionnaireService
                 ? ToDerivedQuestion(definition, derived)
                 : ToQuestion(definition, null, null, null);
         }).ToArray();
-        var complete = questions.All(IsResolved);
+        var complete = state.BrdReady && questions.All(IsResolved);
         var content = Render(state.Authority!.Id, state.BrdVersion!, complete, questions);
         var stableId = $"{state.Authority.Id}:spec:technical-intent-questionnaire";
         var relative = Normalize(Path.GetRelativePath(state.Authority.RepositoryPath, state.Path!));

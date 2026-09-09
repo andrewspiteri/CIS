@@ -1,6 +1,7 @@
 'use strict';
 
 const { escapeHtml, isValidWebviewMessage, nonce, resolveWithin } = require('./security');
+const { doctorFixId, parseDoctorCommand } = require('./doctor-commands');
 
 function openEvidencePanel(vscode, title, model, actions = [], onAction = async () => {}, onPath = undefined) {
   const hasPaths = typeof onPath === 'function' && flatten(model).some(([, value]) => isOpenablePath(value));
@@ -130,33 +131,45 @@ function openDefinitionWizardPanel(vscode, root, model, onAction, onPath, initia
     localResourceRoots: [vscode.Uri.file(root)],
   });
   const scriptNonce = nonce();
-  const allowed = new Set(['activate', 'business-action', 'navigate', 'open-path', 'prepare', 'refresh', 'save-answer']);
+  const allowed = new Set(['activate', 'business-action', 'infer-technical-intent', 'infer-solution-design', 'navigate', 'open-path', 'open-business-dictionary', 'prepare', 'refresh', 'save-answer']);
   let currentModel = model;
   let currentPage = initialPage || model?.currentPage || 'foundation';
+  let busy = false;
+  let disposed = false;
+  panel.onDidDispose?.(() => { disposed = true; });
+  const setBusy = value => {
+    busy = value;
+    if (!disposed) panel.webview.postMessage?.({ command: 'wizard-busy', busy })?.catch(() => {});
+  };
   const controller = {
     panel,
     update(nextModel, requestedPage) {
       currentModel = nextModel || currentModel;
       currentPage = requestedPage || currentPage || nextModel?.currentPage || 'foundation';
-      panel.webview.html = renderDefinitionWizardHtml(panel.webview, root, currentModel, currentPage, scriptNonce, vscode);
+      if (!disposed) panel.webview.html = renderDefinitionWizardHtml(panel.webview, root, currentModel, currentPage, scriptNonce, vscode, busy);
     },
     page() { return currentPage; },
+    isBusy() { return busy; },
   };
   controller.update(model, currentPage);
   panel.webview.onDidReceiveMessage(async message => {
-    if (!isValidWebviewMessage(message, allowed)) return;
+    if (disposed || busy || !isValidWebviewMessage(message, allowed)) return;
     if (message.command === 'navigate') {
       currentPage = String(message.value || 'foundation');
       controller.update(currentModel, currentPage);
       return;
     }
-    if (message.command === 'open-path') await onPath(message.value);
-    else await onAction(message.command, message.value, controller);
+    setBusy(true);
+    try {
+      if (message.command === 'open-path') await onPath(message.value);
+      else await onAction(message.command, message.value, controller);
+    } catch (error) { await vscode.window.showErrorMessage(`CIS: ${error.message}`); }
+    finally { setBusy(false); }
   });
   return controller;
 }
 
-function renderDefinitionWizardHtml(webview, root, model, currentPage, scriptNonce, vscode) {
+function renderDefinitionWizardHtml(webview, root, model, currentPage, scriptNonce, vscode, busy = false) {
   const pages = Array.isArray(model?.pages) ? [...model.pages].sort((a, b) => Number(a.ordinal) - Number(b.ordinal)) : [];
   const selected = pages.find(page => page.id === currentPage) || pages[0] || { id: 'foundation', ordinal: 1, title: 'Project foundation', status: 'Not started', artifactPaths: [], issues: [] };
   const statusClass = selected.complete && selected.current ? 'good' : selected.issues?.length ? 'bad' : 'warn';
@@ -170,31 +183,46 @@ function renderDefinitionWizardHtml(webview, root, model, currentPage, scriptNon
     <button type="button" class="secondary" data-command="navigate" data-value="${escapeHtml(previous?.id || selected.id)}" ${previous ? '' : 'disabled'}>Back</button>
     <div class="footer-primary">
       <button type="button" class="secondary" data-command="refresh">Refresh</button>
-      ${selected.id !== 'review' ? `<button type="button" data-command="prepare" data-value="${escapeHtml(selected.id)}">${selected.complete && selected.current ? 'Save and continue' : 'Prepare or refresh page'}</button>` : model?.readyToActivate && model?.active !== false ? '<button type="button" data-command="activate">Approve and activate</button>' : model?.readyToActivate ? '<span class="badge good">Baseline active</span>' : '<button type="button" class="secondary" data-command="refresh">Recheck readiness</button>'}
+      ${selected.id === 'business' ? '' : selected.id !== 'review' ? `<button type="button" data-command="prepare" data-value="${escapeHtml(selected.id)}">${selected.complete && selected.current ? 'Save and continue' : 'Prepare or refresh page'}</button>` : model?.readyToActivate && model?.active !== false ? '<button type="button" data-command="activate">Approve and activate</button>' : model?.readyToActivate ? '<span class="badge good">Baseline active</span>' : '<button type="button" class="secondary" data-command="refresh">Recheck readiness</button>'}
       ${next && selected.complete && selected.current ? `<button type="button" data-command="navigate" data-value="${escapeHtml(next.id)}">Continue</button>` : ''}
     </div></footer>`;
   const body = `<header class="hero"><div><span class="eyebrow">High-level product definition · ${escapeHtml(model?.sessionId || 'new draft')}</span><h1>${escapeHtml(selected.title)}</h1><p>Build one coherent business, technical, architecture, contract, experience and delivery baseline before the feature loop.</p></div><span class="badge ${statusClass}">${escapeHtml(selected.status || 'Not started')}</span></header>
     <div class="wizard-layout"><nav class="wizard-steps" aria-label="Definition wizard pages">${nav}</nav><section class="wizard-page" aria-labelledby="page-title"><div class="section-heading"><div><span class="eyebrow">Page ${escapeHtml(String(selected.ordinal))} of ${escapeHtml(String(pages.length || 8))}</span><h2 id="page-title">${escapeHtml(selected.title)}</h2></div><span class="badge ${statusClass}">${selected.complete && selected.current ? 'Complete and current' : 'Needs attention'}</span></div>
-    ${pageBody}${artifacts ? `<details><summary>Canonical artifacts (${(selected.artifactPaths || []).length})</summary><ul class="links">${artifacts}</ul></details>` : ''}${issues ? `<section class="notice warning"><strong>What needs attention</strong><ul>${issues}</ul></section>` : ''}</section></div>${footer}`;
-  return studioDocument(webview, 'High-level product definition', body, scriptNonce, definitionWizardScript(scriptNonce));
+    ${pageBody}${artifacts ? `<details><summary>Canonical artifacts (${(selected.artifactPaths || []).length})</summary><ul class="links">${artifacts}</ul></details>` : ''}${issues ? `<section class="notice warning"><strong>What needs attention</strong><ul>${issues}</ul></section>` : ''}</section></div><p id="wizard-progress" role="status" aria-live="polite" ${busy ? '' : 'hidden'}>CIS is working. Please wait for this action to finish.</p>${footer}`;
+  return studioDocument(webview, 'High-level product definition', body, scriptNonce, definitionWizardScript(scriptNonce, busy));
 }
 
 function renderDefinitionPageBody(webview, root, model, page, vscode) {
   if (page.id === 'foundation') {
     const dictionaries = (model.dictionaries || []).filter(item => item.applicable);
-    return `<section class="cards two"><article class="card"><span class="eyebrow">Workspace authority</span><h3>${escapeHtml(model.authorityRepositoryId || 'Not configured')}</h3><p>${escapeHtml(model.workspacePath || root)}</p></article><article class="card"><span class="eyebrow">Classification-selected references</span><h3>${dictionaries.length} dictionaries initialized</h3><p>Existing repositories contribute discovered facts; greenfield repositories retain governed skeletons.</p></article></section><div class="actions"><button type="button" data-command="business-action" data-value="doctor">Open Repository Doctor</button><button type="button" class="secondary" data-command="business-action" data-value="evidence">Browse evidence</button></div>`;
+    return `<section class="cards two"><article class="card"><span class="eyebrow">Workspace authority</span><h3>${escapeHtml(model.authorityRepositoryId || 'Not configured')}</h3><p>${escapeHtml(model.workspacePath || root)}</p></article><article class="card"><span class="eyebrow">Classification-selected references</span><h3>${dictionaries.length} dictionaries initialized</h3><p>Existing repositories contribute discovered facts; greenfield repositories retain governed skeletons.</p></article></section><p>Review the authority and references, then use Continue below to move to business definition.</p><details><summary>Foundation tools</summary><div class="actions"><button type="button" class="secondary" data-command="business-action" data-value="doctor">Open Repository Doctor</button><button type="button" class="secondary" data-command="business-action" data-value="evidence">Browse evidence</button></div></details>`;
   }
   if (page.id === 'business') {
     const questions = model.brdQuestions?.questions || [];
-    return `<section class="card"><h3>Business authority</h3><p>Define the problem, actors, outcomes, rules, constraints, exclusions and success measures. Agent drafting and independent review remain available without leaving this journey.</p><div class="actions"><button type="button" data-command="business-action" data-value="open-brd">Open BRD</button><button type="button" data-command="business-action" data-value="draft-brd">Draft from references</button><button type="button" class="secondary" data-command="business-action" data-value="questions">Answer ${questions.filter(item => String(item.status).toLowerCase() === 'unanswered').length} open questions</button><button type="button" class="secondary" data-command="business-action" data-value="review-brd">Independent review</button></div></section>`;
+    const inference = model.businessInference;
+    const repositories = inference?.repositories || [];
+    const canInfer = inference?.canDraft === true && repositories.length > 0;
+    const hint = !inference ? 'Update the CIS CLI to discover existing-project inference sources.'
+      : !inference.canDraft ? 'Inference is available for Draft or Review Required business definitions. Open the current BRD to review its lifecycle.'
+        : !repositories.length ? 'For an existing system, import its product repositories first. For a new product, draft from reference documents or edit the BRD.'
+          : `Use the ${repositories.length} product repositories below to infer actors, workflows, business rules and scope from the existing system. You can change the selection before starting.`;
+    const preparation = inference?.lastPreparation || [];
+    const inventories = preparation.flatMap((report, reportIndex) => (report.inventories || []).map((item, itemIndex) => ({ ...item, repository: report.repositoryPath, key: `${reportIndex}:${itemIndex}` })));
+    const preparationCard = `<section class="card"><span class="eyebrow">1. Prepare existing-system context</span><h3>Discover the dictionaries first</h3><p>Populate draft API contracts, data fields, relationships, workflow states, permissions and screen routes from the owned repositories. Inspect this evidence before inferring the BRD. Reviewed dictionaries are preserved; source declarations do not establish intended business policy.</p><div class="actions"><button type="button" data-command="business-action" data-value="prepare-evidence" ${repositories.length ? '' : 'disabled'}>Prepare existing-system context</button></div>${inventories.length ? `<details><summary>Last preparation: ${preparation.length} repositories — inspect dictionary counts and files</summary><p>Counts show discovered source rows. Rerun preparation after source changes. Open the listed files to review the dictionaries.</p><table><thead><tr><th>Repository / dictionary</th><th>Discovered rows</th><th>Result</th></tr></thead><tbody>${inventories.map(item => `<tr><td>${escapeHtml(item.repository)}<br><button type="button" class="secondary" data-command="open-business-dictionary" data-value="${escapeHtml(item.key)}">${escapeHtml(item.path)}</button></td><td>${escapeHtml(item.discoveredRows)}</td><td>${escapeHtml(item.action)}</td></tr>`).join('')}</tbody></table></details>` : '<p>No preparation has been recorded yet.</p>'}${preparation.flatMap(report => report.warnings || []).map(warning => `<p>${escapeHtml(warning)}</p>`).join('')}<p>Infer from existing project also runs this preparation automatically. The later contracts page reviews and extends these dictionaries.</p></section>`;
+    return `${preparationCard}<section class="card"><span class="eyebrow">Start with existing evidence</span><h3>Infer your business definition</h3><p>${escapeHtml(hint)}</p>${repositories.length ? `<ul>${repositories.map(repository => `<li>${escapeHtml(repository.id)}</li>`).join('')}</ul>` : ''}<div class="actions"><button type="button" data-command="business-action" data-value="infer-brd" ${canInfer ? '' : 'disabled'}>Infer from existing project</button><button type="button" class="secondary" data-command="business-action" data-value="draft-brd">Draft from references</button></div><p>The agent produces a Review Required BRD with source citations. Business intent that the evidence cannot establish remains an open question.</p></section><section class="card"><h3>Review the business definition</h3><p>Review the draft and source evidence, run an independent review, then resolve the open questions. Continue when this page is complete.</p><div class="actions"><button type="button" data-command="business-action" data-value="open-brd">Open BRD and source evidence</button><button type="button" class="secondary" data-command="business-action" data-value="review-brd">Independent review</button><button type="button" class="secondary" data-command="business-action" data-value="questions">Answer ${questions.filter(item => String(item.status).toLowerCase() === 'unanswered').length} open questions</button></div></section>`;
   }
-  if (page.id === 'technical') return renderWizardQuestions(model.technicalQuestions?.questions, 'technical');
+  if (page.id === 'technical') return `<section class="card"><span class="eyebrow">Existing product</span><h3>Infer technical intent from the implementation</h3><p>CIS reads the owned repositories to explain the current architecture, modules, data flows, integrations, security, operations and verification. Source citations stay in comments. Observed behavior, proposed changes and unavailable evidence remain distinct.</p><div class="actions"><button type="button" data-command="infer-technical-intent" ${(model.businessInference?.repositories || []).length ? '' : 'disabled'}>Infer from existing repositories</button></div><p>You can draft while reviewing the BRD. Approval still requires the reviewed business baseline and resolved technical choices. Review the inferred document before answering the remaining questions.</p></section>${renderWizardQuestions(model.technicalQuestions?.questions, 'technical')}`;
   if (page.id === 'architecture') {
     const diagrams = model.diagrams || [];
-    return `<section class="cards two"><article class="card"><h3>Overall solution design</h3><p>Review module ownership, data boundaries, integrations, trust boundaries, deployment and recovery direction.</p></article><article class="card"><h3>Component sheet</h3><p>Every capability, record and cross-boundary interaction has one explicit owner.</p></article></section><section><h3>Generated diagrams</h3><div class="cards two">${diagrams.map(item => `<article class="card"><span class="eyebrow">${escapeHtml(item.sourceFormat)}</span><h4>${escapeHtml(item.title)}</h4><button type="button" class="link" data-command="open-path" data-value="${escapeHtml(item.relativePath)}">Open canonical diagram source</button></article>`).join('') || '<article class="card empty">Prepare this page after technical direction is complete.</article>'}</div></section>`;
+    const canInfer = (model.businessInference?.repositories || []).length > 0 && page.status !== 'Active';
+    return `<section class="card"><span class="eyebrow">Existing product</span><h3>Infer solution architecture from the implementation</h3><p>CIS reads the owned repositories and populated dictionaries to explain component responsibilities, end-to-end flows, data ownership, integrations, trust boundaries and operations. It drafts the overall design and component sheet together and generates four visual diagrams.</p><div class="actions"><button type="button" data-command="infer-solution-design" ${canInfer ? '' : 'disabled'}>Infer from existing repositories</button></div><p>Review the business and technical baseline alongside the inferred architecture. Observed behavior, proposed changes and unresolved deployment details are labelled. Source citations stay in comments; approval remains a separate whole-bundle review. Use Prepare or refresh page to project completed technical direction for a new product, or refresh diagrams after reviewing an inferred draft.</p></section><section class="cards two"><article class="card"><h3>Overall solution design</h3><p>Review module ownership, data boundaries, integrations, trust boundaries, deployment and recovery direction.</p></article><article class="card"><h3>Component sheet</h3><p>Review responsibility and ownership for every component and its interactions.</p></article></section><section><h3>Architecture diagrams</h3><div class="cards two">${diagrams.map(item => {
+      const file = item.svgRelativePath && resolveWithin(root, item.svgRelativePath);
+      const preview = file ? `<figure class="ui-preview"><img src="${escapeHtml(webview.asWebviewUri(vscode.Uri.file(file)).toString())}" alt="${escapeHtml(item.title)}"></figure>` : '';
+      return `<article class="card"><span class="eyebrow">${escapeHtml(item.sourceFormat)} · ${escapeHtml(item.status || 'Review Required')}</span><h4>${escapeHtml(item.title)}</h4>${preview}<button type="button" class="link" data-command="open-path" data-value="${escapeHtml(item.relativePath)}">${file ? 'Preview diagrams at full size' : 'Open canonical diagram source'}</button></article>`;
+    }).join('') || '<article class="card empty">Infer from existing repositories, or prepare this page after technical direction is complete.</article>'}</div></section>`;
   }
   if (page.id === 'contracts') {
-    return `<p>These shared references start before feature delivery and are extended by each applicable feature.</p><div class="dictionary-grid">${(model.dictionaries || []).map(item => `<article class="card"><div class="section-heading"><h3>${escapeHtml(item.title)}</h3><span class="badge ${item.applicable ? 'good' : 'warn'}">${item.applicable ? `${item.entryCount} entries` : 'Not applicable'}</span></div>${item.applicable ? `<button type="button" class="link" data-command="open-path" data-value="${escapeHtml(item.relativePath)}">${escapeHtml(item.relativePath)}</button>` : '<span class="muted">Not selected by repository classification</span>'}</article>`).join('')}</div>`;
+    return `<p>These shared references start before feature delivery and are extended by each applicable feature.</p><div class="dictionary-grid">${(model.dictionaries || []).map(item => `<article class="card"><div class="section-heading"><h3>${escapeHtml(item.title)}</h3><span class="badge ${item.applicable ? 'good' : 'warn'}">${item.applicable ? `${item.entryCount} entries` : 'Not applicable'}</span></div>${item.applicable ? `<button type="button" class="link" data-command="open-path" data-value="${escapeHtml(item.relativePath)}">${escapeHtml(item.kind === 'erd' ? 'Preview entity diagrams' : item.relativePath)}</button>` : '<span class="muted">Not selected by repository classification</span>'}</article>`).join('')}</div>`;
   }
   if (page.id === 'experience') {
     const preview = model.preview;
@@ -228,12 +256,18 @@ function renderWizardQuestions(questions, page) {
   }).join('')}</section>`;
 }
 
-function definitionWizardScript(scriptNonce) {
-  return `<script nonce="${scriptNonce}">const vscode=acquireVsCodeApi();document.addEventListener('click',event=>{const button=event.target.closest('button');if(!button||button.disabled)return;if(button.dataset.saveQuestion){const area=document.getElementById('wizard-'+button.dataset.saveQuestion);vscode.postMessage({command:'save-answer',value:JSON.stringify({page:button.dataset.page,id:button.dataset.saveQuestion,answer:area?.value||''})});return;}if(button.dataset.command)vscode.postMessage({command:button.dataset.command,value:button.dataset.value||''});});</script>`;
+function definitionWizardScript(scriptNonce, initialBusy) {
+  return `<script nonce="${scriptNonce}">
+const vscode=acquireVsCodeApi();let busy=false;
+const setBusy=value=>{if(busy===value)return;busy=value;document.body.setAttribute('aria-busy',String(value));document.getElementById('wizard-progress').hidden=!value;document.querySelectorAll('button,textarea').forEach(control=>{if(value){control.dataset.cisDisabled=control.disabled?'1':'0';control.disabled=true;}else if(control.dataset.cisDisabled!==undefined){control.disabled=control.dataset.cisDisabled==='1';delete control.dataset.cisDisabled;}});};
+window.addEventListener('message',event=>{if(event.data?.command==='wizard-busy')setBusy(event.data.busy===true);});
+setBusy(${initialBusy});
+document.addEventListener('click',event=>{const button=event.target.closest('button');if(busy||!button||button.disabled)return;let message;if(button.dataset.saveQuestion){const area=document.getElementById('wizard-'+button.dataset.saveQuestion);message={command:'save-answer',value:JSON.stringify({page:button.dataset.page,id:button.dataset.saveQuestion,answer:area?.value||''})};}else if(button.dataset.command){message={command:button.dataset.command,value:button.dataset.value||''};}if(message){setBusy(true);vscode.postMessage(message);}});
+</script>`;
 }
 
 function openDoctorPanel(vscode, status, onAction, onPath) {
-  const allowed = new Set(['copy-fix', 'open-path', 'refresh']);
+  const allowed = new Set(['copy-fix', 'run-fix', 'open-path', 'refresh']);
   const panel = createActionPanel(vscode, 'cis.repositoryDoctor', 'Repository Doctor', allowed, onAction, onPath);
   const scriptNonce = nonce();
   const controller = {
@@ -272,15 +306,18 @@ function renderDoctorHtml(webview, result, scriptNonce) {
     const command = typeof finding.fixCommand === 'string' && finding.fixCommand.trim()
       ? finding.fixCommand.trim() : '';
     const fixability = labelLabel(finding.fixability || (command ? 'review-required' : 'none'));
-    return `<article class="card doctor-finding" aria-labelledby="doctor-${escapeHtml(finding.code || 'finding')}">
-      <div class="section-heading"><div><span class="eyebrow">${escapeHtml(finding.category || 'repository')} · ${escapeHtml(finding.code || 'CIS finding')}</span><h3 id="doctor-${escapeHtml(finding.code || 'finding')}">${escapeHtml(finding.message || 'Repository Doctor finding')}</h3></div><span class="badge ${level === 'error' ? 'bad' : level === 'warning' ? 'warn' : 'good'}">${escapeHtml(level)}</span></div>
+    const fixId = doctorFixId(finding);
+    let runIssue;
+    if (command) { try { parseDoctorCommand(command); } catch (error) { runIssue = error.message; } }
+    return `<article class="card doctor-finding" aria-labelledby="doctor-${fixId}">
+      <div class="section-heading"><div><span class="eyebrow">${escapeHtml(finding.category || 'repository')} · ${escapeHtml(finding.code || 'CIS finding')}</span><h3 id="doctor-${fixId}">${escapeHtml(finding.message || 'Repository Doctor finding')}</h3></div><span class="badge ${level === 'error' ? 'bad' : level === 'warning' ? 'warn' : 'good'}">${escapeHtml(level)}</span></div>
       ${evidence ? `<details><summary>Evidence (${(finding.evidence || []).length})</summary><ul class="criteria">${evidence}</ul></details>` : '<p class="muted">No additional evidence paths were reported.</p>'}
       <section class="notice ${level === 'warning' ? 'warning' : ''}"><strong>Possible fix</strong><span>${escapeHtml(finding.suggestedFix || 'Review the finding and choose a bounded corrective action.')}</span><span class="muted">Fixability: ${escapeHtml(fixability)}</span></section>
-      ${command ? `<div class="card command"><span class="eyebrow">Suggested CIS command</span><pre>${escapeHtml(command)}</pre><div class="actions"><button type="button" data-command="copy-fix" data-value="${escapeHtml(finding.code || '')}">Copy command</button></div></div>` : ''}
+      ${command ? `<div class="card command"><span class="eyebrow">Suggested command</span><pre>${escapeHtml(command)}</pre><div class="actions"><button type="button" data-command="run-fix" data-value="${fixId}" ${runIssue ? 'disabled' : ''}>Run command</button><button type="button" class="secondary" data-command="copy-fix" data-value="${fixId}">Copy command</button></div>${runIssue ? `<p class="muted">${escapeHtml(runIssue)}</p>` : ''}</div>` : ''}
     </article>`;
   };
   const renderGroup = (title, level, items) => `<section aria-labelledby="doctor-${level}-heading"><div class="section-heading"><div><span class="eyebrow">${escapeHtml(level)}</span><h2 id="doctor-${level}-heading">${escapeHtml(title)} (${items.length})</h2></div></div><div class="cards">${items.map(renderFinding).join('') || `<article class="card empty">No ${escapeHtml(title.toLowerCase())} were reported.</article>`}</div></section>`;
-  const body = `<header class="hero"><div><span class="eyebrow">Repository readiness · read-only diagnosis</span><h1>Repository Doctor</h1><p>Review each evidence-backed finding and its possible fix. Commands are never executed automatically; copy one only after reviewing its scope.</p></div><span class="badge ${state}">${escapeHtml(status)}</span></header>
+  const body = `<header class="hero"><div><span class="eyebrow">Repository readiness · read-only diagnosis</span><h1>Repository Doctor</h1><p>Review each evidence-backed finding and its possible fix. Commands are never executed automatically. Run a command for this repository using your configured CIS CLI, or copy it. Findings refresh after each run.</p></div><span class="badge ${state}">${escapeHtml(status)}</span></header>
     <section class="card request" aria-label="Doctor summary"><div><span class="eyebrow">Repository</span><strong>${escapeHtml(result?.repositoryPath || 'Current authority repository')}</strong></div><div><span class="eyebrow">Documentation root</span><strong>${escapeHtml(result?.documentationRoot || 'Not established')}</strong></div><div><span class="eyebrow">Errors</span><strong>${errorCount}</strong></div><div><span class="eyebrow">Warnings</span><strong>${warningCount}</strong></div><div><span class="eyebrow">Information</span><strong>${informationCount}</strong></div><div><span class="eyebrow">Local AI</span><strong>${escapeHtml(result?.ollama?.isAvailable ? `Available${result.ollama.models?.length ? ` · ${result.ollama.models.length} model(s)` : ''}` : 'Unavailable')}</strong></div></section>
     <div class="actions"><button type="button" data-command="refresh">Run Doctor again</button></div>
     ${renderGroup('Errors', 'error', groups.error)}
@@ -753,6 +790,7 @@ function isOpenablePath(value) {
 }
 
 module.exports = {
+  createActionPanel, studioDocument,
   confirmAgentRequest, flatten, isOpenablePath, openBrdQuestionsPanel, openTechnicalIntentQuestionsPanel, openUiDirectionQuestionsPanel, openDefinitionWizardPanel, openDoctorPanel, openChangeOverviewPanel, openDesignPanel, openEvidencePanel,
   openCommandProgressPanel, openContextPanel, openRecommendationReviewPanel, openRunDetailPanel, openTaskDetailPanel,
   renderAgentRequestHtml, renderChangeOverviewHtml, renderCommandProgressHtml, renderContextHtml,

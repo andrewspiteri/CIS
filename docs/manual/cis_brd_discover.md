@@ -29,6 +29,10 @@ templates are excluded; copied feature specifications should declare
 hash. The command also reports graph build identity,
 head, dirty state, freshness, role, and diagnostics for every repository.
 
+Automatic discovery excludes agent configuration and skill directories, along with
+`SKILL.md`, `AGENTS.md`, and `CLAUDE.md`: instructions for authoring requirements do
+not become product requirements merely because they mention a BRD.
+
 The workspace must identify one authority repository and every repository must have a
 built graph. Participant graphs must be fresh. A stale authority graph is reported as
 a warning because canonical BRD edits can make it stale without invalidating participant

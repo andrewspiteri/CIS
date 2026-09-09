@@ -5,7 +5,7 @@ status: Draft
 series: "Change Impact and Planning"
 series_order: 1
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-26"
+last_reviewed: "2026-09-09"
 review_cadence: on change-lifecycle change
 summary: "A durable repository record that connects one outcome to impact, decisions, work, evidence, and acceptance."
 cis:
@@ -20,6 +20,10 @@ holds its full engineering meaning.
 A change dossier is the repository-owned record that connects one proposed outcome to
 its baseline, reviewed impact, decisions, bounded work, design, tests, verification, and
 acceptance.
+
+In a product workspace, the dossier begins after the high-level product definition and
+current technical intent establish the product-wide authority. It governs one repeatable
+feature or change without becoming a competing product definition.
 
 ## One home for the change
 
@@ -80,6 +84,79 @@ current Markdown remains readable, while the event ledger records how the state 
 The ledger does not grant authority on its own. It supports the canonical state and
 helps detect silent replacement.
 
+## The dossier follows a lifecycle
+
+A useful dossier changes character as work progresses:
+
+```text
+Proposed outcome and exact baseline
+  → evidence-backed impact findings
+  → human dispositions and decisions
+  → approved bounded work
+  → candidate implementation and execution claims
+  → independent verification
+  → human acceptance or recorded residual work
+```
+
+Later stages do not erase earlier ones. A rejected impact remains part of the reasoning.
+A superseded decision remains part of history. An unexpected file found during
+verification can be compared with the plan that genuinely existed before execution.
+
+The directory is not valuable because it contains many files. It is valuable because
+each file owns one part of the authority chain. A reader can move from the requested
+outcome to the evidence used for acceptance without reconstructing the change from a
+conversation timeline.
+
+## A dossier is intentionally bounded
+
+One dossier should represent one observable product or engineering outcome. It should not
+become a second backlog, a product strategy document, or a container for every nearby
+cleanup. If work reveals another outcome with separate authority or risk, create or link
+a separate change instead of stretching the original proposal until its baseline and
+acceptance criteria lose meaning.
+
+The boundary is particularly important across repositories. A workspace dossier may
+coordinate several product-owned repositories, but a required modification in a
+dependency repository belongs to that dependency's product authority. The current dossier
+records the impact and coordination obligation; it does not acquire permission to deliver
+the other product's change.
+
+The tracker can still answer “who is working on this?” and “which sprint contains it?”
+The dossier answers “which authority approved this scope?”, “what was the baseline?”,
+“which evidence is required?”, and “what changed when the implementation disagreed with
+the plan?” Those questions need repository history and stable identities, not only a
+mutable issue description.
+
+## Walk through a small dossier
+
+For “allow a list owner to revoke an invitation,” the proposal identifies the observable
+revocation outcome and current graph build. Impact finds the customer screen, API
+operation, permission, invitation state, audit event, and cleanup behavior. Review accepts
+five findings, rejects an unrelated sign-in route, and defers bulk revocation.
+
+A decision chooses whether revocation invalidates already opened links immediately. The
+plan then creates contract, backend, customer UI, observability, test, and verification
+work with explicit dependencies. During delivery, Git reveals an unexpected workflow
+change needed to retain integration-test output. The reviewer either revises scope with
+evidence or removes the workflow edit. Verification records the final diff, checks,
+deferral, and residual risk before a human accepts the result.
+
+Every important boundary is visible in the dossier. The pull request can link to it; the
+pull request does not have to contain it all.
+
+## Keep durable conclusions, not every byte
+
+Raw provider transcripts, large CI logs, caches, temporary worktrees, and repeated query
+results belong in derived local or external systems. The dossier records bounded evidence
+references, hashes, outcomes, and unavailable checks. It should be durable enough to
+explain the change without becoming an archive of every byte produced during delivery.
+
+The managed-file baseline exclusion is equally narrow. It prevents the dossier's own
+generated records from creating a freshness loop; it does not exempt a feature
+specification, reference dictionary, or technical-intent document merely because the
+change links to it. Sources that establish product meaning must still match the approved
+baseline.
+
 ## Takeaway
 
 A change dossier turns transient delivery conversation into durable project state. It
@@ -91,4 +168,4 @@ Git, or CI/CD.
 - [Change impact and bounded planning](../specs/change-impact-and-planning-spec.md)
 - [`cis change create`](../manual/cis_change_create.md)
 - [Context model and local graph](../specs/context-model-and-graph-spec.md)
-
+- [High-level product-definition wizard](../specs/high-level-product-definition-wizard-spec.md)

@@ -48,6 +48,39 @@ and author business outcomes, scope, actors, capabilities and processes, functio
 quality requirements, constraints, success measures, traceability, and open questions.
 CIS does not generate stakeholder decisions from implementation evidence.
 
+## Business-reader presentation
+
+Imported-product authoring includes bounded, digest-cached implementation and test snapshots
+for explicitly selected owned repositories. The author traces behaviour from entrypoints
+through service logic, validations, state changes, integrations and related tests. Dictionary
+projections and repository documents provide navigation and context. Code is observed
+behaviour, not stakeholder intent or evidence of deployed configuration. Every indexed
+implementation area has hidden coverage evidence or a concrete gap; entries are validated
+against the snapshot's actual file paths and roles. A coverage row does not establish
+semantic completeness. An independent review with authoring evidence receives the exact
+snapshot and must examine narrated behaviour and omissions against it. Snapshot files are
+never executed; bounded discovery excludes dependencies, tool state and credential files,
+redacts likely credential literals and reports other source omissions.
+
+The canonical BRD must provide a connected, plain-language narrative of how the product
+works for business and product stakeholders, including nontechnical readers. Describe
+participants, purpose, complete journeys, business rules, operating variations, exceptions
+and outcomes. Stable requirement identities and business-readable acceptance conditions
+remain available for downstream planning. Technical inventories and repeated extraction
+caveats must not replace the product explanation.
+
+All links, URLs, source IDs, anchors, paths, hashes and technical evidence mappings belong
+inside HTML comments. The narrative must stand on its own without rendered citation markers
+or source tables. Detailed mappings remain in comments under Traceability; CIS validation
+and source-drift detection continue to read the Markdown source. Controller-owned baseline,
+source-assessment and feature-traceability blocks retain their original markers and values
+inside reversible evidence comments. Their hidden presentation preserves the business digest.
+
+Initial independent review must treat missing or unusable narrative as a major issue to
+address in that pass. Readability cannot be deferred until stakeholder questions are answered.
+Bounded closure reviews retain their exact approved scope. These presentation rules do not
+claim that declaration projections alone establish complete implementation behaviour.
+
 ## Open-question resolution
 
 Agent-authored numbered questions remain unresolved human decisions. `cis brd questions

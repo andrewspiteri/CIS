@@ -7,7 +7,7 @@ using Cis.Modules.Repository;
 
 namespace Cis.Modules.SolutionDesign;
 
-public sealed class SolutionDesignService : IChangeReadinessCheck
+public sealed partial class SolutionDesignService : IChangeReadinessCheck, ICisSolutionDesignDrafts
 {
     private const string ManagedStart = "<!-- cis:solution-design-managed:start -->";
     private const string ManagedEnd = "<!-- cis:solution-design-managed:end -->";
@@ -35,10 +35,14 @@ public sealed class SolutionDesignService : IChangeReadinessCheck
     }
 
     public SolutionDesignResult Initialize(string workspacePath)
+        => InitializeCore(workspacePath, false);
+
+    private SolutionDesignResult InitializeCore(string workspacePath, bool existingDraft)
     {
         var state = Resolve(workspacePath);
         if (state.Errors.Count > 0) return Error("invalid", state, state.Errors);
-        if (state.ReadinessErrors.Count > 0) return Error("blocked", state, state.ReadinessErrors);
+        var blocking = existingDraft ? state.ReadinessErrors.Where(error => !error.StartsWith("An Active, current technical intent", StringComparison.Ordinal)).ToArray() : state.ReadinessErrors;
+        if (blocking.Count > 0) return Error("blocked", state, blocking);
 
         var designStableId = $"{state.Authority!.Id}:architecture:overall-solution-design";
         var componentsStableId = $"{state.Authority.Id}:reference:component-sheet";
@@ -54,8 +58,8 @@ public sealed class SolutionDesignService : IChangeReadinessCheck
 
         var generatedDesign = RenderDesign(state, designStableId);
         var generatedComponents = RenderComponentSheet(state, componentsStableId);
-        var nextDesign = ReconcileExisting(state.DesignPath!, generatedDesign, designStableId, ManagedStart, ManagedEnd);
-        var nextComponents = ReconcileExisting(state.ComponentSheetPath!, generatedComponents, componentsStableId, ComponentsStart, ComponentsEnd);
+        var nextDesign = ReconcileExisting(state.DesignPath!, generatedDesign, designStableId, ManagedStart, ManagedEnd, existingDraft);
+        var nextComponents = ReconcileExisting(state.ComponentSheetPath!, generatedComponents, componentsStableId, ComponentsStart, ComponentsEnd, existingDraft);
         if (nextDesign is null || nextComponents is null)
             return Error("collision", state, ["A canonical solution-design path contains a document with a different stable identity."]);
 
@@ -174,6 +178,11 @@ public sealed class SolutionDesignService : IChangeReadinessCheck
         foreach (var heading in new[] { "Component catalogue", "Component responsibility profiles", "Component interaction catalogue", "Ownership rules", "Component-specific notes and accepted exceptions" })
             if (string.IsNullOrWhiteSpace(ExtractSection(components, heading))) errors.Add($"Component sheet section is missing or empty: {heading}");
         if (Placeholder(design) || Placeholder(components)) errors.Add("Solution-design artifacts contain TODO, TBD, or incomplete placeholders.");
+        if (design.Contains(InferredMarker, StringComparison.Ordinal))
+        {
+            try { ArchitectureDiagramModel.ReadRequired(design); }
+            catch (InvalidDataException exception) { errors.Add(exception.Message); }
+        }
 
         var parsedComponents = ParseComponents(components);
         if (parsedComponents.Count == 0) errors.Add("Component sheet contains no structured `TI-MOD-*` component rows.");
@@ -373,11 +382,15 @@ This document is one half of the governed overall solution-design bundle. The ov
 {tail}
 """;
 
-    private static string? ReconcileExisting(string path, string generated, string stableId, string start, string end)
+    private static string? ReconcileExisting(string path, string generated, string stableId, string start, string end, bool existingDraft = false)
     {
         if (!File.Exists(path)) return generated;
         var existing = File.ReadAllText(path);
         if (!existing.Contains($"stable_id: {stableId}", StringComparison.Ordinal)) return null;
+        // Inference owns the narrative. Ordinary preparation must preserve it and expose source drift.
+        if (existing.Contains(InferredMarker, StringComparison.Ordinal))
+            return existingDraft && ReadNested(existing, "technical_intent_hash") != ReadNested(generated, "technical_intent_hash")
+                ? ResetApproval(ReplaceNested(existing, "technical_intent_hash", ReadNested(generated, "technical_intent_hash")!)) : existing;
         var next = ReplaceBlock(existing, start, end, ReadBlock(generated, start, end));
         next = ReplaceNested(next, "technical_intent_hash", ReadNested(generated, "technical_intent_hash")!);
         if (!Equivalent(existing, next)) next = ResetApproval(next);
@@ -412,6 +425,28 @@ This document is one half of the governed overall solution-design bundle. The ov
             var requirements = Regex.Matches(cells[5 + offset], @"\b(?:BRD|BR)-[A-Z]+-[0-9]+\b", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
                 .Select(match => match.Value).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
             components.Add(new SolutionComponent(id, name.Length == 0 ? id : name, classification, responsibility, owns, excludes, requirements));
+        }
+        // Existing-system technical narratives retain stable IDs in responsibility profiles rather
+        // than forcing their implementation observations into the original six-column starter.
+        foreach (Match profile in Regex.Matches(content, @"(?ms)^####[ \t]+(?<id>TI-MOD-[A-Z0-9-]+)[ \t]*(?:—|-|:)?[ \t]*(?<name>[^\r\n]*)\r?\n(?<body>.*?)(?=^#{1,4} |\z)",
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
+        {
+            var id = profile.Groups["id"].Value;
+            if (components.Any(item => item.Id == id)) continue;
+            var body = profile.Groups["body"].Value;
+            string Field(string label, string fallback)
+            {
+                var field = Regex.Match(body, $@"(?s)\*\*{Regex.Escape(label)}:\*\*\s*(?<value>.*?)(?=\r?\n\s*\r?\n|\z)",
+                    RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+                return field.Success ? field.Groups["value"].Value.Trim() : fallback;
+            }
+            var name = profile.Groups["name"].Value.Trim();
+            var requirements = Regex.Matches(body, @"\b(?:BRD|BR)-[A-Z]+-[0-9]+\b", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
+                .Select(match => match.Value).Distinct(StringComparer.Ordinal).ToArray();
+            components.Add(new(id, name.Length == 0 ? id : name, "Logical module",
+                Field("Purpose", "Responsibility requires review against implementation."),
+                Field("Owns", "Ownership requires review. Observed data/state: " + Field("Data and state", "Not established by the current technical profile.")),
+                Field("Excludes", "Exclusions require review against the other component boundaries."), requirements));
         }
         return components;
     }

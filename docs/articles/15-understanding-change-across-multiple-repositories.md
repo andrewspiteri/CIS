@@ -5,7 +5,7 @@ status: Draft
 series: "Repository Knowledge and Context"
 series_order: 6
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-26"
+last_reviewed: "2026-09-09"
 review_cadence: on workspace or federation change
 summary: "How one product authority combines owned repositories and bounded dependency context without erasing ownership."
 cis:
@@ -29,6 +29,8 @@ A workspace registers exactly one authority repository for one product's busines
 requirements, technical intent, and change governance. It also records the wider
 ecosystem identity. Imported repositories are explicitly either product-owned or
 external dependencies with producer, consumer, or bidirectional relationships.
+Dependencies may be further limited to named components. They supply integration context
+but are excluded from product-definition inference and implementation routing.
 
 Participants retain:
 
@@ -41,6 +43,18 @@ Participants retain:
 The authority does not copy those repositories. It records their identities, locations,
 documentation roots, roles, and graph builds.
 
+The distinction between role and participation matters:
+
+| Repository boundary | May define this product | May receive implementation work here | Typical use |
+|---|---|---|---|
+| Authority, owned | Yes | Yes, when it contains implementation | Product documents and coordination |
+| Participant, owned | Supplies governed product evidence | Yes | Web, API, mobile, data, or infrastructure delivery |
+| Participant, dependency | No | No | External producer or consumer context |
+
+A dependency is not “less important.” It may carry the contract most likely to break.
+The restriction means only that another product authority owns its requirements,
+implementation decisions, and acceptance.
+
 ## Identity must be repository-qualified
 
 Names collide across repositories. `UserService`, `GET /health`, or `deploy` may exist
@@ -49,6 +63,25 @@ and task routing do not confuse them.
 
 Cross-repository relationships are explicit or evidence-backed. Importing repositories
 does not infer that similarly named components depend on each other.
+
+## Follow a cross-repository change
+
+Suppose an ordering product changes the event emitted when an order is cancelled. The
+authority may identify:
+
+- an owned API repository that publishes the event;
+- an owned operations repository that monitors delivery failures;
+- a dependency repository for a customer-notification product that consumes the event;
+- the versioned event contract and compatibility decision; and
+- separate tests and release paths in each owned repository.
+
+The ordering workspace can plan its publisher and operational work. It can use the
+notification repository as bounded evidence about consumer impact, but it cannot assign
+write-capable agent work there. If the consumer must change, that finding becomes a
+coordination obligation and a separately governed change for the notification product.
+
+This prevents a convenient multi-repository checkout from becoming an accidental
+organization-wide authority.
 
 ## Build graphs independently
 
@@ -59,6 +92,11 @@ generation.
 If one repository is unavailable or invalid, its status remains independent and visible.
 Queries can still use healthy participants while change readiness reports the missing
 evidence.
+
+Partial availability must not be reported as a complete product view. A context search
+may return useful results from five healthy repositories while clearly identifying the
+sixth as unavailable or stale. Impact approval can then decide whether the missing
+repository is irrelevant, requires recovery, or blocks planning.
 
 ## Keep authority baselines current
 
@@ -71,6 +109,11 @@ A new graph build for the same unchanged participant may update provenance witho
 requiring a duplicate decision. The system distinguishes managed baseline movement from
 changed meaning.
 
+Repository-set changes deserve particular care. Adding an owned participant can reveal
+requirements or implementation surfaces absent from the prior product baseline. Removing
+one is not an incidental registry cleanup; it changes the claimed product boundary and
+needs explicit future governance rather than omission from an import command.
+
 ## Route work to owners
 
 Planning uses product-owned repository roles when available. Frontend work routes to
@@ -81,6 +124,27 @@ Cross-cutting coordination remains in the authority workspace.
 
 The plan retains repository targets so an agent envelope cannot silently implement
 workspace-wide scope from one checkout.
+
+## Avoid the shadow-repository trap
+
+A common response to fragmented knowledge is to copy contracts and documentation into a
+central repository. The copy is initially convenient and eventually ambiguous: teams no
+longer know whether the local contract or central version controls, and updates arrive at
+different times.
+
+Federation keeps one product authority without duplicating participant truth. Stable IDs,
+paths, digests, and graph build identities let the authority refer to local facts. When a
+cross-product contract needs shared governance, each product can record its own obligation
+and link to the same external version or reference rather than pretending one workspace
+owns both products.
+
+## Review the topology before the change
+
+Before impact analysis, confirm the product and ecosystem IDs, the single authority,
+owned versus dependency participation, dependency direction, component scopes, repository
+availability, and graph freshness. Those facts determine where meaning can be inferred,
+where implementation may be routed, and which external coordination cannot be completed
+inside the workspace.
 
 ## Takeaway
 

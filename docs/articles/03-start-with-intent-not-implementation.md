@@ -5,7 +5,7 @@ status: Draft
 series: "Governed Software Change"
 series_order: 3
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-25"
+last_reviewed: "2026-09-08"
 review_cadence: on product or governance change
 summary: "Why business outcomes and technical direction must be current before change analysis and implementation planning begin."
 cis:
@@ -33,9 +33,12 @@ success evidence, and technical boundaries.
 AI makes this failure mode more expensive precisely because it makes the requested
 implementation easier. The wrong ladder can be climbed very quickly.
 
-## Intent exists at more than one level
+## Intent is a product baseline, not one document
 
-Change Impact Studio distinguishes business intent from technical intent.
+Change Impact Studio distinguishes business intent from technical intent, then coordinates
+both with architecture, contracts, experience direction, and a delivery map. The high-level
+product-definition journey brings those authorities together before the repeatable feature
+loop without replacing their canonical Markdown or individual ownership boundaries.
 
 Business intent describes:
 
@@ -61,6 +64,21 @@ Technical intent describes:
 These documents serve different authorities. Technical direction cannot quietly
 invent business meaning, and business approval does not resolve every architectural
 choice.
+
+The coordinated definition progresses through eight concerns:
+
+1. project foundation and repository evidence;
+2. business definition;
+3. technical direction;
+4. solution architecture and diagrams;
+5. contracts and governed dictionaries;
+6. experience direction and UI preview;
+7. a high-level delivery map; and
+8. consolidated review and activation.
+
+Each concern remains reviewable in its owning artifact. Consolidated activation binds the
+exact set so that a feature cannot quietly combine business intent from one revision with
+technical direction or contracts from another.
 
 ## Existing documents are evidence, not automatic authority
 
@@ -111,9 +129,11 @@ meaning changed, not whether a timestamp moved.
 
 Intent becomes operational when it controls what may happen next.
 
-In a governed CIS workspace, current technical intent follows current business
-requirements and precedes change-dossier creation, impact analysis, and planning.
-Commands that create or plan governed work check this readiness.
+In a governed CIS product workspace, current technical intent follows current business
+requirements and the governed technical questionnaire. The activated product-definition
+baseline precedes the repeatable feature loop, while current technical intent remains a
+direct gate for change-dossier creation, impact analysis, and planning. Commands that create
+or plan governed work check this readiness.
 
 This prevents a team from producing a detailed task plan while foundational questions
 remain unresolved. Examples include:
@@ -195,5 +215,6 @@ Speed is useful only after the direction is worth accelerating.
 - [Product intent](../specs/product-intent-spec.md)
 - [Business requirements governance](../specs/business-requirements-governance-spec.md)
 - [Workspace technical-intent governance](../specs/technical-intent-governance-spec.md)
+- [High-level product-definition wizard](../specs/high-level-product-definition-wizard-spec.md)
 - [Technical intent](../specs/technical-intent-spec.md)
 - [Change impact and bounded planning](../specs/change-impact-and-planning-spec.md)

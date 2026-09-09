@@ -13,7 +13,8 @@ public sealed record GraphValidationResult(
     IReadOnlyList<CisGraphDiagnostic> Diagnostics,
     bool Strict,
     bool RepositoryConfigurationValid,
-    bool GraphAvailable)
+    bool GraphAvailable,
+    bool StructureCached = false)
 {
     public int ErrorCount => Diagnostics.Count(diagnostic => diagnostic.Severity == "error");
 

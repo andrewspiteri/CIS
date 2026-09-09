@@ -11,6 +11,19 @@ cis:
 
 # `cis agent run`
 
+Codex connection errors marked for automatic retry remain visible in the event journal
+without prematurely ending the run. CIS waits for provider recovery or a terminal result;
+the configured cancellation and timeout limits continue to apply.
+An explicitly reported context-consolidation operation uses the overall run deadline
+because it can be active without streamed output. Ordinary idle monitoring resumes when
+that operation completes; unrelated notifications cannot mark it complete.
+
+Streaming output is journaled in full. Routine run/attempt manifest checkpoints are
+limited to once per second; process/session identity, permission and lifecycle changes
+are checkpointed immediately. The journal sequence count is cached under the append lock
+and re-read after another controller changes the file length or after a process restart,
+so long code-reading sessions do not rescan their accumulated log for every output fragment.
+
 Execute one eligible task through a selected provider in the foreground.
 
 ```text

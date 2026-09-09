@@ -24,7 +24,7 @@ public sealed class FrontendContextService : ICisGraphAugmenter
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
     }
 
-    public string Name => "frontend-context/2";
+    public string Name => "frontend-context/3";
 
     public FrontendContextResult Discover(string repositoryPath)
     {
@@ -178,12 +178,14 @@ public sealed class FrontendContextService : ICisGraphAugmenter
     private static IReadOnlyList<FrontendContextDiagnostic> ValidateObservations(CisRepositoryContext context, IReadOnlyList<CisFrontendObservation> observations)
     {
         var diagnostics = new List<FrontendContextDiagnostic>();
-        foreach (var collision in observations.Where(item => item.Kind == "route" && item.Route is not null)
+        foreach (var collision in observations.Where(item => item.Kind == "route" && item.Route is not null
+                && item.Properties.GetValueOrDefault("routeResolution") != "relative-declaration")
             .GroupBy(item => $"{item.Framework}\u001f{item.Route}", StringComparer.OrdinalIgnoreCase).Where(group => group.Select(item => item.Target).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1))
             diagnostics.Add(Diagnostic("CIS-FRONTEND-ROUTE-001", "error", $"Route resolves to multiple targets: {collision.First().Route}", collision.Select(item => $"{item.SourcePath}:{item.Line}").ToArray()));
         var canonical = CanonicalDestinations(context);
         if (canonical.Count > 0)
-            foreach (var route in observations.Where(item => item.Kind == "route" && item.Route is not null && !canonical.Contains(item.Route)))
+            foreach (var route in observations.Where(item => item.Kind == "route" && item.Route is not null && !canonical.Contains(item.Route)
+                && item.Properties.GetValueOrDefault("routeResolution") != "relative-declaration"))
                 diagnostics.Add(Diagnostic("CIS-FRONTEND-CANONICAL-001", "warning", $"Observed route is not represented in the canonical screen and route map: {route.Route}", $"{route.SourcePath}:{route.Line}"));
         return diagnostics;
     }

@@ -3,6 +3,9 @@
     <Description>Built-in CIS context graph construction and query module.</Description>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="Cis.Modules.Graph.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\Cis.Abstractions\Cis.Abstractions.csproj" />
     <ProjectReference Include="..\Cis.Modules.Docs\Cis.Modules.Docs.csproj" />
     <ProjectReference Include="..\Cis.Modules.Api\Cis.Modules.Api.csproj" />

@@ -5,7 +5,7 @@ status: Draft
 series: "Repository Knowledge and Context"
 series_order: 4
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-26"
+last_reviewed: "2026-09-09"
 review_cadence: on context-routing change
 summary: "How task-specific context packs combine exact sources, excerpts, relationships, and provenance without sending an executor the whole repository."
 cis:
@@ -19,6 +19,11 @@ component, relevant implementation, related tests, applicable decisions, and the
 constraints that shape the requested outcome.
 
 A context pack packages that bounded view.
+
+The constraint is not merely token count. Attention is an engineering resource for both
+people and models. Every irrelevant file competes with the rule, exception, or failure
+condition that actually controls the task. Excess context can make a result less reliable
+even when the consumer technically accepts it.
 
 ## Start with a question
 
@@ -48,6 +53,11 @@ A useful pack contains more than file excerpts. It should identify:
 This lets the consumer distinguish a reviewed specification from an inferred relationship
 and open the original source when necessary.
 
+The pack should also explain why each item was selected. “Included because it implements
+the target operation” is more useful than an unexplained list of files. Selection reasons
+make omissions reviewable and allow a later pack builder to improve its routing rather
+than copying a mysterious bundle.
+
 ## Select in layers
 
 A practical selection strategy is:
@@ -59,7 +69,26 @@ A practical selection strategy is:
 5. add applicable standards, decisions, and workflow constraints; and
 6. stop when the declared depth, size, or evidence boundary is reached.
 
-This produces a explainable pack. Every included source has a reason.
+This produces an explainable pack. Every included source has a reason.
+
+## A bounded example
+
+For a task that changes invitation expiry, the initial roots might be the approved work
+item and the stable identity of the invitation contract. A two-hop traversal could add
+the owning service, persistence abstraction, public response contract, cleanup workflow,
+and focused tests. The pack might then include:
+
+- the exact requirement and resolved lifecycle decision;
+- the current API and data dictionary rows;
+- the handler and expiration policy implementation;
+- the cleanup job contract;
+- tests that cover issue, redeem, revoke, and expire behavior;
+- the security and observability obligations; and
+- explicit exclusions such as account linking and unrelated session policy.
+
+It should not automatically include every authentication source file, the entire database
+schema, all workspace repositories, or every document mentioning “time.” Those may become
+relevant if evidence expands the scope, but they are not justified by the initial question.
 
 ## Excerpts are routing aids
 
@@ -69,6 +98,10 @@ can inspect the full file before changing it.
 
 An excerpt is never a replacement for the source. It is an invitation to the right part
 of the source.
+
+Excerpts also need boundary markers. A consumer should know whether it received a complete
+document section, a line window, a table row, or truncated output. Silent truncation is
+particularly dangerous near exception clauses and negative requirements.
 
 ## Preserve non-goals
 
@@ -81,6 +114,15 @@ authentication protocol routes and unrelated persistence refactoring.
 
 Knowing what not to do is part of useful context.
 
+## Expansion is a governed event
+
+Bounded context must not become a reason to ignore new evidence. If implementation reveals
+an undocumented consumer, the executor should preserve the discovery and request context
+expansion. The impact or plan may need review before work continues.
+
+This is different from allowing the executor to search and change anything it finds.
+Context can expand; authority and scope do not expand silently with it.
+
 ## Respect privacy and provider routes
 
 A pack prepared for local use is not automatically authorized for a remote model. CIS
@@ -88,7 +130,16 @@ suppresses likely sensitive files and requires explicit remote authorization for
 exact content-bearing operation. Credentials and secrets are invalid inputs even when
 they appear relevant.
 
+The same rule applies to product-definition authoring and agent execution: source/provider
+selection and disclosure are explicit, while the executor receives only its selected
+task contract and context rather than the whole graph or repository.
+
 Provider choice changes the permitted context boundary, not the canonical task.
+
+For remote routes, authorization should apply to the concrete source set rather than a
+general belief that the repository is safe. A later pack that adds a configuration file
+or diagnostic excerpt is a new disclosure boundary. Local routing remains the default
+when classification or sensitivity is uncertain.
 
 ## Measure compactness honestly
 
@@ -98,6 +149,17 @@ smaller pack improved correctness.
 
 Pack quality should be evaluated through outcomes: fewer broad searches, less
 rediscovery, correct scope, fewer missing impacts, and successful validation.
+
+## Recognize a poor pack
+
+A pack is probably too broad when most files have no stated relationship to the task,
+when the consumer cannot identify the controlling requirement, or when large generated
+artifacts dominate the content. It is probably too narrow when the implementation target
+appears without its contract, tests, ownership, or non-goals.
+
+The best evaluation occurs after delivery. Unexpected changes, repeated searches, missed
+validation, and requests for missing authority show where routing failed. Those facts can
+improve the next pack without turning the current pack into a permanent source of truth.
 
 ## Takeaway
 

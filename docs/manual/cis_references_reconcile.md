@@ -11,6 +11,9 @@ cis:
 
 # `cis references reconcile`
 
+For tables with a `Repository` column, additive rows retain that column and name the
+selected repository. Existing participant rows remain unchanged.
+
 Preview or apply safe additive rows from deterministic source discovery to selected canonical references.
 
 ```text

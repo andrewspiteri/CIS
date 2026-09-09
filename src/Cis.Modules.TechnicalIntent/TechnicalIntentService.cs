@@ -4,11 +4,12 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Cis.Abstractions;
 using Cis.Modules.Brd;
+using Cis.Modules.Graph;
 using Cis.Modules.Repository;
 
 namespace Cis.Modules.TechnicalIntent;
 
-public sealed partial class TechnicalIntentService : IChangeReadinessCheck
+public sealed partial class TechnicalIntentService : IChangeReadinessCheck, ICisTechnicalIntentDraftPreparer
 {
     private const string BaselineStart = "<!-- cis:technical-intent-baseline:start -->";
     private const string BaselineEnd = "<!-- cis:technical-intent-baseline:end -->";
@@ -74,10 +75,32 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck
     }
 
     public TechnicalIntentResult Initialize(string workspacePath)
+        => InitializeCore(workspacePath, existingDraft: false);
+
+    public CisTechnicalIntentDraftPreparation PrepareExistingDraft(string workspacePath)
+    {
+        var state = ResolveState(workspacePath);
+        if (state.Errors.Count > 0) return new(state.Errors);
+        if (state.Brd is null) return new(["A canonical BRD is required before existing-system technical discovery."]);
+        if (!state.Surfaces.Any(item => item.Participation == "owned" && item.Component != "unclassified"
+                && item.Roles.Any(role => role != "documentation")))
+            return new(["Existing-system technical discovery requires a classified product-owned implementation."]);
+        if (File.Exists(state.CanonicalPath) && ReadFrontMatter(File.ReadAllText(state.CanonicalPath), "status") is not ("Draft" or "Review Required"))
+            return new(["Existing-system inference may update only Draft or Review Required technical intent."]);
+        var questionnaire = new TechnicalIntentQuestionnaireService(_workspaceRegistry, _repositoryResolver, _brd, _catalogMerger, _clock)
+            .InitializeForDiscovery(workspacePath);
+        if (questionnaire.Errors.Count > 0) return new(questionnaire.Errors);
+        var result = InitializeCore(workspacePath, existingDraft: true);
+        return new(result.Errors);
+    }
+
+    private TechnicalIntentResult InitializeCore(string workspacePath, bool existingDraft)
     {
         var state = ResolveState(workspacePath);
         if (state.Errors.Count > 0) return Error("invalid", state);
-        if (state.ReadinessErrors.Count > 0) return Error("blocked", state, state.ReadinessErrors.ToArray());
+        var blocking = existingDraft ? state.ReadinessErrors.Where(error => !error.StartsWith("An Active, current BRD", StringComparison.Ordinal)
+            && !error.StartsWith("The high-level technical questionnaire", StringComparison.Ordinal)).ToArray() : state.ReadinessErrors.ToArray();
+        if (blocking.Length > 0) return Error("blocked", state, blocking);
 
         var stableId = $"{state.Authority!.Id}:spec:technical-intent";
         var canonicalPath = state.CanonicalPath!;
@@ -100,13 +123,14 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck
         }
         else
         {
-            existing = File.ReadAllText(canonicalPath);
+            existing = CisTechnicalIntentPresentation.RestoreManagedEvidence(File.ReadAllText(canonicalPath));
             content = existing;
             if (!content.Contains($"stable_id: {stableId}", StringComparison.Ordinal))
                 return Error("collision", state, "The canonical technical-intent path contains a document with a different stable identity.");
             content = EnsureMetadata(content);
             content = ReplaceOrInsertBaseline(content, state.Baselines);
-            if (state.ScaffoldEligible || IsUpgradeableGeneratedSchema3Draft(content))
+            if (!content.Contains("<!-- cis:technical-intent-implementation-authored -->", StringComparison.Ordinal)
+                && (state.ScaffoldEligible || IsUpgradeableGeneratedSchema3Draft(content)))
                 content = EnrichStarter(content, state);
             content = RefreshDerivedEvidence(content, state);
             approvalCanCarryForward = HasCurrentApproval(existing)
@@ -213,7 +237,7 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck
                     ["Canonical technical intent was not found. Run `cis technical-intent init`."], state.Warnings),
                 state.Baselines, state.Warnings, [], false);
 
-        var content = File.ReadAllText(state.CanonicalPath);
+        var content = CisTechnicalIntentPresentation.RestoreManagedEvidence(File.ReadAllText(state.CanonicalPath));
         var errors = new List<string>();
         var warnings = new List<string>(state.Warnings);
         var stableId = $"{state.Authority.Id}:spec:technical-intent";
@@ -365,6 +389,7 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck
 
     private State ResolveState(string workspacePath)
     {
+        using var graphReads = GraphReadScope.Enter();
         var resolution = _workspaceRegistry.Resolve(workspacePath);
         if (!resolution.IsSuccess || resolution.Workspace is null)
             return new State(null, null, null, null, [], [], [], null, null, false, [], resolution.Errors, []);
@@ -457,8 +482,8 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck
 
             standards.AddRange(DiscoverStandards(repository, warnings));
 
-            var snapshot = _graphReader.Read(repository.RepositoryPath);
-            if (snapshot.Graph is null)
+            var snapshot = _graphReader.ReadMetadata(repository.RepositoryPath);
+            if (snapshot.Build is null)
             {
                 if (repository.Role == "participant") readinessErrors.Add($"Repository '{repository.Id}' graph is unavailable. Run `cis graph build --workspace {workspace.WorkspacePath}`.");
                 else warnings.Add($"Authority repository graph is unavailable: {repository.Id}.");
@@ -466,8 +491,8 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck
             }
             if (repository.Role == "participant")
             {
-                baselines.Add(new TechnicalIntentBaseline("repository", repository.Id, snapshot.Graph.Build.Id,
-                    snapshot.Graph.Build.Head ?? "uncommitted"));
+                baselines.Add(new TechnicalIntentBaseline("repository", repository.Id, snapshot.Build.Id,
+                    snapshot.Build.Head ?? "uncommitted"));
                 if (snapshot.Freshness != "fresh") readinessErrors.Add($"Repository '{repository.Id}' graph is {snapshot.Freshness}. Rebuild the workspace.");
             }
             else if (snapshot.Freshness != "fresh")
@@ -593,6 +618,7 @@ cis:
 
     private static string RefreshDerivedEvidence(string content, State state)
     {
+        var implementationAuthored = content.Contains("<!-- cis:technical-intent-implementation-authored -->", StringComparison.Ordinal);
         if (content.Contains(BusinessEvidenceStart, StringComparison.Ordinal)
             && content.Contains(BusinessEvidenceEnd, StringComparison.Ordinal))
             content = ReplaceBlock(content, BusinessEvidenceStart, BusinessEvidenceEnd, RenderBusinessBaseline(state.Brd));
@@ -607,16 +633,16 @@ cis:
             if (content.Contains(QuestionnaireEvidenceStart, StringComparison.Ordinal)
                 && content.Contains(QuestionnaireEvidenceEnd, StringComparison.Ordinal))
                 content = ReplaceBlock(content, QuestionnaireEvidenceStart, QuestionnaireEvidenceEnd, RenderQuestionnaireChoices(state));
-            if (content.Contains(ComponentMapStart, StringComparison.Ordinal)
+            if (!implementationAuthored && content.Contains(ComponentMapStart, StringComparison.Ordinal)
                 && content.Contains(ComponentMapEnd, StringComparison.Ordinal))
                 content = ReplaceBlock(content, ComponentMapStart, ComponentMapEnd, RenderComponentMap(state));
-            if (content.Contains(ModuleArchitectureStart, StringComparison.Ordinal)
+            if (!implementationAuthored && content.Contains(ModuleArchitectureStart, StringComparison.Ordinal)
                 && content.Contains(ModuleArchitectureEnd, StringComparison.Ordinal))
                 content = ReplaceBlock(content, ModuleArchitectureStart, ModuleArchitectureEnd, RenderProductModuleArchitecture(state));
-            if (content.Contains(IntegrationPointStart, StringComparison.Ordinal)
+            if (!implementationAuthored && content.Contains(IntegrationPointStart, StringComparison.Ordinal)
                 && content.Contains(IntegrationPointEnd, StringComparison.Ordinal))
                 content = ReplaceBlock(content, IntegrationPointStart, IntegrationPointEnd, RenderIntegrationPointCatalog(state));
-            if (content.Contains(DecisionEvidenceStart, StringComparison.Ordinal)
+            if (!implementationAuthored && content.Contains(DecisionEvidenceStart, StringComparison.Ordinal)
                 && content.Contains(DecisionEvidenceEnd, StringComparison.Ordinal))
                 content = ReplaceBlock(content, DecisionEvidenceStart, DecisionEvidenceEnd, RenderOpenDecisions(state));
         }
@@ -770,7 +796,7 @@ cis:
             return "No canonical BRD content was readable. Initialization must remain blocked until the Active BRD is restored.";
 
         var builder = new StringBuilder()
-            .AppendLine($"This draft is grounded in the Active canonical [{brd.Title}]({brd.RelativePath}) and must not broaden its scope, actors, outcomes, exclusions, or acceptance boundaries.")
+            .AppendLine($"This draft is grounded in the current canonical [{brd.Title}]({brd.RelativePath}) (document status: {ReadFrontMatter(brd.Content, "status") ?? "unknown"}) and must not broaden its scope, actors, outcomes, exclusions, or acceptance boundaries. This evidence does not grant business approval.")
             .AppendLine()
             .AppendLine($"- Semantic source: `{brd.Digest}`")
             .AppendLine($"- Requirement coverage ({brd.RequirementIds.Count}): {RenderInlineCodes(brd.RequirementIds)}")
@@ -1682,6 +1708,7 @@ cis:
 
     private static string ReadBlock(string content, string start, string end)
     {
+        content = CisTechnicalIntentPresentation.RestoreManagedEvidence(content);
         var startIndex = content.IndexOf(start, StringComparison.Ordinal);
         var endIndex = content.IndexOf(end, StringComparison.Ordinal);
         return startIndex < 0 || endIndex < startIndex ? string.Empty : content[(startIndex + start.Length)..endIndex].Trim();
@@ -1689,6 +1716,7 @@ cis:
 
     private static string ContentDigest(string content)
     {
+        content = CisTechnicalIntentPresentation.RestoreManagedEvidence(content);
         var normalized = content.Replace("\r\n", "\n", StringComparison.Ordinal);
         foreach (var key in new[] { "status", "last_reviewed" })
             normalized = Regex.Replace(normalized, $"(?m)^{key}:.*$", $"{key}: <approval-metadata>", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
@@ -1758,7 +1786,12 @@ cis:
     private static string Cell(string value) => value.Replace("|", "\\|", StringComparison.Ordinal).Replace('\r', ' ').Replace('\n', ' ');
     private static bool Equivalent(string left, string right) => left.Replace("\r\n", "\n", StringComparison.Ordinal).TrimEnd() == right.Replace("\r\n", "\n", StringComparison.Ordinal).TrimEnd();
     private static string NormalizePath(string path) => path.Replace('\\', '/');
-    private static void Write(string path, string content) => File.WriteAllText(path, content.Replace("\r\n", "\n", StringComparison.Ordinal), new UTF8Encoding(false));
+    private static void Write(string path, string content)
+    {
+        if (content.Contains("<!-- cis:technical-intent-implementation-authored -->", StringComparison.Ordinal))
+            content = CisTechnicalIntentPresentation.HideManagedEvidence(content);
+        File.WriteAllText(path, content.Replace("\r\n", "\n", StringComparison.Ordinal), new UTF8Encoding(false));
+    }
 
     private static string UpdateCatalogStatus(string catalog, string id, string status)
     {

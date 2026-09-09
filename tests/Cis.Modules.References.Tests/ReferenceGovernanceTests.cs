@@ -145,8 +145,10 @@ public sealed class ReferenceGovernanceTests
         Assert.DoesNotContain("GeneratedCommand", state, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void SourceImport_ProjectsWordEvidenceAndPreservesStableRegisteredDigest()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SourceImport_ProjectsWordEvidenceAndPreservesStableRegisteredDigest(bool hiddenCitation)
     {
         using var repository = ReferenceRepository.Create(aligned: true);
         var source = System.IO.Path.Combine(repository.Path, "docs", "ref", "proposal.docx");
@@ -166,7 +168,9 @@ public sealed class ReferenceGovernanceTests
         Assert.Contains("scope--p-00112233", File.ReadAllText(System.IO.Path.Combine(projection, "source-map.json")), StringComparison.Ordinal);
         Assert.True(File.Exists(System.IO.Path.Combine(projection, "index-card.md")));
 
-        var brd = $"# BRD\n\n## Traceability\n\n- {sourceId}#scope--p-00112233\n";
+        var citation = $"{sourceId}#scope--p-00112233";
+        var brd = "# BRD\n\n## Traceability\n\n" + (hiddenCitation
+            ? $"<!-- Evidence: {citation} -->\n" : $"- {citation}\n");
         repository.Replace("docs/cis/specs/business-requirements.md", brd);
         WriteDocx(source, "Scope", "Changed governed scope", "00112233");
         Assert.Equal(0, application.Invoke(["references", "source", "build", "--repo", repository.Path,
@@ -187,11 +191,16 @@ public sealed class ReferenceGovernanceTests
             new CisGraphBuildMetadata("sha256:repository-graph", "references-fixture", "abc123", false, "complete"),
             [new CisGraphNode("references-fixture::endpoint::GET-/lists", "references-fixture", "endpoint", "api-operation",
                 "GET /lists", "List discovery", ["contract"], "derived", "active",
-                [new CisGraphLocation("src/ListFeature.cs", "line", "1")], new Dictionary<string, string>(), [])],
+                [new CisGraphLocation("src/ListFeature.cs", "line", "1")], new Dictionary<string, string>
+                { ["Request contract"] = "CreateDepositDto", ["Permission / auth"] = "deposits.create", ["rawSource"] = "never project raw source" }, []),
+             new CisGraphNode("references-fixture::field::minimumDeposit", "references-fixture", "reference-item", "data-field",
+                "Product/minimumDeposit", "Product / minimumDeposit", ["data"], "canonical", "draft", [],
+                new Dictionary<string, string> { ["Entity"] = "Product", ["Field"] = "minimumDeposit", ["Constraints"] = "decimal; precision=18; scale=2" }, [])],
             [], new CisGraphDiagnosticSummary(0, 0, 0));
         var resolver = new CisRepositoryContextResolver();
+        var reader = new FakeGraphReader(repository.Path, graph);
         var service = new SourceEvidenceProjectionService(resolver, new DocumentationCatalogMerger(),
-            new WorkspaceRegistry(resolver), new FakeGraphReader(repository.Path, graph));
+            new WorkspaceRegistry(resolver), reader);
 
         var result = service.Import(repository.Path, repository.Path, "Reference", "Andrew", "Existing product behavior");
 
@@ -201,10 +210,46 @@ public sealed class ReferenceGovernanceTests
         var projection = File.ReadAllText(System.IO.Path.Combine(repository.Path, source.ProjectionPath!.Replace('/', System.IO.Path.DirectorySeparatorChar), "content.md"));
         Assert.Contains("Repository snapshot", projection, StringComparison.Ordinal);
         Assert.Contains("List discovery", projection, StringComparison.Ordinal);
+        Assert.Contains("Request contract: CreateDepositDto", projection, StringComparison.Ordinal);
+        Assert.Contains("Permission / auth: deposits.create", projection, StringComparison.Ordinal);
+        Assert.Contains("precision=18", projection, StringComparison.Ordinal);
+        Assert.Contains("Dictionary coverage", projection, StringComparison.Ordinal);
+        Assert.DoesNotContain("never project raw source", projection, StringComparison.Ordinal);
         Assert.DoesNotContain("public sealed record CreateListCommand", projection, StringComparison.Ordinal);
         var registry = File.ReadAllText(System.IO.Path.Combine(repository.Path, "docs", "cis", "references", "source-evidence.md"));
         Assert.Contains("workspace:references-fixture", registry, StringComparison.Ordinal);
         Assert.Contains("| repository |", registry, StringComparison.Ordinal);
+        var fullReads = reader.FullReads;
+        Assert.Equal("current", Assert.Single(service.Status(repository.Path).Sources).Status);
+        Assert.Equal(fullReads, reader.FullReads);
+        reader.CurrentBuildId = "sha256:new-build";
+        Assert.Equal("changed", Assert.Single(service.Status(repository.Path).Sources).Status);
+        reader.Fresh = false;
+        var stale = service.Status(repository.Path);
+        Assert.NotEqual(0, stale.ExitCode);
+        Assert.Equal("missing", Assert.Single(stale.Sources).Status);
+        Assert.Equal(fullReads, reader.FullReads);
+    }
+
+    [Fact]
+    public void RepositoryProjection_BoundsUtf8SizeAndKeepsSmallDictionaryFamiliesVisible()
+    {
+        using var repository = ReferenceRepository.Create(aligned: true);
+        var nodes = Enumerable.Range(0, 2500).Select(index => new CisGraphNode("field-" + index, "references-fixture",
+            "reference-item", "data-field", "field-" + index, "Field " + index, [], "canonical", "draft", [],
+            new Dictionary<string, string> { ["Entity"] = "Entity" + index % 40, ["Constraints"] = new string('界', 3000) }, [])).ToList();
+        nodes.Add(new("workflow-final", "references-fixture", "reference-item", "workflow-state", "Deposit/Matured", "Matured", [],
+            "canonical", "draft", [], new Dictionary<string, string> { ["State"] = "Matured" }, []));
+        var graph = new CisGraphDocument(2, new("sha256:bounded", "references-fixture", null, false, "complete"), nodes, [], new(0, 0, 0));
+        var resolver = new CisRepositoryContextResolver();
+        var service = new SourceEvidenceProjectionService(resolver, new DocumentationCatalogMerger(), new WorkspaceRegistry(resolver), new FakeGraphReader(repository.Path, graph));
+        var result = service.Import(repository.Path, repository.Path, "Reference", "Andrew", "Existing system evidence");
+        Assert.Equal(0, result.ExitCode);
+        var projection = File.ReadAllText(System.IO.Path.Combine(repository.Path, Assert.Single(result.Sources).ProjectionPath!, "content.md"));
+        Assert.True(Encoding.UTF8.GetByteCount(projection) < 512 * 1024);
+        Assert.Contains("**Matured**", projection, StringComparison.Ordinal);
+        Assert.Contains("details truncated", projection, StringComparison.Ordinal);
+        Assert.Contains("Omitted evidence is not evidence of absence", projection, StringComparison.Ordinal);
     }
 
     private static void WriteDocx(string path, string heading, string paragraph, string paragraphId)
@@ -225,9 +270,19 @@ public sealed class ReferenceGovernanceTests
 
     private sealed class FakeGraphReader(string repositoryPath, CisGraphDocument graph) : ICisGraphSnapshotReader
     {
-        public CisGraphSnapshotReadResult Read(string path) => new("available", 0, repositoryPath, "fresh", graph,
+        public int FullReads { get; private set; }
+        public bool Fresh { get; set; } = true;
+        public string CurrentBuildId { get; set; } = graph.Build.Id;
+        public CisGraphSnapshotReadResult Read(string path)
+        {
+            FullReads++;
+            return new("available", 0, repositoryPath, "fresh", graph,
             new CisGraphManifest(2, graph.Build.Id, graph.Build.RepositoryId, "docs/cis", graph.Build.Head,
                 graph.Build.Dirty, [], ["test"]), ["test"], [], []);
+        }
+        public CisGraphMetadataReadResult ReadMetadata(string path)
+            => new(Fresh ? "available" : "stale", Fresh ? 0 : 5, repositoryPath, Fresh ? "fresh" : "stale",
+                graph.Build with { Id = CurrentBuildId }, null, [], []);
     }
 
     private sealed class ReferenceRepository : IDisposable

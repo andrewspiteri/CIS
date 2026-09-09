@@ -5,7 +5,7 @@ status: Draft
 series: "Governed Software Change"
 series_order: 1
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-26"
+last_reviewed: "2026-09-08"
 review_cadence: on product or governance change
 summary: "Why faster code production increases the need to govern outcomes, authority, evidence, and acceptance."
 cis:

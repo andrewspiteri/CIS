@@ -3,7 +3,7 @@ title: "cis brd status"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-09"
+last_reviewed: "2026-09-08"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-brd-status
@@ -32,6 +32,14 @@ cis brd status [--workspace <path>] [--format <human|json|agent>]
 
 Automation may reduce `Active` to effective `Stale`; only `brd approve` may restore
 `Active`. Status is read-only.
+
+Status checks graph headers and current input hashes without loading all graph nodes and
+edges. Registered repository sources likewise compare fresh build identities using metadata.
+Explicit `brd discover`, `brd validate`, and `brd approve` retain deep graph validation.
+Generated and dependency directories such as `node_modules` are pruned before searching
+for Markdown candidates. Each calculation rechecks freshness and file existence, including
+content edits that preserve file length and modification time.
+See [`cis graph validate`](cis_graph_validate.md) for cache invalidation and fallback behavior.
 
 ## Exit codes
 

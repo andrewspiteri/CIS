@@ -30,6 +30,24 @@ ready repository.
 
 ## First use
 
+Open **Getting Started** from the Workspace view’s first row or book toolbar button, or run
+**CIS: Getting Started**. It shows the selected authority, the next setup action, and buttons
+to select a folder, initialize authority, import repositories, and open the high-level wizard.
+The page uses local setup metadata and does not launch analysis when opened. **How to use CIS**
+opens a bundled beginner guide explaining the sequence through feature delivery.
+
+The high-level wizard uses one panel per authority and disables its controls while an action
+is running. Repeated Prepare, Save, or Refresh requests are ignored until the action completes
+or fails. Preparation and answer commands supply their own updated page status, avoiding a
+duplicate full status query. Supplementary question reads and other extension-issued repository
+commands run sequentially for the same authority to avoid shared-evidence file contention.
+
+**CIS: Initialize Authority** uses the CLI workspace-initialization contract. It collects the
+documentation root and explicit ecosystem/product identity, presents a dry-run plan, then
+initializes and builds the context graph after confirmation. An already initialized authority
+is preserved. The Getting Started page refreshes after each action and remains available when
+no folder is open, trust is missing, or the CLI is unavailable.
+
 - Trust only a workspace you control before running CIS processes.
 - For a new empty project, choose the required repository-relative documentation root and
   run **CIS: Initialize Repository**. Starting product definition then captures the product
@@ -53,6 +71,19 @@ ready repository.
 - Confirm the product and ecosystem identity shown at the top of the Workspace View before
   authoring requirements or assigning work.
 - Run Repository Doctor, then refresh the Workspace View.
+
+### Infer an existing product's business definition
+
+Open **High-level product definition wizard → Business definition → Infer from existing
+project**. CIS preselects imported product-owned repositories and shows their identities.
+Review up to ten selected repositories, choose a provider, and confirm the evidence disclosure.
+The CLI drafts from bounded graph evidence, refreshing stale selected graphs when needed.
+The result remains Review Required with citations and open questions; current code does not
+establish stakeholder intent by itself. The wizard stays on Business definition for
+**Open BRD and source evidence**, **Independent review**, and **Answer open questions**.
+This action is also available as **CIS: Infer Business Definition from Existing Project**.
+Use **Draft from references** for document intake or a new product. The business page does
+not display the generic Prepare action because that command does not infer business content.
 
 ### Specify a new product or project
 
@@ -164,8 +195,12 @@ extension performs that same generation automatically; this adds no second quest
 Selecting **Doctor: errors**, **Doctor: warnings**, the status-bar health item, or **CIS: Run
 Repository Doctor** opens a dedicated Repository Doctor page. It groups errors, warnings, and
 informational findings and shows each finding's code, category, complete message, evidence,
-fixability, suggested fix, and optional CIS command. **Copy command** copies the exact suggestion
-for review; it does not execute it. **Run Doctor again** refreshes the same page and the Workspace
+fixability, suggested fix, and optional CIS command. **Run command** executes the exact suggestion
+with the configured CIS executable for that report's authority, shows progress and cancellation,
+then refreshes findings. Commands with unresolved placeholders or shell syntax retain Copy access
+and explain why Run is disabled. **Copy command** copies the exact suggestion for review.
+Changing authority requires reopening Doctor before running an old report's command.
+**Run Doctor again** refreshes the same page and the Workspace
 health projection. Evidence links open only when they remain inside the selected authority's
 permitted canonical or local-evidence boundary.
 
@@ -214,7 +249,8 @@ Codex Desktop/App Server session can still be usable.
 | Existing repository is unimported | Run the import journey; review its dry-run summary before confirmation. |
 | Initialization collision | Run Repository Doctor; existing files are preserved. |
 | Stale view | Select **CIS: Refresh Workspace**. Watchers only mark evidence stale; one explicit refresh performs the bounded projection reload and stops when it completes. |
-| Repeated read-only CLI calls | Reload the current extension build. Identical workspace queries, including structured not-ready results, share one cache for the current repository generation. Watched changes, explicit refresh, and mutations invalidate it. Repository, graph, and index status also use content-aware disposable caches under `.cis/local/`. |
+| Repeated read-only CLI calls | Reload the current extension build. Identical workspace queries, including structured not-ready results, share one cache for the current repository generation. Watched source, configuration, documentation, and graph changes in all registered repositories invalidate it, including participants not open as folders. Generated output churn is ignored. Explicit refresh and mutations also invalidate it. Repository, graph, and index status use disposable caches under `.cis/local/`. |
+| Wizard waiting behind background reads | Pending interactive commands take priority after the active command finishes. Current CLIs bundle both questionnaires into definition status, reducing the wizard load to two commands; repeat loads reuse the current generation. |
 | Context graph shown stale with information-only findings | Reload the current extension build. Informational extraction diagnostics remain visible in Doctor but no longer classify a fresh graph as stale. |
 | Routing index is not built | Select the Workspace entry or run **CIS: Build Routing Index**. The explicit foreground action is cancellable, completes all pending cards, and reuses current cards; startup never invokes a model. |
 | Invalid evidence | Open bounded diagnostics; a successful process without readable expected output is not passed. |
@@ -245,3 +281,9 @@ Release verification also installs the VSIX into a clean VS Code profile, binds 
 CIS CLI, opens initialized and uninitialized fixtures, and exercises Repository Doctor.
 Implementation must remain consistent with `docs/specs/vscode-client-spec.md` and the
 approved `docs/changes/CIS-0001/` design evidence.
+
+On the business page, **Prepare existing-system context** populates draft dictionaries before
+BRD inference and shows per-repository counts with buttons to open each inventory. **Infer from
+existing project** performs preparation automatically after evidence-disclosure confirmation.
+Both preparation and inference share the authority's single-operation guard. The contracts
+page later reviews and extends the early API, data, workflow, permission and route inventories.

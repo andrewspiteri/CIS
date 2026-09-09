@@ -2,24 +2,30 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Cis.Abstractions;
+using Cis.Modules.Repository;
 
 namespace Cis.Modules.References;
 
-public sealed class ReferenceGovernanceService
+public sealed partial class ReferenceGovernanceService
 {
+    internal const int InventorySchemaVersion = 2;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private static readonly string[] ExcludedSegments =
     [".git", ".codex-tmp", "node_modules", "bin", "obj", ".next", "dist", "coverage", ".terraform", "artifacts", ".artifacts", "out", ".cis"];
 
     private readonly ICisRepositoryContextResolver _resolver;
     private readonly IReadOnlyList<ICisReferenceProvider> _providers;
+    private readonly ICisWorkspaceRegistry _workspaces;
 
     public ReferenceGovernanceService(
         ICisRepositoryContextResolver resolver,
-        IEnumerable<ICisReferenceProvider> providers)
+        IEnumerable<ICisReferenceProvider> providers,
+        ICisWorkspaceRegistry? workspaces = null)
     {
         _resolver = resolver;
+        _workspaces = workspaces ?? new WorkspaceRegistry(resolver);
         _providers = providers.OrderBy(item => item.Kind, StringComparer.Ordinal).ThenBy(item => item.GetType().FullName, StringComparer.Ordinal).ToArray();
     }
 
@@ -39,10 +45,10 @@ public sealed class ReferenceGovernanceService
             var provider = group.Single();
             var canonicalPath = Path.Combine(context.DocumentationPath, "references", provider.CanonicalFileName);
             var canonical = File.Exists(canonicalPath)
-                ? ParseCanonical(provider.Kind, canonicalPath, context.RepositoryPath, diagnostics)
+                ? ParseCanonical(provider.Kind, canonicalPath, context, diagnostics)
                 : [];
             var observations = DiscoverProvider(provider, discoveryContext);
-            var correlated = Correlate(observations, canonical);
+            var correlated = Correlate(observations, canonical.Where(entry => IsLocal(entry, context.RepositoryId)).ToArray());
             families.Add(new(
                 provider.Kind,
                 provider.GetType().FullName ?? provider.GetType().Name,
@@ -97,31 +103,43 @@ public sealed class ReferenceGovernanceService
                 readErrors.Select(error => Diagnostic("CIS-REF-STATE-001", "error", "state", error, "Run cis references discover.")).ToArray(), true);
 
         var diagnostics = state.Diagnostics.ToList();
+        var evidenceRoots = ResolveEvidenceRoots(resolution.Context, state.Families, diagnostics);
         foreach (var family in state.Families.Where(item => item.CanonicalAvailable))
         {
-            foreach (var duplicate in family.CanonicalEntries.GroupBy(item => Normalize(item.Identity), StringComparer.Ordinal).Where(item => item.Count() > 1))
+            foreach (var duplicate in family.CanonicalEntries.GroupBy(EntryKey, StringComparer.Ordinal).Where(item => item.Count() > 1))
                 diagnostics.Add(Diagnostic("CIS-REF-CANON-001", "error", family.Kind,
-                    $"Canonical identity is duplicated: {duplicate.First().Identity}", "Keep one row per stable identity.", duplicate.Select(item => $"{item.Path}:{item.Line}").ToArray()));
+                    $"Canonical identity is duplicated: {duplicate.First().Identity} (repository: {duplicate.First().RepositoryId ?? state.RepositoryId})", "Keep one row per complete identity within its repository.", duplicate.Select(item => $"{item.Path}:{item.Line}").ToArray()));
 
             foreach (var observation in family.Observations.Where(item => !item.CanonicalDeclared))
                 diagnostics.Add(Diagnostic("CIS-REF-DRIFT-001", "warning", family.Kind,
                     $"Source identity is missing from the canonical reference: {observation.Identity}",
                     $"Review and add or explicitly exclude the identity in {family.CanonicalPath}.", [Location(observation.SourcePath, observation.Line)]));
 
-            foreach (var entry in family.CanonicalEntries.Where(IsCurrent).Where(entry =>
-                         !family.Observations.Any(observation => observation.CanonicalIdentity?.Equals(entry.Identity, StringComparison.OrdinalIgnoreCase) == true)))
+            foreach (var entry in family.CanonicalEntries.Where(IsCurrent).Where(entry => IsLocal(entry, state.RepositoryId)).Where(entry =>
+                         !family.Observations.Any(observation => observation.CanonicalKey == entry.CanonicalKey)))
                 diagnostics.Add(Diagnostic("CIS-REF-DRIFT-002", "warning", family.Kind,
                     $"Current canonical identity has no discovered source evidence: {entry.Identity}",
                     "Update its evidence/status or restore the corresponding implementation.", [$"{entry.Path}:{entry.Line}"]));
 
+            foreach (var scope in family.CanonicalEntries.Where(IsCurrent).Where(entry => !IsLocal(entry, state.RepositoryId))
+                         .GroupBy(entry => entry.RepositoryId, StringComparer.OrdinalIgnoreCase))
+                diagnostics.Add(Diagnostic("CIS-REF-SCOPE-002", "warning", family.Kind,
+                    $"Source correlation for current rows in repository '{scope.Key}' is outside this repository's source scan.",
+                    "Validate source correlation in the owning participant repository; this command checks the authority rows' identities and evidence paths.",
+                    scope.Select(entry => $"{entry.Path}:{entry.Line}").ToArray()));
+
             foreach (var entry in family.CanonicalEntries)
             {
+                if (!evidenceRoots.TryGetValue(entry.RepositoryId ?? state.RepositoryId, out var evidenceRoot)) continue;
                 foreach (var evidence in entry.Evidence.Where(LooksLikePath))
                 {
-                    var relative = evidence.Split('#')[0].Split(':')[0].Trim('`', ' ');
-                    if (relative.Length == 0 || File.Exists(Path.Combine(resolution.Context.RepositoryPath, relative.Replace('/', Path.DirectorySeparatorChar)))) continue;
+                    if (Uri.TryCreate(evidence, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https") continue;
+                    var relative = Regex.Replace(evidence.Split('#')[0].Trim('`', ' '), @":\d+(?:-\d+)?$", "");
+                    if (relative.Length == 0) continue;
+                    if (CisPathSafety.TryResolveUnderRoot(evidenceRoot, relative, out var evidencePath)
+                        && !CisPathSafety.ContainsReparsePoint(evidenceRoot, evidencePath) && File.Exists(evidencePath)) continue;
                     diagnostics.Add(Diagnostic("CIS-REF-EVIDENCE-001", "warning", family.Kind,
-                        $"Canonical evidence path does not exist: {relative}", "Repair or retire the evidence locator.", [$"{entry.Path}:{entry.Line}"]));
+                        $"Canonical evidence path is missing or unsafe in repository '{entry.RepositoryId ?? state.RepositoryId}': {relative}", "Repair or retire the evidence locator.", [$"{entry.Path}:{entry.Line}"]));
                 }
             }
         }
@@ -135,7 +153,7 @@ public sealed class ReferenceGovernanceService
     public ReferenceReconcileResult Reconcile(string repositoryPath, IReadOnlyList<string> selectedKinds, bool yes)
     {
         var discovery = Discover(repositoryPath);
-        if (!discovery.RepositoryConfigurationValid || discovery.RepositoryPath is null)
+        if (discovery.ExitCode != 0 || discovery.RepositoryPath is null)
             return new("invalid-repository", discovery.RepositoryPath, selectedKinds, 0, [], [],
                 discovery.Diagnostics.Select(item => "ERROR: " + item.Message).ToArray(), false, false);
         var supported = new HashSet<string>(["configuration-dictionary", "module-ownership-map", "package-catalogue", "screen-route-map"], StringComparer.OrdinalIgnoreCase);
@@ -149,7 +167,20 @@ public sealed class ReferenceGovernanceService
                 .ToArray()))
             .Where(item => item.Missing.Length > 0).ToArray();
         var total = plans.Sum(item => item.Missing.Length);
-        var proposedRows = plans.SelectMany(plan => plan.Missing.Select(item => $"{plan.Family.CanonicalPath}: {RenderReconcileRow(plan.Family.Kind, item)}")).ToArray();
+        var repositoryId = _resolver.Resolve(discovery.RepositoryPath).Context!.RepositoryId;
+        var scopeColumns = plans.ToDictionary(plan => plan.Family.Kind, plan =>
+            Cells(File.ReadLines(Path.Combine(discovery.RepositoryPath, plan.Family.CanonicalPath))
+                .First(line => line.TrimStart().StartsWith('|'))).FindIndex(header => header.Equals("Repository", StringComparison.OrdinalIgnoreCase)));
+        string RenderRow(ReferenceFamilyState family, ReferenceObservationState item)
+        {
+            var rendered = RenderReconcileRow(family.Kind, item);
+            var scopeColumn = scopeColumns[family.Kind];
+            if (scopeColumn < 0) return rendered;
+            var cells = Cells(rendered);
+            cells.Insert(scopeColumn, repositoryId);
+            return "| " + string.Join(" | ", cells) + " |";
+        }
+        var proposedRows = plans.SelectMany(plan => plan.Missing.Select(item => $"{plan.Family.CanonicalPath}: {RenderRow(plan.Family, item)}")).ToArray();
         if (diagnostics.Count > 0) return new("invalid", discovery.RepositoryPath, kinds, 0, [], [], diagnostics, false, false);
         if (total == 0) return new("unchanged", discovery.RepositoryPath, kinds, 0, [], [], [], false, false);
         if (!yes) return new("confirmation-required", discovery.RepositoryPath, kinds, total,
@@ -159,7 +190,7 @@ public sealed class ReferenceGovernanceService
         foreach (var plan in plans)
         {
             var absolute = Path.Combine(discovery.RepositoryPath, plan.Family.CanonicalPath.Replace('/', Path.DirectorySeparatorChar));
-            var content = File.ReadAllText(absolute); var rows = plan.Missing.Select(item => RenderReconcileRow(plan.Family.Kind, item)).ToArray();
+            var content = File.ReadAllText(absolute); var rows = plan.Missing.Select(item => RenderRow(plan.Family, item)).ToArray();
             var reconciled = AppendTableRows(content, rows, out var error);
             if (error is not null) { diagnostics.Add($"ERROR: {plan.Family.CanonicalPath}: {error}"); continue; }
             if (!string.Equals(content, reconciled, StringComparison.Ordinal)) { AtomicWrite(absolute, reconciled); updated.Add(plan.Family.CanonicalPath); }
@@ -194,10 +225,10 @@ public sealed class ReferenceGovernanceService
             var provider = group.Single();
             var canonicalAbsolute = Path.Combine(context.DocumentationPath, "references", provider.CanonicalFileName);
             var canonicalRelative = Relative(context.RepositoryPath, canonicalAbsolute);
-            var current = File.Exists(canonicalAbsolute) ? ParseCanonical(provider.Kind, canonicalAbsolute, context.RepositoryPath, diagnostics) : [];
+            var current = File.Exists(canonicalAbsolute) ? ParseCanonical(provider.Kind, canonicalAbsolute, context, diagnostics) : [];
             var priorContent = Git(context.RepositoryPath, "show", $"{baseline}:{canonicalRelative}");
-            var prior = priorContent.ExitCode == 0 ? ParseCanonicalContent(provider.Kind, canonicalRelative, priorContent.Output, diagnostics) : [];
-            CompareCanonical(provider.Kind, prior, current, changes);
+            var prior = priorContent.ExitCode == 0 ? ParseCanonicalContent(provider.Kind, canonicalRelative, priorContent.Output, context.RepositoryId, diagnostics) : [];
+            CompareCanonical(provider.Kind, prior, current, changes, diagnostics);
 
             var sourceDrift = false;
             foreach (var path in changedFiles.Where(provider.Supports))
@@ -298,16 +329,16 @@ public sealed class ReferenceGovernanceService
             var match = item.Aliases.Append(item.Identity).Select(Normalize)
                 .Where(lookup.ContainsKey).Select(key => lookup[key]).FirstOrDefault();
             return new ReferenceObservationState(item.Kind, item.Identity, item.DisplayName, item.SourcePath, item.Line,
-                item.Aliases, match is not null, match?.Identity);
+                item.Aliases, match is not null, match?.Identity, match?.CanonicalKey);
         }).ToArray();
     }
 
     private static IReadOnlyList<CanonicalReferenceEntry> ParseCanonical(
-        string kind, string path, string repositoryPath, List<ReferenceDiagnostic> diagnostics)
-        => ParseCanonicalContent(kind, Relative(repositoryPath, path), File.ReadAllText(path), diagnostics);
+        string kind, string path, CisRepositoryContext context, List<ReferenceDiagnostic> diagnostics)
+        => ParseCanonicalContent(kind, Relative(context.RepositoryPath, path), File.ReadAllText(path), context.RepositoryId, diagnostics);
 
     private static IReadOnlyList<CanonicalReferenceEntry> ParseCanonicalContent(
-        string kind, string relativePath, string content, List<ReferenceDiagnostic> diagnostics)
+        string kind, string relativePath, string content, string repositoryId, List<ReferenceDiagnostic> diagnostics)
     {
         var lines = content.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
         for (var index = 0; index + 1 < lines.Length; index++)
@@ -321,7 +352,13 @@ public sealed class ReferenceGovernanceService
             for (var row = index + 2; row < lines.Length && lines[row].TrimStart().StartsWith('|'); row++)
             {
                 var cells = Cells(lines[row]);
-                if (cells.Count != headers.Count) continue;
+                if (cells.Count != headers.Count)
+                {
+                    diagnostics.Add(Diagnostic("CIS-REF-CANON-003", "error", kind,
+                        $"Canonical row has {cells.Count} cells; expected {headers.Count}: {relativePath}:{row + 1}",
+                        "Repair the row or escape literal pipes as \\|.", [$"{relativePath}:{row + 1}"]));
+                    continue;
+                }
                 var values = headers.Select((header, cell) => (header, value: CleanCell(cells[cell])))
                     .ToDictionary(item => item.header, item => item.value, StringComparer.OrdinalIgnoreCase);
                 var identity = values[identityHeader];
@@ -333,12 +370,17 @@ public sealed class ReferenceGovernanceService
                     identity = $"{identity}@{packageComponent}";
                     entryAliases = [identity];
                 }
+                var dimensions = IdentityDimensions(kind, values, identity);
+                identity = DisplayIdentity(kind, dimensions, identity);
+                var scope = values.GetValueOrDefault("Repository");
+                var key = JsonSerializer.Serialize(new[] { scope ?? repositoryId }.Concat(dimensions).Select(value => value.ToUpperInvariant()));
                 var display = entryAliases.Skip(1).FirstOrDefault() ?? identity;
                 var evidence = values.Where(item => item.Key.Contains("Evidence", StringComparison.OrdinalIgnoreCase)
-                                                     || item.Key.Contains("Source location", StringComparison.OrdinalIgnoreCase))
+                                                     || item.Key.Contains("Source location", StringComparison.OrdinalIgnoreCase)
+                                                     || item.Key.Equals("Enforcement point", StringComparison.OrdinalIgnoreCase))
                     .SelectMany(item => item.Value.Split([';', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)).ToArray();
                 var status = values.FirstOrDefault(item => item.Key.Equals("Status", StringComparison.OrdinalIgnoreCase)).Value ?? "unknown";
-                result.Add(new(kind, identity, display, status, Hash(lines[row]), entryAliases.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(), evidence, relativePath, row + 1));
+                result.Add(new(kind, identity, display, status, Hash(lines[row]), entryAliases.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(), evidence, relativePath, row + 1, scope, key));
             }
             return result;
         }
@@ -418,10 +460,17 @@ public sealed class ReferenceGovernanceService
         || value.Contains("api_key", StringComparison.OrdinalIgnoreCase);
     private static string Slug(string value) => new(value.Select(character => char.IsLetterOrDigit(character) ? character : '-').ToArray());
 
-    private static void CompareCanonical(string kind, IReadOnlyList<CanonicalReferenceEntry> prior, IReadOnlyList<CanonicalReferenceEntry> current, List<ReferenceDiffItem> changes)
+    private static void CompareCanonical(string kind, IReadOnlyList<CanonicalReferenceEntry> prior, IReadOnlyList<CanonicalReferenceEntry> current, List<ReferenceDiffItem> changes, List<ReferenceDiagnostic> diagnostics)
     {
-        var old = prior.ToDictionary(item => Normalize(item.Identity), StringComparer.Ordinal);
-        var latest = current.ToDictionary(item => Normalize(item.Identity), StringComparer.Ordinal);
+        var duplicates = prior.GroupBy(EntryKey).Concat(current.GroupBy(EntryKey)).Where(group => group.Count() > 1).ToArray();
+        if (duplicates.Length > 0)
+        {
+            foreach (var duplicate in duplicates) diagnostics.Add(Diagnostic("CIS-REF-CANON-001", "error", kind,
+                $"Canonical identity is duplicated: {duplicate.First().Identity}", "Repair duplicate rows before comparing references.", duplicate.Select(item => $"{item.Path}:{item.Line}").ToArray()));
+            return;
+        }
+        var old = prior.ToDictionary(EntryKey, StringComparer.Ordinal);
+        var latest = current.ToDictionary(EntryKey, StringComparer.Ordinal);
         foreach (var item in latest.Where(item => !old.ContainsKey(item.Key))) changes.Add(new(kind, "added", item.Value.Identity, "Canonical reference identity was added.", [$"{item.Value.Path}:{item.Value.Line}"]));
         foreach (var item in old.Where(item => !latest.ContainsKey(item.Key))) changes.Add(new(kind, "removed", item.Value.Identity, "Canonical reference identity was removed.", [$"{item.Value.Path}:{item.Value.Line}"]));
         foreach (var item in latest.Where(item => old.TryGetValue(item.Key, out var before) && before.RowDigest != item.Value.RowDigest)) changes.Add(new(kind, "changed", item.Value.Identity, "Canonical reference row changed.", [$"{item.Value.Path}:{item.Value.Line}"]));
@@ -432,7 +481,7 @@ public sealed class ReferenceGovernanceService
         var revision = Git(context.RepositoryPath, "rev-parse", "HEAD").Output;
         var material = string.Join('\n', families.SelectMany(family => family.CanonicalEntries.Select(item => $"C|{family.Kind}|{item.Identity}|{item.RowDigest}"))
             .Concat(families.SelectMany(family => family.Observations.Select(item => $"S|{family.Kind}|{item.Identity}|{item.SourcePath}|{item.Line}"))));
-        return new(1, context.RepositoryId, revision, DateTimeOffset.UtcNow, Hash(material), families, diagnostics);
+        return new(InventorySchemaVersion, context.RepositoryId, revision, DateTimeOffset.UtcNow, Hash(material), families, diagnostics);
     }
 
     private static ReferenceInventoryDocument? ReadState(string repositoryPath, out List<string> errors)
@@ -444,16 +493,19 @@ public sealed class ReferenceGovernanceService
         {
             var state = JsonSerializer.Deserialize<ReferenceInventoryDocument>(File.ReadAllText(path), JsonOptions);
             if (state is null) errors.Add("Reference state is empty.");
-            else if (state.SchemaVersion != 1) errors.Add($"Unsupported reference-state schema: {state.SchemaVersion}");
+            else if (state.SchemaVersion != InventorySchemaVersion) errors.Add($"Unsupported reference-state schema: {state.SchemaVersion}. Run cis references discover to refresh it.");
             return errors.Count == 0 ? state : null;
         }
         catch (JsonException exception) { errors.Add($"Reference state is invalid JSON: {exception.Message}"); return null; }
     }
 
     private static bool IsCurrent(CanonicalReferenceEntry entry) => entry.Status is not ("Planned" or "Draft" or "Deprecated" or "Archived" or "Retired");
-    private static bool LooksLikePath(string value) => value.Contains('/') || value.Contains('\\') || value.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) || value.EndsWith(".ts", StringComparison.OrdinalIgnoreCase);
+    private static bool LooksLikePath(string value)
+        // Repository classification also records package-detection labels in Evidence.
+        => !Regex.IsMatch(value, @"^@[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+ package dependency$", RegexOptions.CultureInvariant)
+           && (value.Contains('/') || value.Contains('\\') || value.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) || value.EndsWith(".ts", StringComparison.OrdinalIgnoreCase));
     private static bool IsSeparator(string line) => Cells(line).Count > 0 && Cells(line).All(cell => cell.Trim().Trim(':').All(character => character == '-'));
-    private static List<string> Cells(string line) => line.Trim().Trim('|').Split('|').Select(item => item.Replace("\\|", "|", StringComparison.Ordinal).Trim()).ToList();
+    private static List<string> Cells(string line) => Regex.Split(line.Trim().Trim('|'), @"(?<!\\)\|").Select(item => item.Replace("\\|", "|", StringComparison.Ordinal).Trim()).ToList();
     private static string CleanCell(string value) => value.Trim().Trim('`').Replace("<br>", ";", StringComparison.OrdinalIgnoreCase);
     private static string Normalize(string value)
     {

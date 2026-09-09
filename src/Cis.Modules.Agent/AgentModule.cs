@@ -5,7 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Cis.Modules.Agent;
 
-public sealed class AgentModule : ICisModule
+public sealed partial class AgentModule : ICisModule
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     public string Name => "agent";
@@ -19,7 +19,10 @@ public sealed class AgentModule : ICisModule
             serviceProvider.GetService<ICisWorkspaceRegistry>(),
             sourceEvidenceRegistrars: serviceProvider.GetServices<ICisSourceEvidenceRegistrar>(),
             sourceEvidenceReconciler: serviceProvider.GetService<ICisBrdSourceEvidenceReconciler>(),
-            productDefinitionAuthorities: serviceProvider.GetServices<ICisProductDefinitionAuthority>()));
+            productDefinitionAuthorities: serviceProvider.GetServices<ICisProductDefinitionAuthority>(),
+            technicalIntentDraftPreparer: serviceProvider.GetService<ICisTechnicalIntentDraftPreparer>(),
+            observedReferencePreparer: serviceProvider.GetService<ICisObservedReferencePreparer>(),
+            solutionDesignDrafts: serviceProvider.GetService<ICisSolutionDesignDrafts>()));
         services.AddSingleton<AgentEvidenceService>();
         services.AddSingleton<ICisRepositoryDoctorCheck, AgentProviderDoctorCheck>();
     }
@@ -33,6 +36,7 @@ public sealed class AgentModule : ICisModule
         root.Subcommands.Add(Prepare(service));
         root.Subcommands.Add(Run(service));
         root.Subcommands.Add(Author(service));
+        root.Subcommands.Add(DiscoverBrd(service));
         root.Subcommands.Add(Incorporate(service));
         root.Subcommands.Add(Revise(service));
         root.Subcommands.Add(Review(service));
@@ -46,6 +50,36 @@ public sealed class AgentModule : ICisModule
         root.Subcommands.Add(Simple("status", "Report envelopes, runs, and imported results.", service.Status));
         root.Subcommands.Add(Evidence(services.GetRequiredService<AgentEvidenceService>()));
         commands.Add(root);
+    }
+
+    private static Command DiscoverBrd(AgentService service)
+    {
+        var group = new Command("discover", "Prepare local implementation evidence without contacting an agent provider.");
+        var command = new Command("brd", "Preview digest-bound implementation/test snapshots and coverage areas for selected owned repositories.");
+        var reference = new Option<string[]>("--reference") { Required = true, AllowMultipleArgumentsPerToken = true,
+            Description = "Explicitly selected initialized product-owned repository paths." };
+        var actor = Required("--actor"); var repo = Repo(); var format = Format();
+        foreach (var option in new Option[] { reference, actor, repo, format }) command.Options.Add(option);
+        command.SetAction(result =>
+        {
+            var outputFormat = result.GetValue(format)!;
+            return Render(ExecuteForeground((cancellationToken, progress) => service.DiscoverBrdImplementation(
+                result.GetValue(repo)!, result.GetValue(reference) ?? [], result.GetValue(actor)!, cancellationToken, progress), outputFormat), outputFormat);
+        });
+        group.Subcommands.Add(command);
+        var technical = new Command("technical-intent", "Prepare a local technical-intent scaffold, questionnaire and implementation disclosure preview without contacting a provider.");
+        var technicalReference = new Option<string[]>("--reference") { Required = true, AllowMultipleArgumentsPerToken = true };
+        var technicalActor = Required("--actor"); var technicalRepo = Repo(); var technicalFormat = Format();
+        foreach (var option in new Option[] { technicalReference, technicalActor, technicalRepo, technicalFormat }) technical.Options.Add(option);
+        technical.SetAction(result =>
+        {
+            var output = result.GetValue(technicalFormat)!;
+            return Render(ExecuteForeground((cancellation, progress) => service.DiscoverBrdImplementation(
+                result.GetValue(technicalRepo)!, result.GetValue(technicalReference) ?? [], result.GetValue(technicalActor)!,
+                cancellation, progress, technicalIntent: true), output), output);
+        });
+        group.Subcommands.Add(technical);
+        group.Subcommands.Add(DiscoverSolutionDesign(service)); return group;
     }
 
     private static Command ProviderCommands(AgentService service)
@@ -168,6 +202,8 @@ public sealed class AgentModule : ICisModule
         });
         group.Subcommands.Add(command);
 
+        group.Subcommands.Add(AuthorTechnicalIntent(service));
+        group.Subcommands.Add(AuthorSolutionDesign(service));
         var feature = new Command("feature", "Draft one started high-level feature specification from current governed product and technical evidence.");
         var item = new Option<string>("--item") { Required = true, Description = "Started high-level backlog item identity, for example HLT-FR-001." };
         var featureProvider = new Option<string>("--provider") { Required = true };

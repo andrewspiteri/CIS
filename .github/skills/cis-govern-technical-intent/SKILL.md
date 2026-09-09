@@ -12,6 +12,14 @@ technology as product direction or plan writes against them.
 
 ## Workflow
 
+For an imported existing product, the maintainer may request review-only discovery while
+the BRD is still under review. Use `cis agent discover technical-intent --reference <owned-repo>
+--actor <human> --repo <authority>` for local preparation, then `cis agent author technical-intent`
+with an explicitly selected provider for an implementation-based narrative. This draft exception
+does not approve the BRD, answer unresolved questions, resolve technical decisions or enable
+downstream implementation. Preserve code-supported current behavior separately from proposed
+direction. Review-only discovery precedes, and does not replace, the approval workflow below.
+
 1. Confirm `cis brd status --workspace <workspace>` reports Active, valid, and current.
 2. Run `cis technical-intent questions init`. For an existing implementation, retain evidence-supported `Derived` answers with confidence and provenance; present only unresolved or intentionally overridden choices for human input. For a greenfield project, present the complete `TI-Q-*` set. Record each human answer with `cis technical-intent questions answer`; advisory directions are not answers.
 3. Build and strictly validate the workspace graph.

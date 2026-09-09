@@ -17,6 +17,41 @@ public sealed class GraphSnapshotReader : ICisGraphSnapshotReader
     }
 
     public CisGraphSnapshotReadResult Read(string repositoryPath)
+        => GraphReadScope.Read(this, nameof(Read), repositoryPath, () => ReadCore(repositoryPath));
+
+    public CisGraphMetadataReadResult ReadMetadata(string repositoryPath)
+        => GraphReadScope.Read(this, nameof(ReadMetadata), repositoryPath, () => ReadMetadataCore(repositoryPath));
+
+    private CisGraphMetadataReadResult ReadMetadataCore(string repositoryPath)
+    {
+        var resolution = _resolver.Resolve(repositoryPath);
+        if (!resolution.IsSuccess)
+            return new("invalid-repository", 2, null, "unknown", null, null, [], resolution.Errors);
+        var context = resolution.Context!;
+        if (!File.Exists(_store.DatabasePath(context.RepositoryPath)))
+            return new("missing", 4, context.RepositoryPath, "missing", null, null, [],
+                ["Graph generation is missing. Run `cis graph build` first."]);
+        var header = _store.ReadHeader(context.RepositoryPath);
+        if (!header.Success || header.Build is null || header.Manifest is null)
+            return new("invalid", 4, context.RepositoryPath, "unknown", null, null, [],
+                [$"Unable to read SQLite graph generation: {header.Error}"]);
+        var manifest = header.Manifest;
+        if (manifest.SchemaVersion != GraphBuilder.GraphSchemaVersion)
+            return new("invalid", 4, context.RepositoryPath, "stale", header.Build, manifest, [],
+                [$"Graph schema is incompatible (graph={manifest.SchemaVersion}, manifest={manifest.SchemaVersion}, expected={GraphBuilder.GraphSchemaVersion}). Run `cis graph build`."]);
+        if (header.Build.Id != manifest.BuildId)
+            return new("invalid", 4, context.RepositoryPath, "unknown", header.Build, manifest, [],
+                ["Graph and manifest build identities do not match. Run `cis graph build`."]);
+        var stale = FindStaleInputs(context.RepositoryPath, manifest);
+        var warnings = new List<string>();
+        if (header.Build.Status == "partial") warnings.Add("The graph was built with extraction warnings; inference evidence may be incomplete.");
+        if (stale.Count > 0) warnings.Add($"The graph is stale for {stale.Count} input(s); run `cis graph build` before inference.");
+        return new(stale.Count == 0 ? "available" : "stale", stale.Count == 0 ? 0 : 5,
+            context.RepositoryPath, stale.Count == 0 ? "fresh" : "stale", header.Build, manifest,
+            warnings.Concat(stale.Take(20).Select(path => "Stale graph input: " + path)).ToArray(), []);
+    }
+
+    private CisGraphSnapshotReadResult ReadCore(string repositoryPath)
     {
         var resolution = _resolver.Resolve(repositoryPath);
         if (!resolution.IsSuccess)

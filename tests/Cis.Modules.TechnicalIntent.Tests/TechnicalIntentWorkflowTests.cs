@@ -14,6 +14,47 @@ namespace Cis.Modules.TechnicalIntent.Tests;
 public sealed class TechnicalIntentWorkflowTests
 {
     [Fact]
+    public void ExistingDiscovery_DraftsBeforeBusinessApprovalWithoutWeakeningApprovalOrAnswerGates()
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: false);
+        Assert.Equal(0, environment.Brd.Initialize(environment.Authority.Path, "Product BRD").ExitCode);
+        var brdPath = Path.Combine(environment.Authority.Path, "docs/specs/business-requirements.md");
+        var brd = File.ReadAllText(brdPath);
+
+        var prepared = environment.Intent.PrepareExistingDraft(environment.Authority.Path);
+
+        Assert.Empty(prepared.Errors);
+        Assert.Contains("technical_intent_schema: 4", File.ReadAllText(environment.TechnicalIntentPath), StringComparison.Ordinal);
+        Assert.Equal(brd, File.ReadAllText(brdPath));
+        Assert.False(environment.Intent.Status(environment.Authority.Path).Validation!.Current);
+        Assert.Equal("blocked", environment.Intent.Approve(environment.Authority.Path, "Owner", "Review").Status);
+        Assert.False(environment.Intent.Evaluate(environment.Authority.Path).Ready);
+        Assert.Contains(environment.Questionnaire.Status(environment.Authority.Path).Questions, item => item.Status == "Unanswered");
+        Assert.Equal("blocked", environment.Questionnaire.Answer(environment.Authority.Path, "TI-Q-013", "Policy", "Owner").Status);
+    }
+
+    [Fact]
+    public void ExistingDiscovery_PreservesInferredArchitectureAndOpenDecisionsWhenQuestionnaireCompletes()
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true, completeQuestionnaire: false);
+        Assert.Empty(environment.Intent.PrepareExistingDraft(environment.Authority.Path).Errors);
+        var content = File.ReadAllText(environment.TechnicalIntentPath);
+        content = content.Replace("<!-- cis:technical-intent-module-architecture:start -->", "<!-- cis:technical-intent-module-architecture:start -->\nObserved service owns its transaction boundary.", StringComparison.Ordinal)
+            + "\n<!-- cis:technical-intent-implementation-authored -->\n";
+        File.WriteAllText(environment.TechnicalIntentPath, content);
+        foreach (var question in environment.Questionnaire.Status(environment.Authority.Path).Questions)
+            Assert.Equal(0, environment.Questionnaire.Answer(environment.Authority.Path, question.Id, question.SuggestedAnswer, "Owner").ExitCode);
+
+        environment.Intent.Initialize(environment.Authority.Path);
+
+        var refreshed = File.ReadAllText(environment.TechnicalIntentPath);
+        Assert.Contains("Observed service owns its transaction boundary.", refreshed, StringComparison.Ordinal);
+        Assert.Contains("| Open |", refreshed, StringComparison.Ordinal);
+        Assert.DoesNotContain("| Accepted |", refreshed, StringComparison.Ordinal);
+        Assert.Equal("blocked", environment.Intent.Approve(environment.Authority.Path, "Owner", "Review").Status);
+    }
+
+    [Fact]
     public void Commands_AreRegistered()
     {
         using var application = new CisHostBuilder()

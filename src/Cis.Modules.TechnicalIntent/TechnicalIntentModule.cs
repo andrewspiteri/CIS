@@ -21,6 +21,7 @@ public sealed class TechnicalIntentModule : ICisModule
     {
         services.AddSingleton<TechnicalIntentQuestionnaireService>();
         services.AddSingleton<TechnicalIntentService>();
+        services.AddSingleton<ICisTechnicalIntentDraftPreparer>(provider => provider.GetRequiredService<TechnicalIntentService>());
         services.AddSingleton<GovernanceRefreshService>();
         services.AddSingleton<IChangeReadinessCheck>(provider =>
             provider.GetRequiredService<TechnicalIntentService>());

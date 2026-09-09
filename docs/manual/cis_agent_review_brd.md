@@ -33,7 +33,11 @@ the final result into a provider-owned plan file instead of returning governed e
 
 By default, the provider receives the canonical BRD and applicable governance context.
 `--include-authoring-evidence` additionally discloses the latest digest-matching BRD
-authoring envelope, including its previously extracted source evidence. This is opt-in
+authoring envelope, including its previously extracted source evidence and exact
+implementation/test snapshots when repository discovery was used. Snapshot manifests and
+files are verified against the authoring digests before disclosure; missing or changed
+cache evidence blocks the review. Later edits to live participant code do not silently
+replace the files used to author the BRD. This is opt-in
 because selecting a different provider expands the disclosure boundary. If the evidence
 is missing or no longer matches the successful authoring run, CIS fails closed.
 When references are not included, the isolated workspace explicitly tells the reviewer
@@ -44,6 +48,15 @@ The provider must return a structured recommendation of `ready`, `revise`, or `b
 strengths, and at most 100 findings. Each finding records a stable `BRD-REV-*` identity,
 severity, category, location, observation, and recommended action. A `ready`
 recommendation cannot contain blocking or major findings.
+
+The initial review assesses the rendered BRD as a business reader with no technical
+background. A missing or unusable product narrative is a major finding requiring revision
+in that pass; readability is not deferred until questions are answered. The narrative
+must explain complete journeys, participants, business rules, operating variations,
+exceptions and outcomes. Source links and technical evidence mappings are read from HTML
+comments, and exposed references are actionable readability findings. Agreement with a
+bounded declaration inventory cannot establish complete product coverage. These criteria
+do not broaden the exact scope of later closure-only or answer-incorporation reviews.
 
 CIS retains the JSON result and a human-readable Markdown rendering beneath:
 

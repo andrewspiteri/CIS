@@ -5,7 +5,7 @@ status: Draft
 series: "Change Impact and Planning"
 series_order: 5
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-26"
+last_reviewed: "2026-09-09"
 review_cadence: on task-planning change
 summary: "Complexity should constrain execution by creating bounded child tasks, not merely label a large instruction."
 cis:
@@ -57,6 +57,72 @@ Requirements and accepted impacts cannot disappear when work is split. Parent an
 records preserve traceability so validation can show which executable task covers each
 obligation.
 
+## Complexity is a coupling signal
+
+Complexity rises when a task must coordinate several kinds of authority at once. A useful
+assessment looks beyond story points:
+
+| Signal | Why it increases risk |
+|---|---|
+| Multiple repositories | Baselines, owners, and release paths can diverge |
+| Public contract change | Compatibility and consumer coordination become material |
+| Security or permission boundary | Incorrect behavior can expose data or capability |
+| Data migration | Forward, rollback, and mixed-version states must agree |
+| Several user surfaces | Behavior and evidence differ by audience |
+| Operational rollout | Runtime failure and recovery become part of the outcome |
+| Unresolved decision | The executor would otherwise choose product direction |
+
+The exact scoring can vary. The control principle is stable: once the amount of coupled
+judgment exceeds one safe execution boundary, the work must change shape.
+
+## Decompose an authentication feature
+
+“Add social sign-in” might become a high-complexity parent covering the outcome and all
+accepted impact. Its children could be:
+
+1. approve identity ownership, provider, and account-linking decisions;
+2. define redirect, callback, error, and session contracts;
+3. implement backend protocol and permission behavior;
+4. implement the public sign-in entry and customer account states;
+5. configure secrets, telemetry, and provider-outage behavior;
+6. run security, contract, browser, and integration verification; and
+7. coordinate rollout and final acceptance.
+
+Each child has a smaller authority set, clear dependencies, and evidence that can fail
+for the right reason. The parent completes only when the children collectively cover the
+outcome and accepted findings.
+
+## Good children are independently reviewable
+
+A bounded child should have one primary objective, named repository targets, explicit
+inputs, non-goals, acceptance criteria, and validation. It should be possible to explain
+why the child is complete without relying on another child's private reasoning.
+
+This does not mean every child can ship alone. Contract work may intentionally precede
+consumers, and a schema change may require a coordinated deployment. Independence here
+means that authority, execution, and evidence are understandable at the child boundary.
+
+## Avoid decomposition theatre
+
+Weak decomposition creates tasks such as “edit backend files,” “edit frontend files,” and
+“run tests.” These are activity buckets, not engineering boundaries. They leave contract,
+security, failure behavior, and ownership choices implicit.
+
+Another anti-pattern creates dozens of tiny tasks that share the same context and cannot
+be verified separately. Coordination cost rises while risk remains coupled. The objective
+is not the maximum number of tasks; it is the smallest set of safe, coherent execution
+contracts.
+
+## Coordinate without restoring one giant task
+
+The parent preserves cross-child requirements and accepted impact. Dependencies express
+order. Shared decisions and contract artifacts become explicit inputs. Verification can
+then inspect both child evidence and the integrated outcome.
+
+If one child discovers new impact, only the affected scope needs to return to review. The
+remaining children do not acquire permission to absorb it merely because they share a
+parent.
+
 ## Takeaway
 
 Complexity classification should change what may execute. Use a high-complexity parent
@@ -68,4 +134,3 @@ and validation boundaries.
 - [Change impact and bounded planning](../specs/change-impact-and-planning-spec.md)
 - [Task-type contract](../specs/task-type-contract-spec.md)
 - [Core task-type catalogue](../specs/core-task-type-catalog.md)
-

@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using Cis.Abstractions;
 
 namespace Cis.Modules.Brd;
 
@@ -20,7 +21,8 @@ public static class BrdDocumentDigest
 
     public static string Compute(string content)
     {
-        var normalized = content.Replace("\r\n", "\n", StringComparison.Ordinal);
+        var normalized = CisBrdPresentation.RestoreManagedEvidence(content)
+            .Replace("\r\n", "\n", StringComparison.Ordinal);
         foreach (var key in new[] { "status", "last_reviewed" })
             normalized = Regex.Replace(normalized, $"(?m)^{key}:.*$", $"{key}: <approval-metadata>",
                 RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));

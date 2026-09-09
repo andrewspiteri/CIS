@@ -5,7 +5,7 @@ status: Draft
 series: "Governed Software Change"
 series_order: 5
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-25"
+last_reviewed: "2026-09-08"
 review_cadence: on impact or planning change
 summary: "Why evidence-backed impact findings must remain proposals until reviewed against an exact baseline."
 cis:
@@ -165,4 +165,3 @@ belongs and who accepted the obligation.
 - [Context model and local graph](../specs/context-model-and-graph-spec.md)
 - [Technical-intent governance](../specs/technical-intent-governance-spec.md)
 - [Traceability matrix specification](../specs/traceability-matrix-spec.md)
-

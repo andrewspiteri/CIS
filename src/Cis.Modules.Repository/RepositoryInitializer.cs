@@ -5,7 +5,7 @@ using System.Text.RegularExpressions;
 
 namespace Cis.Modules.Repository;
 
-public sealed partial class RepositoryInitializer
+public sealed partial class RepositoryInitializer : Cis.Abstractions.ICisObservedReferencePreparer
 {
     private static readonly StringComparison PathComparison = OperatingSystem.IsWindows()
         ? StringComparison.OrdinalIgnoreCase

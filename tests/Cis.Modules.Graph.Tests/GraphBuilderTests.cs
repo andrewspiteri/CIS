@@ -14,6 +14,53 @@ namespace Cis.Modules.Graph.Tests;
 public sealed class GraphBuilderTests
 {
     [Fact]
+    public void Build_PreservesRepeatedJavaScriptTestsAndQuotedNames()
+    {
+        using var repository = TemporaryRepository.Create();
+        const string tests = """
+            describe('first scope', () => {
+              it('returns a result', () => {});
+              it("strips 'first' field", () => {});
+              it("strips 'second' field", () => {});
+              it('supports "quoted" text', () => {});
+              it('supports \'escaped\' text', () => {});
+              test(`supports 'single' and "double" text`, () => {});
+            });
+            describe('second scope', () => {
+              it('returns a result', () => {});
+            });
+            """;
+        repository.Write("src/example.spec.ts", tests);
+        Assert.Equal(0, new RepositoryInitializer().Initialize(new RepositoryInitRequest(
+            repository.Path, "docs/cis", DryRun: false, Confirmed: true)).ExitCode);
+
+        var result = CreateBuilder().Build(repository.Path);
+
+        Assert.True(result.ExitCode == 0, string.Join("\n", result.Diagnostics.Select(item => item.Message)));
+        using var graph = ReadGraphJson(repository.Path);
+        var nodes = graph.RootElement.GetProperty("nodes").EnumerateArray()
+            .Where(node => NodeValue(node, "kind") == "test").ToArray();
+        Assert.Equal(7, nodes.Length);
+        Assert.Equal(7, nodes.Select(node => NodeValue(node, "key")).Distinct().Count());
+        Assert.Equal(2, nodes.Count(node => NodeValue(node, "label") == "returns a result"));
+        Assert.Contains(nodes, node => NodeValue(node, "label") == "strips 'first' field");
+        Assert.Contains(nodes, node => NodeValue(node, "label") == "strips 'second' field");
+        Assert.Contains(nodes, node => NodeValue(node, "label") == "supports \"quoted\" text");
+        Assert.Contains(nodes, node => NodeValue(node, "label") == "supports \\'escaped\\' text");
+        Assert.Contains(nodes, node => NodeValue(node, "label") == "supports 'single' and \"double\" text");
+        Assert.Equal(0, CreateValidator().Validate(repository.Path, strict: true).ExitCode);
+
+        repository.Write("src/example.spec.ts", "// unrelated line\n" + tests);
+        Assert.Equal(0, CreateBuilder().Build(repository.Path).ExitCode);
+        using var rebuilt = ReadGraphJson(repository.Path);
+        Assert.Equal(
+            nodes.Select(node => NodeValue(node, "key")).Order(),
+            rebuilt.RootElement.GetProperty("nodes").EnumerateArray()
+                .Where(node => NodeValue(node, "kind") == "test")
+                .Select(node => NodeValue(node, "key")).Order());
+    }
+
+    [Fact]
     public void Build_CreatesRepositoryComponentDocumentAndReferenceNodes()
     {
         using var repository = TemporaryRepository.CreateInitializedApi();
@@ -51,6 +98,42 @@ public sealed class GraphBuilderTests
         Assert.Contains(edges, edge => NodeValue(edge, "type") == "declares");
         Assert.Contains(edges, edge => NodeValue(edge, "type") == "governed-by");
         Assert.Contains(edges, edge => NodeValue(edge, "type") == "owns");
+    }
+
+    [Fact]
+    public void Build_ScopesAuthorityDictionaryIdentitiesByRepository()
+    {
+        using var repository = TemporaryRepository.CreateInitializedGovernedApi();
+        var existing = File.ReadAllText(Path.Combine(repository.Path, "docs/cis/references/permissions-dictionary.md"));
+        repository.Write("docs/cis/references/permissions-dictionary.md", existing[..existing.IndexOf("| Permission code", StringComparison.Ordinal)] + """
+            | Permission code | Repository |
+            | --- | --- |
+            | PERM-ORDERS-READ | customer-api |
+            | PERM-ORDERS-READ | operations-api |
+            | TODO | customer-api |
+            """);
+        foreach (var name in new[] { "api-dictionary", "problem-details-catalogue" })
+        {
+            var content = File.ReadAllText(Path.Combine(repository.Path, "docs/cis/references/" + name + ".md"));
+            var start = content.IndexOf('|');
+            var lines = content[start..].Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            repository.Write("docs/cis/references/" + name + ".md", content[..start] + lines[0] + " Repository |\n"
+                + lines[1] + "---|\n" + lines[2] + " customer-api |\n" + lines[2] + " operations-api |\n");
+        }
+        Assert.Equal(0, CreateBuilder().Build(repository.Path).ExitCode);
+        using var graph = ReadGraphJson(repository.Path);
+        var nodes = graph.RootElement.GetProperty("nodes").EnumerateArray().ToArray();
+        var permissions = nodes
+            .Where(node => NodeValue(node, "kind") == "reference-item" && NodeValue(node, "subtype") == "permission").ToArray();
+        Assert.Equal(2, permissions.Length);
+        Assert.Equal(2, permissions.Select(node => NodeValue(node, "localId")).Distinct().Count());
+        var byKey = nodes.ToDictionary(node => NodeValue(node, "key"));
+        var contractEdges = graph.RootElement.GetProperty("edges").EnumerateArray()
+            .Where(edge => NodeValue(edge, "type") is "authorized-by" or "fails-with").ToArray();
+        Assert.Equal(4, contractEdges.Length);
+        Assert.All(contractEdges, edge => Assert.Equal(
+            byKey[NodeValue(edge, "from")].GetProperty("properties").GetProperty("Repository").GetString(),
+            byKey[NodeValue(edge, "to")].GetProperty("properties").GetProperty("Repository").GetString()));
     }
 
     [Fact]
@@ -336,6 +419,38 @@ public sealed class GraphBuilderTests
         Assert.Contains(nodes, node => NodeValue(node, "kind") == "tracker-conflict" && NodeValue(node, "localId") == "TRACKER-001");
         Assert.Contains(edges, edge => NodeValue(edge, "type") == "mirrored-by");
         Assert.Contains(edges, edge => NodeValue(edge, "type") == "has-conflict");
+    }
+
+    [Fact]
+    public void Build_PreservesFileScopedVerificationForMultipleTestsInOneFile()
+    {
+        using var repository = TemporaryRepository.CreateInitializedApiWithDeliveryEvidence();
+        repository.Write("tests/Orders.Api.Tests/OrderContractTests.cs", """
+            using Xunit;
+            public sealed class OrderContractTests
+            {
+                private const string ContractId = "orders-api:get:orders-id";
+                [Fact] public void First() { Assert.NotNull(ContractId); }
+                [Fact] public void Second() { Assert.NotNull(ContractId); }
+            }
+            """);
+        repository.Write("tests/Orders.Api.Tests/UnrelatedTests.cs", """
+            using Xunit;
+            public sealed class UnrelatedTests
+            {
+                [Fact] public void Unrelated() { Assert.True(true); }
+            }
+            """);
+
+        Assert.Equal(0, CreateBuilder().Build(repository.Path).ExitCode);
+        using var graph = ReadGraphJson(repository.Path);
+        var nodes = graph.RootElement.GetProperty("nodes").EnumerateArray()
+            .ToDictionary(node => NodeValue(node, "key"), StringComparer.Ordinal);
+        var verified = graph.RootElement.GetProperty("edges").EnumerateArray()
+            .Where(edge => NodeValue(edge, "type") == "verified-by").ToArray();
+        Assert.Equal(new[] { "First", "Second" }, verified
+            .Select(edge => NodeValue(nodes[NodeValue(edge, "to")], "label")).Order(StringComparer.Ordinal));
+        Assert.All(verified, edge => Assert.Equal("reference-item", NodeValue(nodes[NodeValue(edge, "from")], "kind")));
     }
 
     [Fact]
@@ -984,6 +1099,229 @@ public sealed class GraphBuilderTests
         Assert.True(fresh.EdgeCount > 0);
         Assert.Equal("stale", stale.Freshness);
         Assert.Contains(stale.Diagnostics, diagnostic => diagnostic.Code == "CIS-GRAPH-VALIDATE-STALE-003");
+    }
+
+    [Fact]
+    public void ValidationCache_ReusesStructureAcrossReadersButRehashesCurrentInputs()
+    {
+        using var repository = TemporaryRepository.CreateInitializedApiWithDeliveryEvidence();
+        Assert.Equal(0, CreateBuilder().Build(repository.Path).ExitCode);
+        var cold = CreateValidator().Validate(repository.Path, false);
+        var warm = CreateValidator().Validate(repository.Path, true);
+        Assert.False(cold.StructureCached);
+        Assert.True(warm.StructureCached);
+        Assert.Equal(0, warm.ExitCode);
+        var input = Path.Combine(repository.Path, "src/Orders.Api/Program.cs");
+        var original = File.ReadAllText(input);
+        var timestamp = File.GetLastWriteTimeUtc(input);
+        File.WriteAllText(input, original.Replace("/orders", "/edited", StringComparison.Ordinal));
+        File.SetLastWriteTimeUtc(input, timestamp);
+        var stale = CreateValidator().Validate(repository.Path, true);
+        Assert.True(stale.StructureCached);
+        Assert.Equal("stale", stale.Freshness);
+        Assert.Equal(5, stale.ExitCode);
+        Assert.Contains(stale.Diagnostics, item => item.Code == "CIS-GRAPH-VALIDATE-STALE-003");
+        File.WriteAllText(input, original);
+        repository.Write("src/Orders.Api/NewInput.cs", "public class Added { }");
+        var added = CreateValidator().Validate(repository.Path, false);
+        Assert.True(added.StructureCached);
+        Assert.Contains(added.Diagnostics, item => item.Code == "CIS-GRAPH-VALIDATE-STALE-005");
+        File.Delete(input);
+        var removed = CreateValidator().Validate(repository.Path, false);
+        Assert.False(removed.StructureCached);
+        Assert.Contains(removed.Diagnostics, item => item.Code == "CIS-GRAPH-VALIDATE-LOCATION-002");
+    }
+
+    [Fact]
+    public void ValidationCache_DetectsDatabaseEditsWithUnchangedBuildIdentityAndTimestamp()
+    {
+        using var repository = TemporaryRepository.CreateInitializedApiWithDeliveryEvidence();
+        Assert.Equal(0, CreateBuilder().Build(repository.Path).ExitCode);
+        var original = CreateValidator().Validate(repository.Path, false);
+        Assert.True(CreateValidator().Validate(repository.Path, false).StructureCached);
+        var database = Path.Combine(repository.Path, SqliteGraphStore.DatabaseRelativePath);
+        var timestamp = File.GetLastWriteTimeUtc(database);
+        ExecuteSql(repository.Path, "UPDATE edges SET type='bad-kind' WHERE key=(SELECT key FROM edges ORDER BY key LIMIT 1);");
+        File.SetLastWriteTimeUtc(database, timestamp);
+        var invalid = CreateValidator().Validate(repository.Path, false);
+        Assert.Equal(original.BuildId, invalid.BuildId);
+        Assert.False(invalid.StructureCached);
+        Assert.Equal(5, invalid.ExitCode);
+        Assert.Contains(invalid.Diagnostics, item => item.Code == "CIS-GRAPH-VALIDATE-EDGE-002");
+        var cachedInvalid = CreateValidator().Validate(repository.Path, false);
+        Assert.True(cachedInvalid.StructureCached);
+        Assert.Equal(5, cachedInvalid.ExitCode);
+    }
+
+    [Fact]
+    public void ValidationCache_CorruptionAndAnUnwritableCacheDoNotChangeValidation()
+    {
+        using var repository = TemporaryRepository.CreateInitializedApiWithDeliveryEvidence();
+        Assert.Equal(0, CreateBuilder().Build(repository.Path).ExitCode);
+        Assert.Equal(0, CreateValidator().Validate(repository.Path, true).ExitCode);
+        var cache = Path.Combine(repository.Path, ".cis/local/status/graph-validation.json");
+        Assert.True(File.Exists(cache));
+        File.WriteAllText(cache, "{broken");
+        var recovered = CreateValidator().Validate(repository.Path, true);
+        Assert.False(recovered.StructureCached);
+        Assert.Equal(0, recovered.ExitCode);
+        var malformed = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(cache))!;
+        malformed["diagnostics"] = System.Text.Json.Nodes.JsonNode.Parse("[{}]");
+        File.WriteAllText(cache, malformed.ToJsonString());
+        var incomplete = CreateValidator().Validate(repository.Path, true);
+        Assert.False(incomplete.StructureCached);
+        Assert.Equal(0, incomplete.ExitCode);
+        File.Delete(cache);
+        Directory.CreateDirectory(cache);
+        var uncached = CreateValidator().Validate(repository.Path, true);
+        Assert.False(uncached.StructureCached);
+        Assert.Equal(0, uncached.ExitCode);
+    }
+
+    [Fact]
+    public void DatabaseHashCache_RecoversFromCorruptionWhileSourcesAreAlwaysChecked()
+    {
+        using var repository = TemporaryRepository.CreateInitializedApiWithDeliveryEvidence();
+        Assert.Equal(0, CreateBuilder().Build(repository.Path).ExitCode);
+        Assert.Equal(0, CreateValidator().Validate(repository.Path, true).ExitCode);
+        var cache = Path.Combine(repository.Path, ".cis/local/status/graph-database-hash.json");
+        if (OperatingSystem.IsWindows() && new DriveInfo(Path.GetPathRoot(repository.Path)!).DriveFormat == "NTFS")
+        {
+            Assert.True(File.Exists(cache));
+            var written = File.GetLastWriteTimeUtc(cache);
+            Assert.Equal(0, CreateValidator().Validate(repository.Path, true).ExitCode);
+            Assert.Equal(written, File.GetLastWriteTimeUtc(cache));
+        }
+        var input = Path.Combine(repository.Path, "src/Orders.Api/Program.cs");
+        var original = File.ReadAllText(input);
+        var timestamp = File.GetLastWriteTimeUtc(input);
+        File.WriteAllText(input + ".replacement", original.Replace("/orders", "/edited", StringComparison.Ordinal));
+        File.SetLastWriteTimeUtc(input + ".replacement", timestamp);
+        File.Move(input + ".replacement", input, overwrite: true);
+        Assert.Equal(5, CreateValidator().Validate(repository.Path, true).ExitCode);
+        File.WriteAllText(cache, "{broken");
+        Assert.Equal(5, CreateValidator().Validate(repository.Path, true).ExitCode);
+        File.Delete(cache);
+        Directory.CreateDirectory(cache);
+        File.WriteAllText(input, original);
+        Assert.Equal(0, CreateValidator().Validate(repository.Path, true).ExitCode);
+        if (OperatingSystem.IsWindows())
+        {
+            using var writer = File.Open(input, FileMode.Open, FileAccess.Write, FileShare.ReadWrite);
+            var unreadable = CreateValidator().Validate(repository.Path, true);
+            Assert.Equal(5, unreadable.ExitCode);
+            Assert.Contains(unreadable.Diagnostics, item => item.Code == "CIS-GRAPH-VALIDATE-STALE-004");
+        }
+    }
+
+    [Fact]
+    public void MetadataReader_PreservesFreshnessAndDoesNotLoadGraphFacts()
+    {
+        using var repository = TemporaryRepository.CreateInitializedApiWithDeliveryEvidence();
+        Assert.Equal(0, CreateBuilder().Build(repository.Path).ExitCode);
+        var reader = new GraphSnapshotReader(new CisRepositoryContextResolver());
+        var full = reader.Read(repository.Path);
+        var metadata = reader.ReadMetadata(repository.Path);
+        Assert.Equal(full.Graph!.Build, metadata.Build);
+        Assert.Equal(full.Freshness, metadata.Freshness);
+        File.AppendAllText(Path.Combine(repository.Path, "src/Orders.Api/Program.cs"), " // changed");
+        Assert.Equal(reader.Read(repository.Path).Freshness, reader.ReadMetadata(repository.Path).Freshness);
+        ExecuteSql(repository.Path, "UPDATE nodes SET properties_json='{broken' WHERE key=(SELECT key FROM nodes ORDER BY key LIMIT 1);");
+        Assert.Equal(4, reader.Read(repository.Path).ExitCode);
+        Assert.NotNull(reader.ReadMetadata(repository.Path).Build);
+        Assert.False(CreateValidator().Validate(repository.Path, false).GraphAvailable);
+    }
+
+    [Fact]
+    public void ReadScope_ReusesClassificationAcrossInstancesOnlyUntilTheReadPhaseEnds()
+    {
+        using var repository = TemporaryRepository.CreateInitializedApi();
+        RepositoryClassification before;
+        using (CisReadScope.Enter())
+        {
+            before = new RepositoryClassifier().Classify(repository.Path);
+            Assert.Same(before, new RepositoryClassifier().Classify(repository.Path));
+        }
+        repository.Write("frontend/package.json", "{\"dependencies\":{\"react\":\"19.0.0\"}}");
+        using (CisReadScope.Enter())
+        {
+            var after = new RepositoryClassifier().Classify(repository.Path);
+            Assert.NotSame(before, after);
+            Assert.Contains(after.Components, component => component.Frameworks.Contains("react"));
+        }
+    }
+
+    [Fact]
+    public void ReadScope_SharesNestedGraphReadsAndRechecksContentAfterDisposal()
+    {
+        using var repository = TemporaryRepository.CreateInitializedApiWithDeliveryEvidence();
+        Assert.Equal(0, CreateBuilder().Build(repository.Path).ExitCode);
+        var resolver = new CisRepositoryContextResolver();
+        var store = new SqliteGraphStore();
+        var snapshots = new GraphSnapshotReader(resolver, store);
+        var validator = new GraphValidator(resolver, store);
+        CisGraphSnapshotReadResult first;
+        GraphValidationResult validation;
+        using (GraphReadScope.Enter())
+        {
+            Assert.Equal("invalid-repository", snapshots.Read(string.Empty).Status);
+            first = snapshots.Read(repository.Path);
+            validation = validator.Validate(repository.Path, false);
+            using (GraphReadScope.Enter())
+            {
+                Assert.Same(first, snapshots.Read(repository.Path + Path.DirectorySeparatorChar));
+                Assert.Same(first.Graph, store.Read(repository.Path).Graph);
+                Assert.Same(validation, validator.Validate(repository.Path, false));
+                Assert.True(validator.Validate(repository.Path, true).Strict);
+            }
+            Assert.Same(first, snapshots.Read(repository.Path));
+        }
+
+        // A metadata-only cache would miss this edit: preserve both length and timestamp.
+        var input = Path.Combine(repository.Path, "src", "Orders.Api", "Program.cs");
+        var timestamp = File.GetLastWriteTimeUtc(input);
+        var content = File.ReadAllText(input);
+        File.WriteAllText(input, content.Replace("/orders", "/edited", StringComparison.Ordinal));
+        Assert.NotEqual(content, File.ReadAllText(input));
+        File.SetLastWriteTimeUtc(input, timestamp);
+        using (GraphReadScope.Enter())
+        {
+            var changed = snapshots.Read(repository.Path);
+            Assert.NotSame(first, changed);
+            Assert.Equal("stale", changed.Freshness);
+            Assert.Equal("stale", validator.Validate(repository.Path, false).Freshness);
+            Assert.Equal(5, validator.Validate(repository.Path, true).ExitCode);
+        }
+
+        Assert.Equal(0, CreateBuilder().Build(repository.Path).ExitCode);
+        using (GraphReadScope.Enter())
+        {
+            var rebuilt = snapshots.Read(repository.Path);
+            Assert.Equal("fresh", rebuilt.Freshness);
+            Assert.NotEqual(first.Graph!.Build.Id, rebuilt.Graph!.Build.Id);
+        }
+    }
+
+    [Fact]
+    public void Validate_RechecksSharedLocatorsAndRetainsEachFactsDiagnostic()
+    {
+        using var repository = TemporaryRepository.CreateInitializedApiWithDeliveryEvidence();
+        const string removed = "src/Orders.Api/Shared.cs";
+        repository.Write(removed, "public sealed class Shared { public void Submit() { } }");
+        Assert.Equal(0, CreateBuilder().Build(repository.Path).ExitCode);
+        var validator = CreateValidator();
+        Assert.Equal(0, validator.Validate(repository.Path, true).ExitCode);
+        var graph = new SqliteGraphStore().Read(repository.Path).Graph!;
+        var affected = graph.Nodes.Where(node => node.Locations.Any(location => location.Path == removed)).ToArray();
+        Assert.True(affected.Length > 1);
+        File.Delete(Path.Combine(repository.Path, removed));
+
+        var invalid = validator.Validate(repository.Path, false);
+
+        foreach (var node in affected)
+            Assert.Contains(invalid.Diagnostics, diagnostic => diagnostic.Code == "CIS-GRAPH-VALIDATE-LOCATION-002"
+                && diagnostic.Evidence.Contains(node.Key));
+        Assert.Equal(5, invalid.ExitCode);
     }
 
     [Fact]

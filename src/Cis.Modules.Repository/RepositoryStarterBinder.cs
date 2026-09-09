@@ -151,7 +151,8 @@ internal sealed class RepositoryStarterBinder
         string repositoryId,
         string documentationRoot,
         RepositoryClassification classification,
-        bool workspaceAuthority = false)
+        bool workspaceAuthority = false,
+        IReadOnlyDictionary<string, IReadOnlyList<IReadOnlyList<string>>>? observedSeeds = null)
     {
         var selections = new List<RepositoryStarterSelection>();
         var artifacts = new List<RepositoryStarterArtifact>();
@@ -166,12 +167,13 @@ internal sealed class RepositoryStarterBinder
         AddStandardsGovernance(repositoryId, documentationRoot, classification, selections, artifacts);
         AddImplementationSkillPacks(repositoryId, documentationRoot, classification, selections, artifacts);
         AddAgentGuidance(documentationRoot, classification, selections, artifacts);
-        var referenceSeeds = RepositoryReferenceSeeder.Seed(repositoryPath, classification);
+        var referenceSeeds = observedSeeds ?? RepositoryReferenceSeeder.Seed(repositoryPath, classification);
 
         // The authority owns the cross-repository vocabulary and may precede every implementation
         // repository in a greenfield workspace. Seed its complete governed starter set; participant
         // repositories remain classification-selected so they do not receive irrelevant contracts.
-        foreach (var family in ReferenceFamilies.Where(family => workspaceAuthority || family.Applies(classification)))
+        foreach (var family in ReferenceFamilies.Where(family => workspaceAuthority || family.Applies(classification)
+                     || referenceSeeds.GetValueOrDefault(family.Slug)?.Count > 0))
         {
             var definition = $"reference.{family.Slug}";
             var evidence = EvidenceForFamily(family.Slug, classification);
@@ -190,6 +192,17 @@ internal sealed class RepositoryStarterBinder
                 .Select(group => group.First())
                 .OrderBy(artifact => artifact.RelativePath, StringComparer.OrdinalIgnoreCase)
                 .ToArray());
+    }
+
+    internal static IReadOnlyList<RepositoryStarterArtifact> BindWorkspaceReferences(string repositoryId,
+        string documentationRoot, IReadOnlyDictionary<string, IReadOnlyList<IReadOnlyList<string>>> seeds)
+    {
+        var artifacts = new List<RepositoryStarterArtifact>();
+        foreach (var family in ReferenceFamilies)
+            AddReferenceFamily(repositoryId, documentationRoot,
+                family with { Columns = family.Columns.Concat(["Repository"]).ToArray() },
+                seeds.GetValueOrDefault(family.Slug) ?? [], artifacts);
+        return artifacts;
     }
 
     private static void AddRepositoryProfile(
@@ -1735,6 +1748,15 @@ internal sealed class RepositoryStarterBinder
         var referencePath = $"{documentationRoot}/references/{family.Slug}.md";
         var specId = $"{repositoryId}:spec:{family.Slug}";
         var referenceId = $"{repositoryId}:reference:{family.Slug}";
+        var referenceContent = CreateReferenceDocument(family, referenceId, specId, rows);
+        if (family.Slug == "erd")
+        {
+            var diagrams = ErdDiagramRenderer.Render(referenceContent, repositoryId);
+            referenceContent = diagrams.Markdown;
+            foreach (var asset in diagrams.Assets)
+                artifacts.Add(new RepositoryStarterArtifact($"{definition}.diagram.{Path.GetFileNameWithoutExtension(asset.RelativePath)}",
+                    definition, $"{documentationRoot}/references/{asset.RelativePath}", asset.Content, null));
+        }
         artifacts.Add(new RepositoryStarterArtifact(
             $"{definition}.spec",
             definition,
@@ -1750,7 +1772,7 @@ internal sealed class RepositoryStarterBinder
             $"{definition}.reference",
             definition,
             referencePath,
-            CreateReferenceDocument(family, referenceId, specId, rows),
+            referenceContent,
             new CatalogArtifactEntry(
                 referenceId,
                 referencePath,
@@ -3406,6 +3428,14 @@ internal sealed class RepositoryStarterBinder
 
         # Govern Overall Solution Design
 
+        For an imported existing product, `cis agent discover solution-design` prepares a local evidence
+        preview and review-only scaffold; `cis agent author solution-design` infers the architecture bundle
+        from selected owned repositories and the current BRD/technical intent. This draft-only path may run
+        while upstream documents are under review. It does not grant approval or weaken the ordinary gates
+        below. Inspect every implementation area, preserve human notes and stable component IDs, keep source
+        citations in comments, and distinguish observed, proposed and unresolved facts. Run
+        `cis definition prepare --page architecture` after authoring to render its four SVG views.
+
         1. Confirm `cis technical-intent status --workspace <workspace>` is Active, valid, and current.
         2. Run `cis solution-design init --workspace <workspace> --format agent`.
         3. Review `architecture/overall-solution-design.md` for system context, logical topology, data ownership, integration, trust, deployment, recovery, verification, traceability, and a bounded UI-design handoff.
@@ -3956,6 +3986,9 @@ internal sealed class RepositoryStarterBinder
         - Treat BRDs, domain-equivalent product-design documents such as GDDs, and development feature specifications found in product-owned repositories as source evidence until a human assesses each source row. Dependency documents belong to another product authority and are excluded.
         - File existence, deterministic extraction, graph freshness, or agent review never proves business currency.
         - Complete business outcomes, scope, actors, capabilities, requirements, constraints, success measures, traceability, and open questions through human review.
+        - Write a connected, plain-language narrative of how the product works for business and product stakeholders, including nontechnical readers. Explain participants, end-to-end journeys, business rules, operating variations, exceptions and outcomes. Keep requirement identities and business-readable acceptance conditions; endpoint, DTO, guard and schema inventories cannot substitute for the narrative.
+        - For imported products, use CIS's digest-bound implementation snapshots and coverage indexes. Trace entrypoints through called services, validations, states, integrations and related tests before drafting. Keep a hidden coverage row for every indexed source area, cite actual files, and identify gaps explicitly. Repository documents and declarations are supporting navigation/context. Do not ask stakeholders to supply behaviour that can be established from implementation; distinguish current behaviour from intended policy and deployed configuration.
+        - Keep every link, URL, source ID, anchor, path, digest and technical evidence mapping inside HTML comments, including mappings under Traceability. The rendered BRD must stand on its own without citation markers or source tables. Preserve protected managed blocks exactly; CIS controls their hidden presentation. Review narrative quality during the initial independent review, without deferring it until stakeholder questions are answered.
         - A controller may delegate a Review Required draft with `cis agent author brd --reference <file> --provider <provider> --actor <human>`. CIS reads bounded plain text or extracts bounded text from Word Open XML (`.docx`), binds the original selected evidence by digest, runs in an isolated scratch repository, and applies only an exact one-file BRD diff whose frontmatter and managed blocks remain unchanged.
         - After an agent-authored draft, prefer a different review-capable provider through `cis agent review brd`. Keep the run read-only and isolated, disclose extracted authoring references only with explicit authority, and treat every finding as advisory evidence rather than approval or stakeholder fact.
         - For review findings, use `cis brd review init/status/decide`. Require a named human to approve each recommendation as written or with exact edited text, without a separate rationale or aggregate approval. The final decision mechanically locks the set; `cis brd review approve` is legacy recovery only. Agents never receive disposition authority.

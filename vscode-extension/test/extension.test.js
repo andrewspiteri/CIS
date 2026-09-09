@@ -34,6 +34,7 @@ const extension = require('../extension');
 Module._load = originalLoad;
 const { hasExistingRepositoryEvidence, repositoryMetadata } = require('../lib/views');
 const { AuthoritySelector } = require('../lib/authority');
+const { doctorFixId, parseDoctorCommand, assertDoctorScope } = require('../lib/doctor-commands');
 const { CisCli, foregroundFailureMessage, isCacheableQuery, safeCommandDisplay } = require('../lib/cis-cli');
 const { projectChangeOverview } = require('../lib/projections');
 const { documentStatus, isActiveCurrent, isReadyForApproval, linkedFeatureItems, nextStartableItem, productPaths, stateOf } = require('../lib/product-journey');
@@ -303,6 +304,72 @@ test('tree honors the initialized documentation root', () => {
     assert.equal(metadata.id, 'fixture');
     assert.equal(metadata.documentationPath, path.join(root, 'custom-docs'));
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('single-folder authority selection opens the picker and recovers from a removed folder', async () => {
+  const folder = { name: 'docs', uri: vscode.Uri.file('C:\\repos\\docs') };
+  const storage = state();
+  await storage.update('cis.authorityFolderUri', 'file://removed');
+  let picks = 0;
+  const selector = new AuthoritySelector({ workspace: { workspaceFolders: [folder] }, window: {
+    showQuickPick: async items => { picks++; return items[0]; },
+  } }, storage);
+  assert.equal(selector.root(), folder.uri.fsPath);
+  assert.equal(await selector.choose(), folder);
+  assert.equal(picks, 1);
+  assert.equal(storage.get('cis.authorityFolderUri'), folder.uri.toString());
+});
+
+test('wizard reports incompatible CLI evidence and allows large workspace status queries to finish', async () => {
+  const calls = [];
+  const cli = { query: async (args, options) => {
+    calls.push({ args, options });
+    return args[0] === 'definition' ? { pages: [], errors: ["Unsupported workspace schema version '2'."] } : {};
+  } };
+  await assert.rejects(extension.definitionWizardModel(cli, 'C:\\repo'), /Unsupported workspace schema version '2'/u);
+  assert.equal(calls.find(call => call.args[0] === 'definition').options.timeout, 300_000);
+  await assert.rejects(extension.definitionWizardModel({ query: async () => { throw new Error('CIS timed out'); } }, 'C:\\repo'), /CIS timed out/u);
+  calls.length = 0;
+  const initialized = { sessionId: 'DEF-1', pages: [{ id: 'foundation' }] };
+  const model = await extension.definitionWizardModel(cli, 'C:\\repo', initialized);
+  assert.equal(model.sessionId, 'DEF-1');
+  assert.equal(calls.some(call => call.args[0] === 'definition'), false);
+});
+
+test('wizard reuses bundled questionnaires instead of launching two more status processes', async () => {
+  const calls = [];
+  const base = { pages: [{ id: 'technical' }], technicalQuestions: { status: 'missing', questions: [] },
+    uiQuestions: { status: 'blocked', questions: [{ id: 'UI-Q-1', question: 'Theme?' }] } };
+  const cli = { query: async (args, options) => {
+    calls.push(args.slice(0, 3).join(' '));
+    assert.equal(options.acceptStructuredFailure, true);
+    assert.equal(options.interactive, true);
+    return args[0] === 'definition' ? base : { questions: [] };
+  } };
+  const model = await extension.definitionWizardModel(cli, 'C:\\repo');
+  assert.equal(model.technicalQuestions, base.technicalQuestions);
+  assert.equal(model.uiQuestions, base.uiQuestions);
+  assert.deepEqual(calls, ['definition status --workspace', 'brd questions guidance']);
+});
+
+test('Doctor commands preserve quoted arguments, reject shell/templates, and bind exact fixes to their scope', () => {
+  assert.deepEqual(parseDoctorCommand('cis repo init --root "docs/product authority" --dry-run'),
+    ['repo', 'init', '--root', 'docs/product authority', '--dry-run']);
+  assert.deepEqual(parseDoctorCommand('cis graph build --repo "C:\\work\\product docs"'),
+    ['graph', 'build', '--repo', 'C:\\work\\product docs']);
+  for (const command of ['cis graph build; whoami', 'cis graph build && whoami', 'cis graph build | more',
+    'cis index build --provider <id>', 'cis index build --provider "<id>"', 'cis graph build\nwhoami',
+    'powershell -Command whoami', 'cis graph build "unfinished', 'cis $(whoami)', 'cis'])
+    assert.throws(() => parseDoctorCommand(command), undefined, command);
+  const first = { code: 'SAME', fixCommand: 'cis graph build' };
+  const second = { code: 'SAME', fixCommand: 'cis index build' };
+  assert.notEqual(doctorFixId(first), doctorFixId(second));
+  assert.equal(doctorFixId(first), doctorFixId({ ...first }));
+  const root = path.resolve('authority');
+  assert.doesNotThrow(() => assertDoctorScope(['graph', 'build', '--workspace', root], root));
+  assert.doesNotThrow(() => assertDoctorScope(['graph', 'build', '--repo', '.'], root));
+  assert.throws(() => assertDoctorScope(['graph', 'build', '--repo', '..'], root), /another repository/u);
+  assert.throws(() => assertDoctorScope(['graph', 'build', '--workspace=../other'], root), /another repository/u);
 });
 
 test('workspace boundary helpers preserve explicit ecosystem and product identity', () => {
@@ -1176,6 +1243,8 @@ test('markdown routing is deterministic, bounded, and only returns safe Markdown
     fs.mkdirSync(path.join(root, 'node_modules'));
     fs.writeFileSync(path.join(root, 'node_modules', 'bad.md'), '# bad');
     assert.deepEqual(extension.markdownFiles(vscode, root, true).map(item => item.label), ['a', 'b']);
+    fs.writeFileSync(path.join(root, 'erd.md'), '# ERD');
+    assert.equal(extension.markdownFiles(vscode, root, true).find(item => item.label === 'erd').command.command, 'cis.preview');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -1363,6 +1432,7 @@ test('high-level definition wizard renders all eight revisable pages and one con
       status: 'Answered', answer: 'Inter.' }] },
     diagrams: [{ title: 'System context', sourceFormat: 'Mermaid', relativePath: 'docs/cis/architecture/high-level-architecture-diagrams.md' }],
     dictionaries: [{ title: 'API dictionary', applicable: true, entryCount: 2, relativePath: 'docs/cis/references/api-dictionary.md' },
+      { kind: 'erd', title: 'Entity Relationship Diagram', applicable: true, entryCount: 12, relativePath: 'docs/cis/references/erd.md' },
       { title: 'Mobile route map', applicable: false, entryCount: 0, relativePath: 'docs/cis/references/mobile-route-map.md' }],
     preview: { svgRelativePath: 'docs/cis/design/ui-system-preview.svg', fontFamily: 'Inter', density: 'comfortable', radius: '6px' },
   };
@@ -1376,10 +1446,34 @@ test('high-level definition wizard renders all eight revisable pages and one con
   }
   assert.match(rendered.foundation, /Repository Doctor/u);
   assert.match(rendered.business, /Draft from references/u);
+  assert.match(rendered.business, /data-value="infer-brd" disabled/u);
+  assert.doesNotMatch(rendered.business, /data-command="prepare"/u);
+  const inferenceHtml = renderDefinitionWizardHtml(webview, root, { ...model,
+    businessInference: { canDraft: true, repositories: [{ id: 'backend <existing>', repositoryPath: root, graphFreshness: 'fresh' }],
+      lastPreparation: [{ repositoryPath: root, inventories: [{ kind: 'data-dictionary', path: 'docs/data-dictionary.md', discoveredRows: 125, action: 'refreshed' }], warnings: ['Review <unknown> constraints'] }] },
+  }, 'business', 'wizard-nonce', vscode);
+  assert.match(inferenceHtml, /Prepare existing-system context/u);
+  assert.match(inferenceHtml, /data-command="open-business-dictionary" data-value="0:0"/u);
+  assert.match(inferenceHtml, /125/u);
+  assert.match(inferenceHtml, /Review &lt;unknown&gt; constraints/u);
+  assert.match(inferenceHtml, /Infer from existing project/u);
+  assert.match(inferenceHtml, /backend &lt;existing&gt;/u);
+  assert.doesNotMatch(inferenceHtml, /data-value="infer-brd" disabled/u);
   assert.match(rendered.technical, /Modular monolith\./u);
   assert.match(rendered.technical, /data-save-question="TI-Q-1"/u);
   assert.match(rendered.architecture, /System context/u);
+  assert.match(rendered.architecture, /data-command="infer-solution-design" disabled/u);
+  const architectureHtml = renderDefinitionWizardHtml(webview, root, { ...model,
+    businessInference: { repositories: [{ id: 'backend', repositoryPath: root }] },
+    diagrams: [{ title: 'System <context>', sourceFormat: 'svg', relativePath: 'docs/cis/architecture/high-level-architecture-diagrams.md',
+      svgRelativePath: 'docs/cis/architecture/architecture-diagrams/system-context.svg' }],
+  }, 'architecture', 'wizard-nonce', vscode);
+  assert.doesNotMatch(architectureHtml, /data-command="infer-solution-design" disabled/u);
+  assert.match(architectureHtml, /<img src="webview:/u);
+  assert.match(architectureHtml, /alt="System &lt;context&gt;"/u);
+  assert.match(architectureHtml, /Preview diagrams at full size/u);
   assert.match(rendered.contracts, /API dictionary/u);
+  assert.match(rendered.contracts, /Preview entity diagrams/u);
   assert.match(rendered.experience, /ui-system-preview\.svg/u);
   assert.match(rendered.delivery, /repository routing/u);
   assert.match(rendered.review, /7\/7 pages complete/u);
@@ -1390,7 +1484,7 @@ test('high-level definition wizard renders all eight revisable pages and one con
   assert.match(rendered.review, /const vscode=acquireVsCodeApi/u);
 });
 
-test('Repository Doctor page presents grouped findings, evidence, possible fixes, and copy-only commands', () => {
+test('Repository Doctor page presents grouped findings, evidence, and explicit run/copy commands', () => {
   const html = renderDoctorHtml({ cspSource: 'vscode-webview:' }, {
     status: 'errors', repositoryPath: 'C:\\repo', documentationRoot: 'docs/cis',
     errorCount: 1, warningCount: 1, informationCount: 1,
@@ -1416,7 +1510,8 @@ test('Repository Doctor page presents grouped findings, evidence, possible fixes
   assert.match(html, /Review and reconcile the generated baseline\./u);
   assert.match(html, /Fixability: Manual/u);
   assert.match(html, /cis repo init --root docs\/cis --accept-current --yes/u);
-  assert.match(html, /data-command="copy-fix" data-value="CIS-REPO-003"/u);
+  assert.match(html, /data-command="copy-fix" data-value="[a-f0-9]{64}"/u);
+  assert.match(html, /data-command="run-fix" data-value="[a-f0-9]{64}" >Run command/u);
   assert.match(html, /data-command="open-path" data-value="docs\/cis\/specs\/technical-intent-spec\.md"/u);
   assert.match(html, /data-command="refresh"/u);
   assert.match(html, /never executed automatically/u);
@@ -1655,17 +1750,18 @@ test('TC-VSC-011-001 TC-VSC-020-001 TC-VSC-023-001 Runs projection keeps agent, 
 // Trace: TC-VSC-002-001, TC-VSC-016-001, TC-VSC-018-001.
 test('TC-VSC-002-001 TC-VSC-016-001 TC-VSC-018-001 Workspace Welcome projection distinguishes no-folder, untrusted, and incompatible CLI states', async () => {
   const noFolder = new extension.CisViewProvider(vscode, 'workspace', { root: () => undefined, needsSelection: () => false }, {});
-  assert.equal((await noFolder.getChildren())[0].label, 'Open a repository folder');
+  assert.equal((await noFolder.getChildren())[0].command.command, 'cis.gettingStarted');
+  assert.equal((await noFolder.getChildren())[1].label, 'Open a repository folder');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cis-vscode-'));
   try {
     const authority = { root: () => root, needsSelection: () => false };
     vscode.workspace.isTrusted = false;
     const untrusted = new extension.CisViewProvider(vscode, 'workspace', authority, {});
-    assert.equal((await untrusted.getChildren())[0].label, 'Workspace is untrusted');
+    assert.equal((await untrusted.getChildren())[1].label, 'Workspace is untrusted');
     vscode.workspace.isTrusted = true;
     const incompatible = new extension.CisViewProvider(vscode, 'workspace', authority,
       { version: async () => ({ raw: '1.0.0', compatible: false }) });
-    assert.match((await incompatible.getChildren())[0].label, /incompatible/u);
+    assert.match((await incompatible.getChildren())[1].label, /incompatible/u);
   } finally { vscode.workspace.isTrusted = true; fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -1683,8 +1779,8 @@ test('existing source repository is routed through import while an empty project
       version: async () => ({ raw: '0.3.0', compatible: true }),
     });
     const items = await provider.getChildren();
-    assert.deepEqual(items.map(item => item.label), ['Existing repository is not imported', 'Import existing repository']);
-    assert.equal(items[1].command.command, 'cis.repoImport');
+    assert.deepEqual(items.map(item => item.label), ['Getting Started', 'Existing repository is not imported', 'Import existing repository']);
+    assert.equal(items[2].command.command, 'cis.repoImport');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -1899,9 +1995,13 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
   const originalRelativePattern = vscode.RelativePattern;
   const originalViewColumn = vscode.ViewColumn;
   const originalStatusBarAlignment = vscode.StatusBarAlignment;
+  const originalProgressLocation = vscode.ProgressLocation;
   const originalEnv = vscode.env;
   const registered = new Map();
   const treeProviders = new Map();
+  const statusBar = { show() {}, dispose() {} };
+  let needsAuthority = true;
+  let selectedRoot = root;
   const foreground = [];
   const queries = [];
   const panels = [];
@@ -1915,9 +2015,16 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
   let reviewApproved = false;
   let technicalQuestionsInitialized = false;
   let definitionSession = false;
+  let latestDefinition;
   let featureApproved = false;
   let aiMode = 'local';
   let openDialogOptions;
+  let authorityPlanBlocked = false;
+  let authorityConfirmation = 'Initialize authority';
+  let cancelInference = false;
+  let authoringConfirmation = 'Start BRD draft';
+  let referenceSelections = 0;
+  let switchAuthorityDuringInference = false;
   const promptValue = prompt => {
     if (/documentation root/iu.test(prompt)) return 'docs/cis';
     if (/Search bounded/iu.test(prompt)) return 'agent provider';
@@ -1978,6 +2085,7 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
     configuration.actorIdentity = 'Andrew Spiteri';
     vscode.ViewColumn = { Active: 1 };
     vscode.StatusBarAlignment = { Left: 1 };
+    vscode.ProgressLocation = { Notification: 15 };
     vscode.env = { clipboard: { writeText: async value => clipboardWrites.push(value) } };
     vscode.RelativePattern = class { constructor(base, pattern) { this.base = base; this.pattern = pattern; } };
     vscode.workspace.workspaceFolders = [{ name: 'fixture', uri: vscode.Uri.file(root) }];
@@ -2000,19 +2108,24 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
     vscode.window = {
       createOutputChannel: () => ({ append() {}, appendLine: value => outputLines.push(value), show() { this.shown = true; }, dispose() {} }),
       registerTreeDataProvider: (id, provider) => { treeProviders.set(id, provider); return { dispose() {} }; },
-      createStatusBarItem: () => ({ show() { this.visible = true; }, dispose() {} }),
+      createStatusBarItem: () => statusBar,
+      withProgress: async (_options, operation) => operation(),
       showInputBox: async options => promptValue(options.prompt || ''),
       showOpenDialog: async options => {
+        referenceSelections += 1;
         openDialogOptions = options;
         return options.canSelectFiles === false ? [vscode.Uri.file(root)] : [vscode.Uri.file(reference)];
       },
-      showQuickPick: async items => Array.isArray(items) && items.includes('Complete') ? 'Complete' : items[0],
-      showWarningMessage: async (_message, _options, action) => action,
+      showQuickPick: async (items, options) => options?.canPickMany
+        ? cancelInference ? undefined : items
+        : Array.isArray(items) && items.includes('Complete') ? 'Complete' : items[0],
+      showWarningMessage: async (message, _options, action) => message === 'Initialize this CIS authority?' ? authorityConfirmation
+        : action === 'Start BRD draft' ? authoringConfirmation : action,
       showInformationMessage: async () => undefined,
       showErrorMessage: async () => 'Show output',
       showTextDocument: async (uri, options) => opened.push({ id: 'text', uri, options }),
       createWebviewPanel: (kind, title, _column, options) => {
-        const panel = { kind, title, options, webview: { cspSource: 'vscode-webview:', html: '',
+        const panel = { kind, title, options, reveal() { this.revealed = true; }, onDidDispose(handler) { this.dispose = handler; }, webview: { cspSource: 'vscode-webview:', html: '',
           asWebviewUri: uri => ({ toString: () => `webview://${uri.fsPath}` }),
           onDidReceiveMessage(handler) { this.message = handler; } } };
         panels.push(panel); return panel;
@@ -2020,30 +2133,37 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
     };
 
     const authority = {
-      root: () => root,
-      needsSelection: () => false,
-      choose: async () => ({ uri: vscode.Uri.file(root) }),
+      root: () => selectedRoot,
+      needsSelection: () => needsAuthority,
+      choose: async () => { needsAuthority = false; return { uri: vscode.Uri.file(root) }; },
       clear: async () => {},
     };
     const fakeCli = {
       version: async () => ({ raw: '0.3.0', compatible: true }),
       query: async args => {
         const key = args.join(' '); queries.push(key);
+        if (key.startsWith('workspace init ') && args.includes('--dry-run'))
+          return { status: authorityPlanBlocked ? 'invalid' : 'planned', errors: authorityPlanBlocked ? ['Fixture collision'] : [],
+            collisions: [], repositoryInitialization: { filesToCreate: ['docs/README.md'] } };
         if (key.startsWith('definition init --workspace ')) {
           definitionSession = true;
-          return { status: 'initialized', sessionId: 'DEF-1', pages: [] };
+          return { ...await fakeCli.query(['definition', 'status', '--workspace', root]), status: 'initialized' };
         }
         if (key.startsWith('definition answer --page ') || key.startsWith('definition prepare --page '))
-          return { status: 'prepared', sessionId: 'DEF-1', pages: [] };
+          return { ...latestDefinition, status: 'prepared' };
         if (key.startsWith('definition status --workspace ')) {
           const pageNames = [
             ['foundation', 'Project foundation'], ['business', 'Business definition'], ['technical', 'Technical direction'],
             ['architecture', 'Solution architecture and diagrams'], ['contracts', 'Contracts and dictionaries'],
             ['experience', 'Experience direction and UI preview'], ['delivery', 'Delivery map'], ['review', 'Review and activate'],
           ];
-          return {
+          return latestDefinition = {
             status: 'status', sessionId: definitionSession ? 'DEF-1' : null, active: definitionSession,
             authorityRepositoryId: 'fixture', workspacePath: root, readyToActivate: true,
+            businessInference: { canDraft: true, repositories: [
+              { id: 'api', repositoryPath: path.join(root, 'api'), graphFreshness: 'fresh' },
+              { id: 'web', repositoryPath: path.join(root, 'web'), graphFreshness: 'stale' },
+            ] },
             pages: pageNames.map(([id, title], index) => ({ id, title, ordinal: index + 1, status: 'Ready for Approval',
               complete: true, current: true, primaryPath: `docs/${id}.md`, artifactPaths: [`docs/${id}.md`], issues: [] })),
             dictionaries: [{ title: 'API dictionary', applicable: true, entryCount: 1, relativePath: 'docs/references/api-dictionary.md' }],
@@ -2084,7 +2204,7 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
             approvedRecommendation: reviewDecision === 'accepted' ? 'Clarify the bounded scope with explicit evidence.' : undefined,
             decision: reviewDecision }] },
         };
-        if (key === 'repo doctor') return { status: 'warnings', errorCount: 0, warningCount: 1, informationCount: 0,
+        if (key === 'repo doctor' || key === 'repo doctor --refresh') return { status: 'warnings', errorCount: 0, warningCount: 1, informationCount: 0,
           repositoryPath: root, documentationRoot: 'docs', ollama: { isAvailable: true, models: ['local-model'] }, findings: [
             { code: 'CIS-INDEX-001', severity: 'warning', category: 'file-index', message: 'Routing cards are unavailable.',
               evidence: ['docs/changes/CIS-0001/proposal.md'], suggestedFix: 'Build a bounded batch.', fixCommand: 'cis index build --limit 100', fixability: 'review-required' },
@@ -2145,6 +2265,8 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
       },
       runForeground: async (title, args, options) => {
         foreground.push({ title, args, options });
+        if (switchAuthorityDuringInference && args.join(' ') === `definition prepare --page business --workspace ${root}`)
+          selectedRoot = path.join(root, 'another-authority');
         if (args[0] === 'definition' && args[1] === 'activate') definitionSession = false;
         if (args[0] === 'workspace' && args[1] === 'init') fs.writeFileSync(path.join(root, '.cis', 'workspace.yml'), 'schema_version: 2\necosystem:\n  id: fixture\n  name: fixture\nproduct:\n  id: fixture\n  name: fixture\nrepositories:\n- id: fixture\n  path: .\n  documentation_root: docs\n  role: authority\n  participation: owned\n  relationship: none\n  components: []\n');
         if (args[0] === 'brd' && args[1] === 'init') fs.writeFileSync(brd, '---\nstatus: Review Required\n---\n# BRD\n');
@@ -2163,16 +2285,50 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
 
     assert.equal(treeProviders.size, 6);
     assert.ok(registered.size >= 25);
+    const startupQueries = queries.length;
+    await registered.get('cis.gettingStarted')();
+    const gettingStartedPanel = panels.find(panel => panel.kind === 'cis.gettingStarted');
+    assert.ok(gettingStartedPanel);
+    assert.match(gettingStartedPanel.webview.html, /Authority initialized/u);
+    await registered.get('cis.gettingStarted')();
+    assert.equal(panels.filter(panel => panel.kind === 'cis.gettingStarted').length, 1);
+    assert.equal(gettingStartedPanel.revealed, true);
+    await gettingStartedPanel.webview.message({ command: 'guide' });
+    assert.ok(opened.some(item => item.id === 'markdown.showPreview' && item.args[0].fsPath.endsWith('GETTING_STARTED.md')));
+    await gettingStartedPanel.webview.message({ command: 'initialize' });
+    assert.equal(queries.length, startupQueries, 'Opening the page and guide or reinitializing a ready authority cannot launch queries');
+    assert.equal(foreground.length, 0);
     await registered.get('cis.refresh')();
+    assert.equal(statusBar.command, 'cis.selectAuthority');
     await registered.get('cis.selectAuthority')();
+    assert.equal(statusBar.command, 'cis.repoDoctor');
     await registered.get('cis.clearAuthority')();
     await registered.get('cis.open')({ file: proposal });
     await registered.get('cis.preview')({ file: proposal });
     await registered.get('cis.repoInit')();
-    await registered.get('cis.repoImport')();
+    await gettingStartedPanel.webview.message({ command: 'import' });
     fs.rmSync(path.join(root, '.cis', 'workspace.yml'));
     fs.rmSync(brd);
     await registered.get('cis.productStart')();
+    fs.rmSync(path.join(root, '.cis', 'workspace.yml'));
+    const beforeAuthorityInit = foreground.length;
+    vscode.workspace.isTrusted = false;
+    await gettingStartedPanel.webview.message({ command: 'initialize' });
+    assert.equal(foreground.length, beforeAuthorityInit);
+    vscode.workspace.isTrusted = true;
+    authorityPlanBlocked = true;
+    await gettingStartedPanel.webview.message({ command: 'initialize' });
+    assert.equal(foreground.length, beforeAuthorityInit, 'A failed dry-run plan must block initialization');
+    authorityPlanBlocked = false; authorityConfirmation = undefined;
+    await gettingStartedPanel.webview.message({ command: 'initialize' });
+    assert.equal(foreground.length, beforeAuthorityInit, 'Cancelling plan confirmation cannot create authority files');
+    authorityConfirmation = 'Initialize authority';
+    await gettingStartedPanel.webview.message({ command: 'initialize' });
+    assert.equal(foreground.length, beforeAuthorityInit + 2);
+    assert.deepEqual(foreground.at(-2).args, ['workspace', 'init', '--repo', root, '--root', 'docs/cis',
+      '--ecosystem', 'fixture', '--product', 'fixture', '--ecosystem-name', 'fixture', '--product-name', 'fixture', '--yes']);
+    assert.deepEqual(foreground.at(-1).args, ['graph', 'build', '--workspace', root]);
+    assert.match(gettingStartedPanel.webview.html, /Authority initialized/u);
     await registered.get('cis.brdValidate')();
     await registered.get('cis.brdApprove')();
     await registered.get('cis.brdAgentDraft')();
@@ -2214,19 +2370,92 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
     await registered.get('cis.uiDirectionInit')();
     await registered.get('cis.uiDirectionValidate')();
     await registered.get('cis.uiDirectionApprove')();
+    await Promise.all([
+      gettingStartedPanel.webview.message({ command: 'wizard' }),
+      registered.get('cis.definitionWizard')(),
+    ]);
+    assert.equal(panels.filter(panel => panel.kind === 'cis.definitionWizard').length, 1);
+    const queriesBeforeReopen = queries.length;
     await registered.get('cis.definitionWizard')();
+    assert.equal(queries.length, queriesBeforeReopen, 'Reopening the same wizard only reveals its existing panel');
+    assert.equal(panels.some(panel => panel.kind === 'cis.repositoryDoctor'), false, 'Opening the wizard must not open Doctor');
     const definitionPanel = panels.find(panel => panel.kind === 'cis.definitionWizard');
-    assert.ok(definitionPanel);
+    assert.ok(definitionPanel, outputLines.join('\n'));
     await definitionPanel.webview.message({ command: 'navigate', value: 'technical' });
     await definitionPanel.webview.message({ command: 'refresh', value: '' });
     await definitionPanel.webview.message({ command: 'save-answer',
       value: JSON.stringify({ page: 'technical', id: 'TI-Q-004', answer: 'Modular monolith with explicit boundaries.' }) });
+    const statusesBeforePrepare = queries.filter(item => item.startsWith('definition status')).length;
+    const preparesBefore = queries.filter(item => item.startsWith('definition prepare')).length;
+    const preparing = definitionPanel.webview.message({ command: 'prepare', value: 'experience' });
     await definitionPanel.webview.message({ command: 'prepare', value: 'experience' });
+    await definitionPanel.webview.message({ command: 'refresh' });
+    await preparing;
+    assert.equal(queries.filter(item => item.startsWith('definition prepare')).length, preparesBefore + 1);
+    assert.equal(queries.filter(item => item.startsWith('definition status')).length, statusesBeforePrepare,
+      'The prepared status is reused instead of starting a second full status process');
     await definitionPanel.webview.message({ command: 'open-path', value: 'docs/specs/technical-intent-spec.md' });
+    fs.mkdirSync(path.join(root, 'docs', 'references'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'docs', 'references', 'erd.md'), '# ERD');
+    await definitionPanel.webview.message({ command: 'open-path', value: 'docs/references/erd.md' });
+    assert.ok(opened.some(item => item.id === 'markdown.showPreview' && item.args[0].fsPath.endsWith('erd.md')));
     await definitionPanel.webview.message({ command: 'business-action', value: 'open-brd' });
     await definitionPanel.webview.message({ command: 'business-action', value: 'doctor' });
     await definitionPanel.webview.message({ command: 'business-action', value: 'evidence' });
     await definitionPanel.webview.message({ command: 'business-action', value: 'questions' });
+    const beforeInference = foreground.length;
+    const selectionsBeforeInference = referenceSelections;
+    cancelInference = true;
+    await definitionPanel.webview.message({ command: 'business-action', value: 'infer-brd' });
+    assert.equal(foreground.length, beforeInference, 'Cancelling repository selection cannot start inference');
+    cancelInference = false;
+    authoringConfirmation = undefined;
+    await registered.get('cis.brdInferFromProject')();
+    assert.equal(foreground.length, beforeInference, 'Declining provider disclosure cannot refresh graphs or author the BRD');
+    authoringConfirmation = 'Start BRD draft';
+    await Promise.all([
+      definitionPanel.webview.message({ command: 'business-action', value: 'infer-brd' }),
+      registered.get('cis.brdInferFromProject')(),
+    ]);
+    assert.equal(referenceSelections, selectionsBeforeInference, 'Imported repository inference must not open a reference file picker');
+    assert.deepEqual(foreground.slice(beforeInference).map(item => item.args), [
+      ['definition', 'prepare', '--page', 'business', '--workspace', root],
+      ['agent', 'author', 'brd', '--provider', 'codex', '--transport', 'app-server', '--actor', 'Andrew Spiteri',
+        '--reference', path.join(root, 'api'), '--reference', path.join(root, 'web')],
+      ['graph', 'build', '--repo', root],
+    ]);
+    assert.match(definitionPanel.webview.html, /Infer your business definition/u);
+    await definitionPanel.webview.message({ command: 'navigate', value: 'technical' });
+    assert.match(definitionPanel.webview.html, /Infer from existing repositories/u);
+    const beforeTechnicalInference = foreground.length;
+    await Promise.all([
+      definitionPanel.webview.message({ command: 'infer-technical-intent' }),
+      registered.get('cis.technicalIntentInferFromProject')(),
+    ]);
+    assert.deepEqual(foreground.slice(beforeTechnicalInference).map(item => item.args), [
+      ['agent', 'author', 'technical-intent', '--provider', 'codex', '--transport', 'app-server', '--actor', 'Andrew Spiteri', '--repo', root,
+        '--reference', path.join(root, 'api'), '--reference', path.join(root, 'web')],
+      ['graph', 'build', '--repo', root],
+    ], 'Wizard and command palette share one technical inference run and bind its authority explicitly');
+    await definitionPanel.webview.message({ command: 'navigate', value: 'architecture' });
+    assert.match(definitionPanel.webview.html, /Infer solution architecture from the implementation/u);
+    const beforeArchitectureInference = foreground.length;
+    await Promise.all([
+      definitionPanel.webview.message({ command: 'infer-solution-design' }),
+      registered.get('cis.solutionDesignInferFromProject')(),
+    ]);
+    assert.deepEqual(foreground.slice(beforeArchitectureInference).map(item => item.args), [
+      ['agent', 'author', 'solution-design', '--provider', 'codex', '--transport', 'app-server', '--actor', 'Andrew Spiteri', '--repo', root,
+        '--reference', path.join(root, 'api'), '--reference', path.join(root, 'web')],
+      ['definition', 'prepare', '--page', 'architecture', '--workspace', root],
+      ['graph', 'build', '--repo', root],
+    ], 'Architecture inference runs once, then renders its visual diagrams');
+    const beforeAuthorityChange = foreground.length;
+    switchAuthorityDuringInference = true;
+    await registered.get('cis.brdInferFromProject')();
+    assert.equal(foreground.length, beforeAuthorityChange + 1, 'Changing authority during graph refresh cannot draft into another authority');
+    assert.ok(outputLines.some(line => line.includes('Inference stopped before drafting')));
+    switchAuthorityDuringInference = false; selectedRoot = root;
     await definitionPanel.webview.message({ command: 'activate', value: '' });
     await registered.get('cis.backlogBuild')();
     await registered.get('cis.backlogValidate')();
@@ -2238,7 +2467,20 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
     const doctorPanel = panels.find(panel => panel.kind === 'cis.repositoryDoctor');
     assert.ok(doctorPanel);
     assert.match(doctorPanel.webview.html, /Routing cards are unavailable\./u);
-    await doctorPanel.webview.message({ command: 'copy-fix', value: 'CIS-INDEX-001' });
+    const fixId = doctorFixId({ code: 'CIS-INDEX-001', fixCommand: 'cis index build --limit 100' });
+    await doctorPanel.webview.message({ command: 'copy-fix', value: fixId });
+    const priorRuns = foreground.length;
+    await doctorPanel.webview.message({ command: 'run-fix', value: 'cis graph build' });
+    assert.equal(foreground.length, priorRuns, 'Webview command text cannot be executed');
+    await doctorPanel.webview.message({ command: 'run-fix', value: fixId });
+    assert.equal(foreground.length, priorRuns + 1);
+    assert.deepEqual(foreground.at(-1).args, ['index', 'build', '--limit', '100']);
+    assert.equal(foreground.at(-1).options.cancellable, true);
+    assert.ok(queries.includes('repo doctor --refresh'));
+    selectedRoot = path.join(root, 'another-authority');
+    await doctorPanel.webview.message({ command: 'run-fix', value: fixId });
+    assert.equal(foreground.length, priorRuns + 1, 'An old report cannot run in a new authority');
+    selectedRoot = root;
     await doctorPanel.webview.message({ command: 'open-path', value: 'docs/changes/CIS-0001/proposal.md' });
     await doctorPanel.webview.message({ command: 'refresh', value: '' });
     await registered.get('cis.graphBuild')();
@@ -2339,6 +2581,7 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
     vscode.RelativePattern = originalRelativePattern;
     vscode.ViewColumn = originalViewColumn;
     vscode.StatusBarAlignment = originalStatusBarAlignment;
+    vscode.ProgressLocation = originalProgressLocation;
     vscode.env = originalEnv;
     fs.rmSync(root, { recursive: true, force: true });
   }

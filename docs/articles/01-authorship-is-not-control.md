@@ -1,11 +1,11 @@
 ---
 title: "Authorship Is Not Control"
 type: article
-status: Draft
+status: Active
 series: "Governed Software Change"
 series_order: 1
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-08"
+last_reviewed: "2026-09-09"
 review_cadence: on product or governance change
 summary: "Why faster code production increases the need to govern outcomes, authority, evidence, and acceptance."
 cis:

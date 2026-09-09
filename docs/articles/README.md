@@ -29,7 +29,9 @@ then closes with practical application and product learning.
 The baselines were reconciled on 8 September 2026 against the current product boundary,
 product-definition workflow, direct agent execution, reference governance, editor client,
 and assurance behavior. The remaining short drafts were expanded to full text on
-9 September 2026. They remain Draft until editorial and publication review.
+9 September 2026. The first three articles in the Governed Software Change series
+are Active and publication-ready; the remaining articles stay Draft until editorial
+and publication review.
 
 | Track | Articles | Purpose |
 |---|---:|---|
@@ -54,9 +56,9 @@ Its connective thesis is:
 
 | Order | Working title | Focus | Status |
 |---:|---|---|---|
-| 1 | [Authorship Is Not Control](01-authorship-is-not-control.md) | Why faster code production requires stronger outcome governance | Draft |
-| 2 | [Governance Should Live with the Code](02-governance-should-live-with-the-code.md) | Repository-backed authority, lifecycle, stable identity, and disposable derived state | Draft |
-| 3 | [Start with Intent, Not Implementation](03-start-with-intent-not-implementation.md) | Business and technical intent, drift, and authority gates | Draft |
+| 1 | [Authorship Is Not Control](01-authorship-is-not-control.md) | Why faster code production requires stronger outcome governance | Active |
+| 2 | [Governance Should Live with the Code](02-governance-should-live-with-the-code.md) | Repository-backed authority, lifecycle, stable identity, and disposable derived state | Active |
+| 3 | [Start with Intent, Not Implementation](03-start-with-intent-not-implementation.md) | Business and technical intent, drift, and authority gates | Active |
 | 4 | [Context Should Be Routed, Not Dumped](04-context-should-be-routed-not-dumped.md) | Provenance, bounded retrieval, typed graphs, and fact-versus-inference | Draft |
 | 5 | [Review Impact Before You Plan the Work](05-review-impact-before-you-plan-the-work.md) | Baselines, proposed findings, human disposition, and completeness boundaries | Draft |
 | 6 | [Bound the Work Before You Give It to an Agent](06-bound-the-work-before-you-give-it-to-an-agent.md) | Decisions, task contracts, provider-neutral envelopes, and scope expansion | Draft |
@@ -64,9 +66,9 @@ Its connective thesis is:
 | 8 | [Govern the Learning Loop](08-govern-the-learning-loop.md) | Sanitized feedback, diagnostic evidence, reviewed proposals, and canonical learning | Draft |
 | 9 | [Change Impact Studio in Practice](09-change-impact-studio-in-practice.md) | An end-to-end governed change using the Friends Todo golden path | Draft |
 
-All titles below link to working drafts. Draft status means that claims, examples,
-structure, and tone remain open to editorial review; it does not grant product
-authority.
+All titles link to their canonical repository source. Active marks the current
+publication-ready version; Draft means that claims, examples, structure, and tone
+remain open to editorial review. Neither lifecycle state grants product authority.
 
 ## Repository Knowledge and Context series
 

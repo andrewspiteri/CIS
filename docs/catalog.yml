@@ -544,17 +544,17 @@ documents:
   - id: change-impact-studio:article:authorship-is-not-control
     path: docs/articles/01-authorship-is-not-control.md
     type: article
-    status: draft
+    status: active
     authority: canonical
   - id: change-impact-studio:article:governance-should-live-with-the-code
     path: docs/articles/02-governance-should-live-with-the-code.md
     type: article
-    status: draft
+    status: active
     authority: canonical
   - id: change-impact-studio:article:start-with-intent-not-implementation
     path: docs/articles/03-start-with-intent-not-implementation.md
     type: article
-    status: draft
+    status: active
     authority: canonical
   - id: change-impact-studio:article:context-should-be-routed-not-dumped
     path: docs/articles/04-context-should-be-routed-not-dumped.md

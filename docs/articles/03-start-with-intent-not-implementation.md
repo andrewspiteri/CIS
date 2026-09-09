@@ -1,11 +1,11 @@
 ---
 title: "Start with Intent, Not Implementation"
 type: article
-status: Draft
+status: Active
 series: "Governed Software Change"
 series_order: 3
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-08"
+last_reviewed: "2026-09-09"
 review_cadence: on product or governance change
 summary: "Why business outcomes and technical direction must be current before change analysis and implementation planning begin."
 cis:

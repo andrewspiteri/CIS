@@ -131,9 +131,10 @@ internal static class MarkdownGraphExtractor
     public static IReadOnlyList<string> CreateIdentityParts(
         ReferenceFamilyDefinition family,
         IReadOnlyDictionary<string, string> row)
-        => family.IdentityFields
+        => (string.IsNullOrWhiteSpace(GetValue(row, "Repository")) ? [] : new[] { GetValue(row, "Repository") })
+            .Concat(family.IdentityFields
             .Select(field => GetValue(row, field))
-            .Select(value => value.Trim())
+            .Select(value => value.Trim()))
             .ToArray();
 
     public static string CreateReferenceLocalId(

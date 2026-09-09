@@ -141,6 +141,10 @@ public sealed partial class GraphValidator
     }
 
     public GraphValidationResult Validate(string repositoryPath, bool strict)
+        => GraphReadScope.Read(this, strict ? "validate-strict" : "validate", repositoryPath,
+            () => ValidateCore(repositoryPath, strict));
+
+    private GraphValidationResult ValidateCore(string repositoryPath, bool strict)
     {
         var resolution = _repositoryContextResolver.Resolve(repositoryPath);
         if (!resolution.IsSuccess)
@@ -173,23 +177,37 @@ public sealed partial class GraphValidator
                 graphPath);
         }
 
-        var stored = _store.Read(context.RepositoryPath);
-        if (!stored.Success || stored.Graph is null || stored.Manifest is null)
+        var header = _store.ReadHeader(context.RepositoryPath);
+        if (!header.Success || header.Build is null || header.Manifest is null)
         {
             return Unavailable(
                 context.RepositoryPath,
                 strict,
-                $"SQLite graph generation is empty or incompatible: {stored.Error}. Run `cis graph build`.",
+                $"SQLite graph generation is empty or incompatible: {header.Error}. Run `cis graph build`.",
                 graphPath);
         }
-        var graph = stored.Graph;
-        var manifest = stored.Manifest;
-
-        var diagnostics = new List<CisGraphDiagnostic>(stored.Diagnostics);
-        ValidateGenerationMetadata(context, graph, manifest, diagnostics);
-        var nodesByKey = ValidateNodes(context, graph.Nodes, diagnostics);
-        ValidateEdges(context.RepositoryPath, graph.Edges, nodesByKey, diagnostics);
-        ValidateManifest(context.RepositoryPath, manifest, diagnostics);
+        using var contentHashes = FileContentHashCache.Enter(context.RepositoryPath);
+        var locators = new RepositoryLocators(context.RepositoryPath);
+        var key = GraphValidationCache.Key(context, header.Build.Id, _expectedExtractors);
+        var cached = GraphValidationCache.TryRead(context.RepositoryPath, key, locators.Error, out var structural);
+        var diagnostics = new List<CisGraphDiagnostic>(structural);
+        if (!cached)
+        {
+            var stored = _store.Read(context.RepositoryPath);
+            if (!stored.Success || stored.Graph is null || stored.Manifest is null)
+                return Unavailable(context.RepositoryPath, strict,
+                    $"SQLite graph generation is empty or incompatible: {stored.Error}. Run `cis graph build`.", graphPath);
+            var graph = stored.Graph;
+            header = new(true, graph.Build, stored.Manifest, stored.Diagnostics, graph.Nodes.Count, graph.Edges.Count, null);
+            diagnostics.AddRange(stored.Diagnostics);
+            ValidateGenerationMetadata(context, graph, stored.Manifest, diagnostics);
+            var nodesByKey = ValidateNodes(context, graph.Nodes, locators, diagnostics);
+            ValidateEdges(locators, graph.Edges, nodesByKey, diagnostics);
+            // Do not publish an entry if a concurrent rebuild changed its database or configuration.
+            if (key is not null && key == GraphValidationCache.Key(context, graph.Build.Id, _expectedExtractors))
+                GraphValidationCache.Write(context.RepositoryPath, key, diagnostics, locators.Errors);
+        }
+        ValidateManifest(context.RepositoryPath, header.Manifest!, diagnostics);
         ValidateGitTracking(context.RepositoryPath, diagnostics);
 
         var ordered = diagnostics
@@ -213,14 +231,15 @@ public sealed partial class GraphValidator
             status,
             context.RepositoryPath,
             GraphRelativePath,
-            graph.Build.Id,
+            header.Build!.Id,
             freshness,
-            graph.Nodes.Count,
-            graph.Edges.Count,
+            header.NodeCount,
+            header.EdgeCount,
             ordered,
             strict,
             RepositoryConfigurationValid: true,
-            GraphAvailable: true);
+            GraphAvailable: true,
+            StructureCached: cached);
     }
 
     public GraphValidationResult Status(string repositoryPath)
@@ -370,6 +389,7 @@ public sealed partial class GraphValidator
     private static IReadOnlyDictionary<string, CisGraphNode> ValidateNodes(
         CisRepositoryContext context,
         IReadOnlyList<CisGraphNode> nodes,
+        RepositoryLocators locators,
         ICollection<CisGraphDiagnostic> diagnostics)
     {
         var nodesByKey = new Dictionary<string, CisGraphNode>(StringComparer.Ordinal);
@@ -438,8 +458,8 @@ public sealed partial class GraphValidator
             }
 
             ValidateFacets(node, diagnostics);
-            ValidateLocations(context.RepositoryPath, node, diagnostics);
-            ValidateProvenance(context.RepositoryPath, node.Key, node.Provenance, diagnostics);
+            ValidateLocations(locators, node, diagnostics);
+            ValidateProvenance(locators, node.Key, node.Provenance, diagnostics);
             ValidateSensitiveProperties(node, diagnostics);
             ValidateKindIdentity(node, missingComponentIdentity, diagnostics);
         }
@@ -480,7 +500,7 @@ public sealed partial class GraphValidator
     }
 
     private static void ValidateLocations(
-        string repositoryPath,
+        RepositoryLocators locators,
         CisGraphNode node,
         ICollection<CisGraphDiagnostic> diagnostics)
     {
@@ -496,8 +516,7 @@ public sealed partial class GraphValidator
 
         foreach (var location in node.Locations)
         {
-            ValidateRepositoryPath(
-                repositoryPath,
+            locators.Validate(
                 location.Path,
                 node.Key,
                 "CIS-GRAPH-VALIDATE-LOCATION-002",
@@ -506,7 +525,7 @@ public sealed partial class GraphValidator
     }
 
     private static void ValidateProvenance(
-        string repositoryPath,
+        RepositoryLocators locators,
         string ownerKey,
         IReadOnlyList<CisGraphEvidence> provenance,
         ICollection<CisGraphDiagnostic> diagnostics)
@@ -523,8 +542,7 @@ public sealed partial class GraphValidator
 
         foreach (var evidence in provenance)
         {
-            ValidateRepositoryPath(
-                repositoryPath,
+            locators.Validate(
                 evidence.Path,
                 ownerKey,
                 "CIS-GRAPH-VALIDATE-EVIDENCE-002",
@@ -619,7 +637,7 @@ public sealed partial class GraphValidator
     }
 
     private static void ValidateEdges(
-        string repositoryPath,
+        RepositoryLocators locators,
         IReadOnlyList<CisGraphEdge> edges,
         IReadOnlyDictionary<string, CisGraphNode> nodes,
         ICollection<CisGraphDiagnostic> diagnostics)
@@ -683,7 +701,7 @@ public sealed partial class GraphValidator
                     edge.Key));
             }
 
-            ValidateProvenance(repositoryPath, edge.Key, edge.Observations, diagnostics);
+            ValidateProvenance(locators, edge.Key, edge.Observations, diagnostics);
             ValidateRelationshipDisposition(edge, diagnostics);
         }
     }
@@ -858,33 +876,31 @@ public sealed partial class GraphValidator
             tracked.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)));
     }
 
-    private static void ValidateRepositoryPath(
-        string repositoryPath,
-        string path,
-        string ownerKey,
-        string code,
-        ICollection<CisGraphDiagnostic> diagnostics)
+    private sealed class RepositoryLocators(string repositoryPath)
     {
-        if (string.IsNullOrWhiteSpace(repositoryPath))
+        // Many thousands of facts can cite the same file. Check each locator once,
+        // retaining a separate diagnostic for every affected fact when it is invalid.
+        private readonly Dictionary<string, string?> _errors = new(StringComparer.Ordinal);
+
+        public IReadOnlyDictionary<string, string?> Errors => _errors;
+
+        public string? Error(string path)
         {
-            return;
+            if (!_errors.TryGetValue(path, out var error))
+            {
+                error = !TryResolveRepositoryPath(repositoryPath, path, out var absolutePath)
+                    ? $"Graph locator escapes the repository: {path}"
+                    : !File.Exists(absolutePath) ? $"Graph locator does not resolve to a file: {path}" : null;
+                _errors.Add(path, error);
+            }
+            return error;
         }
 
-        if (!TryResolveRepositoryPath(repositoryPath, path, out var absolutePath))
+        public void Validate(string path, string ownerKey, string code, ICollection<CisGraphDiagnostic> diagnostics)
         {
-            diagnostics.Add(Diagnostic(
-                code,
-                "error",
-                $"Graph locator escapes the repository: {path}",
-                ownerKey));
-        }
-        else if (!File.Exists(absolutePath))
-        {
-            diagnostics.Add(Diagnostic(
-                code,
-                "error",
-                $"Graph locator does not resolve to a file: {path}",
-                ownerKey));
+            if (string.IsNullOrWhiteSpace(repositoryPath)) return;
+            var error = Error(path);
+            if (error is not null) diagnostics.Add(Diagnostic(code, "error", error, ownerKey));
         }
     }
 

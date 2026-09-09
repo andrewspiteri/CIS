@@ -54,6 +54,22 @@ Validation reconstructs the portable graph contract from SQLite only when whole-
 structural inspection is required. Normal graph queries continue to read bounded
 indexed rows.
 
+Successful structural reads are cached in `.cis/local/status/graph-validation.json`,
+keyed by database content, repository configuration, build identity, extractor set,
+and validator version. The JSON result's `structureCached` field reports reuse. Each
+command still checks input freshness, file locators, new inputs, and Git tracking;
+cached structural errors retain their diagnostics and exit codes. Rebuilding or
+editing the database invalidates this cache. Active SQLite journals disable reuse.
+
+On local NTFS volumes, `.cis/local/status/graph-database-hash.json` avoids rereading
+unchanged database contents. Reuse requires matching volume/file identity, size, creation,
+write, and NTFS change times, checked with a handle that denies concurrent writes and
+replacement. Edits that restore the ordinary last-write timestamp are still detected.
+Source inputs are always content-hashed. Unsupported filesystems also hash the database.
+These bounded caches are disposable;
+missing, corrupt, or unwritable caches fall back to ordinary reads. They contain no
+approval decisions and never replace canonical documents.
+
 Input freshness uses the same managed-input normalization as `cis graph build`. Catalog
 and dossier routes owned by CIS therefore do not invalidate the generation that wrote
 them, while human-authored and product-source changes remain visible. Governed lifecycle

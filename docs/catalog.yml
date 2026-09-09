@@ -361,8 +361,23 @@ documents:
     type: command-reference
     status: active
     authority: canonical
+  - id: change-impact-studio:manual:cis-agent-discover-brd
+    path: docs/manual/cis_agent_discover_brd.md
+    type: command-reference
+    status: active
+    authority: canonical
   - id: change-impact-studio:manual:cis-agent-author-feature
     path: docs/manual/cis_agent_author_feature.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-agent-author-technical-intent
+    path: docs/manual/cis_agent_author_technical_intent.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-agent-discover-technical-intent
+    path: docs/manual/cis_agent_discover_technical_intent.md
     type: command-reference
     status: active
     authority: canonical
@@ -2328,6 +2343,16 @@ documents:
     authority: canonical
   - id: change-impact-studio:manual:cis-definition-activate
     path: docs/manual/cis_definition_activate.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-agent-author-solution-design
+    path: docs/manual/cis_agent_author_solution_design.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-agent-discover-solution-design
+    path: docs/manual/cis_agent_discover_solution_design.md
     type: command-reference
     status: active
     authority: canonical

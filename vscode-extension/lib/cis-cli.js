@@ -1,6 +1,7 @@
 'use strict';
 
 const childProcess = require('node:child_process');
+const path = require('node:path');
 const { bound, redact, validateArgument, validateExecutable } = require('./security');
 const { openCommandProgressPanel } = require('./webview');
 
@@ -29,6 +30,7 @@ class CisCli {
     this.processes = processes;
     this.queryCache = new Map();
     this.versionCache = undefined;
+    this.commandQueues = new Map();
   }
 
   executable() {
@@ -54,6 +56,35 @@ class CisCli {
     return validated;
   }
 
+  scheduleCommand(args, root, operation, interactive = false) {
+    // Even status projections can update shared derived evidence. Never overlap
+    // repository commands from this extension for the same authority.
+    const option = name => {
+      const index = args.indexOf(name);
+      return index >= 0 ? args[index + 1] : args.find(arg => arg.startsWith(`${name}=`))?.slice(name.length + 1);
+    };
+    const scope = path.resolve(root || '.', option('--workspace') || option('--repo') || root || '.');
+    const key = process.platform === 'win32' ? scope.toLowerCase() : scope;
+    let queue = this.commandQueues.get(key);
+    if (!queue) { queue = { pending: [], running: false }; this.commandQueues.set(key, queue); }
+    return new Promise((resolve, reject) => {
+      queue.pending.push({ operation, interactive, resolve, reject });
+      if (!queue.running) {
+        queue.running = true;
+        queueMicrotask(() => this.drainQueue(key, queue));
+      }
+    });
+  }
+
+  drainQueue(key, queue) {
+    if (!queue.pending.length) { this.commandQueues.delete(key); return; }
+    // User actions precede pending background refreshes; an active process is never interrupted.
+    const preferred = queue.pending.findIndex(job => job.interactive);
+    const [job] = queue.pending.splice(preferred < 0 ? 0 : preferred, 1);
+    void Promise.resolve().then(() => { this.ensureTrusted(); return job.operation(); })
+      .then(job.resolve, job.reject).then(() => this.drainQueue(key, queue));
+  }
+
   query(args, options = {}) {
     this.ensureTrusted();
     const root = options.repository === false ? this.authority.root() : this.root();
@@ -65,8 +96,8 @@ class CisCli {
     const cached = cacheKey ? this.queryCache.get(cacheKey) : undefined;
     if (cached && (cached.expiresAt === Infinity || cached.expiresAt > Date.now())) return cached.promise;
     if (!cacheable) this.clearQueryCache();
-    this.output.appendLine(`$ ${safeCommandDisplay(executable, commandArgs)}`);
-    const operation = new Promise((resolve, reject) => {
+    const operation = this.scheduleCommand(commandArgs, root, () => new Promise((resolve, reject) => {
+      this.output.appendLine(`$ ${safeCommandDisplay(executable, commandArgs)}`);
       this.processes.execFile(executable, commandArgs,
         { cwd: root, windowsHide: true, timeout, maxBuffer: OUTPUT_LIMIT, shell: false },
         (error, stdout, stderr) => {
@@ -93,7 +124,7 @@ class CisCli {
             return reject(new CisCliError('CIS returned no structured result.', 'invalid-evidence', exitCode));
           resolve({ ...data, _process: { exitCode } });
         });
-    });
+    }), options.interactive === true || !cacheable);
     if (!cacheKey) return operation;
     const entry = { promise: undefined, expiresAt: Infinity };
     entry.promise = operation.then(result => {
@@ -116,7 +147,7 @@ class CisCli {
         && (this.versionCache.expiresAt === Infinity || this.versionCache.expiresAt > Date.now()))
       return this.versionCache.promise;
     const entry = { key, promise: undefined, expiresAt: Infinity };
-    const operation = new Promise((resolve, reject) => {
+    const operation = this.scheduleCommand([], root, () => new Promise((resolve, reject) => {
       this.processes.execFile(executable, ['--version'], { cwd: root, windowsHide: true, timeout: 10_000,
         maxBuffer: 64 * 1024, shell: false }, (error, stdout, stderr) => {
         if (error) return reject(new CisCliError(bound(stderr || error.message, 1024),
@@ -128,7 +159,7 @@ class CisCli {
         version.compatible = version.major === COMPATIBLE_CLI.major && version.minor >= COMPATIBLE_CLI.minimumMinor;
         resolve(version);
       });
-    });
+    }));
     entry.promise = operation.then(result => {
       entry.expiresAt = Date.now() + QUERY_CACHE_TTL_MS;
       return result;
@@ -151,12 +182,12 @@ class CisCli {
     const executable = this.executable();
     this.clearQueryCache();
     const commandArgs = this.arguments(args, { format: options.format || 'agent', repository: options.repository });
-    this.output.appendLine(`$ ${safeCommandDisplay(executable, commandArgs)}`);
-    return this.vscode.window.withProgress({
+    return this.scheduleCommand(commandArgs, root, () => this.vscode.window.withProgress({
       location: this.vscode.ProgressLocation.Notification,
       title,
       cancellable: options.cancellable === true,
     }, (progress, cancellation) => new Promise((resolve, reject) => {
+      this.output.appendLine(`$ ${safeCommandDisplay(executable, commandArgs)}`);
       const started = Date.now();
       const process = this.processes.spawn(executable, commandArgs, { cwd: root, windowsHide: true, shell: false,
         stdio: ['ignore', 'pipe', 'pipe'] });
@@ -210,7 +241,7 @@ class CisCli {
           'command-failed', code, undefined, result));
         resolve(result);
       });
-    }));
+    })), true);
   }
 }
 

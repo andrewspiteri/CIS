@@ -5,7 +5,7 @@ status: Draft
 series: "Governed Software Change"
 series_order: 6
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-25"
+last_reviewed: "2026-09-08"
 review_cadence: on planning or agent-execution change
 summary: "How explicit objectives, non-goals, dependencies, validation, and task envelopes make human and agent execution safer."
 cis:
@@ -112,6 +112,11 @@ The provider is metadata. The same bounded task can be handed to:
 This protects the organization from two forms of lock-in. The task does not depend on a
 provider-specific prompt format, and its authority does not live in one agent's memory.
 
+CIS can also execute eligible tasks directly through an explicitly selected Codex or
+Claude provider. `cis agent run` negotiates the transport, mode, permission ceiling, and
+target; workspace-write execution uses an isolated Git worktree by default. The portable
+provider remains preparation-only, and no provider is selected implicitly.
+
 ## Stale-safe execution matters
 
 Between preparation and result ingestion, the task or repository can change. An agent
@@ -169,3 +174,5 @@ that precedes it.
 - [Core task-type catalogue](../specs/core-task-type-catalog.md)
 - [Execution, assurance, diagnostics, and learning](../specs/execution-assurance-and-learning-spec.md)
 - [Delivery and assurance](../specs/delivery-and-assurance-spec.md)
+- [`cis agent run`](../manual/cis_agent_run.md)
+- [Agent provider profile](../references/agent-provider-profile.md)

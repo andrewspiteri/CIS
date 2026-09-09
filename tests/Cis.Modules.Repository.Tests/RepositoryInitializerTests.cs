@@ -1148,6 +1148,34 @@ public sealed class RepositoryInitializerTests
         Assert.Contains(component.Evidence, item => item.Contains("built-in SQLite", StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Classifier_DetectsAzureFunctionWorkerAndOnlyEvidenceBackedHttpRoles(bool hasHttpTrigger)
+    {
+        using var repository = TemporaryRepository.Create();
+        repository.Write("webhook-dispatcher/package.json",
+            """{"name":"@example/webhook-dispatcher","dependencies":{"@azure/functions":"4.0.0","pg":"8.0.0"}}""");
+        repository.Write("webhook-dispatcher/src/function.ts",
+            "import { app } from '@azure/functions';\napp.serviceBusQueue('dispatch', { handler: async () => fetch('https://example.test') });\n"
+            + (hasHttpTrigger ? "app.http('verify', { handler: async () => ({ status: 200 }) });" : ""));
+
+        var component = Assert.Single(new RepositoryClassifier().Classify(repository.Path).Components);
+
+        Assert.Equal("webhook-dispatcher", component.Root);
+        Assert.Contains("azure-functions", component.Frameworks);
+        Assert.Contains("worker", component.Roles);
+        Assert.Contains("event-consumer", component.Roles);
+        Assert.Contains("backend-api-consumer", component.Roles);
+        Assert.Contains("database", component.Roles);
+        Assert.Contains("events", component.Capabilities);
+        Assert.Contains("persistence", component.Capabilities);
+        Assert.DoesNotContain("shared-library", component.Roles);
+        Assert.Equal(hasHttpTrigger, component.Roles.Contains("backend-api-producer"));
+        Assert.Equal(hasHttpTrigger, component.Capabilities.Contains("routes"));
+        Assert.DoesNotContain("commands", component.Capabilities);
+    }
+
     [Fact]
     public void Classifier_DetectsSeraTailwindAndMotionEvidence()
     {
@@ -2139,6 +2167,29 @@ public sealed class RepositoryInitializerTests
     }
 
     [Fact]
+    public void Initialize_ScopesAngularRouteDeclarationsAndDoesNotInventNextPages()
+    {
+        using var repository = TemporaryRepository.Create();
+        repository.Write("package.json", """{"dependencies":{"@angular/core":"20.0.0"}}""");
+        repository.Write("angular.json", """{"projects":{"admin":{"projectType":"application","root":"","sourceRoot":"src"}}}""");
+        repository.Write("src/app.routes.ts", "import { Routes } from '@angular/router'; const routes: Routes = [{ path: '', redirectTo: 'home' }, { path: '', component: Home }];");
+        repository.Write("src/app/pages/accounts/accounts.routes.ts", "import { Routes } from '@angular/router'; const routes: Routes = [{ path: '', component: Accounts }];");
+        repository.Write("src/app/pages/accounts/account.service.ts", "export class AccountService {}");
+        repository.Write("src/app/pages/accounts/account.spec.ts", "import { Routes } from '@angular/router'; const data = { path: '/uploads/test.csv' };");
+
+        Assert.Equal(0, new RepositoryInitializer().Initialize(new RepositoryInitRequest(
+            repository.Path, "docs/cis", DryRun: false, Confirmed: true)).ExitCode);
+        var map = File.ReadAllText(Path.Combine(repository.Path, "docs/cis/references/screen-route-map.md"));
+
+        Assert.DoesNotContain("Next.js", map, StringComparison.Ordinal);
+        Assert.DoesNotContain("/uploads/test.csv", map, StringComparison.Ordinal);
+        Assert.Contains("path '' @ src/app.routes.ts#route-1", map, StringComparison.Ordinal);
+        Assert.Contains("path '' @ src/app.routes.ts#route-2", map, StringComparison.Ordinal);
+        Assert.Contains("path '' @ src/app/pages/accounts/accounts.routes.ts#route-1", map, StringComparison.Ordinal);
+        Assert.Contains("prefixes are unresolved", map, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Initialize_SeedsReferencesFromDeterministicRepositoryEvidence()
     {
         using var repository = TemporaryRepository.Create();
@@ -2313,9 +2364,10 @@ public sealed class RepositoryInitializerTests
         Assert.Equal(0, plan.ExitCode);
         Assert.Equal(2, plan.Classification!.Components.Count);
         Assert.Contains(".github/instructions/example-worker-csharp.instructions.md", plan.FilesToCreate);
-        Assert.Contains("docs/cis/specs/module-ownership-map-spec.md", plan.FilesToCreate);
+        Assert.True(File.Exists(Path.Combine(repository.Path, "docs/cis/specs/module-ownership-map-spec.md")));
+        Assert.Contains("docs/cis/references/module-ownership-map.md", plan.FilesToUpdate);
         Assert.Contains("docs/cis/references/repository-profile.md", plan.FilesToUpdate);
-        Assert.Contains("docs/cis/catalog.yml", plan.FilesToUpdate);
+        Assert.DoesNotContain("docs/cis/catalog.yml", plan.FilesToUpdate);
         Assert.Contains(".cis/starter-manifest.yml", plan.FilesToUpdate);
     }
 

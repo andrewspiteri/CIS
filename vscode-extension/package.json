@@ -20,9 +20,12 @@
       "restrictedConfigurations": ["cis.executablePath"]
     }
   },
-  "activationEvents": ["onView:cis.workspace", "onView:cis.journey", "onView:cis.changes", "onView:cis.evidence", "onView:cis.runs", "onView:cis.governance", "onCommand:cis.refresh", "onCommand:cis.definitionWizard"],
+  "activationEvents": ["onView:cis.workspace", "onView:cis.journey", "onView:cis.changes", "onView:cis.evidence", "onView:cis.runs", "onView:cis.governance", "onCommand:cis.refresh", "onCommand:cis.definitionWizard", "onCommand:cis.gettingStarted"],
   "contributes": {
     "commands": [
+      { "command": "cis.gettingStarted", "title": "CIS: Getting Started", "icon": "$(book)" },
+      { "command": "cis.openGuide", "title": "CIS: How to Use CIS" },
+      { "command": "cis.authorityInit", "title": "CIS: Initialize Authority" },
       { "command": "cis.refresh", "title": "CIS: Refresh Workspace" },
       { "command": "cis.selectAuthority", "title": "CIS: Select Authority Repository" },
       { "command": "cis.clearAuthority", "title": "CIS: Clear Authority Repository" },
@@ -35,6 +38,7 @@
       { "command": "cis.brdValidate", "title": "CIS: Validate Business Requirements" },
       { "command": "cis.brdApprove", "title": "CIS: Approve Business Requirements" },
       { "command": "cis.brdAgentDraft", "title": "CIS: Draft Business Requirements from Reference with Agent" },
+      { "command": "cis.brdInferFromProject", "title": "CIS: Infer Business Definition from Existing Project" },
       { "command": "cis.brdAgentReview", "title": "CIS: Review Business Requirements with Independent Agent" },
       { "command": "cis.brdReviewRecommendations", "title": "CIS: Disposition BRD Review Recommendations" },
       { "command": "cis.brdAgentRevise", "title": "CIS: Apply Approved BRD Recommendations with Agent" },
@@ -42,9 +46,11 @@
       { "command": "cis.brdAgentIncorporateQuestions", "title": "CIS: Update BRD from Answered Questions with Agent" },
       { "command": "cis.technicalIntentQuestions", "title": "CIS: Define High-Level Technical Direction" },
       { "command": "cis.technicalIntentInit", "title": "CIS: Generate Technical Intent Skeleton" },
+      { "command": "cis.technicalIntentInferFromProject", "title": "CIS: Infer Technical Intent from Existing Repositories" },
       { "command": "cis.technicalIntentValidate", "title": "CIS: Validate Technical Intent" },
       { "command": "cis.technicalIntentApprove", "title": "CIS: Approve Technical Intent" },
       { "command": "cis.solutionDesignInit", "title": "CIS: Generate Overall Solution Design and Component Sheet" },
+      { "command": "cis.solutionDesignInferFromProject", "title": "CIS: Infer Solution Architecture from Existing Repositories" },
       { "command": "cis.solutionDesignValidate", "title": "CIS: Validate Solution-Design Bundle" },
       { "command": "cis.solutionDesignApprove", "title": "CIS: Approve Solution-Design Bundle" },
       { "command": "cis.uiDirectionQuestions", "title": "CIS: Define High-Level UI Look and Feel" },
@@ -101,6 +107,7 @@
     },
     "menus": {
       "view/title": [
+        { "command": "cis.gettingStarted", "when": "view == cis.workspace", "group": "navigation@0" },
         { "command": "cis.refresh", "when": "view =~ /cis\\.(workspace|journey|changes|evidence|runs|governance)/", "group": "navigation" },
         { "command": "cis.selectAuthority", "when": "view == cis.workspace", "group": "navigation@2" },
         { "command": "cis.filterChanges", "when": "view == cis.changes", "group": "navigation@2" },
@@ -127,7 +134,7 @@
     }
   },
   "scripts": {
-    "check": "node --check extension.js && node --check lib/authority.js && node --check lib/cis-cli.js && node --check lib/product-journey.js && node --check lib/projections.js && node --check lib/security.js && node --check lib/views.js && node --check lib/webview.js && node --test test/*.test.js",
+    "check": "node --check extension.js && node --check lib/authority.js && node --check lib/cis-cli.js && node --check lib/doctor-commands.js && node --check lib/getting-started.js && node --check lib/product-journey.js && node --check lib/projections.js && node --check lib/security.js && node --check lib/views.js && node --check lib/watch-roots.js && node --check lib/webview.js && node --test test/*.test.js",
     "test": "node --test test/*.test.js"
   }
 }

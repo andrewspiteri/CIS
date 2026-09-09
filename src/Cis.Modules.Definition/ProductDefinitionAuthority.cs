@@ -123,6 +123,7 @@ public sealed class ProductDefinitionAuthority(ICisRepositoryContextResolver rep
             return "semantic-v1:" + BrdDocumentDigest.Compute(normalized);
         if (relativePath == "specs/technical-intent-spec.md")
         {
+            normalized = CisTechnicalIntentPresentation.RestoreManagedEvidence(normalized);
             foreach (var key in new[] { "status", "last_reviewed" })
                 normalized = Regex.Replace(normalized, $"(?m)^{key}:.*$", $"{key}: <approval-metadata>",
                     RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));

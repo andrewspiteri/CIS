@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using Cis.Abstractions;
 
 namespace Cis.Modules.Repository;
 
@@ -31,6 +32,10 @@ public sealed partial class RepositoryClassifier
     };
 
     public RepositoryClassification Classify(string repositoryPath)
+        => CisReadScope.Read(typeof(RepositoryClassifier), nameof(Classify), repositoryPath,
+            () => ClassifyCore(repositoryPath));
+
+    private static RepositoryClassification ClassifyCore(string repositoryPath)
     {
         var components = new List<RepositoryComponentClassification>();
         var warnings = new List<string>();
@@ -385,6 +390,7 @@ public sealed partial class RepositoryClassifier
             var isVsCodeExtension = document.RootElement.TryGetProperty("engines", out var engines)
                 && engines.ValueKind == JsonValueKind.Object
                 && engines.TryGetProperty("vscode", out _);
+            var isAzureFunctions = packages.Contains("@azure/functions");
             var frontendFramework = packages.Contains("next")
                 ? "nextjs"
                 : packages.Contains("react")
@@ -403,7 +409,8 @@ public sealed partial class RepositoryClassifier
                             : packages.Contains("@hapi/hapi")
                                 ? "hapi"
                                 : null;
-            var primaryFramework = isVsCodeExtension ? "vscode-extension" : frontendFramework ?? backendFramework;
+            var primaryFramework = isVsCodeExtension ? "vscode-extension"
+                : frontendFramework ?? backendFramework ?? (isAzureFunctions ? "azure-functions" : null);
             if (primaryFramework is null)
             {
                 return null;
@@ -420,14 +427,16 @@ public sealed partial class RepositoryClassifier
                 : null;
             var roles = new List<string>();
             if (isVsCodeExtension) roles.Add("tooling");
+            if (isAzureFunctions) roles.Add("worker");
             if (frontendFramework is not null) roles.Add("frontend-consumer");
-            if (backendFramework is not null) roles.Add("backend-api-producer");
+            var hasFunctionHttpTrigger = isAzureFunctions && Regex.IsMatch(source, @"\bapp\s*\.\s*http\s*\(");
+            if (backendFramework is not null || hasFunctionHttpTrigger) roles.Add("backend-api-producer");
             var capabilities = new List<string> { "configuration", "packages" };
-            if (frontendFramework is not null || backendFramework is not null)
+            if (frontendFramework is not null || backendFramework is not null || hasFunctionHttpTrigger)
             {
                 capabilities.Add("routes");
             }
-            else
+            else if (!isAzureFunctions)
             {
                 capabilities.Add("commands");
             }
@@ -437,6 +446,18 @@ public sealed partial class RepositoryClassifier
                 $"{primaryFramework} package dependency",
             };
             var frameworks = new List<string> { primaryFramework };
+            if (isAzureFunctions)
+            {
+                frameworks.Add("azure-functions");
+                evidence.Add("@azure/functions package dependency");
+                if (hasFunctionHttpTrigger) evidence.Add("Azure Functions HTTP trigger registration");
+                if (Regex.IsMatch(source, @"\bapp\s*\.\s*(?:serviceBusQueue|serviceBusTopic|storageQueue|eventHub|eventGrid|cosmosDB)\s*\("))
+                {
+                    roles.Add("event-consumer");
+                    capabilities.Add("events");
+                    evidence.Add("Azure Functions event trigger registration");
+                }
+            }
             if (frontendFramework is not null && backendFramework is not null)
             {
                 frameworks.Add(backendFramework);

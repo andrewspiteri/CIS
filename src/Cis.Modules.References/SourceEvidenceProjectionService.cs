@@ -269,7 +269,7 @@ public sealed class SourceEvidenceProjectionService : ICisSourceEvidenceRegistra
             status = currentDigest == entry.RegisteredDigest ? "current" : "changed",
             materialToBrd = material,
             builtAtUtc = UtcNow(),
-            extractor = "cis-source-evidence/1",
+            extractor = "cis-source-evidence/2",
             contentDigest = ShaText(projection.Markdown),
             sourceMapDigest = ShaFile(mapPath),
         });
@@ -282,9 +282,15 @@ public sealed class SourceEvidenceProjectionService : ICisSourceEvidenceRegistra
         string detected;
         if (entry.Format == "repository")
         {
-            if (!TryResolveRegisteredRepository(context, entry, out var graph, diagnostics))
+            if (!TryResolveRegisteredRepositoryPath(context, entry, out var repositoryPath, diagnostics))
                 return State(entry, null, "missing", true, null, diagnostics);
-            detected = graph!.Build.Id;
+            var snapshot = _graphReader!.ReadMetadata(repositoryPath!);
+            if (snapshot.Build is null || snapshot.ExitCode != 0 || snapshot.Freshness != "fresh")
+            {
+                diagnostics.Add($"ERROR: Repository evidence requires a fresh graph for '{entry.SourcePath["workspace:".Length..]}'. Run `cis graph build --repo {repositoryPath}`.");
+                return State(entry, null, "missing", true, null, diagnostics);
+            }
+            detected = snapshot.Build.Id;
         }
         else
         {
@@ -355,23 +361,86 @@ public sealed class SourceEvidenceProjectionService : ICisSourceEvidenceRegistra
         foreach (var group in graph.Nodes.GroupBy(item => item.Kind, StringComparer.Ordinal).OrderBy(item => item.Key, StringComparer.Ordinal))
             output.AppendLine($"| {group.Key} | {group.Count()} |");
         output.AppendLine(); output.AppendLine("## Components, contracts, behavior, and source routes"); output.AppendLine();
-        var selected = graph.Nodes
-            .Where(item => item.Kind is not "dependency" || item.Subtype == "project")
-            .OrderBy(item => NodePriority(item.Kind)).ThenBy(item => item.Key, StringComparer.Ordinal)
-            .Take(1000).ToArray();
+        output.AppendLine("Dictionary details are evidence at their recorded lifecycle, not approved business intent. Unknown fields are omitted. Declared states do not prove allowed transitions; declared guards do not prove effective authorization.");
+        output.AppendLine("NestJS paths are controller-relative declarations; global prefixes/versioning and effective policy require review. Configuration, package and trace-link rows are counted but omitted from business evidence.");
+        var selected = graph.Nodes.Where(item => item.Kind is "repository" or "component").OrderBy(item => item.Key, StringComparer.Ordinal)
+            .Concat(FairRepositoryEvidence(graph.Nodes.Where(item => (item.Kind is "reference-item" or "contract" or "endpoint" or "entity" or "event" or "command" or "route")
+                && item.Subtype is not ("configuration-key" or "package" or "trace-link"))))
+            .Concat(graph.Nodes.Where(item => item.Kind is not ("repository" or "component" or "reference-item" or "contract" or "endpoint" or "entity" or "event" or "command" or "route" or "dependency"))
+                .OrderBy(item => NodePriority(item.Kind)).ThenBy(item => item.Key, StringComparer.Ordinal).Take(150))
+            .Take(2000).ToArray();
+        // A source path shared by hundreds of fields is printed once, with short locators in rows.
+        var sourcePaths = selected.Where(item => item.Kind == "reference-item").SelectMany(item => item.Properties.Values)
+            .SelectMany(value => Regex.Matches(value, @"[A-Za-z0-9_./-]+\.(?:tsx|jsx|cs|ts|js|swift|kt)\b").Select(match => match.Value))
+            .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).Take(500)
+            .Select((path, index) => (Path: path, Id: "src" + (index + 1))).ToDictionary(item => item.Path, item => item.Id, StringComparer.Ordinal);
+        output.AppendLine("\n### Source location key\n");
+        foreach (var sourcePath in sourcePaths) output.AppendLine($"- {sourcePath.Value}: `{sourcePath.Key}`");
+        output.AppendLine("\n### Cited declarations\n");
+        var replacements = sourcePaths.OrderByDescending(item => item.Key.Length).ToArray();
         var ordinal = 0;
+        var included = new List<CisGraphNode>();
+        var bytes = Encoding.UTF8.GetByteCount(output.ToString());
         foreach (var node in selected)
         {
-            ordinal++; var anchor = "node-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(node.Key)))[..16].ToLowerInvariant();
+            var anchor = "node-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(node.Key)))[..16].ToLowerInvariant();
             var locations = string.Join(", ", node.Locations.Take(5).Select(item => item.Path));
-            var text = $"{node.Kind}/{node.Subtype}: {node.Label}" + (locations.Length == 0 ? string.Empty : $" — {locations}");
+            var details = RepositoryDetails(node);
+            var text = $"{node.Kind}/{node.Subtype}: {node.Label}" + (locations.Length == 0 ? string.Empty : $" — {locations}") + details;
+            var renderedDetails = details;
+            foreach (var sourcePath in replacements)
+                renderedDetails = renderedDetails.Replace(sourcePath.Key, sourcePath.Value, StringComparison.Ordinal);
+            var rendered = $"<a id=\"{anchor}\"></a>\n- **{node.Label}** — `{node.Subtype}`{(node.Kind == "reference-item" || locations.Length == 0 ? string.Empty : $" — `{locations}`")}{renderedDetails}\n";
+            var size = Encoding.UTF8.GetByteCount(rendered);
+            if (bytes + size > 460 * 1024) continue;
+            bytes += size; ordinal++; included.Add(node);
             anchors.Add(new(anchor, "graph", node.Key, ordinal, "repository-evidence", ShaText(text), text));
-            output.AppendLine($"<a id=\"{anchor}\"></a>");
-            output.AppendLine($"- **{node.Label}** — `{node.Kind}/{node.Subtype}`{(locations.Length == 0 ? string.Empty : $" — `{locations}`")}");
+            output.Append(rendered);
         }
-        if (graph.Nodes.Count > selected.Length)
-            output.AppendLine($"\n> Projection bounded to {selected.Length} of {graph.Nodes.Count} graph nodes. Use CIS graph/context queries for deeper evidence.");
+        output.AppendLine("\n## Dictionary coverage\n\n| Dictionary kind | Included | Available |\n| --- | ---: | ---: |");
+        foreach (var group in graph.Nodes.Where(item => item.Kind == "reference-item").GroupBy(item => item.Subtype).OrderBy(item => item.Key, StringComparer.Ordinal))
+            output.AppendLine($"| {group.Key} | {included.Count(item => item.Kind == "reference-item" && item.Subtype == group.Key)} | {group.Count()} |");
+        if (graph.Nodes.Count > included.Count)
+            output.AppendLine($"\n> Projection bounded to {included.Count} of {graph.Nodes.Count} graph nodes (2,000 nodes / 460 KiB evidence budget). Omitted evidence is not evidence of absence. Use CIS graph/context queries and the original dictionaries for deeper evidence.");
         return new(output.ToString(), anchors);
+    }
+
+    private static IEnumerable<CisGraphNode> FairRepositoryEvidence(IEnumerable<CisGraphNode> nodes)
+    {
+        // Alternate families and entities so large data/API inventories cannot hide workflows or permissions.
+        var groups = nodes.GroupBy(item => item.Kind + "/" + item.Subtype).OrderBy(item => item.Key, StringComparer.Ordinal)
+            .Select(group => new Queue<CisGraphNode>(RoundRobin(group.GroupBy(item =>
+                item.Properties.GetValueOrDefault("Entity") ?? item.Properties.GetValueOrDefault("Workflow") ?? item.Key)
+                .OrderBy(item => item.Key, StringComparer.Ordinal)
+                .Select(items => new Queue<CisGraphNode>(items.OrderBy(item => item.Key, StringComparer.Ordinal)))))).ToArray();
+        return RoundRobin(groups);
+    }
+
+    private static IEnumerable<CisGraphNode> RoundRobin(IEnumerable<Queue<CisGraphNode>> source)
+    {
+        var queues = source.ToArray();
+        while (queues.Any(queue => queue.Count > 0))
+            foreach (var queue in queues)
+                if (queue.TryDequeue(out var node)) yield return node;
+    }
+
+    private static string RepositoryDetails(CisGraphNode node)
+    {
+        if (node.Kind is not ("reference-item" or "contract" or "endpoint" or "entity" or "event" or "command" or "route")) return string.Empty;
+        // Exclude arbitrary graph properties, configuration values and raw source bodies.
+        string[] columns = ["Request contract", "Response contract", "Permission / auth", "Notes",
+            "Type", "Required", "Constraints", "Relationship", "Target", "Cardinality",
+            "Meaning", "Allowed transitions", "Triggering commands", "Blocking rules", "Terminal",
+            "Applies to", "Default role mappings", "Access / permission", "Destination",
+            "Command name", "Actor / trigger", "Preconditions", "Result", "Emits events", "Event name", "Payload summary",
+            "Rule", "Enforcement point", "Projection / read model", "Source of truth", "Fields summary", "Evidence", "Source location"];
+        var details = "\n  Lifecycle: " + node.Lifecycle + "; " + string.Join("; ", columns.Where(node.Properties.ContainsKey)
+            .Select(key => (Key: key, Value: node.Properties[key].Trim()))
+            .Where(item => item.Value.Length > 0 && !item.Value.Equals("unknown", StringComparison.OrdinalIgnoreCase) && item.Value != "TODO")
+            .Select(item => item.Key + ": " + Regex.Replace(item.Value, @"\s+", " ")
+                .Replace("Controller-relative path; global prefixes/versioning and effective policy require review.", "", StringComparison.Ordinal)
+                .Replace("Deterministically discovered; role mapping and least-privilege review required.", "", StringComparison.Ordinal)));
+        return details.Length <= 1800 ? details : details[..1770] + " [details truncated]";
     }
 
     private static int NodePriority(string kind) => kind switch
@@ -605,10 +674,20 @@ public sealed class SourceEvidenceProjectionService : ICisSourceEvidenceRegistra
         out CisGraphDocument? graph, List<string> diagnostics)
     {
         graph = null;
+        if (!TryResolveRegisteredRepositoryPath(authority, entry, out var repositoryPath, diagnostics)) return false;
+        var snapshot = _graphReader!.Read(repositoryPath!);
+        if (snapshot.Graph is null || snapshot.ExitCode != 0 || snapshot.Freshness != "fresh")
+        { diagnostics.Add($"ERROR: Repository evidence requires a fresh graph for '{entry.SourcePath["workspace:".Length..]}'. Run `cis graph build --repo {repositoryPath}`."); return false; }
+        graph = snapshot.Graph; return true;
+    }
+
+    private bool TryResolveRegisteredRepositoryPath(CisRepositoryContext authority, SourceEvidenceEntry entry,
+        out string? repositoryPath, List<string> diagnostics)
+    {
+        repositoryPath = null;
         if (!entry.SourcePath.StartsWith("workspace:", StringComparison.Ordinal))
         { diagnostics.Add($"ERROR: Repository source key is invalid: {entry.SourcePath}"); return false; }
         var id = entry.SourcePath["workspace:".Length..];
-        string? repositoryPath = null;
         if (id == authority.RepositoryId) repositoryPath = authority.RepositoryPath;
         else
         {
@@ -618,10 +697,7 @@ public sealed class SourceEvidenceProjectionService : ICisSourceEvidenceRegistra
         if (repositoryPath is null)
         { diagnostics.Add($"ERROR: Registered repository evidence is no longer present in the workspace: {id}"); return false; }
         if (_graphReader is null) { diagnostics.Add("ERROR: Repository evidence requires the CIS graph module."); return false; }
-        var snapshot = _graphReader.Read(repositoryPath);
-        if (snapshot.Graph is null || snapshot.ExitCode != 0 || snapshot.Freshness != "fresh")
-        { diagnostics.Add($"ERROR: Repository evidence requires a fresh graph for '{id}'. Run `cis graph build --repo {repositoryPath}`."); return false; }
-        graph = snapshot.Graph; return true;
+        return true;
     }
 
     private static IReadOnlyList<SourceEvidenceEntry> ReadRegistry(CisRepositoryContext context, List<string> diagnostics)

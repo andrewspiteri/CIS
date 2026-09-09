@@ -3,7 +3,7 @@ title: "Change Impact Studio Articles"
 type: navigation
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-26"
+last_reviewed: "2026-09-09"
 review_cadence: on article publication
 cis:
   stable_id: change-impact-studio:docs:articles
@@ -22,9 +22,14 @@ canonical sources behind its material claims.
 
 ## Editorial programme
 
-The programme contains 78 working drafts across nine connected topic tracks. The
+The programme contains 78 full-text working drafts across nine connected topic tracks. The
 sequence moves from the governance problem through the CIS model and implementation,
 then closes with practical application and product learning.
+
+The baselines were reconciled on 8 September 2026 against the current product boundary,
+product-definition workflow, direct agent execution, reference governance, editor client,
+and assurance behavior. The remaining short drafts were expanded to full text on
+9 September 2026. They remain Draft until editorial and publication review.
 
 | Track | Articles | Purpose |
 |---|---:|---|

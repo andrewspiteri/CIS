@@ -5,6 +5,14 @@ description: Generate, refine, validate, and approve the atomic overall solution
 
 # Govern Overall Solution Design
 
+For an imported existing product, `cis agent discover solution-design` prepares a local evidence
+preview and review-only scaffold; `cis agent author solution-design` infers the architecture bundle
+from selected owned repositories and the current BRD/technical intent. This draft-only path may run
+while upstream documents are under review. It does not grant approval or weaken the ordinary gates
+below. Inspect every implementation area, preserve human notes and stable component IDs, keep source
+citations in comments, and distinguish observed, proposed and unresolved facts. Run
+`cis definition prepare --page architecture` after authoring to render its four SVG views.
+
 1. Confirm `cis technical-intent status --workspace <workspace>` is Active, valid, and current.
 2. Run `cis solution-design init --workspace <workspace> --format agent`.
 3. Review `architecture/overall-solution-design.md` for system context, logical topology, data ownership, integration, trust, deployment, recovery, verification, traceability, and a bounded UI-design handoff.

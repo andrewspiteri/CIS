@@ -15,7 +15,7 @@ namespace Cis.Modules.SolutionDesign.Tests;
 public sealed class SolutionDesignConsoleCollection;
 
 [Collection("SolutionDesignConsole")]
-public sealed class SolutionDesignWorkflowTests
+public sealed partial class SolutionDesignWorkflowTests
 {
     [Fact]
     public void Commands_AreRegistered()

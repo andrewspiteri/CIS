@@ -5,7 +5,7 @@ status: Draft
 series: "Governed Software Change"
 series_order: 7
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-25"
+last_reviewed: "2026-09-08"
 review_cadence: on verification or assurance change
 summary: "Why implementation success and executor reports must be checked against independently observed Git and validation evidence."
 cis:
@@ -108,6 +108,9 @@ Evidence may include:
 - explicitly unavailable checks and residual risks.
 
 The right evidence depends on the affected risk, not on a fixed test pyramid.
+An exit code of zero without the expected parseable result is not a pass. CIS records
+missing or malformed required output as `InvalidEvidence`, keeping process success
+separate from proof of the engineering claim.
 
 ## Run the smallest check that can fail for the right reason
 
@@ -178,4 +181,4 @@ Execution produces a candidate change. Evidence earns acceptance.
 - [Execution, assurance, diagnostics, and learning](../specs/execution-assurance-and-learning-spec.md)
 - [Verification task type](../specs/verification-task-type.md)
 - [Change impact and bounded planning](../specs/change-impact-and-planning-spec.md)
-
+- [Security testing and evidence](../specs/security-testing-and-evidence-spec.md)

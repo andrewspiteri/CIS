@@ -22,6 +22,7 @@ public sealed class SolutionDesignModule : ICisModule
     {
         services.TryAddSingleton<ISolutionDesignTechnicalIntentSource, SolutionDesignTechnicalIntentSource>();
         services.AddSingleton<SolutionDesignService>();
+        services.AddSingleton<ICisSolutionDesignDrafts>(provider => provider.GetRequiredService<SolutionDesignService>());
         services.AddSingleton<IChangeReadinessCheck>(provider => provider.GetRequiredService<SolutionDesignService>());
     }
 

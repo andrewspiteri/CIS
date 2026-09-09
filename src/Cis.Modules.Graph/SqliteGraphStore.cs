@@ -41,6 +41,9 @@ public sealed class SqliteGraphStore
     }
 
     public GraphStoreReadResult Read(string repositoryPath)
+        => GraphReadScope.Read(this, nameof(Read), repositoryPath, () => ReadCore(repositoryPath));
+
+    private GraphStoreReadResult ReadCore(string repositoryPath)
     {
         var path = DatabasePath(repositoryPath);
         if (!File.Exists(path)) return GraphStoreReadResult.Failure("SQLite graph database is missing.");
@@ -77,6 +80,9 @@ public sealed class SqliteGraphStore
     }
 
     public GraphStoreHeaderResult ReadHeader(string repositoryPath)
+        => GraphReadScope.Read(this, nameof(ReadHeader), repositoryPath, () => ReadHeaderCore(repositoryPath));
+
+    private GraphStoreHeaderResult ReadHeaderCore(string repositoryPath)
     {
         var path = DatabasePath(repositoryPath);
         if (!File.Exists(path)) return GraphStoreHeaderResult.Failure("SQLite graph database is missing.");
@@ -108,6 +114,7 @@ public sealed class SqliteGraphStore
         CisGraphManifest manifest,
         IReadOnlyList<CisGraphDiagnostic> diagnostics)
     {
+        using var timing = CisPerformanceTrace.Start("sqlite.write");
         var path = DatabasePath(repositoryPath);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var existed = File.Exists(path);

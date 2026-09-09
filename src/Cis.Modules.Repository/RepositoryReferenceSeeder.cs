@@ -4,7 +4,7 @@ using System.Xml.Linq;
 
 namespace Cis.Modules.Repository;
 
-internal static class RepositoryReferenceSeeder
+internal static partial class RepositoryReferenceSeeder
 {
     private static readonly HashSet<string> ExcludedDirectories = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -90,7 +90,7 @@ internal static class RepositoryReferenceSeeder
         RepositoryClassification classification)
     {
         var files = EnumerateFiles(repositoryPath).ToArray();
-        return new Dictionary<string, IReadOnlyList<IReadOnlyList<string>>>(StringComparer.Ordinal)
+        var seeds = new Dictionary<string, IReadOnlyList<IReadOnlyList<string>>>(StringComparer.Ordinal)
         {
             ["api-dictionary"] = SeedApis(repositoryPath, files, classification),
             ["command-dictionary"] = SeedNamedTypes(repositoryPath, files, classification, CommandTypePattern, "command"),
@@ -105,9 +105,11 @@ internal static class RepositoryReferenceSeeder
             ["problem-details-catalogue"] = SeedProblems(repositoryPath, files, classification),
             ["module-ownership-map"] = SeedModules(classification),
             ["data-dictionary"] = SeedData(repositoryPath, files, classification),
-            ["erd"] = [],
+            ["erd"] = SeedTypeScriptRelationships(repositoryPath, files, classification),
             ["traceability-matrix"] = SeedTraceability(classification),
         };
+        EnrichTypeScriptBehavior(repositoryPath, files, classification, seeds);
+        return seeds;
     }
 
     private static IReadOnlyList<IReadOnlyList<string>> SeedApis(
@@ -238,6 +240,8 @@ internal static class RepositoryReferenceSeeder
             {
                 var method = match.Groups["method"].Value.ToUpperInvariant();
                 var route = match.Groups["route"].Value;
+                // Nest application.get(token) is a dependency lookup, not an Express route.
+                if (!route.StartsWith('/') || !content[(match.Index + match.Length)..].TrimStart().StartsWith(',')) continue;
                 rows.Add([
                     CreateApiId(component.Id, method, route),
                     "unversioned",
@@ -266,6 +270,7 @@ internal static class RepositoryReferenceSeeder
             }
         }
 
+        rows.AddRange(SeedNestApis(repositoryPath, files, classification));
         return ConsolidateApiRows(rows);
     }
 
@@ -405,10 +410,12 @@ internal static class RepositoryReferenceSeeder
         RepositoryClassification classification)
     {
         var rows = new List<IReadOnlyList<string>>();
-        foreach (var path in files.Where(path => path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)))
+        foreach (var path in files.Where(path => path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) || IsExpressSource(path)))
         {
             var component = FindComponent(repositoryPath, path, classification);
-            foreach (Match match in WorkflowEnumPattern.Matches(TryReadText(path)))
+            var source = TryReadText(path);
+            if (IsExpressSource(path)) source = WithoutComments(source);
+            foreach (Match match in WorkflowEnumPattern.Matches(source))
             {
                 var workflow = match.Groups["name"].Value;
                 foreach (var state in ParseEnumMembers(match.Groups["body"].Value))
@@ -417,7 +424,7 @@ internal static class RepositoryReferenceSeeder
                         CreateCatalogueId("WF", $"{component.Id}-{workflow}"),
                         workflow,
                         state,
-                        "unknown",
+                        $"Declared state; evidence: {ToRepositoryPath(repositoryPath, path)}. Transition semantics require review.",
                         "unknown",
                         "unknown",
                         "unknown",
@@ -429,7 +436,16 @@ internal static class RepositoryReferenceSeeder
             }
         }
 
-        return DistinctRows(rows);
+        var ambiguous = rows.GroupBy(row => row[0], StringComparer.OrdinalIgnoreCase)
+            .Where(group => group.Select(row => row[3]).Distinct(StringComparer.Ordinal).Skip(1).Any())
+            .Select(group => group.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return DistinctRows(rows.Select(row =>
+        {
+            if (!ambiguous.Contains(row[0])) return row;
+            var qualified = row.ToArray();
+            qualified[0] += "-" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(row[3])))[..12];
+            return (IReadOnlyList<string>)qualified;
+        }));
     }
 
     private static IReadOnlyList<IReadOnlyList<string>> SeedProjections(
@@ -493,7 +509,12 @@ internal static class RepositoryReferenceSeeder
             }
         }
 
-        return DistinctRows(discoveries.Select(discovery =>
+        foreach (var path in files.Where(IsExpressSource))
+            foreach (var decorator in TypeScriptDecorators(TryReadText(path)).Where(item => item.Name == "RequirePermissions"))
+                foreach (Match permission in Regex.Matches(decorator.Arguments, "['\"](?<value>[A-Za-z0-9_.:-]+)['\"]"))
+                    discoveries.Add((permission.Groups["value"].Value, "declared permission gate", ToRepositoryPath(repositoryPath, path)));
+
+        var permissionRows = discoveries.Select(discovery =>
         {
             var component = FindComponentByRelativePath(discovery.Evidence, classification);
             var action = discovery.Permission.Split('.', StringSplitOptions.RemoveEmptyEntries).LastOrDefault() ?? "unknown";
@@ -513,7 +534,13 @@ internal static class RepositoryReferenceSeeder
                 "Draft",
                 "Deterministically discovered; role mapping and least-privilege review required.",
             ];
-        }));
+        });
+        return permissionRows.GroupBy(row => row[0], StringComparer.OrdinalIgnoreCase).Select(group =>
+        {
+            var row = group.First().ToArray();
+            row[11] = string.Join("; ", group.Select(item => item[11]).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.Ordinal));
+            return (IReadOnlyList<string>)row;
+        }).OrderBy(row => row[0], StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
     private static IReadOnlyList<IReadOnlyList<string>> SeedProblems(
@@ -572,6 +599,7 @@ internal static class RepositoryReferenceSeeder
             }
         }
 
+        rows.AddRange(SeedTypeScriptData(repositoryPath, files, classification));
         return DistinctRows(rows);
     }
 
@@ -816,6 +844,7 @@ internal static class RepositoryReferenceSeeder
         foreach (var path in files.Where(IsNextPage))
         {
             var component = FindComponent(repositoryPath, path, classification);
+            if (!component.Frameworks.Contains("nextjs", StringComparer.Ordinal)) continue;
             rows.Add([
                 CreateNextRoute(repositoryPath, path, component),
                 component.Id,
@@ -831,23 +860,30 @@ internal static class RepositoryReferenceSeeder
         foreach (var path in files.Where(path => path.EndsWith(".ts", StringComparison.OrdinalIgnoreCase)))
         {
             var component = FindComponent(repositoryPath, path, classification);
-            if (!component.Frameworks.Contains("angular", StringComparer.Ordinal))
+            var content = TryReadText(path);
+            if (!component.Frameworks.Contains("angular", StringComparer.Ordinal)
+                || path.EndsWith(".spec.ts", StringComparison.OrdinalIgnoreCase)
+                || path.EndsWith(".test.ts", StringComparison.OrdinalIgnoreCase)
+                || !content.Contains("@angular/router", StringComparison.Ordinal))
             {
                 continue;
             }
 
-            foreach (Match match in AngularRoutePattern.Matches(TryReadText(path)))
+            var declaration = 0;
+            foreach (Match match in AngularRoutePattern.Matches(content))
             {
                 var route = match.Groups["route"].Value;
+                var sourcePath = ToRepositoryPath(repositoryPath, path);
+                var identity = sourcePath + "#route-" + (++declaration).ToString(System.Globalization.CultureInfo.InvariantCulture);
                 rows.Add([
-                    route.Length == 0 ? "/" : "/" + route.TrimStart('/'),
+                    $"path '{route}' @ {identity}",
                     component.Id,
                     "Angular",
                     "unknown",
                     ToRepositoryPath(repositoryPath, path),
                     "Draft",
                     ToRepositoryPath(repositoryPath, path),
-                    "Route declaration; guards and destination behavior require review.",
+                    "Relative Angular path declaration; parent and lazy-module prefixes are unresolved. Guards and destination behavior require review.",
                 ]);
             }
         }

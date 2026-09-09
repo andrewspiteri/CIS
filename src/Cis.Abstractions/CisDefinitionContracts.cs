@@ -26,7 +26,10 @@ public sealed record CisDefinitionDiagram(
     string Title,
     string RelativePath,
     string SourceFormat,
-    string Status);
+    string Status)
+{
+    public string? SvgRelativePath { get; init; }
+}
 
 public sealed record CisDefinitionPreview(
     string RelativePath,
@@ -38,6 +41,22 @@ public sealed record CisDefinitionPreview(
     IReadOnlyDictionary<string, string> Colors,
     IReadOnlyList<string> Components,
     IReadOnlyList<string> Surfaces);
+
+public sealed record CisDefinitionQuestion(
+    string Id, string Area, string Question, string Why, IReadOnlyList<string> CommonOptions,
+    string SuggestedAnswer, string Status, string? Answer, string? AnsweredBy, string? AnsweredAtUtc,
+    string ResolutionSource, string? Confidence, IReadOnlyList<string> Evidence);
+
+public sealed record CisDefinitionQuestionnaire(
+    string Status, bool Current, bool Complete, IReadOnlyList<CisDefinitionQuestion> Questions,
+    IReadOnlyList<string> Errors);
+
+public sealed record CisDefinitionBusinessRepository(string Id, string RepositoryPath, string GraphFreshness);
+
+public sealed record CisDefinitionBusinessInference(bool CanDraft, IReadOnlyList<CisDefinitionBusinessRepository> Repositories)
+{
+    public IReadOnlyList<CisReferencePreparationResult> LastPreparation { get; init; } = [];
+}
 
 public sealed record CisDefinitionWizardResult(
     string Status,
@@ -56,6 +75,9 @@ public sealed record CisDefinitionWizardResult(
     bool Applied)
 {
     public int ExitCode => Errors.Count > 0 ? 5 : 0;
+    public CisDefinitionQuestionnaire? TechnicalQuestions { get; init; }
+    public CisDefinitionQuestionnaire? UiQuestions { get; init; }
+    public CisDefinitionBusinessInference? BusinessInference { get; init; }
 }
 
 /// <summary>

@@ -41,6 +41,13 @@ approved feature supplied the evidence.
 
 ## Development workflow
 
+Reconciliation retains managed baseline, source-assessment and adopted-feature traceability
+data inside reversible HTML comments. Standard metadata headings are hidden too. Source
+values and assessments remain available to CIS and Markdown-source readers. Moving this
+controller-owned metadata into comments preserves the business-content digest and does
+not require renewed approval by itself. Human-authored narrative and evidence comments
+are preserved.
+
 1. Generate or update a feature specification with front matter
    `type: feature-specification`.
 2. Rebuild the affected repository graph.

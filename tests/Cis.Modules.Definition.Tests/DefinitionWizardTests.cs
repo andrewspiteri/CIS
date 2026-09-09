@@ -16,7 +16,7 @@ namespace Cis.Modules.Definition.Tests;
 public sealed class DefinitionConsoleCollection;
 
 [Collection("DefinitionConsole")]
-public sealed class DefinitionWizardTests
+public sealed partial class DefinitionWizardTests
 {
     [Fact]
     public void Commands_AreRegistered()
@@ -54,6 +54,10 @@ public sealed class DefinitionWizardTests
         Assert.Contains("\"status\": \"initialized\"", initialized.Output, StringComparison.Ordinal);
         Assert.Contains("\"ordinal\": 8", initialized.Output, StringComparison.Ordinal);
         Assert.Contains("\"title\": \"Review and activate\"", initialized.Output, StringComparison.Ordinal);
+        Assert.Contains("\"technicalQuestions\": {", initialized.Output, StringComparison.Ordinal);
+        Assert.Contains("\"uiQuestions\": {", initialized.Output, StringComparison.Ordinal);
+        using (var result = System.Text.Json.JsonDocument.Parse(initialized.Output))
+            Assert.Single(result.RootElement.GetProperty("businessInference").GetProperty("repositories").EnumerateArray());
         Assert.True(File.Exists(Path.Combine(repository.Path, ".cis", "local", "definition-wizard", "session.json")));
         Assert.True(File.Exists(Path.Combine(repository.Path, "docs", "cis", "references", "dictionary-index.md")));
         Assert.True(File.Exists(apiDictionary));
@@ -69,6 +73,55 @@ public sealed class DefinitionWizardTests
             ["definition", "prepare", "--workspace", repository.Path, "--page", "unknown", "--format", "agent"]);
         Assert.Equal(5, invalidPage.ExitCode);
         Assert.Contains("Unknown definition-wizard page", invalidPage.Output, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("business")]
+    [InlineData("technical")]
+    [InlineData("contracts")]
+    public void BusinessInference_SelectsOwnedParticipantsAndExcludesDocsAuthorityAndDependencies(string page)
+    {
+        using var authority = TemporaryRepository.Create();
+        using var owned = TemporaryRepository.Create();
+        using var dependency = TemporaryRepository.Create();
+        File.WriteAllText(Path.Combine(owned.Path, "package.json"), """{"name":"deposits","dependencies":{"@nestjs/core":"1","@nestjs/common":"1","typeorm":"1"}}""");
+        File.WriteAllText(Path.Combine(dependency.Path, "package.json"), """{"name":"external","dependencies":{"@nestjs/core":"1","@nestjs/common":"1"}}""");
+        using var application = CreateApplication();
+        Assert.Equal(0, Invoke(application, ["workspace", "init", "--repo", authority.Path, "--root", "docs/cis",
+            "--ecosystem", "sample", "--product", "sample", "--yes", "--format", "json"]).ExitCode);
+        var importer = new RepositoryImporter(new RepositoryInitializer(), new WorkspaceRegistry(new CisRepositoryContextResolver()));
+        Assert.Equal(0, importer.Import(new RepositoryImportRequest(authority.Path, "docs/cis", [owned.Path],
+            false, true, "owned", "none")).ExitCode);
+        Assert.Equal(0, importer.Import(new RepositoryImportRequest(authority.Path, "docs/cis", [dependency.Path],
+            false, true, "dependency", "producer")).ExitCode);
+        var status = Invoke(application, ["definition", "status", "--workspace", authority.Path, "--format", "json"]);
+        using var result = System.Text.Json.JsonDocument.Parse(status.Output);
+        var source = Assert.Single(result.RootElement.GetProperty("businessInference").GetProperty("repositories").EnumerateArray());
+        Assert.Equal(owned.Path, source.GetProperty("repositoryPath").GetString());
+        Assert.Equal("missing", source.GetProperty("graphFreshness").GetString());
+        File.WriteAllText(Path.Combine(owned.Path, "controller.ts"), """
+            import { Controller, Get } from '@nestjs/common';
+            @Controller('products')
+            export class ProductsController {
+              @Get()
+              list(): string { return 'products'; }
+            }
+            """);
+        var dependencyDictionary = Path.Combine(dependency.Path, "docs/cis/references/api-dictionary.md");
+        var dependencyBefore = File.ReadAllText(dependencyDictionary);
+        var prepared = Invoke(application, ["definition", "prepare", "--page", page, "--workspace", authority.Path, "--format", "json"]);
+        Assert.True(prepared.ExitCode == 0, prepared.Output + prepared.Error);
+        using var preparation = System.Text.Json.JsonDocument.Parse(prepared.Output);
+        var reports = preparation.RootElement.GetProperty("businessInference").GetProperty("lastPreparation").EnumerateArray().ToArray();
+        Assert.Equal(2, reports.Length);
+        var report = Assert.Single(reports, item => item.GetProperty("repositoryPath").GetString() == owned.Path);
+        Assert.Equal(owned.Path, report.GetProperty("repositoryPath").GetString());
+        Assert.Contains("/products", File.ReadAllText(Path.Combine(owned.Path, "docs/cis/references/api-dictionary.md")), StringComparison.Ordinal);
+        Assert.Equal(dependencyBefore, File.ReadAllText(dependencyDictionary));
+        Assert.Contains("/products", File.ReadAllText(Path.Combine(authority.Path, "docs/cis/references/api-dictionary.md")), StringComparison.Ordinal);
+        var dictionaries = preparation.RootElement.GetProperty("dictionaries").EnumerateArray().ToArray();
+        Assert.Contains(dictionaries, item => item.GetProperty("relativePath").GetString()!.EndsWith("api-dictionary.md") && item.GetProperty("entryCount").GetInt32() == 1);
+        Assert.Contains(dictionaries, item => item.GetProperty("relativePath").GetString()!.EndsWith("data-dictionary.md") && item.GetProperty("entryCount").GetInt32() == 0);
     }
 
     [Fact]

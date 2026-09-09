@@ -33,6 +33,16 @@ or ownership boundaries.
 
 ## Draft coordination
 
+The Business definition page offers **Infer from existing project** for imported systems.
+The CLI supplies eligible product-owned repository paths and graph freshness. The client
+preselects these sources, accepts an explicit source/provider selection, and invokes the
+existing protected BRD authoring command. Dependency repositories and a docs-only authority
+are excluded from the proposed product evidence; an authority with implementation code may
+be included. The agent distinguishes observed behavior from intended policy and preserves
+unresolved business decisions as questions. The result remains Review Required. The page
+then guides draft/source review, independent review, and question resolution. Its generic
+Prepare button is omitted because page preparation does not infer business content.
+
 Normal CIS commands continue to require Active upstream authorities. While the definition module is
 preparing or evaluating this bounded wizard only, a valid/current Ready for Approval upstream draft
 may feed the next draft. The allowance is process-local, nest-safe, and disposed after the command;
@@ -45,10 +55,21 @@ new editor for each answer.
 
 ## Diagrams, dictionaries, and preview
 
+The Architecture page offers **Infer from existing repositories**. The client uses the CLI's eligible
+owned repositories, source/provider selection and disclosure confirmation, then calls
+`cis agent author solution-design`. CIS prepares dictionaries and immutable implementation snapshots
+and writes the architecture/component bundle with a validated four-view model. The client then
+prepares the architecture page to render SVGs and refreshes the graph. Diagram cards show the images
+directly and open the diagram sheet in Markdown preview. Repeated clicks share the authoring guard.
+This review-only path may run while upstream drafts are under review; activation gates remain intact.
+The generic preparation action remains the projection path for new products and the diagram-refresh
+path for inferred architecture. It preserves inferred narrative.
+
 `definition init` and `definition prepare` maintain three canonical derived records:
 
 - `architecture/high-level-architecture-diagrams.md` contains system-context, component-topology,
-  integration/trust-boundary, and deployment/operations Mermaid diagrams;
+  integration/trust-boundary, and deployment/operations views. Inferred architecture uses local SVGs
+  generated from its model; technical-intent projection retains Mermaid sources;
 - `references/dictionary-index.md` reports applicability, lifecycle, entries, and links for the
   classification-selected dictionaries seeded by repository initialization;
 - `design/ui-system-preview.md` and `design/ui-system-preview.svg` show one representative page
@@ -96,3 +117,25 @@ cis definition activate --reviewer <human> [--workspace <path>] [--format <human
 Session state is derived and disposable under `.cis/local/definition-wizard/session.json`.
 Markdown and its human approval evidence remain canonical. Unknown pages, malformed answers,
 missing workspace authority, incomplete baselines, path collisions, and stale artifacts fail closed.
+
+### Existing-system evidence before business drafting
+
+The business, technical and contracts pages prepare observed inventories before inference:
+API declarations, data fields and relationships, status enums, permissions, routes, commands,
+events, projection declarations, exceptions, rejection guards, configuration keys, packages,
+ownership and traceability in product-owned repositories. The authority consolidates code-derived
+facts from every owned repository, including its own implementation when present. Repository
+attribution scopes identities without changing code identifiers. Dependency repositories are
+excluded. Empty TODO starters count as zero entries. Direct discovery and authoring prepare the
+same dictionaries and graphs before freezing selected repository evidence.
+Show the last discovery counts, preservation warnings and navigable dictionary paths.
+Inference automatically runs this explicit preparation after controller source/provider consent.
+Refresh untouched managed Draft starters; add missing identities to human-edited Draft tables;
+preserve reviewed documents and existing human rows. Keep recovery copies of changed content.
+Never run source discovery from wizard status. Reuse unchanged graph builds.
+
+Repository projections must retain relevant dictionary details and lifecycle with stable
+citations, bounded UTF-8 size and visible per-family coverage. Alternate large inventory
+families/entities so state and permission evidence is not starved by data fields. Translate
+observed implementation into business capabilities without inventing transitions, policy,
+approvals or stakeholder intent. The contracts page remains the later review/refinement step.

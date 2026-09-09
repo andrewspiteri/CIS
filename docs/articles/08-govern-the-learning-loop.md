@@ -5,7 +5,7 @@ status: Draft
 series: "Governed Software Change"
 series_order: 8
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-25"
+last_reviewed: "2026-09-08"
 review_cadence: on diagnostics, feedback, or learning change
 summary: "How delivery evidence can improve future engineering work without allowing a tool or model to rewrite canonical authority."
 cis:
@@ -167,4 +167,3 @@ show what it learned, why, and who authorized the consequence.
 - [Diagnostics profile](../references/diagnostics-profile.md)
 - [Learning history](../references/learning-history.md)
 - [Product intent](../specs/product-intent-spec.md)
-

@@ -37,6 +37,10 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
         "/.git/",
         "/.cis/local/",
         "/.github/",
+        "/.claude/",
+        "/.codex/",
+        "/.agents/",
+        "/skills/",
         "/bin/",
         "/obj/",
         "/node_modules/",
@@ -84,7 +88,11 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
     }
 
     public BrdDiscoveryResult Discover(string workspacePath)
+        => Discover(workspacePath, validateGraph: true);
+
+    private BrdDiscoveryResult Discover(string workspacePath, bool validateGraph)
     {
+        using var graphReads = GraphReadScope.Enter();
         var resolution = ResolveAuthority(workspacePath);
         if (resolution.Errors.Count > 0 || resolution.Workspace is null || resolution.Authority is null)
         {
@@ -107,7 +115,9 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
         var baselines = new List<BrdRepositoryBaseline>();
         foreach (var repository in workspace.Repositories)
         {
-            var validation = _graphValidator.Validate(repository.RepositoryPath, strict: false);
+            var validation = validateGraph
+                ? _graphValidator.Validate(repository.RepositoryPath, strict: false)
+                : _graphValidator.Status(repository.RepositoryPath);
             if (!validation.RepositoryConfigurationValid || !validation.GraphAvailable)
             {
                 errors.Add(
@@ -115,9 +125,9 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
                 continue;
             }
 
-            var snapshot = _graphReader.Read(repository.RepositoryPath);
-            var graph = snapshot.Graph;
-            if (graph is null)
+            var snapshot = _graphReader.ReadMetadata(repository.RepositoryPath);
+            var build = snapshot.Build;
+            if (build is null)
             {
                 errors.Add($"Repository '{repository.Id}' graph could not be read.");
                 continue;
@@ -127,11 +137,11 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
                 repository.Id,
                 repository.RepositoryPath,
                 repository.IsDependency ? "dependency" : repository.Role,
-                graph.Build.Id,
-                graph.Build.Head,
-                graph.Build.Dirty,
+                build.Id,
+                build.Head,
+                build.Dirty,
                 validation.Freshness,
-                graph.Build.Status));
+                build.Status));
             if (!string.Equals(validation.Freshness, "fresh", StringComparison.Ordinal))
             {
                 var message = $"Repository '{repository.Id}' graph is {validation.Freshness}.";
@@ -356,7 +366,8 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
         return Initialize(workspacePath, title);
     }
 
-    public BrdResult Status(string workspacePath) => ValidateInternal(workspacePath, "status");
+    public BrdResult Status(string workspacePath)
+        => CisReadScope.Read(this, nameof(Status), workspacePath, () => ValidateInternal(workspacePath, "status"));
 
     public BrdResult Validate(string workspacePath) => ValidateInternal(workspacePath, "validated");
 
@@ -493,7 +504,8 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
 
     private BrdResult ValidateInternal(string workspacePath, string operation)
     {
-        var discovery = Discover(workspacePath);
+        // Status checks freshness; explicit validation and approval retain deep graph assurance.
+        var discovery = Discover(workspacePath, validateGraph: operation != "status");
         if (discovery.ExitCode != 0)
         {
             return Error("invalid", discovery, discovery.Errors);
@@ -671,7 +683,7 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
         builder.AppendLine();
         builder.AppendLine($"# {title}");
         builder.AppendLine();
-        builder.AppendLine("This canonical BRD belongs to the workspace authority repository. Discovered BRDs and development feature specifications are source evidence, not automatically current authority.");
+        builder.AppendLine("This document describes how the product works, who uses it, and the business rules and outcomes to be confirmed through review.");
         builder.AppendLine();
         builder.AppendLine("## CIS participant baseline");
         builder.AppendLine();
@@ -695,7 +707,7 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
             builder.AppendLine();
         }
 
-        return builder.ToString().Replace("\r\n", "\n", StringComparison.Ordinal);
+        return CisBrdPresentation.HideManagedEvidence(builder.ToString().Replace("\r\n", "\n", StringComparison.Ordinal));
     }
 
     private static string Reconcile(
@@ -703,11 +715,12 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
         IReadOnlyList<BrdRepositoryBaseline> baselines,
         IReadOnlyList<BrdCandidate> candidates)
     {
+        content = CisBrdPresentation.RestoreManagedEvidence(content);
         var existingRows = ParseSourceRows(content);
         var next = ReplaceBlock(content, BaselineStart, BaselineEnd, RenderBaselines(baselines));
         next = ReplaceBlock(next, SourcesStart, SourcesEnd, RenderSources(candidates, existingRows));
         next = ReconcileFeatureTraceability(next, candidates);
-        return next;
+        return CisBrdPresentation.HideManagedEvidence(next);
     }
 
     private static string ClearApproval(string content)
@@ -913,10 +926,11 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
         ICollection<string> warnings)
     {
         var inspected = 0;
-        foreach (var path in CisPathSafety.EnumerateFiles(repository.RepositoryPath, "*.md"))
+        foreach (var path in EnumerateCandidateFiles(repository.RepositoryPath))
         {
             var normalizedAbsolute = "/" + NormalizePath(path).TrimStart('/') + "/";
-            if (ExcludedSegments.Any(segment => normalizedAbsolute.Contains(segment, StringComparison.OrdinalIgnoreCase)))
+            if (ExcludedSegments.Any(segment => normalizedAbsolute.Contains(segment, StringComparison.OrdinalIgnoreCase))
+                || new[] { "SKILL.md", "AGENTS.md", "CLAUDE.md" }.Contains(Path.GetFileName(path), StringComparer.OrdinalIgnoreCase))
             {
                 continue;
             }
@@ -963,6 +977,19 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
                 Hash(content),
                 evidence.Signals.Count == 0 ? ["canonical-path"] : evidence.Signals,
                 isCanonical);
+        }
+    }
+
+    private static IEnumerable<string> EnumerateCandidateFiles(string root)
+    {
+        // Prune generated/dependency trees before entering them, rather than filtering their files
+        // after recursive enumeration (which can traverse hundreds of thousands of ignored paths).
+        foreach (var file in CisPathSafety.EnumerateFiles(root, "*.md", recursive: false)) yield return file;
+        foreach (var directory in CisPathSafety.EnumerateDirectories(root, recursive: false))
+        {
+            var normalized = "/" + NormalizePath(directory).TrimStart('/') + "/";
+            if (ExcludedSegments.Any(segment => normalized.Contains(segment, StringComparison.OrdinalIgnoreCase))) continue;
+            foreach (var file in EnumerateCandidateFiles(directory)) yield return file;
         }
     }
 
@@ -1248,7 +1275,7 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
         var endIndex = content.IndexOf(end, StringComparison.Ordinal);
         return startIndex < 0 || endIndex < startIndex
             ? string.Empty
-            : content[(startIndex + start.Length)..endIndex].Trim();
+            : CisBrdPresentation.RestoreManagedEvidence(content[(startIndex + start.Length)..endIndex]).Trim();
     }
 
     private static bool HasManagedBlocks(string content)

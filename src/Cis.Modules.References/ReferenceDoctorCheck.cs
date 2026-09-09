@@ -24,7 +24,7 @@ public sealed class ReferenceDoctorCheck : ICisRepositoryDoctorCheck
         try
         {
             using var document = JsonDocument.Parse(File.ReadAllText(statePath));
-            if (!document.RootElement.TryGetProperty("schemaVersion", out var schema) || schema.GetInt32() != 1)
+            if (!document.RootElement.TryGetProperty("schemaVersion", out var schema) || schema.GetInt32() != ReferenceGovernanceService.InventorySchemaVersion)
                 return [Finding("CIS-REF-DOCTOR-002", "warning", "Local normalized reference state has an unsupported schema.",
                     [".cis/local/references/inventory.json"], "Regenerate disposable reference state.", "cis references discover")];
             return [];

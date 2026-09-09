@@ -285,6 +285,25 @@ public sealed class BrdWorkflowTests
     }
 
     [Fact]
+    public void Discover_ExcludesAgentInstructionsAndSkillsFromBusinessSources()
+    {
+        using var environment = WorkspaceEnvironment.Create(participants: 1,
+            configureParticipant: (repository, _) =>
+            {
+                foreach (var path in new[] { ".claude/skills/tdd/SKILL.md", ".agents/skills/brd/reference.md",
+                    ".codex/BRD.md", "skills/tdd/references/BRD.md", "AGENTS.md", "CLAUDE.md", "SKILL.md",
+                    "node_modules/library/BRD.md", "web/.next/output/BRD.md", "src/bin/output/BRD.md" })
+                    repository.Write(path, "# Business Requirements Document\n\nInstructions for producing a BRD, not business source evidence.\n");
+                repository.Write("legacy/BRD.md", "# Business Requirements Document\n\nHistorical product requirements.\n");
+            });
+
+        var result = environment.Service.Discover(environment.Authority.Path);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal("legacy/BRD.md", Assert.Single(result.Candidates).Path);
+    }
+
+    [Fact]
     public void Discover_DoesNotAbsorbBusinessAuthorityFromDependencyRepository()
     {
         using var environment = WorkspaceEnvironment.Create(
@@ -412,6 +431,23 @@ public sealed class BrdWorkflowTests
             "Stakeholders confirmed scope, outcomes, and traceability");
         Assert.Equal("unchanged", repeated.Status);
         Assert.False(repeated.Applied);
+    }
+
+    [Fact]
+    public void Status_DetectsParticipantContentChangesWithUnchangedLengthAndTimestamp()
+    {
+        using var environment = WorkspaceEnvironment.Create(participants: 1,
+            configureParticipant: (repository, _) => repository.Write("src/Product/Changed.cs", "public sealed class BeforeX { }"));
+        Assert.Equal(0, environment.Service.Initialize(environment.Authority.Path, "Product BRD").ExitCode);
+        var path = Path.Combine(environment.Participants[0].Path, "src/Product/Changed.cs");
+        var timestamp = File.GetLastWriteTimeUtc(path);
+        File.WriteAllText(path, "public sealed class AfterXX { }");
+        File.SetLastWriteTimeUtc(path, timestamp);
+
+        var result = environment.Service.Status(environment.Authority.Path);
+
+        Assert.NotEqual(0, result.ExitCode);
+        Assert.Contains(result.Errors, error => error.Contains("graph is stale", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -778,6 +814,29 @@ public sealed class BrdWorkflowTests
         Assert.Equal(0, repeated.ExitCode);
         Assert.Equal("unchanged", repeated.Status);
         Assert.False(repeated.Applied);
+    }
+
+    [Fact]
+    public void Reconcile_HidesLegacyEvidenceWithoutChangingBusinessDigestOrApproval()
+    {
+        using var environment = WorkspaceEnvironment.Create(participants: 1);
+        Assert.Equal(0, environment.Service.Initialize(environment.Authority.Path, "Product BRD").ExitCode);
+        CompleteHumanReview(environment.CanonicalPath, hasCandidate: false);
+        var legacy = CisBrdPresentation.RestoreManagedEvidence(File.ReadAllText(environment.CanonicalPath));
+        File.WriteAllText(environment.CanonicalPath, legacy);
+        Assert.Equal(0, environment.Service.Approve(environment.Authority.Path, "Business owner", "Product reviewed").ExitCode);
+        var before = File.ReadAllText(environment.CanonicalPath);
+
+        var reconciled = environment.Service.Reconcile(environment.Authority.Path);
+        var after = File.ReadAllText(environment.CanonicalPath);
+
+        Assert.Equal(0, reconciled.ExitCode);
+        Assert.True(reconciled.Validation!.Valid);
+        Assert.Equal("Active", reconciled.Validation.EffectiveStatus);
+        Assert.Contains("<!-- cis:brd-evidence", after, StringComparison.Ordinal);
+        Assert.Equal(BrdDocumentDigest.Compute(before), BrdDocumentDigest.Compute(after));
+        Assert.DoesNotContain("| Repository |", Regex.Replace(after, "<!--.*?-->", string.Empty, RegexOptions.Singleline), StringComparison.Ordinal);
+        Assert.Equal("unchanged", environment.Service.Reconcile(environment.Authority.Path).Status);
     }
 
     [Fact]

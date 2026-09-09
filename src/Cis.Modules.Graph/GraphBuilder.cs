@@ -20,7 +20,7 @@ public sealed class GraphBuilder
     [
         "cis.catalog/1",
         "cis.markdown.repository-profile/1",
-        "cis.markdown.reference-table/1",
+        "cis.markdown.reference-table/2",
         "cis.markdown.governance-link/1",
         "cis.markdown.api-governance/1",
         "cis.api.state/1",
@@ -30,7 +30,7 @@ public sealed class GraphBuilder
         "cis.source-declarations/1",
         "cis.csharp.compiler/3",
         "cis.csharp.semantic-facts/3",
-        "cis.test-declarations/1",
+        "cis.test-declarations/2",
         "cis.project-dependencies/1",
         "cis.github-actions/1",
     ];
@@ -70,6 +70,7 @@ public sealed class GraphBuilder
 
     public GraphBuildResult Build(string repositoryPath, bool refresh = false)
     {
+        using var timing = CisPerformanceTrace.Start("graph.build");
         var resolution = _repositoryContextResolver.Resolve(repositoryPath);
         if (!resolution.IsSuccess)
         {
@@ -92,6 +93,7 @@ public sealed class GraphBuilder
             return Failed(context, diagnostics);
         }
 
+        timing.Mark("document-validation");
         var catalogResult = _catalogReader.Read(context.CatalogPath);
         if (!catalogResult.IsSuccess)
         {
@@ -116,6 +118,7 @@ public sealed class GraphBuilder
             return Failed(context, diagnostics);
         }
 
+        timing.Mark("inventory");
         var catalog = catalogResult.Catalog!;
         var inputs = ReadInputs(context, catalog.Documents, diagnostics);
         if (diagnostics.Any(diagnostic => diagnostic.Severity == "error"))
@@ -135,6 +138,7 @@ public sealed class GraphBuilder
             return current!;
         }
 
+        timing.Mark("inputs-and-cache");
         var nodes = new Dictionary<string, CisGraphNode>(StringComparer.Ordinal);
         var edges = new Dictionary<string, CisGraphEdge>(StringComparer.Ordinal);
         var hashes = inputs.ToDictionary(input => input.Path, input => input.Hash, StringComparer.OrdinalIgnoreCase);
@@ -173,6 +177,7 @@ public sealed class GraphBuilder
             edges,
             diagnostics,
             repositoryNode.Key);
+        timing.Mark("documents-and-components");
         ExtractReferences(
             context,
             catalog.Documents,
@@ -182,6 +187,7 @@ public sealed class GraphBuilder
             nodes,
             edges,
             diagnostics);
+        timing.Mark("references");
         ExtractDecisions(
             context,
             catalog.Documents,
@@ -191,6 +197,7 @@ public sealed class GraphBuilder
             nodes,
             edges,
             diagnostics);
+        timing.Mark("decisions");
         ExtractImplementation(
             context,
             components,
@@ -199,6 +206,7 @@ public sealed class GraphBuilder
             edges,
             diagnostics,
             repositoryNode.Key);
+        timing.Mark("implementation");
         ExtractApiGovernanceRelationships(
             context,
             catalog.Documents,
@@ -218,6 +226,7 @@ public sealed class GraphBuilder
             foreach (var edge in augmentation.Edges) AddEdge(context.RepositoryId, edge.Type, edge.From, edge.To,
                 edge.State, edge.Confidence, edge.Observations, edges, edge.Properties);
         }
+        timing.Mark("governance-and-augmenters");
         ValidateEdges(nodes, edges, diagnostics);
 
         var orderedDiagnostics = diagnostics
@@ -250,7 +259,10 @@ public sealed class GraphBuilder
             inputs,
             activeExtractors);
 
-        return Persist(context, graph, manifest, orderedDiagnostics, refresh);
+        timing.Mark("finalize");
+        var persisted = Persist(context, graph, manifest, orderedDiagnostics, refresh);
+        timing.Mark("persist");
+        return persisted;
     }
 
     private static IReadOnlyList<CisGraphInput> ReadInputs(
@@ -615,6 +627,10 @@ public sealed class GraphBuilder
                 }
 
                 AddEdge(context.RepositoryId, "declares", documentNode.Key, node.Key, "declared", "high", [evidence], edges);
+                // A workspace rollup retains the source repository's component names. Never
+                // attach a foreign row to a coincidentally named component of the authority.
+                if (row.TryGetValue("Repository", out var sourceRepository) && !string.IsNullOrWhiteSpace(sourceRepository)
+                    && !sourceRepository.Equals(context.RepositoryId, StringComparison.OrdinalIgnoreCase)) continue;
                 foreach (var owner in MarkdownGraphExtractor.FindOwners(table.Family, row))
                 {
                     if (components.TryGetValue(owner, out var component))
@@ -807,18 +823,19 @@ public sealed class GraphBuilder
         }
 
         var permissions = nodes.Values.Where(node => node.Kind == "reference-item" && node.Subtype == "permission")
-            .ToDictionary(node => node.Properties.GetValueOrDefault("Permission code") ?? node.Properties.GetValueOrDefault("graphIdentity") ?? node.LocalId,
+            .ToLookup(node => ScopedContract(node, node.Properties.GetValueOrDefault("Permission code") ?? node.LocalId),
                 StringComparer.OrdinalIgnoreCase);
         var problems = nodes.Values.Where(node => node.Kind == "reference-item" && node.Subtype == "problem")
-            .ToDictionary(node => node.Properties.GetValueOrDefault("Problem ID") ?? node.Properties.GetValueOrDefault("graphIdentity") ?? node.LocalId,
+            .ToLookup(node => ScopedContract(node, node.Properties.GetValueOrDefault("Problem ID") ?? node.LocalId),
                 StringComparer.OrdinalIgnoreCase);
+        string ScopedContract(CisGraphNode node, string id) => ReferenceRepository(node, context.RepositoryId) + "\u001f" + id;
 
         foreach (var operation in nodes.Values.Where(node => node.Kind == "reference-item" && node.Subtype == "api-operation").ToArray())
         {
             var permissionText = operation.Properties.GetValueOrDefault("Permission / auth") ?? string.Empty;
             foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(permissionText, "\\bPERM-[A-Za-z0-9_.:-]+", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
             {
-                if (permissions.TryGetValue(match.Value, out var permission))
+                if (permissions[ScopedContract(operation, match.Value)].Take(2).ToArray() is [var permission])
                 {
                     AddEdge(context.RepositoryId, "authorized-by", operation.Key, permission.Key, "declared", "high", operation.Provenance, edges);
                 }
@@ -827,7 +844,7 @@ public sealed class GraphBuilder
             var errorText = operation.Properties.GetValueOrDefault("Error contract") ?? string.Empty;
             foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(errorText, "\\bPROB-[A-Za-z0-9_.:-]+", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
             {
-                if (problems.TryGetValue(match.Value, out var problem))
+                if (problems[ScopedContract(operation, match.Value)].Take(2).ToArray() is [var problem])
                 {
                     AddEdge(context.RepositoryId, "fails-with", operation.Key, problem.Key, "declared", "high", operation.Provenance, edges);
                 }
@@ -836,7 +853,8 @@ public sealed class GraphBuilder
             var consumerText = operation.Properties.GetValueOrDefault("Consumer") ?? string.Empty;
             foreach (var consumerId in consumerText.Split(',', ';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
-                if (components.TryGetValue(consumerId, out var consumer))
+                if (ReferenceRepository(operation, context.RepositoryId).Equals(context.RepositoryId, StringComparison.OrdinalIgnoreCase)
+                    && components.TryGetValue(consumerId, out var consumer))
                 {
                     AddEdge(context.RepositoryId, "consumed-by", operation.Key, consumer.Key, "declared", "high", operation.Provenance, edges);
                 }
@@ -894,8 +912,10 @@ public sealed class GraphBuilder
         }
 
         var canonicalOperations = nodes.Values.Where(node => node.Kind == "reference-item" && node.Subtype == "api-operation")
-            .ToDictionary(node => node.Properties.GetValueOrDefault("API ID") ?? node.Properties.GetValueOrDefault("graphIdentity") ?? node.LocalId,
-                StringComparer.OrdinalIgnoreCase);
+            .Where(node => ReferenceRepository(node, context.RepositoryId).Equals(context.RepositoryId, StringComparison.OrdinalIgnoreCase))
+            .GroupBy(node => node.Properties.GetValueOrDefault("API ID") ?? node.Properties.GetValueOrDefault("graphIdentity") ?? node.LocalId,
+                StringComparer.OrdinalIgnoreCase).Where(group => group.Count() == 1)
+            .ToDictionary(group => group.Key, group => group.Single(), StringComparer.OrdinalIgnoreCase);
         var rules = nodes.Values.Where(node => node.Kind == "api-rule")
             .ToDictionary(node => node.LocalId, StringComparer.OrdinalIgnoreCase);
         var testsByPath = nodes.Values.Where(node => node.Kind == "test")
@@ -1649,8 +1669,11 @@ public sealed class GraphBuilder
         IReadOnlyDictionary<string, CisGraphNode> sourceNodes,
         IReadOnlyList<(CisGraphNode Node, string Content)> testSources)
     {
+        using var timing = CisPerformanceTrace.Start("graph.link-implementation-evidence");
+        var testReferences = new Dictionary<string, List<CisGraphNode>>(StringComparer.Ordinal);
         foreach (var reference in nodes.Values.Where(node => node.Kind == "reference-item").ToArray())
         {
+            if (!ReferenceRepository(reference, context.RepositoryId).Equals(context.RepositoryId, StringComparison.OrdinalIgnoreCase)) continue;
             var evidenceValue = reference.Properties
                 .FirstOrDefault(pair => string.Equals(pair.Key, "Evidence", StringComparison.OrdinalIgnoreCase)).Value;
             var evidencePath = string.IsNullOrWhiteSpace(evidenceValue)
@@ -1675,7 +1698,18 @@ public sealed class GraphBuilder
                 continue;
             }
 
-            foreach (var testSource in testSources.Where(test => test.Content.Contains(identity, StringComparison.Ordinal)))
+            if (!testReferences.TryGetValue(identity, out var references)) testReferences[identity] = references = [];
+            references.Add(reference);
+        }
+        if (testReferences.Count == 0 || testSources.Count == 0) return;
+        var matcher = new OrdinalPatternMatcher(testReferences.Keys);
+        // Evidence is file-scoped in the lexical adapter. Scan each file once, then retain the
+        // same links and provenance for every test declaration that the original scan matched.
+        foreach (var file in testSources.GroupBy(test => test.Node.Locations[0].Path, StringComparer.Ordinal))
+        {
+            foreach (var identity in matcher.Find(file.First().Content))
+            foreach (var reference in testReferences[identity])
+            foreach (var testSource in file)
             {
                 AddEdge(
                     context.RepositoryId,
@@ -1689,6 +1723,9 @@ public sealed class GraphBuilder
             }
         }
     }
+
+    private static string ReferenceRepository(CisGraphNode node, string fallback)
+        => node.Properties.TryGetValue("Repository", out var repository) && !string.IsNullOrWhiteSpace(repository) ? repository : fallback;
 
     private static CisGraphNode? FindComponentForPath(string path, IEnumerable<CisGraphNode> components)
     {
@@ -2102,6 +2139,10 @@ public sealed class GraphBuilder
                     .Select(input => $"input:{input.Path}={input.Hash}"))));
 
     internal static string HashInput(string relativePath, string absolutePath)
+        => CisReadScope.Read(typeof(GraphBuilder), "input:" + relativePath, absolutePath,
+            () => HashInputCore(relativePath, absolutePath));
+
+    private static string HashInputCore(string relativePath, string absolutePath)
     {
         if (IsManagedChangeDossierPath(relativePath))
             return "sha256:" + HashText("managed-change-dossier:" + relativePath.Replace('\\', '/').ToLowerInvariant());

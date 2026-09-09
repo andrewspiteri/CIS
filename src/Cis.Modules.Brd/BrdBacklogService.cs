@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Cis.Abstractions;
+using Cis.Modules.Graph;
 using Cis.Modules.Repository;
 
 namespace Cis.Modules.Brd;
@@ -262,6 +263,7 @@ public sealed class BrdBacklogService
 
     private BrdBacklogResult ValidateInternal(string workspacePath, string operation, bool applied)
     {
+        using var graphReads = GraphReadScope.Enter();
         var state = Resolve(workspacePath);
         if (state.Errors.Count > 0) return Error("invalid", state, state.Errors);
         if (!File.Exists(state.BacklogPath!))

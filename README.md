@@ -98,18 +98,31 @@ New-Item -ItemType Directory C:\work\new-product
 Set-Location C:\work\new-product
 git init
 
-cis repo init --root docs\cis --dry-run --format agent
-cis repo init --root docs\cis --yes
+cis workspace init `
+  --root docs\cis `
+  --ecosystem new-product-ecosystem `
+  --product new-product `
+  --dry-run --format agent
+
+cis workspace init `
+  --root docs\cis `
+  --ecosystem new-product-ecosystem `
+  --product new-product `
+  --yes
 
 cis docs validate --strict
 cis skills validate --strict
 cis standards validate --strict
 cis graph build --format agent
 cis graph validate --strict
+cis definition init
+cis definition status
 ```
 
 The dry run shows every planned directory, file, standard, skill, instruction, warning,
-and collision without changing the repository. Review it before passing `--yes`.
+collision, and authority record without changing the repository. Review it before passing
+`--yes`. Replace the sample ecosystem and product IDs with stable identifiers for the
+product being created. One workspace governs one product.
 
 As source projects are added, rerun initialization. CIS will reconcile newly detected
 languages, frameworks, roles, and capabilities without silently overwriting reviewed
@@ -123,8 +136,21 @@ engineering documentation locally.
 ```powershell
 Set-Location C:\work\orders
 
-cis repo init --root docs\cis --dry-run --format agent
-cis repo init --root docs\cis --yes
+cis repo import `
+  --workspace C:\work\orders `
+  --source C:\work\orders `
+  --root docs\cis `
+  --participation owned --relationship none `
+  --ecosystem commerce --product ordering `
+  --dry-run --format agent
+
+cis repo import `
+  --workspace C:\work\orders `
+  --source C:\work\orders `
+  --root docs\cis `
+  --participation owned --relationship none `
+  --ecosystem commerce --product ordering `
+  --yes
 
 cis docs inventory
 cis docs validate --strict
@@ -134,10 +160,11 @@ cis graph build --format agent
 cis graph validate --strict
 ```
 
-Initialization classifies repository evidence and proposes the applicable documentation,
-standards, references, skills, and instructions. Deterministically discovered material
-starts with a truthful review state; discovery is evidence, not proof that the generated
-meaning is complete or approved.
+Self-import initializes the repository in place and registers that same repository as
+the product authority in one reviewed transaction. It classifies repository evidence and
+proposes the applicable documentation, standards, references, skills, and instructions.
+Deterministically discovered material starts with a truthful review state; discovery is
+evidence, not proof that the generated meaning is complete or approved.
 
 If initialization reports an error or collision, do not repeatedly force it. Inspect
 the repository with the same documentation root:
@@ -146,8 +173,9 @@ the repository with the same documentation root:
 cis repo doctor --root docs\cis --format agent
 ```
 
-See the [`cis repo init` manual](docs/manual/cis_repo_init.md) for confirmation,
-ownership, collision, and recoverable-quarantine behavior.
+See the [`cis repo import` manual](docs/manual/cis_repo_import.md) for the self-import
+contract and the [`cis repo init` manual](docs/manual/cis_repo_init.md) for underlying
+confirmation, ownership, collision, and recoverable-quarantine behavior.
 
 ### 2.4. Initializing a multi-repository workspace
 

@@ -14,7 +14,8 @@ class AuthoritySelector {
     const folders = this.folders();
     if (folders.length === 0) return undefined;
     const selected = this.workspaceState.get(AUTHORITY_KEY);
-    if (selected) return folders.find(folder => folder.uri.toString() === selected);
+    const match = selected && folders.find(folder => folder.uri.toString() === selected);
+    if (match) return match;
     return folders.length === 1 ? folders[0] : undefined;
   }
 
@@ -23,10 +24,6 @@ class AuthoritySelector {
   async choose() {
     const folders = this.folders();
     if (folders.length === 0) throw new Error('Open a repository folder first.');
-    if (folders.length === 1) {
-      await this.workspaceState.update(AUTHORITY_KEY, folders[0].uri.toString());
-      return folders[0];
-    }
     const items = folders.map(folder => ({ label: folder.name, description: folder.uri.fsPath, folder }));
     const selected = await this.vscode.window.showQuickPick(items, {
       placeHolder: 'Select the CIS authority repository',

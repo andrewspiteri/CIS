@@ -17,7 +17,9 @@ public sealed record CanonicalReferenceEntry(
     IReadOnlyList<string> Aliases,
     IReadOnlyList<string> Evidence,
     string Path,
-    int Line);
+    int Line,
+    string? RepositoryId = null,
+    string? CanonicalKey = null);
 
 public sealed record ReferenceObservationState(
     string Kind,
@@ -27,7 +29,8 @@ public sealed record ReferenceObservationState(
     int? Line,
     IReadOnlyList<string> Aliases,
     bool CanonicalDeclared,
-    string? CanonicalIdentity);
+    string? CanonicalIdentity,
+    string? CanonicalKey = null);
 
 public sealed record ReferenceFamilyState(
     string Kind,

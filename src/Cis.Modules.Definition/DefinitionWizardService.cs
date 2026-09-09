@@ -12,7 +12,7 @@ using Cis.Modules.UiDirection;
 
 namespace Cis.Modules.Definition;
 
-public sealed class DefinitionWizardService
+public sealed partial class DefinitionWizardService
 {
     private const string SessionRelativePath = ".cis/local/definition-wizard/session.json";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
@@ -89,12 +89,14 @@ public sealed class DefinitionWizardService
 
     public CisDefinitionWizardResult Status(string workspacePath)
     {
+        using var timing = CisPerformanceTrace.Start("definition.status");
         var state = Resolve(workspacePath);
         return state.Errors.Count > 0 ? Error(state, state.Errors) : StatusInternal(state, "status", false);
     }
 
     public CisDefinitionWizardResult Prepare(string workspacePath, string page)
     {
+        using var timing = CisPerformanceTrace.Start("definition.prepare");
         var state = Resolve(workspacePath);
         if (state.Errors.Count > 0) return Error(state, state.Errors);
         var normalized = NormalizePage(page);
@@ -104,6 +106,11 @@ public sealed class DefinitionWizardService
         {
             var foundationErrors = ReconcileFoundation(state);
             if (foundationErrors.Count > 0) return Error(state, foundationErrors);
+        }
+        if (normalized is "business" or "technical" or "contracts")
+        {
+            var preparationErrors = PrepareBusinessEvidence(state);
+            if (preparationErrors.Count > 0) return Error(state, preparationErrors);
         }
         using (CisDefinitionDraftScope.Enter())
         {
@@ -129,6 +136,11 @@ public sealed class DefinitionWizardService
         }
         var refreshErrors = TryRefreshDerived(state);
         if (refreshErrors.Count > 0) return Error(state, refreshErrors);
+        if (normalized is "business" or "technical" or "contracts")
+        {
+            var graph = _graph.Build(state.AuthorityRepositoryPath!);
+            if (graph.ExitCode != 0) return Error(state, graph.Diagnostics.Where(item => item.Severity == "error").Select(item => item.Message).ToArray());
+        }
         return StatusInternal(state, "prepared", true);
     }
 
@@ -222,15 +234,25 @@ public sealed class DefinitionWizardService
 
     private CisDefinitionWizardResult StatusInternal(State state, string operation, bool applied)
     {
+        using var timing = CisPerformanceTrace.Start("definition.status-projection");
+        using var graphReads = GraphReadScope.Enter();
         using var scope = CisDefinitionDraftScope.Enter();
         var brd = _brd.Status(state.WorkspacePath!);
+        timing.Mark("brd");
         var technicalQuestions = _technicalQuestions.Status(state.WorkspacePath!);
+        timing.Mark("technical-questions");
         var technical = _technicalIntent.Status(state.WorkspacePath!);
+        timing.Mark("technical-intent");
         var solution = _solutionDesign.Status(state.WorkspacePath!);
+        timing.Mark("solution");
         var uiQuestions = _uiQuestions.Status(state.WorkspacePath!);
+        timing.Mark("ui-questions");
         var ui = _uiDirection.Status(state.WorkspacePath!);
+        timing.Mark("ui-direction");
         var backlog = _backlog.Status(state.WorkspacePath!);
+        timing.Mark("backlog");
         var dictionaries = ReadDictionaries(state);
+        timing.Mark("dictionaries");
         var diagrams = ReadDiagrams(state, solution);
         var preview = ReadPreview(state, uiQuestions);
         var session = MigrateSemanticBaseline(state, ReadSession(state), brd, technicalQuestions,
@@ -273,19 +295,81 @@ public sealed class DefinitionWizardService
         var warnings = pages.SelectMany(page => page.Issues).Where(item => !string.IsNullOrWhiteSpace(item)).Distinct().ToArray();
         return new CisDefinitionWizardResult(operation, state.WorkspacePath, state.AuthorityRepositoryId,
             session?.SessionId, session?.CurrentPage ?? "foundation", session?.Active ?? false, ready,
-            pages, dictionaries, diagrams, preview, warnings, [], applied);
+            pages, dictionaries, diagrams, preview, warnings, [], applied)
+        {
+            TechnicalQuestions = new(technicalQuestions.Status, technicalQuestions.Current, technicalQuestions.Complete,
+                technicalQuestions.Questions.Select(question => new CisDefinitionQuestion(question.Id, question.Area,
+                    question.Question, question.Why, question.CommonOptions, question.SuggestedAnswer, question.Status,
+                    question.Answer, question.AnsweredBy, question.AnsweredAtUtc, question.ResolutionSource,
+                    question.Confidence, question.Evidence ?? [])).ToArray(), technicalQuestions.Errors),
+            UiQuestions = new(uiQuestions.Status, uiQuestions.Current, uiQuestions.Complete,
+                uiQuestions.Questions.Select(question => new CisDefinitionQuestion(question.Id, question.Area,
+                    question.Question, question.Why, question.CommonOptions, question.SuggestedAnswer, question.Status,
+                    question.Answer, question.AnsweredBy, question.AnsweredAtUtc, question.ResolutionSource,
+                    question.Confidence, question.Evidence)).ToArray(), uiQuestions.Errors),
+            BusinessInference = BusinessInference(state, brd),
+        };
+    }
+
+    private CisDefinitionBusinessInference BusinessInference(State state, BrdResult brd)
+    {
+        var workspace = _workspaces.Resolve(state.WorkspacePath!).Workspace;
+        var sources = workspace?.Repositories.Where(repository => repository.IsProductOwned
+            && (repository.Role == "participant"
+                || new RepositoryClassifier().Classify(repository.RepositoryPath).Components.Count > 0))
+            .Select(repository => new CisDefinitionBusinessRepository(repository.Id, repository.RepositoryPath,
+                brd.Discovery?.Baselines.FirstOrDefault(baseline => baseline.RepositoryId == repository.Id)?.Freshness ?? "missing"))
+            .ToArray() ?? [];
+        return new(brd.Status == "missing" || brd.Validation?.DocumentStatus is "Draft" or "Review Required", sources)
+        { LastPreparation = ReadBusinessPreparation(state) };
+    }
+
+    private static string BusinessPreparationPath(State state) => Path.Combine(state.AuthorityRepositoryPath!, ".cis", "local", "definition-wizard", "business-evidence.json");
+
+    private static IReadOnlyList<CisReferencePreparationResult> ReadBusinessPreparation(State state)
+    {
+        try
+        {
+            var path = BusinessPreparationPath(state);
+            return File.Exists(path) ? JsonSerializer.Deserialize<CisReferencePreparationResult[]>(File.ReadAllText(path), JsonOptions) ?? [] : [];
+        }
+        catch (Exception exception) when (exception is IOException or JsonException or UnauthorizedAccessException) { return []; }
+    }
+
+    private IReadOnlyList<string> PrepareBusinessEvidence(State state)
+    {
+        var reports = _repositoryInitializer.PrepareWorkspaceObservedReferences(state.WorkspacePath!);
+        WriteAtomic(BusinessPreparationPath(state), JsonSerializer.Serialize(reports, JsonOptions));
+        foreach (var report in reports)
+        {
+            if (report.Errors.Count > 0) return report.Errors;
+            var graph = _graph.Build(report.RepositoryPath);
+            if (graph.ExitCode != 0) return graph.Diagnostics.Where(item => item.Severity == "error").Select(item => item.Message).ToArray();
+        }
+        WriteAtomic(BusinessPreparationPath(state), JsonSerializer.Serialize(reports, JsonOptions));
+        return [];
     }
 
     private void RefreshDerived(State state)
     {
         using var scope = CisDefinitionDraftScope.Enter();
-        var solution = _solutionDesign.Status(state.WorkspacePath!);
-        var uiQuestions = _uiQuestions.Status(state.WorkspacePath!);
-        var ui = _uiDirection.Status(state.WorkspacePath!);
+        SolutionDesignResult solution;
+        UiDirectionQuestionnaireResult uiQuestions;
+        UiDirectionResult ui;
+        using (GraphReadScope.Enter())
+        {
+            solution = _solutionDesign.Status(state.WorkspacePath!);
+            uiQuestions = _uiQuestions.Status(state.WorkspacePath!);
+            ui = _uiDirection.Status(state.WorkspacePath!);
+        }
         Directory.CreateDirectory(Path.GetDirectoryName(state.DiagramPath!)!);
         Directory.CreateDirectory(Path.GetDirectoryName(state.DictionaryIndexPath!)!);
         Directory.CreateDirectory(Path.GetDirectoryName(state.PreviewPath!)!);
-        if (Accepted(solution.Validation?.Valid, solution.Validation?.Current, solution.Validation?.EffectiveStatus))
+        var inferredDesign = ResolveDocument(state, solution.DesignPath);
+        var inferredDraft = File.Exists(inferredDesign) && File.ReadAllText(inferredDesign).Contains(ArchitectureDiagramModel.Marker, StringComparison.Ordinal)
+            && ReadNestedValue(File.ReadAllText(inferredDesign), "technical_intent_hash") == solution.TechnicalIntentVersion;
+        if (Accepted(solution.Validation?.Valid, solution.Validation?.Current, solution.Validation?.EffectiveStatus)
+            || inferredDraft && solution.Validation is { Valid: true })
             WriteDerived(state.DiagramPath!, RenderDiagrams(state, solution));
         var dictionaries = ReadDictionaries(state);
         WriteDerived(state.DictionaryIndexPath!, RenderDictionaryIndex(state, dictionaries));
@@ -320,6 +404,9 @@ public sealed class DefinitionWizardService
 
     private static string RenderDiagrams(State state, SolutionDesignResult solution)
     {
+        var designPath = ResolveDocument(state, solution.DesignPath);
+        if (File.Exists(designPath) && File.ReadAllText(designPath).Contains(ArchitectureDiagramModel.Marker, StringComparison.Ordinal))
+            return RenderInferredDiagrams(state, solution, ArchitectureDiagramModel.ReadRequired(File.ReadAllText(designPath)));
         var interactions = ReadInteractions(state, solution);
         var componentNodes = solution.Components.Count == 0
             ? "  system[Product system]"
@@ -526,6 +613,7 @@ The preview is derived from the current high-level UI questionnaire and directio
 
     private IReadOnlyList<CisDefinitionDictionary> ReadDictionaries(State state)
     {
+        using var timing = CisPerformanceTrace.Start("definition.read-dictionaries");
         return DictionaryKinds.Select(kind =>
         {
             var path = Path.Combine(state.DocumentationPath!, "references", kind + ".md");
@@ -538,15 +626,19 @@ The preview is derived from the current high-level UI questionnaire and directio
     }
 
     private IReadOnlyList<CisDefinitionDiagram> ReadDiagrams(State state, SolutionDesignResult solution)
-        => File.Exists(state.DiagramPath)
-            ?
-            [
-                new("system-context", "System context", state.DiagramRelativePath!, "mermaid", DerivedStatus(state.DiagramPath!, DiagramSourceHash(state, solution))),
-                new("component-topology", "Component topology", state.DiagramRelativePath!, "mermaid", DerivedStatus(state.DiagramPath!, DiagramSourceHash(state, solution))),
-                new("integration-trust", "Integration and trust boundaries", state.DiagramRelativePath!, "mermaid", DerivedStatus(state.DiagramPath!, DiagramSourceHash(state, solution))),
-                new("deployment-operations", "Deployment and operations", state.DiagramRelativePath!, "mermaid", DerivedStatus(state.DiagramPath!, DiagramSourceHash(state, solution))),
-            ]
-            : [];
+    {
+        if (!File.Exists(state.DiagramPath)) return [];
+        var content = File.ReadAllText(state.DiagramPath);
+        var status = DerivedStatus(state.DiagramPath!, DiagramSourceHash(state, solution));
+        CisDefinitionDiagram View(string id, string title)
+        {
+            var match = Regex.Match(content, $@"\]\((?<path>architecture-diagrams/{Regex.Escape(id)}-[a-f0-9]{{64}}\.svg)\)");
+            var image = match.Success ? Normalize(Path.Combine(Path.GetDirectoryName(state.DiagramRelativePath!)!, match.Groups["path"].Value)) : null;
+            return new(id, title, state.DiagramRelativePath!, image is null ? "mermaid" : "svg", status) { SvgRelativePath = image };
+        }
+        return [View("system-context", "System context"), View("component-topology", "Component topology"),
+            View("integration-trust", "Integration and trust boundaries"), View("deployment-operations", "Deployment and operations")];
+    }
 
     private static CisDefinitionPreview? ReadPreview(State state, UiDirectionQuestionnaireResult questions)
     {
@@ -731,8 +823,16 @@ The preview is derived from the current high-level UI questionnaire and directio
 
     private static int MarkdownEntryCount(string content)
     {
-        var rows = content.Split('\n').Count(line => line.TrimStart().StartsWith('|') && !Regex.IsMatch(line, @"^\s*\|?\s*:?-{3,}"));
-        return Math.Max(0, rows - 1);
+        var lines = Regex.Replace(content, @"<!--[\s\S]*?-->", "").Replace("\r\n", "\n").Split('\n');
+        var count = 0;
+        for (var index = 0; index + 1 < lines.Length; index++)
+        {
+            if (!lines[index].TrimStart().StartsWith('|') || !Regex.IsMatch(lines[index + 1], @"^\s*\|[\s|:-]+\|\s*$")) continue;
+            index += 2;
+            for (; index < lines.Length && lines[index].TrimStart().StartsWith('|'); index++)
+                if (!Regex.IsMatch(lines[index], @"^\s*\|\s*(?:`?TODO`?|TBD)?\s*\|", RegexOptions.IgnoreCase)) count++;
+        }
+        return count;
     }
 
     private static IReadOnlyList<string> SplitChoices(string answer, IReadOnlyList<string> defaults)
@@ -760,7 +860,7 @@ The preview is derived from the current high-level UI questionnaire and directio
     {
         var design = ResolveDocument(state, solution.DesignPath);
         var sheet = ResolveDocument(state, solution.ComponentSheetPath);
-        return Digest(string.Join('|', "diagram-renderer-v2", solution.TechnicalIntentVersion,
+        return Digest(string.Join('|', "diagram-renderer-v3", solution.TechnicalIntentVersion,
             File.Exists(design) ? File.ReadAllText(design) : string.Empty,
             File.Exists(sheet) ? File.ReadAllText(sheet) : string.Empty));
     }
@@ -780,11 +880,14 @@ The preview is derived from the current high-level UI questionnaire and directio
         var path = ResolveDocument(state, solution.ComponentSheetPath);
         if (!File.Exists(path)) return [];
         var rows = new List<DiagramInteraction>();
+        var contractColumn = -1;
         foreach (var line in File.ReadLines(path))
         {
-            if (!line.TrimStart().StartsWith("| `TI-INT-", StringComparison.Ordinal)) continue;
-            var cells = line.Trim().Trim('|').Split('|').Select(cell => cell.Trim().Trim('`')).ToArray();
-            if (cells.Length >= 5) rows.Add(new(cells[1], cells[2], cells[3], cells[4]));
+            if (!line.TrimStart().StartsWith('|')) continue;
+            var cells = Regex.Split(line.Trim().Trim('|'), @"(?<!\\)\|").Select(cell => cell.Trim().Trim('`').Replace("\\|", "|", StringComparison.Ordinal)).ToArray();
+            if (cells.Length > 0 && cells[0] == "Integration") { contractColumn = Array.FindIndex(cells, cell => cell.StartsWith("Contract", StringComparison.OrdinalIgnoreCase)); continue; }
+            if (cells.Length >= 4 && Regex.IsMatch(cells[0], @"^TI-INT-[A-Z0-9-]+$"))
+                rows.Add(new(cells[1], cells[2], cells[3], contractColumn >= 0 && contractColumn < cells.Length ? cells[contractColumn] : cells[2]));
         }
         return rows;
     }

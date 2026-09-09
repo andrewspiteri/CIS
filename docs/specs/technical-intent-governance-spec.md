@@ -24,6 +24,21 @@ change-dossier creation, impact analysis, and planning. The canonical questionna
 
 ## Managed evidence and deterministic scaffold
 
+Existing products also support a bounded draft-discovery stage through `cis agent discover
+technical-intent` and `cis agent author technical-intent`. This stage may read the current
+canonical BRD while it is still under review and prepare an incomplete questionnaire without
+inventing answers. It never changes BRD approval, the ordinary technical-intent readiness gate,
+or downstream authority. Only a Draft or Review Required technical document may be authored.
+
+The author reads cached, redacted implementation/test snapshots from explicitly selected owned
+repositories, distinguishes observed implementation from proposed direction, and documents
+evidence omissions. Exact coverage records, immutable context, one-file isolation and unchanged
+human decisions are checked before copy-back. Evidence provenance remains in reversible HTML
+comments; technical narrative and human decisions remain visible. Implementation-authored
+component maps, module responsibilities, integration records and decisions are preserved by
+later initialization instead of being replaced with deterministic candidates. Human review,
+complete/current questionnaire and Active/current business authority remain required.
+
 CIS owns the marked technical-intent baseline, business-evidence, questionnaire-evidence,
 component-map, product-module architecture, integration-point catalog, technical-surface-evidence,
 standards-evidence, and questionnaire-derived decision blocks plus lifecycle metadata. The baseline

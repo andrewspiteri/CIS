@@ -42,7 +42,7 @@ public sealed class FrontendContextTests
         repository.Write("web/app/page.tsx", "export default function HomePage(){ return <div>Home</div>; }");
         var service = CreateService();
         var context = new CisRepositoryContextResolver().Resolve(repository.Path).Context!;
-        Assert.Equal("frontend-context/2", service.Name);
+        Assert.Equal("frontend-context/3", service.Name);
 
         var augmentation = service.Augment(context, new Dictionary<string, string> { ["web/app/page.tsx"] = "sha256:test" });
 
@@ -72,6 +72,38 @@ public sealed class FrontendContextTests
 
         Assert.Equal(5, result.ExitCode);
         Assert.Contains(result.Diagnostics, item => item.Code == "CIS-FRONTEND-PROVIDER-001");
+    }
+
+    [Fact]
+    public void AngularRelativeRoutes_DoNotCollideAcrossModulesOrReadTestFixtures()
+    {
+        using var repository = Fixture.Create();
+        repository.Write("src/app.routes.ts", "import { Routes } from '@angular/router'; const routes: Routes = [{ path: '', redirectTo: 'home' }, { path: '', component: Shell, children: [{ path: '', component: Home }] }];");
+        repository.Write("src/child.routes.ts", "import { Routes } from '@angular/router'; const routes: Routes = [{ path: '', component: Child }];");
+        repository.Write("src/fixture.spec.ts", "import { Routes } from '@angular/router'; const fixture = { path: '/uploads/test.csv', component: Fake };");
+
+        var result = CreateService().Discover(repository.Path);
+
+        Assert.Equal(0, result.ExitCode);
+        var routes = result.Observations.Where(item => item.Kind == "route").ToArray();
+        Assert.Equal(3, routes.Length);
+        Assert.Equal(3, routes.Select(item => item.Id).Distinct().Count());
+        Assert.All(routes, item => Assert.Equal("relative-declaration", item.Properties["routeResolution"]));
+        Assert.DoesNotContain(result.Observations, item => item.SourcePath.EndsWith(".spec.ts", StringComparison.Ordinal));
+        Assert.DoesNotContain(result.Diagnostics, item => item.Code == "CIS-FRONTEND-ROUTE-001");
+    }
+
+    [Fact]
+    public void ResolvedNextRoutes_StillRejectConflictingPageTargets()
+    {
+        using var repository = Fixture.Create();
+        repository.Write("web/app/(first)/page.tsx", "export default function FirstPage() { return <main />; }");
+        repository.Write("web/app/(second)/page.tsx", "export default function SecondPage() { return <main />; }");
+
+        var result = CreateService().Discover(repository.Path);
+
+        Assert.Equal(5, result.ExitCode);
+        Assert.Contains(result.Diagnostics, item => item.Code == "CIS-FRONTEND-ROUTE-001");
     }
 
     private static FrontendContextService CreateService()

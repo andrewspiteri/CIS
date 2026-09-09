@@ -17,6 +17,7 @@ public sealed class DefinitionModule : ICisModule
         services.AddSingleton<ICisProductDefinitionAuthority>(provider =>
             provider.GetRequiredService<ProductDefinitionAuthority>());
         services.AddSingleton<DefinitionWizardService>();
+        services.AddSingleton<ICisObservedReferencePreparer, ObservedReferenceWorkspacePreparer>();
     }
 
     public void RegisterCommands(ICisCommandRegistry commands, IServiceProvider services)

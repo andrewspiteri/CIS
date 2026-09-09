@@ -3,7 +3,7 @@ title: "Reference Governance and Drift Specification"
 type: specification
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-27"
+last_reviewed: "2026-09-08"
 review_cadence: "on reference-provider contract change"
 cis:
   stable_id: change-impact-studio:spec:reference-governance-drift
@@ -36,6 +36,29 @@ identities, lifecycle, evidence, and human rationale remain there. Normalized st
 written to `.cis/local/references/inventory.json`; it contains provider provenance,
 repository revision, source locations, aliases, canonical correlation, diagnostics,
 and a content digest. Repeated unchanged discovery is idempotent.
+
+Inventory schema 2 includes each canonical row's repository scope and complete identity
+key. Keys retain dimension boundaries and punctuation; loose source-correlation aliases
+are not duplicate-detection keys. Default validation replaces obsolete derived state;
+cached reads reject older schemas with a discovery instruction.
+
+| Family | Identity within a repository |
+| --- | --- |
+| Data | Entity, field |
+| ERD | Entity, relationship, target |
+| Workflow state | Workflow ID (or workflow), state |
+| Configuration | Owner, path (or name when no path column exists) |
+| Package | Package, component |
+| Screen/route | Route, component, platform |
+| Other families | Stable ID/code |
+
+An explicit `Repository` value must resolve to a product-owned repository in the workspace.
+Absent repository columns retain local-repository semantics. Evidence resolves under that
+owner's root, with path containment and reparse-point checks. Provider observations remain
+local to the command's selected repository and cannot correlate to another owner's row.
+Current foreign rows report an unresolved source-correlation warning rather than claiming
+their implementation was inspected or incorrectly asserting their source is missing.
+Malformed table rows are reported; escaped literal pipes remain part of a cell.
 
 ### Source-document projections
 

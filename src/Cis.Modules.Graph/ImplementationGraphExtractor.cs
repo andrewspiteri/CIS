@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using Cis.Abstractions;
 
 namespace Cis.Modules.Graph;
 
@@ -55,6 +56,10 @@ internal static partial class ImplementationGraphExtractor
     };
 
     public static IReadOnlyList<string> EnumerateInputPaths(string repositoryPath)
+        => CisReadScope.Read(typeof(ImplementationGraphExtractor), nameof(EnumerateInputPaths), repositoryPath,
+            () => EnumerateInputPathsCore(repositoryPath));
+
+    private static IReadOnlyList<string> EnumerateInputPathsCore(string repositoryPath)
     {
         var files = new List<string>();
         var pending = new Stack<string>();
@@ -126,6 +131,7 @@ internal static partial class ImplementationGraphExtractor
     {
         var language = LanguageFor(path);
         var tests = new List<DiscoveredTest>();
+        var occurrences = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (Match match in TestPattern(language).Matches(content))
         {
             var name = match.Groups["name"].Value;
@@ -136,8 +142,17 @@ internal static partial class ImplementationGraphExtractor
 
             var framework = TestFramework(language, match.Value);
             var identity = $"{path}#{name}";
+            var localId = $"{Encode(componentId)}/{framework}/{Encode(identity)}";
+            var occurrence = occurrences.GetValueOrDefault(localId) + 1;
+            occurrences[localId] = occurrence;
+            // Lexical adapters cannot infer runtime suite scope. Keep each declaration
+            // addressable without making its identity depend on unrelated line changes.
+            if (occurrence > 1)
+            {
+                localId += "/occurrence/" + occurrence.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            }
             tests.Add(new DiscoveredTest(
-                $"{Encode(componentId)}/{framework}/{Encode(identity)}",
+                localId,
                 name,
                 framework,
                 language,
@@ -450,7 +465,7 @@ internal static partial class ImplementationGraphExtractor
     [GeneratedRegex(@"\[(?:Fact|Theory|Test|TestCase|TestMethod)(?:\([^\]]*\))?\]\s*(?:(?:public|internal|protected|private|static|async|virtual|sealed|override)\s+)*(?:[\w<>,?.\[\]]+\s+)+(?<name>[A-Za-z_]\w*)\s*\(", RegexOptions.Multiline)]
     private static partial Regex CSharpTestPattern();
 
-    [GeneratedRegex(@"\b(?:it|test)\s*\(\s*['""`](?<name>[^'""`]+)['""`]", RegexOptions.Multiline)]
+    [GeneratedRegex("""\b(?:it|test)\s*\(\s*(?:'(?<name>(?:\\.|[^'\\])*)'|"(?<name>(?:\\.|[^"\\])*)"|`(?<name>(?:\\.|[^`\\])*)`)\s*(?=,|\))""", RegexOptions.Multiline)]
     private static partial Regex JavaScriptTestPattern();
 
     [GeneratedRegex(@"^\s*func\s+(?<name>test[A-Za-z_]\w*)\s*\(", RegexOptions.Multiline)]

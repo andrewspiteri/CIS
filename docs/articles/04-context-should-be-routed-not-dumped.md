@@ -5,7 +5,7 @@ status: Draft
 series: "Governed Software Change"
 series_order: 4
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-25"
+last_reviewed: "2026-09-08"
 review_cadence: on product or context-model change
 summary: "How provenance, typed relationships, and bounded retrieval provide better engineering context than loading an entire repository."
 cis:
@@ -169,4 +169,3 @@ Context should be routed, not dumped.
 - [File index cards](../specs/file-index-card-spec.md)
 - [System context](../specs/system-context-spec.md)
 - [AI routing profile](../references/ai-routing-profile.md)
-

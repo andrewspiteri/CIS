@@ -1,11 +1,11 @@
 ---
 title: "Understanding Change Across Multiple Repositories"
 type: article
-status: Draft
+status: Active
 series: "Repository Knowledge and Context"
 series_order: 6
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on workspace or federation change
 summary: "How one product authority combines owned repositories and bounded dependency context without erasing ownership."
 cis:

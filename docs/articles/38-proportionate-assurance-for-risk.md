@@ -1,11 +1,11 @@
 ---
 title: "Proportionate Assurance for Different Risk Classes"
 type: article
-status: Draft
+status: Active
 series: "Verification and Assurance"
 series_order: 5
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on assurance-policy change
 summary: "Focused validation for low-risk work and wider independent evidence as consequence and uncertainty increase."
 cis:

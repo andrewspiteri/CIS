@@ -1,11 +1,11 @@
 ---
 title: "Repository-Backed State Versus Local SQLite"
 type: article
-status: Draft
+status: Active
 series: "Building Change Impact Studio"
 series_order: 5
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on storage architecture change
 summary: "Markdown and explicit configuration own meaning; normalized SQLite makes derived graph queries efficient."
 cis:

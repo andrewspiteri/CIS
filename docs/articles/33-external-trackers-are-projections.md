@@ -1,11 +1,11 @@
 ---
 title: "External Trackers Are Projections, Not Sources of Truth"
 type: article
-status: Draft
+status: Active
 series: "Human and Agent Execution"
 series_order: 8
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on tracker-synchronization change
 summary: "How GitHub Issues and Jira can coordinate governed work without acquiring authority over scope, evidence, or completion."
 cis:

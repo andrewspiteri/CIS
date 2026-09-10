@@ -1,11 +1,11 @@
 ---
 title: "Turning a Golden-Path Failure into Reviewed Product Learning"
 type: article
-status: Draft
+status: Active
 series: "CIS in Practice"
 series_order: 10
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on learning or golden-path change
 summary: "A disciplined route from real integration failure to specification, implementation, regression evidence, and reviewed learning."
 cis:

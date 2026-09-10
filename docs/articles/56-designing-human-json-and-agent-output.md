@@ -1,11 +1,11 @@
 ---
 title: "Designing Human, JSON, and Agent Output"
 type: article
-status: Draft
+status: Active
 series: "Building Change Impact Studio"
 series_order: 6
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on CLI-output change
 summary: "One command can support readable terminal use, stable automation, and compact agent routing without mixing diagnostics into stdout."
 cis:

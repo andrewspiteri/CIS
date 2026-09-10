@@ -1,11 +1,11 @@
 ---
 title: "Finding Unexpected Work During Verification"
 type: article
-status: Draft
+status: Active
 series: "CIS in Practice"
 series_order: 9
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on verification change
 summary: "How an unplanned workflow edit becomes a visible finding, scope decision, and possible improvement to future impact analysis."
 cis:

@@ -1,11 +1,11 @@
 ---
 title: "Release Notes with Engineering Context"
 type: article
-status: Draft
+status: Active
 series: "Product Evolution and Learning"
 series_order: 6
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on release-process change
 summary: "Explain outcomes, contract changes, migrations, evidence, and known limits instead of publishing a raw commit list."
 cis:

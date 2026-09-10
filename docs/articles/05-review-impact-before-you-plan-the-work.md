@@ -1,11 +1,11 @@
 ---
 title: "Review Impact Before You Plan the Work"
 type: article
-status: Draft
+status: Active
 series: "Governed Software Change"
 series_order: 5
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-08"
+last_reviewed: "2026-09-10"
 review_cadence: on impact or planning change
 summary: "Why evidence-backed impact findings must remain proposals until reviewed against an exact baseline."
 cis:

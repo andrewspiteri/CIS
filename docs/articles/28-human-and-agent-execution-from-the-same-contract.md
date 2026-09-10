@@ -1,11 +1,11 @@
 ---
 title: "Human and Agent Execution from the Same Contract"
 type: article
-status: Draft
+status: Active
 series: "Human and Agent Execution"
 series_order: 3
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on task-contract change
 summary: "A bounded work item should be equally understandable to a developer and a coding agent."
 cis:

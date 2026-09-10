@@ -1,11 +1,11 @@
 ---
 title: "Change Impact Studio in Practice"
 type: article
-status: Draft
+status: Active
 series: "Governed Software Change"
 series_order: 9
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-08"
+last_reviewed: "2026-09-10"
 review_cadence: on golden-path or product change
 summary: "A worked example of governing a cross-repository feature from product intent through independent verification and reviewed learning."
 cis:

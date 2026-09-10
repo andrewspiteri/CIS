@@ -1,11 +1,11 @@
 ---
 title: "Why Agent-Reported Changed Files Are Not Evidence"
 type: article
-status: Draft
+status: Active
 series: "Verification and Assurance"
 series_order: 1
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on verification change
 summary: "An executor's changed-file list is useful narration, but Git provides the independent repository evidence."
 cis:

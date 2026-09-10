@@ -1,11 +1,11 @@
 ---
 title: "Canonical Knowledge Versus Derived Knowledge"
 type: article
-status: Draft
+status: Active
 series: "Repository Knowledge and Context"
 series_order: 2
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on authority or storage change
 summary: "A practical boundary between durable repository authority and rebuildable local routing, analysis, and execution state."
 cis:

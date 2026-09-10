@@ -1,11 +1,11 @@
 ---
 title: "Provider Contracts and Explicit Assembly Loading"
 type: article
-status: Draft
+status: Active
 series: "Building Change Impact Studio"
 series_order: 8
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on provider architecture change
 summary: "Replaceable transports implement stable contracts and are loaded deliberately rather than discovered in target repositories."
 cis:

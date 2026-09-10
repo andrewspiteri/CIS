@@ -1,11 +1,11 @@
 ---
 title: "Initializing a Newly Created Repository"
 type: article
-status: Draft
+status: Active
 series: "CIS in Practice"
 series_order: 1
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on repository-initialization change
 summary: "Establish governed intent, documentation, standards, and context before a new codebase accumulates undocumented decisions."
 cis:

@@ -1,11 +1,11 @@
 ---
 title: "Plan Public, Customer, and Backoffice Experiences Separately"
 type: article
-status: Draft
+status: Active
 series: "Change Impact and Planning"
 series_order: 8
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on frontend-classification change
 summary: "Why each affected user-facing classification needs its own behavior, design, implementation, and evidence chain."
 cis:

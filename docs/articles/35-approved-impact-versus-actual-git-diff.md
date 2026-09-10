@@ -1,11 +1,11 @@
 ---
 title: "Comparing Approved Impact with the Actual Git Diff"
 type: article
-status: Draft
+status: Active
 series: "Verification and Assurance"
 series_order: 2
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on verification change
 summary: "How planned repositories and paths are compared with observed workspace changes from the approved baseline."
 cis:

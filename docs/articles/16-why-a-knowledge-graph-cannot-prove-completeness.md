@@ -1,11 +1,11 @@
 ---
 title: "Why a Knowledge Graph Cannot Prove Completeness"
 type: article
-status: Draft
+status: Active
 series: "Repository Knowledge and Context"
 series_order: 7
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on graph or impact-completeness change
 summary: "A graph can prove what it traversed and validated, but not that every semantic obligation exists in its model."
 cis:

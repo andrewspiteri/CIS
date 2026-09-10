@@ -1,11 +1,11 @@
 ---
 title: "Bound the Work Before You Give It to an Agent"
 type: article
-status: Draft
+status: Active
 series: "Governed Software Change"
 series_order: 6
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-08"
+last_reviewed: "2026-09-10"
 review_cadence: on planning or agent-execution change
 summary: "How explicit objectives, non-goals, dependencies, validation, and task envelopes make human and agent execution safer."
 cis:

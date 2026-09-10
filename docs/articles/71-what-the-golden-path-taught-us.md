@@ -1,11 +1,11 @@
 ---
 title: "What the Golden Path Taught Us"
 type: article
-status: Draft
+status: Active
 series: "Product Evolution and Learning"
 series_order: 1
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on golden-path review
 summary: "Real product replays expose classification, contract, packaging, and authority gaps that isolated tests cannot reveal."
 cis:

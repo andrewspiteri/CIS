@@ -1,11 +1,11 @@
 ---
 title: "Governing Exceptions and Compensating Controls"
 type: article
-status: Draft
+status: Active
 series: "Standards and Engineering Policy"
 series_order: 6
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on exception-policy change
 summary: "An exception needs exact rule identity, human authority, bounded scope, review conditions, and alternative risk controls."
 cis:

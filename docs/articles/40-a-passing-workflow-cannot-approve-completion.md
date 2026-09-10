@@ -1,11 +1,11 @@
 ---
 title: "Why a Passing Workflow Cannot Approve Completion"
 type: article
-status: Draft
+status: Active
 series: "Verification and Assurance"
 series_order: 7
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on workflow or acceptance change
 summary: "A zero exit code proves one execution contract succeeded; it does not establish complete scope or acceptable risk."
 cis:

@@ -1,11 +1,11 @@
 ---
 title: "Where CIS Still Requires Human Judgment"
 type: article
-status: Draft
+status: Active
 series: "Product Evolution and Learning"
 series_order: 2
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on authority-model change
 summary: "The boundaries where evidence and proposals stop and product, architecture, exception, risk, and acceptance authority begins."
 cis:

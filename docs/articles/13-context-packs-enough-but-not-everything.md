@@ -1,11 +1,11 @@
 ---
 title: "Context Packs: Enough, but Not Everything"
 type: article
-status: Draft
+status: Active
 series: "Repository Knowledge and Context"
 series_order: 4
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on context-routing change
 summary: "How task-specific context packs combine exact sources, excerpts, relationships, and provenance without sending an executor the whole repository."
 cis:

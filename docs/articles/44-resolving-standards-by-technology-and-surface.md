@@ -1,11 +1,11 @@
 ---
 title: "Resolving Standards by Technology and Change Surface"
 type: article
-status: Draft
+status: Active
 series: "Standards and Engineering Policy"
 series_order: 3
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on standards-applicability change
 summary: "Apply the standards relevant to repository classification and affected targets instead of presenting one universal checklist."
 cis:

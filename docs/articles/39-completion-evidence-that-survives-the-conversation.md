@@ -1,11 +1,11 @@
 ---
 title: "Recording Completion Evidence That Survives the Conversation"
 type: article
-status: Draft
+status: Active
 series: "Verification and Assurance"
 series_order: 6
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on completion-evidence change
 summary: "Exact commands, artifacts, outcomes, deferrals, and residual risk belong in durable task and verification records."
 cis:

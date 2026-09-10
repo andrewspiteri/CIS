@@ -1,11 +1,11 @@
 ---
 title: "Testing an Engineering Governance Tool"
 type: article
-status: Draft
+status: Active
 series: "Building Change Impact Studio"
 series_order: 9
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on test strategy change
 summary: "Verification must cover rules, safe mutations, lifecycle, idempotency, integration boundaries, and packaged behavior—not only individual methods."
 cis:

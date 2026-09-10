@@ -1,11 +1,11 @@
 ---
 title: "Detecting a Breaking API Change"
 type: article
-status: Draft
+status: Active
 series: "CIS in Practice"
 series_order: 7
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on API-diff change
 summary: "Discover current operations, validate governance fields, compare every supported baseline, then route the break to a human decision."
 cis:

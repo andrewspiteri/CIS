@@ -1,11 +1,11 @@
 ---
 title: "The Public Endpoint Cache Boundary as a Worked Example"
 type: article
-status: Draft
+status: Active
 series: "Standards and Engineering Policy"
 series_order: 8
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on public-endpoint policy change
 summary: "How one policy marker expands into cache, persistence, security, observability, and verification obligations."
 cis:

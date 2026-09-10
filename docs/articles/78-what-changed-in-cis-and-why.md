@@ -1,11 +1,11 @@
 ---
 title: "What Changed in CIS and Why"
 type: article
-status: Draft
+status: Active
 series: "Product Evolution and Learning"
 series_order: 8
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on product release
 summary: "A repeatable product-evolution format connecting evidence, intent, decisions, implementation, verification, and future work."
 cis:

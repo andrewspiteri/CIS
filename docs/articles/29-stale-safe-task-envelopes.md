@@ -1,11 +1,11 @@
 ---
 title: "Stale-Safe Task Envelopes"
 type: article
-status: Draft
+status: Active
 series: "Human and Agent Execution"
 series_order: 4
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on agent-envelope change
 summary: "How path and digest binding prevents old prepared work from being accepted against a changed task."
 cis:

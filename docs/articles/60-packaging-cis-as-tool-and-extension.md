@@ -1,11 +1,11 @@
 ---
 title: "Packaging CIS as a .NET Tool and VS Code Extension"
 type: article
-status: Draft
+status: Active
 series: "Building Change Impact Studio"
 series_order: 10
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on release change
 summary: "One semantic version, verified source and client builds, packaged-tool smoke tests, archives, and checksums."
 cis:

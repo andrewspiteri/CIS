@@ -1,11 +1,11 @@
 ---
 title: "Resumable Workflows Without Shell Execution"
 type: article
-status: Draft
+status: Active
 series: "Human and Agent Execution"
 series_order: 7
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on workflow-engine change
 summary: "Ordered executable-and-argument steps, dependency checks, timeouts, checkpoints, and digest-safe resume without evaluating shell text."
 cis:

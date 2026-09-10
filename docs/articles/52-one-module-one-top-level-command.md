@@ -1,11 +1,11 @@
 ---
 title: "One Module, One Top-Level Command"
 type: article
-status: Draft
+status: Active
 series: "Building Change Impact Studio"
 series_order: 2
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on module architecture change
 summary: "A simple ownership rule aligns CLI vocabulary, code boundaries, tests, and future extension contracts."
 cis:

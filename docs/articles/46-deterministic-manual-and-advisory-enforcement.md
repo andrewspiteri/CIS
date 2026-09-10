@@ -1,11 +1,11 @@
 ---
 title: "Deterministic, Manual, and Advisory Enforcement"
 type: article
-status: Draft
+status: Active
 series: "Standards and Engineering Policy"
 series_order: 5
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on standards-enforcement change
 summary: "Different rules need validators, tests, human review, or model advice, and those evidence strengths must remain distinct."
 cis:

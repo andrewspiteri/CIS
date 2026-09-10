@@ -1,11 +1,11 @@
 ---
 title: "From an Approved Feature Specification to Bounded Work"
 type: article
-status: Draft
+status: Active
 series: "Change Impact and Planning"
 series_order: 7
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on feature-derivation change
 summary: "How exact feature authority can produce impact, tasks, test cases, and a validated plan without creating a second approval."
 cis:

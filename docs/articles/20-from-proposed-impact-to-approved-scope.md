@@ -1,11 +1,11 @@
 ---
 title: "From Proposed Impact to Approved Scope"
 type: article
-status: Draft
+status: Active
 series: "Change Impact and Planning"
 series_order: 3
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on impact-disposition change
 summary: "How stable evidence-backed findings move through human acceptance, rejection, or deferral before planning."
 cis:

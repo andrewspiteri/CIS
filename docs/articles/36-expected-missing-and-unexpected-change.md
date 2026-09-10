@@ -1,11 +1,11 @@
 ---
 title: "Expected, Missing, and Unexpected Change"
 type: article
-status: Draft
+status: Active
 series: "Verification and Assurance"
 series_order: 3
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on verification-finding change
 summary: "A practical vocabulary for reviewing whether implementation matches approved work."
 cis:

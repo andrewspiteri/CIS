@@ -130,16 +130,10 @@ public sealed class GraphSnapshotReader : ICisGraphSnapshotReader
         foreach (var input in manifest.Inputs)
         {
             var path = Path.Combine(repositoryPath, input.Path.Replace('/', Path.DirectorySeparatorChar));
-            if (!File.Exists(path)) { stale.Add(input.Path + " (missing)"); continue; }
-            try
-            {
-                var hash = GraphBuilder.HashInput(input.Path, path);
-                if (!hash.Equals(input.Hash, StringComparison.Ordinal)) stale.Add(input.Path + " (changed)");
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                stale.Add(input.Path + " (unreadable)");
-            }
+            var inputState = GraphInputInspection.Read(input.Path, path);
+            if (!inputState.Exists) { stale.Add(input.Path + " (missing)"); continue; }
+            if (inputState.Error is not null) stale.Add(input.Path + " (unreadable)");
+            else if (!string.Equals(inputState.Hash, input.Hash, StringComparison.Ordinal)) stale.Add(input.Path + " (changed)");
         }
         try
         {

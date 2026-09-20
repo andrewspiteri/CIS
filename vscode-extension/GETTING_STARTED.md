@@ -1,5 +1,15 @@
 # How to use CIS
 
+If you update a feature BRD externally, reopen the feature under **High-level features**
+and select **Reimport BRD**. Choose the updated Markdown file, compare its changes, then
+select **Apply updated BRD**. CIS keeps saved answers, repository work and earlier source
+versions. Review the retained answers against the updated requirements before saving again.
+
+The feature wizard presents separate questions for technical choices, architecture,
+integration contracts, experience and delivery. Review each formatted suggestion and use
+**Edit answer** to change it. **Save and continue** moves to the next completed step;
+partial answers are saved and the remaining questions stay visible.
+
 For an existing product, open **High-level wizard → Technical direction → Infer from existing
 repositories** after drafting the BRD. CIS reads implementation/test evidence to explain the
 current architecture and leaves unsupported future choices for review. You can draft while
@@ -11,7 +21,7 @@ reviewed work. Start with the product’s purpose and boundaries, then work on o
 a time. Requirements, designs, decisions, plans, and results live in your repository.
 
 Open **CIS: Getting Started** from the Command Palette, or choose **Getting Started** at the
-top of the CIS Workspace view. Its buttons take you through the steps below.
+top of the CIS Product view. Its buttons take you through the steps below.
 
 ## 1. Choose the authority folder
 
@@ -100,10 +110,53 @@ not supply stakeholder decisions or approve the product for you.
 
 ## 5. Find the next action and deliver a feature
 
-Open **Journey Map** to see the product’s current stage. The **Workspace** view also shows
-a **Next** action based on the current evidence.
+Open **Product** for the product definition and repositories. **High-level features**
+keeps every saved feature visible, and **Workflow guide** explains the delivery stages.
 
 After product definition is approved:
+
+If you have a prepared BRD for a new feature, choose **Add feature from BRD** in
+Getting Started, the **+** button in High-level features, or **CIS: Add Feature
+from BRD** in the Command Palette. Select the Markdown BRD, enter a feature name,
+choose a new or existing implementation repository, and select integration targets.
+Review the setup preview, then choose **Create feature request**. CIS creates and
+connects the repository and preserves the supplied BRD under the authority. This
+works when the current backlog has no planned work.
+
+The resulting request is Draft. **Review feature request** and **Open original BRD**
+open documents beside the setup page. Review unresolved decisions and reconcile
+the proposed scope into the product backlog before starting its specification.
+
+In the feature's **Solution architecture and diagrams** step, review the suggested
+direction and choose **Save answers and generate C4 diagrams**. The context, container
+and component views appear in the wizard, with buttons to open full-size diagrams or
+save SVGs. Edit the architecture answers and regenerate when the proposed design changes.
+
+In **Experience direction and UI impact**, review the prefilled answers and choose
+**Save answers and generate screens**. CIS creates proposed screens from this feature's
+BRD and the existing UI baseline using your local model. Open the images in new tabs or
+save JPGs for review. To refine one screen, describe the changes below its image and choose
+**Apply changes to this screen**. Choose **Not needed** to exclude it, or **Include this
+screen again** to undo an exclusion. CIS retains these decisions with the feature.
+If an amendment fails, the saved feedback and previous image remain available.
+Edit the experience answers and regenerate when the overall direction changes.
+
+Continue through the **Feature definition wizard**: business definition, technical
+direction, architecture, integrations and dictionaries, UI impact, delivery and final
+review. Each page links to the existing product baseline and explains what needs
+attention. Review the suggested BRD excerpts and use **Save reviewed answers**. Closing
+the wizard keeps your page and draft text; **CIS: Open Feature Definition Wizard**
+resumes it. Click any saved feature in **High-level features** to reopen it directly.
+The wizard also keeps links to the other features available while you review a feature.
+
+In **Delivery and acceptance**, choose **Add repository feature** to break the product
+feature into work for its repositories. Give each item a title and scope, select dependencies,
+and optionally link existing change dossiers. Several items can belong to the same repository.
+Independent items can be planned in parallel. Use **Save reviewed answers** to save the
+breakdown with the delivery page. Other features retain their own answers and drafts.
+
+Recording the final definition review does not approve implementation. Its next-action
+buttons lead to product reconciliation and the approved backlog's feature-specification flow.
 
 1. Choose a feature from the backlog and prepare its specification.
 2. Review the feature and its change plan, including affected repositories and designs.
@@ -114,8 +167,8 @@ After product definition is approved:
 ## When you need help
 
 - **Getting Started** explains setup and lets you return to the wizard.
-- **Journey Map** shows the broader sequence and your next available actions.
-- **Evidence** opens the documents behind an assessment.
+- **Workflow guide** shows the broader sequence and your next available actions.
+- **Documents** opens the documents behind an assessment.
 - **Repository Doctor** explains setup and health findings. Review a suggested fix, then
   choose **Run command** or **Copy command**. A command with placeholders needs editing first.
 - **Runs** shows what an agent or verification process did and whether it completed.

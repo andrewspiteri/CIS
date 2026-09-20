@@ -94,13 +94,14 @@ public sealed partial class DefinitionWizardService
         return state.Errors.Count > 0 ? Error(state, state.Errors) : StatusInternal(state, "status", false);
     }
 
-    public CisDefinitionWizardResult Prepare(string workspacePath, string page)
+    public CisDefinitionWizardResult Prepare(string workspacePath, string page, string? backlogMode = null, string? actor = null)
     {
         using var timing = CisPerformanceTrace.Start("definition.prepare");
         var state = Resolve(workspacePath);
         if (state.Errors.Count > 0) return Error(state, state.Errors);
         var normalized = NormalizePage(page);
         if (normalized is null) return Error(state, [$"Unknown definition-wizard page: {page}"]);
+        if (backlogMode is not null && normalized != "delivery") return Error(state, ["Backlog mode is supported only on the delivery page."]);
         EnsureSession(state, normalized);
         if (normalized is "foundation" or "contracts")
         {
@@ -122,7 +123,20 @@ public sealed partial class DefinitionWizardService
                         _technicalIntent.Initialize(state.WorkspacePath!);
                     break;
                 case "architecture":
-                    _solutionDesign.Initialize(state.WorkspacePath!);
+                    var architecture = _solutionDesign.Initialize(state.WorkspacePath!);
+                    if (architecture.Validation?.InferenceReconciliationRequired == true)
+                        return StatusInternal(state, "reconciliation-required", false) with
+                        {
+                            Errors = ["Architecture preparation is blocked: the inferred design must be reconciled with the updated technical direction. Use Reconcile architecture with technical direction in this wizard, or cis agent author solution-design. The existing narrative and diagrams were preserved."],
+                        };
+                    if (architecture.ExitCode != 0)
+                    {
+                        // Existing review-only diagrams remain renderable while upstream approval is pending.
+                        var preserved = _solutionDesign.Status(state.WorkspacePath!);
+                        if (architecture.Status != "blocked" || preserved.Validation is not { Valid: true, InferenceReconciliationRequired: false })
+                            return StatusInternal(state, "preparation-blocked", architecture.Applied) with
+                            { Errors = architecture.Errors.Concat(architecture.Validation?.Errors ?? []).DefaultIfEmpty("Architecture preparation could not complete. Review its validation findings.").ToArray() };
+                    }
                     break;
                 case "experience":
                     var uiQuestions = _uiQuestions.Initialize(state.WorkspacePath!);
@@ -130,7 +144,10 @@ public sealed partial class DefinitionWizardService
                         _uiDirection.Initialize(state.WorkspacePath!);
                     break;
                 case "delivery":
-                    _backlog.Build(state.WorkspacePath!);
+                    var backlog = _backlog.Build(state.WorkspacePath!, backlogMode, actor);
+                    if (backlog.ExitCode != 0)
+                        return StatusInternal(state, "preparation-blocked", backlog.Applied) with
+                        { Errors = backlog.Errors.Concat(backlog.Validation?.Errors ?? []).DefaultIfEmpty("The backlog could not be prepared. Review its findings.").ToArray() };
                     break;
             }
         }
@@ -195,7 +212,9 @@ public sealed partial class DefinitionWizardService
             {
                 RequireApproved(_brd.Approve(state.WorkspacePath!, reviewer, reason).Validation?.EffectiveStatus, "business requirements");
                 RequireApproved(_technicalIntent.Approve(state.WorkspacePath!, reviewer, reason).Validation?.EffectiveStatus, "technical intent");
-                RequireApproved(_solutionDesign.Approve(state.WorkspacePath!, reviewer, reason).Validation?.EffectiveStatus, "solution design");
+                var approvedSolution = _solutionDesign.Approve(state.WorkspacePath!, reviewer, reason);
+                RequireApproved(approvedSolution.Validation?.EffectiveStatus, "solution design");
+                BindDiagramSources(state, approvedSolution);
                 RequireApproved(_uiDirection.Approve(state.WorkspacePath!, reviewer, reason).Validation?.EffectiveStatus, "UI direction");
                 RequireApproved(_backlog.Approve(state.WorkspacePath!, reviewer, reason).Validation?.EffectiveStatus, "high-level backlog");
             }
@@ -257,6 +276,7 @@ public sealed partial class DefinitionWizardService
         var preview = ReadPreview(state, uiQuestions);
         var session = MigrateSemanticBaseline(state, ReadSession(state), brd, technicalQuestions,
             technical, solution, uiQuestions, ui, backlog);
+        var businessInference = BusinessInference(state, brd);
 
         var pages = new List<CisDefinitionPage>
         {
@@ -266,15 +286,22 @@ public sealed partial class DefinitionWizardService
                     ? [] : ["No governed starter dictionaries are present. Prepare the foundation page to reconcile repository initialization."]),
             Page("business", 2, "Business definition", Effective(brd.Validation?.EffectiveStatus),
                 Accepted(brd.Validation?.Valid, brd.Validation?.Current, brd.Validation?.EffectiveStatus), brd.Validation?.Current == true,
-                brd.CanonicalPath, brd.CanonicalPath is null ? [] : [brd.CanonicalPath], brd.Errors.Concat(brd.Validation?.Errors ?? [])),
+                brd.CanonicalPath, brd.CanonicalPath is null ? [] : [brd.CanonicalPath],
+                brd.Errors.Concat(brd.Validation?.Errors ?? []).Concat(brd.Validation?.Warnings ?? []))
+            with { Guidance = BusinessGuidance(brd, businessInference) },
             Page("technical", 3, "Technical direction", Effective(technical.Validation?.EffectiveStatus),
                 technicalQuestions.Complete && technicalQuestions.Current && Accepted(technical.Validation?.Valid, technical.Validation?.Current, technical.Validation?.EffectiveStatus),
                 technicalQuestions.Current && technical.Validation?.Current == true, technical.CanonicalPath,
-                Existing(technicalQuestions.CanonicalPath, technical.CanonicalPath), technicalQuestions.Errors.Concat(technical.Errors).Concat(technical.Validation?.Errors ?? [])),
+                Existing(technicalQuestions.CanonicalPath, technical.CanonicalPath), technicalQuestions.Errors.Concat(technical.Errors).Concat(technical.Validation?.Errors ?? []).Concat(technical.Validation?.Warnings ?? []))
+            with { Guidance = TechnicalGuidance(technical, technicalQuestions, businessInference.Repositories.Count > 0) },
             Page("architecture", 4, "Solution architecture and diagrams", Effective(solution.Validation?.EffectiveStatus),
                 Accepted(solution.Validation?.Valid, solution.Validation?.Current, solution.Validation?.EffectiveStatus) && diagrams.Count > 0 && diagrams.All(item => item.Status != "Stale"),
                 solution.Validation?.Current == true && diagrams.All(item => item.Status != "Stale"), solution.DesignPath,
-                Existing(solution.DesignPath, solution.ComponentSheetPath, state.DiagramRelativePath), solution.Errors.Concat(solution.Validation?.Errors ?? [])),
+                Existing(solution.DesignPath, solution.ComponentSheetPath, state.DiagramRelativePath), solution.Errors.Concat(solution.Validation?.Errors ?? [])
+                    .Concat(solution.Validation?.Warnings ?? [])
+                    .Concat(diagrams.Count == 0 ? ["Architecture diagrams are missing. Prepare the architecture page."]
+                        : diagrams.Any(item => item.Status == "Stale") ? ["Architecture diagrams are stale. Reconcile any changed design first, then use Prepare to regenerate the views. Refresh only rechecks their state."] : []))
+            with { Guidance = ArchitectureGuidance(solution) },
             Page("contracts", 5, "Contracts and dictionaries", dictionaries.Any(item => item.Applicable) ? "Ready" : "Incomplete",
                 dictionaries.Any(item => item.Applicable) && File.Exists(state.DictionaryIndexPath)
                     && DerivedStatus(state.DictionaryIndexPath!, DictionarySourceHash(dictionaries)) != "Stale",
@@ -287,7 +314,12 @@ public sealed partial class DefinitionWizardService
                 Existing(uiQuestions.RelativePath, ui.RelativePath, state.PreviewRelativePath, state.PreviewSvgRelativePath), uiQuestions.Errors.Concat(ui.Errors).Concat(ui.Validation?.Errors ?? [])),
             Page("delivery", 7, "Delivery map", Effective(backlog.Validation?.EffectiveStatus),
                 Accepted(backlog.Validation?.Valid, backlog.Validation?.Current, backlog.Validation?.EffectiveStatus), backlog.Validation?.Current == true,
-                backlog.RelativePath, Existing(backlog.RelativePath), backlog.Errors.Concat(backlog.Validation?.Errors ?? [])),
+                backlog.RelativePath, Existing(backlog.RelativePath), backlog.Errors.Concat(backlog.Validation?.Errors ?? []).Concat(backlog.Validation?.Warnings ?? []))
+            with { Guidance = DeliveryGuidance(backlog,
+                Accepted(brd.Validation?.Valid, brd.Validation?.Current, brd.Validation?.EffectiveStatus)
+                && Accepted(technical.Validation?.Valid, technical.Validation?.Current, technical.Validation?.EffectiveStatus)
+                && Accepted(solution.Validation?.Valid, solution.Validation?.Current, solution.Validation?.EffectiveStatus)
+                && Accepted(ui.Validation?.Valid, ui.Validation?.Current, ui.Validation?.EffectiveStatus)) },
         };
         var ready = pages.All(page => page.Complete && page.Current);
         pages.Add(Page("review", 8, "Review and activate", ready ? "Ready to activate" : "Needs attention",
@@ -307,7 +339,7 @@ public sealed partial class DefinitionWizardService
                     question.Question, question.Why, question.CommonOptions, question.SuggestedAnswer, question.Status,
                     question.Answer, question.AnsweredBy, question.AnsweredAtUtc, question.ResolutionSource,
                     question.Confidence, question.Evidence)).ToArray(), uiQuestions.Errors),
-            BusinessInference = BusinessInference(state, brd),
+            BusinessInference = businessInference,
         };
     }
 
@@ -315,6 +347,7 @@ public sealed partial class DefinitionWizardService
     {
         var workspace = _workspaces.Resolve(state.WorkspacePath!).Workspace;
         var sources = workspace?.Repositories.Where(repository => repository.IsProductOwned
+            && brd.Discovery?.DeferredRepositoryIds.Contains(repository.Id, StringComparer.Ordinal) != true
             && (repository.Role == "participant"
                 || new RepositoryClassifier().Classify(repository.RepositoryPath).Components.Count > 0))
             .Select(repository => new CisDefinitionBusinessRepository(repository.Id, repository.RepositoryPath,
@@ -369,7 +402,7 @@ public sealed partial class DefinitionWizardService
         var inferredDraft = File.Exists(inferredDesign) && File.ReadAllText(inferredDesign).Contains(ArchitectureDiagramModel.Marker, StringComparison.Ordinal)
             && ReadNestedValue(File.ReadAllText(inferredDesign), "technical_intent_hash") == solution.TechnicalIntentVersion;
         if (Accepted(solution.Validation?.Valid, solution.Validation?.Current, solution.Validation?.EffectiveStatus)
-            || inferredDraft && solution.Validation is { Valid: true })
+            || inferredDraft && solution.Validation is { Valid: true, InferenceReconciliationRequired: false })
             WriteDerived(state.DiagramPath!, RenderDiagrams(state, solution));
         var dictionaries = ReadDictionaries(state);
         WriteDerived(state.DictionaryIndexPath!, RenderDictionaryIndex(state, dictionaries));
@@ -402,11 +435,11 @@ public sealed partial class DefinitionWizardService
         return result.Errors.Concat(result.Collisions).Distinct(StringComparer.Ordinal).ToArray();
     }
 
-    private static string RenderDiagrams(State state, SolutionDesignResult solution)
+    private static string RenderDiagrams(State state, SolutionDesignResult solution, bool writeAssets = true)
     {
         var designPath = ResolveDocument(state, solution.DesignPath);
         if (File.Exists(designPath) && File.ReadAllText(designPath).Contains(ArchitectureDiagramModel.Marker, StringComparison.Ordinal))
-            return RenderInferredDiagrams(state, solution, ArchitectureDiagramModel.ReadRequired(File.ReadAllText(designPath)));
+            return RenderInferredDiagrams(state, solution, ArchitectureDiagramModel.ReadRequired(File.ReadAllText(designPath)), writeAssets);
         var interactions = ReadInteractions(state, solution);
         var componentNodes = solution.Components.Count == 0
             ? "  system[Product system]"
@@ -630,11 +663,21 @@ The preview is derived from the current high-level UI questionnaire and directio
         if (!File.Exists(state.DiagramPath)) return [];
         var content = File.ReadAllText(state.DiagramPath);
         var status = DerivedStatus(state.DiagramPath!, DiagramSourceHash(state, solution));
+        if (status == "Stale" && IsUnchangedActivatedDiagram(state, solution, content)) status = "Active";
         CisDefinitionDiagram View(string id, string title)
         {
             var match = Regex.Match(content, $@"\]\((?<path>architecture-diagrams/{Regex.Escape(id)}-[a-f0-9]{{64}}\.svg)\)");
             var image = match.Success ? Normalize(Path.Combine(Path.GetDirectoryName(state.DiagramRelativePath!)!, match.Groups["path"].Value)) : null;
             return new(id, title, state.DiagramRelativePath!, image is null ? "mermaid" : "svg", status) { SvgRelativePath = image };
+        }
+        if (solution.DesignPath is not null)
+        {
+            var designPath = Path.Combine(state.AuthorityRepositoryPath!, solution.DesignPath);
+            if (File.Exists(designPath) && File.ReadAllText(designPath).Contains(ArchitectureDiagramModel.Marker, StringComparison.Ordinal))
+            {
+                try { return ArchitectureDiagramModel.ReadRequired(File.ReadAllText(designPath)).Views.Select(v => View(v.Id, v.Title)).ToArray(); }
+                catch (InvalidDataException) { return []; }
+            }
         }
         return [View("system-context", "System context"), View("component-topology", "Component topology"),
             View("integration-trust", "Integration and trust boundaries"), View("deployment-operations", "Deployment and operations")];
@@ -860,7 +903,7 @@ The preview is derived from the current high-level UI questionnaire and directio
     {
         var design = ResolveDocument(state, solution.DesignPath);
         var sheet = ResolveDocument(state, solution.ComponentSheetPath);
-        return Digest(string.Join('|', "diagram-renderer-v3", solution.TechnicalIntentVersion,
+        return Digest(string.Join('|', "diagram-renderer-v4-c4", solution.TechnicalIntentVersion,
             File.Exists(design) ? File.ReadAllText(design) : string.Empty,
             File.Exists(sheet) ? File.ReadAllText(sheet) : string.Empty));
     }

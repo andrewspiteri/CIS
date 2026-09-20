@@ -1,12 +1,15 @@
 using System.Text.Json;
+using Cis.Modules.SolutionDesign;
 using Xunit;
 
 namespace Cis.Modules.Definition.Tests;
 
 public sealed partial class DefinitionWizardTests
 {
-    [Fact]
-    public void ArchitecturePreparation_RendersInferredDraftRepairsImagesAndKeepsActivationBlocked()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ArchitecturePreparation_RendersInferredDraftRepairsImagesAndKeepsActivationBlocked(bool c4)
     {
         using var repository = TemporaryRepository.Create();
         using var application = CreateApplication();
@@ -33,11 +36,29 @@ public sealed partial class DefinitionWizardTests
             sheet += $"\n## {heading}\n\nApplication ownership remains subject to review.\n";
         sheet += "\n| `TI-MOD-SYSTEM` | System | application | Product requests | Product state | External identity | BR-FR-001 |\n<!-- cis:component-sheet-managed:end -->\n<!-- cis:solution-design-implementation-authored -->\n";
         File.WriteAllText(designPath, design); File.WriteAllText(sheetPath, sheet);
+        if (c4)
+        {
+            var person = new ArchitectureNode("person", "Customer", 0, "observed", "person", "Uses the product");
+            var product = new ArchitectureNode("product", "Product", 1, "observed", "software-system", "Provides product services");
+            var api = new ArchitectureNode("api", "API", 1, "observed", "container", "Handles product requests", ".NET", "product");
+            var handler = new ArchitectureNode("handler", "Handler", 1, "observed", "component", "Validates and handles requests", "C#", "api");
+            var model = new ArchitectureDiagramModel([
+                new("context", "C1 context", "Hosting is unresolved.", [person, product], [new("person", "product", "Uses", "observed")], "context", "product"),
+                new("containers", "C2 containers", "Hosting is unresolved.", [person, api], [new("person", "api", "Requests services", "observed", "HTTPS")], "container", "product"),
+                new("components-api", "C3 components", "Hosting is unresolved.", [person, handler], [new("person", "handler", "Requests services", "observed", "HTTPS")], "component", "api")
+            ], 2);
+            var modelPath = Path.Combine(repository.Path, "c4.json");
+            File.WriteAllText(modelPath, JsonSerializer.Serialize(model, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+            var rendered = Invoke(application, ["solution-design", "diagrams", "--model", modelPath, "--workspace", repository.Path, "--format", "json"]);
+            Assert.True(rendered.ExitCode == 0, rendered.Output);
+            design = File.ReadAllText(designPath);
+            Assert.Contains("## C4 solution diagrams", design, StringComparison.Ordinal);
+        }
         var prepared = Invoke(application, ["definition", "prepare", "--page", "architecture", "--workspace", repository.Path, "--format", "json"]);
         Assert.Equal(0, prepared.ExitCode);
         using var result = JsonDocument.Parse(prepared.Output);
         var diagrams = result.RootElement.GetProperty("diagrams").EnumerateArray().ToArray();
-        Assert.Equal(4, diagrams.Length);
+        Assert.Equal(c4 ? 3 : 4, diagrams.Length);
         Assert.False(result.RootElement.GetProperty("readyToActivate").GetBoolean());
         var paths = diagrams.Select(diagram => Path.Combine(repository.Path, diagram.GetProperty("svgRelativePath").GetString()!)).ToArray();
         foreach (var path in paths) Assert.True(File.Exists(path), path);
@@ -48,5 +69,19 @@ public sealed partial class DefinitionWizardTests
         Assert.Equal(image, File.ReadAllText(paths[0]));
         Assert.Equal(design, File.ReadAllText(designPath));
         Assert.Equal(sheet, File.ReadAllText(sheetPath));
+        var diagramPath = Path.Combine(repository.Path, "docs/cis/architecture/high-level-architecture-diagrams.md");
+        var originalDiagrams = File.ReadAllText(diagramPath);
+        var technicalPath = Path.Combine(repository.Path, "docs/cis/specs/technical-intent-spec.md");
+        File.AppendAllText(technicalPath, "\nThe product's technical direction has changed.\n");
+        var blocked = Invoke(application, ["definition", "prepare", "--page", "architecture", "--workspace", repository.Path, "--format", "json"]);
+        Assert.Equal(5, blocked.ExitCode);
+        using var blockedResult = JsonDocument.Parse(blocked.Output);
+        Assert.False(blockedResult.RootElement.GetProperty("applied").GetBoolean());
+        var architecture = blockedResult.RootElement.GetProperty("pages").EnumerateArray().Single(page => page.GetProperty("id").GetString() == "architecture");
+        Assert.Equal("reconcile-architecture", architecture.GetProperty("guidance").GetProperty("nextActionId").GetString());
+        Assert.False(architecture.GetProperty("current").GetBoolean());
+        Assert.Equal(design, File.ReadAllText(designPath));
+        Assert.Equal(sheet, File.ReadAllText(sheetPath));
+        Assert.Equal(originalDiagrams, File.ReadAllText(diagramPath));
     }
 }

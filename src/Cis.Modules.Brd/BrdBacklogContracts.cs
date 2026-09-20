@@ -29,6 +29,9 @@ public sealed record BrdBacklogResult(
     IReadOnlyList<string> Errors,
     bool Applied)
 {
+    public string Mode { get; init; } = "requirements";
+    public string? NoPlannedWorkBy { get; init; }
+    public string? NoPlannedWorkAt { get; init; }
     public int ExitCode => Status == "blocked"
         ? 5
         : Errors.Count > 0

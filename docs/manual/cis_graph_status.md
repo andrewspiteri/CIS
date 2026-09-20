@@ -3,7 +3,7 @@ title: "cis graph status"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-04"
+last_reviewed: "2026-09-09"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-graph-status
@@ -25,6 +25,11 @@ cis graph status [--repo <path> | --workspace <path>]
 The command reports graph availability, build identity, node/edge counts, stored build
 diagnostics, and `fresh` or `stale` input state. It never rebuilds the graph or changes
 canonical Markdown.
+
+Within one read-only calculation, graph validation and metadata readers share input
+existence, content hashes and read failures. The next calculation rechecks the inputs,
+including edits that preserve size and last-write time. Directory scans reuse the filesystem's
+enumeration metadata and skip reparse points; no persistent timestamp-only source cache is used.
 
 Exit `0` means status was read, including a stale result; exit `2` means repository or
 workspace configuration is invalid; exit `4` means no compatible graph exists; and exit

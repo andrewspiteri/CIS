@@ -32,7 +32,10 @@ public sealed record CisTextGenerationRequest(
     bool AllowRemote = false,
     int TimeoutSeconds = 120,
     int MaxOutputTokens = 2_048,
-    bool JsonMode = false);
+    bool JsonMode = false)
+{
+    public string? JsonSchema { get; init; }
+}
 
 public sealed record CisTextGenerationResult(
     string Status,

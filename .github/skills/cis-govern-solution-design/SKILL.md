@@ -11,7 +11,7 @@ from selected owned repositories and the current BRD/technical intent. This draf
 while upstream documents are under review. It does not grant approval or weaken the ordinary gates
 below. Inspect every implementation area, preserve human notes and stable component IDs, keep source
 citations in comments, and distinguish observed, proposed and unresolved facts. Run
-`cis definition prepare --page architecture` after authoring to render its four SVG views.
+`cis definition prepare --page architecture` after authoring to refresh its C4 SVG views in the wizard. CIS embeds context, container and scoped component diagrams inside the overall design when applying inference. Use schemaVersion 2: context contains people and software systems; containers are applications/data stores inside the product; each component view zooms into one container. Preserve evidence status and do not equate containers with deployment instances. Use `cis solution-design diagrams` to repair the embedded views of a review-only C4 draft.
 
 1. Confirm `cis technical-intent status --workspace <workspace>` is Active, valid, and current.
 2. Run `cis solution-design init --workspace <workspace> --format agent`.

@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { resolveWithin } = require('./security');
 const { normalize, terminal } = require('./projections');
+const { featureNodes, repositoryNodes, linkedChanges } = require('./product-navigation');
 const {
   documentStatus, isActiveCurrent, isReadyForApproval, linkedFeatureItems, nextStartableItem,
   productPaths, reviewMatchesBrd, stateOf, titleCase,
@@ -63,6 +64,7 @@ class CisViewProvider {
   node(label, options = {}) {
     const node = new CisTreeItem(this.vscode, label, {
       description: options.description,
+      id: options.id,
       tooltip: options.tooltip || options.description,
       children: options.children,
       file: options.file,
@@ -95,6 +97,7 @@ class CisViewProvider {
     }
     if (!fs.existsSync(path.join(root, '.cis', 'repository.yml'))) return this.onboarding(root);
     if (this.id === 'changes') return this.changes(root);
+    if (this.id === 'features') return this.features(root);
     if (this.id === 'journey') return this.journey(root);
     if (this.id === 'evidence') return this.evidence(root);
     if (this.id === 'runs') return this.runs();
@@ -102,83 +105,58 @@ class CisViewProvider {
     return [];
   }
 
+  async navigation(root) {
+    const result = await this.cli.query(['brd', 'feature', 'wizard', 'navigation', '--workspace', root], { repository: false });
+    if (result.errors?.length) throw new Error(result.errors.join('\n'));
+    return result;
+  }
+
   async workspace(root, version) {
     const metadata = repositoryMetadata(root, this.vscode.workspace.getConfiguration('cis').get('documentationRoot', 'docs/cis'));
     if (!metadata.initialized) return this.onboarding(root);
-    const [doctor, changes, providers] = await Promise.all([
+    const [navigation, definition, doctor] = await Promise.all([
+      this.navigation(root), this.workspaceQuery(['definition', 'status'], root),
       this.cli.query(['repo', 'doctor'], { acceptStructuredFailure: true }),
-      this.cli.query(['change', 'list']), this.cli.query(['agent', 'providers']),
     ]);
-    const active = (changes.changes || []).find(change => String(change.status).toLowerCase() !== 'closed');
-    const [planResult, designResult] = active ? await Promise.allSettled([
-      this.cli.query(['plan', 'show', active.id]), this.cli.query(['design', 'status', active.id]),
-    ]) : [];
-    const plan = planResult?.status === 'fulfilled' ? planResult.value : undefined;
-    const design = designResult?.status === 'fulfilled' ? designResult.value : undefined;
-    const next = plan?.workItems?.find(item => normalize(item.status) === 'inprogress')
-      || plan?.workItems?.find(item => normalize(item.status) === 'ready')
-      || plan?.workItems?.find(item => normalize(item.status) === 'draft'
-        && (item.dependsOn || []).every(id => terminal.has(normalize(plan.workItems.find(candidate => candidate.id === id)?.status))));
-    const warnings = doctor.warningCount ?? doctor.warnings ?? 0;
-    const errors = doctor.errorCount ?? doctor.errors ?? 0;
-    const graphFindings = (doctor.findings || []).filter(finding => finding.category === 'context-graph');
-    const graphProblems = graphFindings.filter(isProblemFinding);
-    const indexFindings = (doctor.findings || []).filter(finding => finding.category === 'file-index');
-    const indexProblems = indexFindings.filter(isProblemFinding);
-    const graphUnavailable = graphProblems.some(finding => finding.code === 'CIS-GRAPH-DOCTOR-001');
-    const indexUnavailable = indexProblems.some(finding => finding.code === 'CIS-INDEX-001');
-    const readme = resolveWithin(metadata.documentationPath, 'README.md');
-    const product = active ? undefined : await this.productJourney(root, metadata);
-    return [
-      ...(metadata.product ? [this.node(metadata.product.name, {
-        description: `Product · ${metadata.product.id} · ${metadata.ecosystem?.name || metadata.ecosystem?.id || 'ecosystem unavailable'}`,
-        icon: 'symbol-class',
-      })] : []),
-      this.node(metadata.id || path.basename(root), { description: 'Authority repository', icon: 'repo' }),
-      this.node(`CIS ${version.raw}`, { description: 'Compatible CLI', icon: 'terminal' }),
-      this.node('Documentation', { description: metadata.documentationRoot, file: readme && fs.existsSync(readme) ? readme : undefined, icon: 'book' }),
-      this.node(errors ? 'Doctor: errors' : warnings ? 'Doctor: warnings' : 'Doctor: healthy', {
-        description: `${errors} errors, ${warnings} warnings`, command: 'cis.repoDoctor', icon: errors ? 'error' : warnings ? 'warning' : 'pass',
-      }),
-      this.node(doctor.ollama?.isAvailable ? 'Local AI available' : 'Local AI unavailable', {
-        description: doctor.ollama?.models?.join(', ') || doctor.ollama?.detail || '', command: 'cis.aiStatus',
-        icon: doctor.ollama?.isAvailable ? 'sparkle' : 'circle-slash',
-      }),
-      this.node(graphUnavailable ? 'Context graph is not built'
-        : graphProblems.length ? 'Context graph is stale or invalid' : 'Context graph is current', {
-        description: graphProblems[0]?.message || graphFindings[0]?.message || 'Repository Doctor reports a current graph.',
-        command: 'cis.graphBuild', icon: graphProblems.length ? 'warning' : 'type-hierarchy-sub',
-      }),
-      this.node(indexUnavailable ? 'Routing index is not built'
-        : indexProblems.length ? 'Routing index is stale or incomplete' : 'Routing index is current', {
-        description: indexProblems[0]?.message || indexFindings[0]?.message || 'Repository Doctor reports a current routing index.',
-        command: indexProblems.length ? 'cis.indexBuild' : undefined,
-        icon: indexProblems.length ? 'warning' : 'list-tree',
-      }),
-      this.node(active ? active.id : 'No active change', {
-        description: active ? `${active.status} — ${active.title}` : 'Complete product definition before creating a change.',
-        file: active ? resolveWithin(root, `${active.relativePath}/proposal.md`) : undefined,
-        icon: active ? 'git-pull-request' : 'circle-outline',
-      }),
-      ...(!active ? [this.node('High-level product definition wizard', {
-        description: 'Business, technical, architecture, contracts, experience, delivery, and one consolidated activation.',
-        command: 'cis.definitionWizard', icon: 'map',
-      })] : []),
-      ...(product ? [product.group] : []),
-      this.node(design ? `Design gate: ${design.gateStatus}` : 'Design gate unavailable', {
-        description: design ? `${design.approvalStatus}; ${design.artifacts?.length || 0} artifacts` : 'No applicable or readable design gate.',
-        command: active ? 'cis.designReview' : undefined, arguments: active ? [active.id] : undefined,
-        icon: design?.gateStatus === 'Approved' ? 'pass' : design ? 'debug-pause' : 'circle-outline',
-      }),
-      this.node(active && next ? `Next: ${next.id}` : active ? 'Next: final status review' : `Next: ${product.next.label}`, {
-        description: active ? next?.title || 'No executable plan task is currently projected.' : product.next.description,
-        command: active ? 'cis.openChange' : product.next.command,
-        arguments: active ? [active] : product.next.arguments, icon: 'arrow-right',
-      }),
-      this.node(`${(providers.providers || []).length} agent providers`, { description: 'Open Runs for capability evidence.', command: 'cis.agentProviders', icon: 'hubot' }),
-    ];
+    const complete = (definition.pages || []).filter(page => page.complete && page.current).length;
+    const repositories = repositoryNodes(this, root, navigation);
+    const product = navigation.workspace?.product || metadata.product;
+    const errors = doctor.errorCount || 0; const warnings = doctor.warningCount || 0;
+    const graphProblems = (doctor.findings || []).filter(finding => finding.category === 'context-graph' && isProblemFinding(finding));
+    const indexProblems = (doctor.findings || []).filter(finding => finding.category === 'file-index' && isProblemFinding(finding));
+    const productNode = this.node(product?.name || metadata.id || path.basename(root), {
+      id: 'product', description: navigation.workspace?.ecosystem?.name || metadata.ecosystem?.name,
+      icon: 'symbol-class', children: [
+        this.node('Product definition', { id: 'product-definition', description: `${complete}/${definition.pages?.length || 8} steps current`,
+          command: 'cis.definitionWizard', icon: 'map' }),
+        this.node('High-level features', { id: 'product-features', description: `${navigation.features?.length || 0} saved features`,
+          command: 'cis.features.focus', arguments: [], icon: 'lightbulb' }),
+        this.node('Repositories', { id: 'repositories', description: `${repositories.length} registered`, children: repositories, icon: 'repo' }),
+        this.node('Add high-level feature', { command: 'cis.featureAdd', arguments: [], icon: 'add' }),
+        this.node('Import repository', { command: 'cis.repoImport', arguments: [], icon: 'repo-pull' }),
+      ],
+    });
+    productNode.collapsibleState = this.vscode.TreeItemCollapsibleState.Expanded;
+    return [productNode, this.node('Workspace health', { id: 'workspace-health', icon: 'pulse',
+      description: `${errors} errors, ${warnings} warnings`, children: [
+        this.node(errors ? 'Doctor: errors' : warnings ? 'Doctor: warnings' : 'Doctor: healthy', {
+          command: 'cis.repoDoctor', icon: errors ? 'error' : warnings ? 'warning' : 'pass' }),
+        this.node(`CIS ${version.raw}`, { description: 'Compatible CLI', icon: 'terminal' }),
+        this.node(graphProblems.length ? 'Context graph is stale or invalid' : 'Context graph is current', {
+          description: graphProblems[0]?.message, command: 'cis.graphBuild', icon: graphProblems.length ? 'warning' : 'type-hierarchy-sub' }),
+        this.node(indexProblems.length ? 'Routing index is stale or incomplete' : 'Routing index is current', {
+          description: indexProblems[0]?.message, command: 'cis.indexBuild', icon: indexProblems.length ? 'warning' : 'list-tree' }),
+        this.node(doctor.ollama?.isAvailable ? 'Local AI available' : 'Local AI unavailable', { command: 'cis.aiStatus', icon: 'sparkle' }),
+      ] })];
   }
 
+  async features(root) {
+    const [navigation, changes] = await Promise.all([this.navigation(root), this.cli.query(['change', 'list'])]);
+    const features = featureNodes(this, root, navigation, changes.changes || []);
+    return [this.node('Add high-level feature', { command: 'cis.featureAdd', arguments: [], icon: 'add' }),
+      ...features, ...(!features.length ? [this.node('No high-level features yet', {
+        description: 'Add a feature from its BRD. Saved features remain here as their repository work progresses.', icon: 'info' })] : [])];
+  }
   onboarding(root) {
     const metadata = repositoryMetadata(root, this.vscode.workspace.getConfiguration('cis').get('documentationRoot', 'docs/cis'));
     const existing = metadata.onboardingMode === 'import';
@@ -489,12 +467,12 @@ class CisViewProvider {
       };
     }
 
-    stage('8. Feature specifications', items.length ? 'All approved' : 'No outcomes found', items.length ? 'pass' : 'warning');
+    stage('8. Feature specifications', items.length ? 'All approved' : 'No planned work', items.length ? 'pass' : 'circle-outline');
     return {
-      group: this.productGroup(stages, items.length ? 'Ready for change delivery' : 'Backlog needs outcomes'),
+      group: this.productGroup(stages, items.length ? 'Ready for change delivery' : 'Ready for a new feature'),
       next: items.length
         ? action('Product definition complete', 'The approved feature specifications are ready for governed change delivery.')
-        : action('Open high-level backlog', 'Add at least one product outcome.', 'cis.open', [{ file: paths.backlog }]),
+        : action('Add feature from BRD', 'Introduce new scope, create or select its repository, and choose integration targets.', 'cis.featureAdd'),
     };
   }
 
@@ -551,7 +529,7 @@ class CisViewProvider {
     });
     const questionnaireState = questions.complete && questions.current ? 'Complete'
       : questions.status === 'missing' ? 'Not started' : `${questions.answeredCount || 0}/${(questions.answeredCount || 0) + (questions.unansweredCount || 0)} resolved`;
-    const active = (changesResult.changes || []).find(change => normalize(change.status) !== 'closed');
+    const activeChanges = (changesResult.changes || []).filter(change => normalize(change.status) !== 'closed');
     const product = this.node('Product definition', {
       description: isActiveCurrent(brd) ? 'Business authority active' : brd.status,
       icon: 'symbol-ruler', children: [
@@ -600,7 +578,7 @@ class CisViewProvider {
       ],
     });
     const delivery = this.node('Feature delivery loop', {
-      description: active ? `${active.id} · ${active.status}` : 'Begins after product definition',
+      description: activeChanges.length ? `${activeChanges.length} open delivery changes` : 'Begins after product definition',
       icon: 'git-pull-request', children: [
         this.node('1. Feature specification', { description: 'Bounded behavior and acceptance', icon: 'book' }),
         this.node('2. Impact and delivery plan', { description: 'Affected evidence, repositories, tasks, and dependencies', icon: 'list-tree' }),
@@ -616,35 +594,30 @@ class CisViewProvider {
   }
 
   async changes(root) {
-    const result = await this.cli.query(['change', 'list']);
-    const changes = (result.changes || []).filter(change => !this.filter
-      || `${change.id} ${change.title} ${change.status}`.toLowerCase().includes(this.filter));
-    if (!changes.length) return [this.node('No changes', { description: 'No CIS change dossiers were found.', icon: 'info' })];
-    const enriched = await Promise.all(changes.map(async change => {
-      if (normalize(change.status) === 'closed') return { change, phase: 'Closed', gate: 'Complete' };
-      const [planResult, designResult] = await Promise.allSettled([
-        this.cli.query(['plan', 'show', change.id]), this.cli.query(['design', 'status', change.id]),
-      ]);
-      const plan = planResult.status === 'fulfilled' ? planResult.value : {};
-      const design = designResult.status === 'fulfilled' ? designResult.value : {};
-      const taskStates = (plan.workItems || []).map(item => normalize(item.status));
-      const designGate = design.gateStatus || 'Not applicable';
-      const phase = normalize(designGate) === 'pausedforreview' ? 'Design review'
-        : taskStates.some(value => ['inprogress', 'ready'].includes(value)) ? 'Implementation'
-          : taskStates.length && taskStates.every(value => terminal.has(value)) ? 'Verification'
-            : plan.planStatus ? 'Planning' : change.status || 'Proposed';
-      return { change, phase, gate: designGate };
+    const [result, navigation] = await Promise.all([this.cli.query(['change', 'list']), this.navigation(root)]);
+    const all = result.changes || [];
+    const nodes = (changes, group) => changes.map(change => this.node(`${change.id}: ${change.title}`, {
+      id: `change:${group}:${change.id}`, description: change.status, icon: normalize(change.status) === 'closed' ? 'pass' : 'git-pull-request',
+      command: 'cis.openChange', arguments: [change], contextValue: 'cis.change', data: change,
     }));
-    return enriched.map(({ change, phase, gate }) => this.node(`${change.id}: ${change.title}`, {
-      description: `${phase} · ${change.status} · ${gate}`,
-      tooltip: `Phase: ${phase}; lifecycle: ${change.status}; blocking gate: ${gate}; projection: current`,
-      file: resolveWithin(root, `${change.relativePath}/proposal.md`),
-      command: 'cis.openChange', arguments: [change],
-      icon: String(change.status).toLowerCase() === 'closed' ? 'pass' : 'git-pull-request',
-      contextValue: 'cis.change', data: { ...change, phase, gate, freshness: 'current' },
-    }));
+    const matches = change => !this.filter || `${change.id} ${change.title} ${change.status}`.toLowerCase().includes(this.filter);
+    const assigned = new Set();
+    const groups = [];
+    const authorityId = navigation.workspace?.repositories?.find(repo => repo.role === 'authority')?.id;
+    for (const feature of navigation.features || []) {
+      const linked = linkedChanges(feature, all, authorityId);
+      linked.forEach(change => assigned.add(change.id));
+      const visible = linked.filter(change => matches(change) || feature.plan.title.toLowerCase().includes(this.filter));
+      if (visible.length) groups.push(this.node(feature.plan.title, {
+        id: `changes-feature:${feature.plan.slug}`, description: `${visible.length} delivery changes`, icon: 'lightbulb', children: nodes(visible, feature.plan.slug),
+      }));
+    }
+    const unassigned = all.filter(change => !assigned.has(change.id) && matches(change));
+    if (unassigned.length) groups.push(this.node('Other product changes', { id: 'unassigned-changes',
+      description: 'Link a change from the feature delivery breakdown', children: nodes(unassigned, 'unassigned'), icon: 'git-pull-request' }));
+    return groups.length ? groups : [this.node(this.filter ? 'No matching changes' : 'No delivery changes yet', {
+      description: 'Open a high-level feature to define its repository work.', command: 'cis.features.focus', arguments: [], icon: 'info' })];
   }
-
   evidence(root) {
     const metadata = repositoryMetadata(root, this.vscode.workspace.getConfiguration('cis').get('documentationRoot', 'docs/cis'));
     const docs = metadata.documentationPath;

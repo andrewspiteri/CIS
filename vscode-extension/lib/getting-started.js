@@ -14,6 +14,7 @@ const ACTIONS = Object.freeze({
   import: 'cis.repoImport',
   wizard: 'cis.definitionWizard',
   journey: 'cis.journey.focus',
+  feature: 'cis.featureWizard',
   doctor: 'cis.repoDoctor',
   trust: 'workbench.trust.manage',
 });
@@ -69,7 +70,7 @@ function renderGettingStartedHtml(webview, model, scriptNonce) {
       <article class="card"><span class="eyebrow">Step 3 · For existing systems</span><h2>Connect your repositories</h2><p>Import the application repositories owned by this product so CIS can discover the existing system. External dependencies can be added with their relationship. For a new product, you can add code repositories later.</p><div class="actions">${button('import', 'Import repositories', model.canContinue)}</div></article>
       <article class="card"><span class="eyebrow">Step 4 · Define the product</span><h2>Run the high-level wizard</h2><p>Work through business requirements, technical direction, architecture, contracts, experience, and delivery. Review the complete baseline before approving it. You can return to any page.</p><div class="actions">${button('wizard', 'Open high-level wizard', model.canContinue)}</div></article>
     </section>
-    <section class="card"><h2>What comes next?</h2><p>Use the Journey Map to see your current stage and next action. After the product baseline is approved, choose a feature, review its specification and plan, run implementation tasks, then review tests and accept the outcome.</p><div class="actions">${button('journey', 'Open Journey Map', model.canContinue)}${button('doctor', 'Check repository health', Boolean(model.root && model.trusted))}</div></section>
+    <section class="card"><h2>What comes next?</h2><p>After the product baseline is approved, add a feature from a prepared BRD. Create or select its implementation repository and choose the existing repositories it integrates with. Review the feature scope before planning and implementation.</p><div class="actions">${button('feature', 'Add feature from BRD', model.canContinue)}${button('journey', 'Open Journey Map', model.canContinue)}${button('doctor', 'Check repository health', Boolean(model.root && model.trusted))}</div></section>
     <p class="muted">The guide is available offline. If a CIS command cannot start, check the executable path in VS Code Settings. Large systems can take a few minutes to load the wizard.</p>`;
   return studioDocument(webview, 'Getting Started with CIS', body, scriptNonce);
 }

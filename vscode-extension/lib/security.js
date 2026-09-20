@@ -41,8 +41,9 @@ function validateExecutable(value) {
   return value.trim();
 }
 
-function validateArgument(value) {
-  if (typeof value !== 'string' || /[\0\r\n]/u.test(value)) throw new Error('A CIS argument is invalid.');
+function validateArgument(value, { allowLineBreaks = false } = {}) {
+  if (typeof value !== 'string' || value.includes('\0') || !allowLineBreaks && /[\r\n]/u.test(value))
+    throw new Error('A CIS argument is invalid.');
   return value;
 }
 

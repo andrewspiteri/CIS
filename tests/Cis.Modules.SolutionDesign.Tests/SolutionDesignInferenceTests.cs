@@ -60,6 +60,22 @@ public sealed partial class SolutionDesignWorkflowTests
         Assert.False(fixture.Service.Status(fixture.Root).Validation!.Current);
         Assert.Empty(fixture.Service.PrepareExistingDraft(fixture.Root).Errors);
         Assert.Contains("Observed services share", File.ReadAllText(fixture.DesignPath), StringComparison.Ordinal);
+        // Preparing an authoring run is not proof that its reconciliation succeeded.
+        var pending = fixture.Service.Status(fixture.Root);
+        Assert.True(pending.Validation!.InferenceReconciliationRequired);
+        Assert.False(pending.Validation.Current);
+        Assert.Equal("blocked", fixture.Service.Approve(fixture.Root, "Reviewer", "Attempt before reconciliation").Status);
+        fixture.Service.Initialize(fixture.Root);
+        Assert.True(fixture.Service.Status(fixture.Root).Validation!.InferenceReconciliationRequired);
+        var currentDesign = File.ReadAllText(fixture.DesignPath);
+        var currentSheet = File.ReadAllText(fixture.SheetPath);
+        var reconciled = fixture.Service.ApplyExistingDraft(fixture.Root, currentDesign, currentSheet,
+            currentDesign + "\nThe updated direction has been considered in this proposed design.\n", currentSheet);
+        Assert.Empty(reconciled.Errors);
+        Assert.True(reconciled.Applied);
+        Assert.True(fixture.Service.Status(fixture.Root).Validation!.Current);
+        Assert.False(fixture.Service.Status(fixture.Root).Validation!.InferenceReconciliationRequired);
+        Assert.Contains("status: Review Required", File.ReadAllText(fixture.DesignPath), StringComparison.Ordinal);
     }
 
     [Theory]
@@ -77,7 +93,7 @@ public sealed partial class SolutionDesignWorkflowTests
         var proposed = design + DiagramJson(); var proposedSheet = sheet + "\nObserved contracts.\n";
         if (failure == "metadata") proposedSheet = proposedSheet.Replace("status: Review Required", "status: Active", StringComparison.Ordinal);
         if (failure == "component") proposedSheet = proposedSheet.Replace("TI-MOD-IDENTITY", "TI-MOD-INVENTED", StringComparison.Ordinal);
-        if (failure == "diagram") proposed = proposed.Replace("system-context", "invented-view", StringComparison.Ordinal);
+        if (failure == "diagram") proposed = proposed.Replace("\"level\":\"context\"", "\"level\":\"invented\"", StringComparison.Ordinal);
         if (failure == "canonical") File.AppendAllText(fixture.SheetPath, "\nHuman edit during inference.\n");
         if (failure == "human-notes") proposedSheet = proposedSheet.Replace("Human note: keep settlement ownership with the application.", "Agent replaced human ownership.", StringComparison.Ordinal);
         var beforeSheet = File.ReadAllText(fixture.SheetPath);
@@ -106,25 +122,37 @@ public sealed partial class SolutionDesignWorkflowTests
         var json = DiagramJson();
         var model = ArchitectureDiagramModel.ReadRequired(json);
         var images = model.Render();
-        Assert.Equal(4, images.Count);
+        Assert.Equal(3, images.Count);
         Assert.Equal(images, model.Render());
         foreach (var image in images)
         {
             var xml = XDocument.Parse(image.Content);
             Assert.DoesNotContain(xml.Descendants(), node => node.Name.LocalName is "script" or "image" or "foreignObject");
             Assert.Contains("unresolved", image.Content, StringComparison.Ordinal);
-            Assert.Contains("&amp;", image.Content, StringComparison.Ordinal);
         }
+        Assert.Contains("&amp;", images[0].Content, StringComparison.Ordinal);
         Assert.Throws<InvalidDataException>(() => ArchitectureDiagramModel.ReadRequired(json.Replace("\"to\":\"api\"", "\"to\":\"missing\"", StringComparison.Ordinal)));
         Assert.Throws<InvalidDataException>(() => ArchitectureDiagramModel.ReadRequired(json + json));
         Assert.Throws<InvalidDataException>(() => ArchitectureDiagramModel.ReadRequired(json.Replace("\"observed\"", "\"approved\"", StringComparison.Ordinal)));
     }
 
-    private static string DiagramJson()
-        => "\n<!-- cis:architecture-views\n" + JsonSerializer.Serialize(new { views = new[] { "system-context", "component-topology", "integration-trust", "deployment-operations" }
-            .Select(id => new { id, title = "Implementation & architecture", notes = "Runtime deployment remains unresolved; no live environment was contacted.",
-                nodes = new[] { new { id = "client", label = "Customer application", layer = 0, status = "observed" },
-                    new { id = "api", label = "Application API", layer = 1, status = "observed" }, new { id = "runtime", label = "Deployment environment", layer = 2, status = "unresolved" } },
-                edges = new[] { new { from = "client", to = "api", label = "Authenticated product requests", status = "observed" },
-                    new { from = "api", to = "runtime", label = "Runtime placement unverified", status = "unresolved" } } }) }) + "\n-->\n";
+    private static ArchitectureDiagramModel C4Model()
+    {
+        var customer = new ArchitectureNode("client", "Customer", 0, "observed", "person", "Manages deposits");
+        var product = new ArchitectureNode("product", "Implementation & architecture", 1, "observed", "software-system", "Manages the deposit lifecycle");
+        var api = new ArchitectureNode("api", "Product API", 1, "observed", "container", "Executes product requests", "NestJS", "product");
+        var data = new ArchitectureNode("data", "Product records", 2, "observed", "container", "Persists product state", "PostgreSQL", "product");
+        var handler = new ArchitectureNode("handler", "Request handler", 1, "observed", "component", "Validates requests and owns transactions", "TypeScript", "api");
+        const string notes = "Deployment remains unresolved; no live environment was contacted.";
+        return new([
+            new("system-context", "C1 - Implementation & architecture", notes, [customer, product],
+                [new("client", "product", "Manages deposits", "observed")], "context", "product"),
+            new("containers", "C2 - Product containers", notes, [customer, api, data],
+                [new("client", "api", "Submits requests", "observed", "HTTPS"), new("api", "data", "Reads and writes records", "observed", "SQL")], "container", "product"),
+            new("components-api", "C3 - API components", notes, [customer, handler, data with { Layer = 3 }],
+                [new("client", "handler", "Submits requests", "observed", "HTTPS"), new("handler", "data", "Persists product state", "observed", "SQL")], "component", "api")
+        ], 2);
+    }
+
+    private static string DiagramJson() => "\n<!-- cis:architecture-views\n" + JsonSerializer.Serialize(C4Model(), new JsonSerializerOptions(JsonSerializerDefaults.Web)) + "\n-->\n";
 }

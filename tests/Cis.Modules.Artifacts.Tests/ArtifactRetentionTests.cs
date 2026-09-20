@@ -9,6 +9,98 @@ namespace Cis.Modules.Artifacts.Tests;
 public sealed class ArtifactRetentionTests
 {
     [Fact]
+    public void Doctor_SkipsFullyProtectedFamiliesButDetectsEligibilityWhenKeepLatestIsExceeded()
+    {
+        using var repository = Fixture.Create();
+        repository.Write("docs/cis/references/local-artifact-retention.md", """
+            | Family | Path | Retain days | Keep latest | Action |
+            |---|---|---:|---:|---|
+            | runs | .cis/local/runs | 7 | 2 | archive |
+            """);
+        foreach (var name in new[] { "old", "new" })
+        {
+            repository.Write($".cis/local/runs/{name}/nested/result.txt", "retained");
+            repository.Age($".cis/local/runs/{name}/nested/result.txt", DateTime.Parse("2026-01-01T00:00:00Z").ToUniversalTime());
+        }
+        var service = repository.Service(); var doctor = new ArtifactDoctorCheck(service);
+        var context = new CisRepositoryContextResolver().Resolve(repository.Path).Context!;
+        Assert.Empty(doctor.Inspect(context));
+        Assert.Equal(2, service.Plan(repository.Path).Entries.Count);
+        repository.Write(".cis/local/runs/latest/result.txt", "recent");
+        var finding = Assert.Single(doctor.Inspect(context));
+        Assert.Equal(Assert.Single(service.Plan(repository.Path).Entries, e => e.Candidate).Path, Assert.Single(finding.Evidence));
+    }
+
+    [Fact]
+    public void Doctor_DoesNotOpenRetainedArtifactContents()
+    {
+        using var repository = Fixture.Create();
+        repository.Write(".cis/local/runs/old/result.txt", "retained evidence");
+        repository.Age(".cis/local/runs/old/result.txt", DateTime.Parse("2026-01-01T00:00:00Z").ToUniversalTime());
+        var service = repository.Service();
+        var context = new CisRepositoryContextResolver().Resolve(repository.Path).Context!;
+        using var locked = new FileStream(System.IO.Path.Combine(repository.Path, ".cis/local/runs/old/result.txt"),
+            FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+
+        var finding = Assert.Single(new ArtifactDoctorCheck(service).Inspect(context));
+
+        Assert.Equal("CIS-ARTIFACT-DOCTOR-002", finding.Code);
+        // Explicit plans still require a real digest and cannot silently reuse a health summary.
+        Assert.Throws<IOException>(() => service.Plan(repository.Path));
+    }
+
+    [Fact]
+    public void Doctor_MatchesPlanEligibilityAndRechecksNestedFileEdits()
+    {
+        using var repository = Fixture.Create();
+        repository.Write("docs/cis/references/local-artifact-retention.md", """
+            | Family | Path | Retain days | Keep latest | Action |
+            |---|---|---:|---:|---|
+            | runs | .cis/local/runs | 7 | 1 | archive |
+            """);
+        repository.Write(".cis/local/runs/old/nested/result.txt", "old");
+        repository.Write(".cis/local/runs/new/result.txt", "new");
+        repository.Age(".cis/local/runs/old/nested/result.txt", DateTime.Parse("2026-01-01T00:00:00Z").ToUniversalTime());
+        repository.Age(".cis/local/runs/new/result.txt", DateTime.Parse("2026-02-01T00:00:00Z").ToUniversalTime());
+        var service = repository.Service();
+        var doctor = new ArtifactDoctorCheck(service);
+        var context = new CisRepositoryContextResolver().Resolve(repository.Path).Context!;
+        var before = Assert.Single(doctor.Inspect(context));
+        var plan = service.Plan(repository.Path);
+        Assert.Equal(Assert.Single(plan.Entries, entry => entry.Candidate).Path, Assert.Single(before.Evidence));
+        Assert.Equal(".cis/local/runs/old", Assert.Single(before.Evidence));
+
+        repository.Age(".cis/local/runs/old/nested/result.txt", DateTime.Parse("2026-08-27T11:00:00Z").ToUniversalTime());
+
+        var after = Assert.Single(doctor.Inspect(context));
+        Assert.Equal(".cis/local/runs/new", Assert.Single(after.Evidence));
+        Assert.Equal(Assert.Single(service.Plan(repository.Path).Entries, entry => entry.Candidate).Path,
+            Assert.Single(after.Evidence));
+    }
+
+    [Fact]
+    public void Inventory_PreservesNestedSizesTimestampsAndEmptyDirectoryDigests()
+    {
+        using var repository = Fixture.Create();
+        repository.Write(".cis/local/runs/tree/a.txt", "abc");
+        repository.Write(".cis/local/runs/tree/nested/b.txt", "12345");
+        var stamp = DateTime.Parse("2026-02-01T00:00:00Z").ToUniversalTime();
+        repository.Age(".cis/local/runs/tree/a.txt", stamp.AddDays(-1));
+        repository.Age(".cis/local/runs/tree/nested/b.txt", stamp);
+        Directory.CreateDirectory(System.IO.Path.Combine(repository.Path, ".cis/local/runs/empty"));
+
+        var entries = repository.Service().Plan(repository.Path).Entries;
+
+        var tree = Assert.Single(entries, entry => entry.Path.EndsWith("/tree", StringComparison.Ordinal));
+        Assert.Equal(8, tree.SizeBytes);
+        Assert.Equal(stamp, DateTimeOffset.Parse(tree.LastWriteUtc).UtcDateTime);
+        Assert.Equal(64, tree.Digest.Length);
+        var empty = Assert.Single(entries, entry => entry.Path.EndsWith("/empty", StringComparison.Ordinal));
+        Assert.Equal(0, empty.SizeBytes);
+        Assert.Equal(Convert.ToHexStringLower(SHA256.HashData([])), empty.Digest);
+    }
+
+    [Fact]
     public void Compact_VerifiesArchiveDeletesOnlyCandidateAndSupportsRetrieveAndRestore()
     {
         using var repository = Fixture.Create();

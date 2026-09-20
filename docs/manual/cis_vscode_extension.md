@@ -30,7 +30,7 @@ ready repository.
 
 ## First use
 
-Open **Getting Started** from the Workspace view’s first row or book toolbar button, or run
+Open **Getting Started** from the Product view’s first row or book toolbar button, or run
 **CIS: Getting Started**. It shows the selected authority, the next setup action, and buttons
 to select a folder, initialize authority, import repositories, and open the high-level wizard.
 The page uses local setup metadata and does not launch analysis when opened. **How to use CIS**
@@ -61,16 +61,16 @@ no folder is open, trust is missing, or the CLI is unavailable.
   Choose **Owned product repository** for implementation governed here, or **External
   dependency repository** plus producer/consumer direction and optional component scope.
   Dependency source is visible context but cannot receive product implementation work.
-- Once initialized, open **High-level product definition wizard** in the Workspace View or
+- Once initialized, open **High-level product definition wizard** in the Product view or
   run **CIS: Open High-Level Product Definition Wizard**. The retained eight-page surface
   coordinates foundation, BRD, technical direction, architecture and diagrams, dictionaries,
   UI direction and preview, backlog, and one consolidated activation. Repository initialization
   alone does not invent product requirements.
 - For a multi-root workspace, select the authority repository explicitly. The extension
   persists that choice for the workspace and never silently switches it.
-- Confirm the product and ecosystem identity shown at the top of the Workspace View before
+- Confirm the product and ecosystem identity shown at the top of the Product view before
   authoring requirements or assigning work.
-- Run Repository Doctor, then refresh the Workspace View.
+- Run Repository Doctor, then refresh the Product view.
 
 ### Infer an existing product's business definition
 
@@ -102,11 +102,12 @@ artifacts, and the focused legacy **Next** actions remain available:
 | High-level backlog | Build from the approved intent, review outcome boundaries and dependencies, validate, and explicitly approve. | `plans/high-level-backlog.md` |
 | Feature specification | Start the next dependency-ready `HLT-*` item, expand the scaffold manually or through a bounded one-file agent draft, review its detailed requirements and acceptance criteria, validate, and explicitly approve. | `specs/features/<item>/feature-specification.md` |
 
-The Workspace tree shows these stages under **Product definition** and exposes one
-prominent **Next** action. Clicking a document stage opens the exact canonical Markdown.
+The Product tree keeps **Product definition** available alongside the complete feature
+and repository lists. The wizard owns its next-step guidance. Clicking a document stage
+in the Workflow guide opens the exact canonical Markdown.
 Architecture diagrams and the one-page visual-system preview are persistent journey artifacts,
-not wizard-only output. Open them from the Workspace **Product definition** group, the Journey
-Map's Technical and Experience sections, or **Evidence → Definition visuals**. These shortcuts
+not wizard-only output. Open them from the Product **Product definition** group, the Journey
+Map's Technical and Experience sections, or **Documents → Definition visuals**. These shortcuts
 open rendered Markdown preview so Mermaid diagrams and the generated SVG are visible; the full
 Architecture, Design, and Plans folders remain available in Evidence as canonical sources.
 Validation is mechanical and needs no approval. The wizard's final page shows all page states,
@@ -171,7 +172,7 @@ projects are pre-filled only where repository evidence supports a derived answer
 and provenance displayed; unresolved decisions remain for the human. Greenfield projects start
 unanswered. Every card has one action: it saves the exact text currently in the editor, whether
 that text began as a suggested, derived, or previously recorded direction. A completed questionnaire
-remains reopenable from the Workspace and Journey Map; updating a recorded direction regenerates
+remains reopenable from the Product and Workflow guide; updating a recorded direction regenerates
 the technical intent, component map, product-module architecture, and integration-point catalog.
 The generated module profiles identify ownership, inputs, outputs, state, policy, recovery, and
 verification responsibilities; integration records identify the source, trigger, target, contract,
@@ -182,15 +183,25 @@ extension performs that same generation automatically; this adds no second quest
 
 ## Navigate the workspace
 
-- **Workspace** shows authority, health, freshness, local AI, active change, blocking
-  review, and one next meaningful action.
-- **Journey Map** shows the current high-level product definition, technical definition,
+- **Product** keeps the product definition, feature list and registered repositories visible,
+  with health and diagnostics grouped underneath.
+- **High-level features** lists every saved feature and opens its wizard by stable identity.
+  Each feature expands into repositories, proposed repository work and explicitly linked changes.
+- **Workflow guide** shows the current high-level product definition, technical definition,
   and the repeatable feature-delivery path from specification through acceptance.
-- **Changes** opens current and closed dossiers without mutating them.
-- **Evidence** opens canonical Markdown and runs bounded context/relationship queries.
+- **Delivery changes** groups current and closed dossiers by explicit feature links; unlinked
+  dossiers remain visible under Other product changes. Filtering never writes canonical state.
+- **Documents** opens canonical Markdown and runs bounded context/relationship queries.
 - **Runs** separates agent, workflow, test, security, diagnostics, and assurance evidence.
 - **Governance** shows skills, instructions, standards, references, providers, conflicts,
   quarantines, and Doctor findings.
+
+The feature wizard's **Delivery and acceptance** page supports multiple repository features
+per product feature. Each has a stable identifier, one owned repository, scope, dependencies
+and optional links to existing authority change dossiers. Independent entries can be planned
+in parallel; circular or missing dependencies are rejected. This is proposed work, not approved
+backlog or executable plan tasks. Saved answers and unsaved drafts remain separate for each feature.
+The [navigation projection](cis_brd_feature_wizard_navigation.md) is bundled with startup checks.
 
 Selecting **Doctor: errors**, **Doctor: warnings**, the status-bar health item, or **CIS: Run
 Repository Doctor** opens a dedicated Repository Doctor page. It groups errors, warnings, and

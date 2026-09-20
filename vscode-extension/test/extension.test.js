@@ -35,7 +35,7 @@ Module._load = originalLoad;
 const { hasExistingRepositoryEvidence, repositoryMetadata } = require('../lib/views');
 const { AuthoritySelector } = require('../lib/authority');
 const { doctorFixId, parseDoctorCommand, assertDoctorScope } = require('../lib/doctor-commands');
-const { CisCli, foregroundFailureMessage, isCacheableQuery, safeCommandDisplay } = require('../lib/cis-cli');
+const { CisCli, CisCliError, foregroundFailureMessage, isCacheableQuery, safeCommandDisplay } = require('../lib/cis-cli');
 const { projectChangeOverview } = require('../lib/projections');
 const { documentStatus, isActiveCurrent, isReadyForApproval, linkedFeatureItems, nextStartableItem, productPaths, stateOf } = require('../lib/product-journey');
 const { bound, isValidWebviewMessage, redact, resolveWithin, validateExecutable } = require('../lib/security');
@@ -72,6 +72,39 @@ test('CisCli constructs argument arrays with one authority and JSON format', () 
     const cli = new CisCli(vscode, { appendLine() {} }, new AuthoritySelector(vscode, state()));
     assert.deepEqual(cli.arguments(['agent', 'providers']), ['agent', 'providers', '--repo', root, '--format', 'json']);
     assert.deepEqual(cli.arguments(['--version'], { repository: false, format: false }), ['--version']);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('questionnaire answers preserve multiline text through query and foreground processes', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cis-multiline-answer-'));
+  const script = path.join(root, 'receive-answer.cjs');
+  const nativeProcesses = require('node:child_process');
+  fs.writeFileSync(script, 'process.stdout.write(JSON.stringify({status:"answered",answer:process.argv[process.argv.indexOf("--answer")+1]}));');
+  const localVscode = { ProgressLocation: { Notification: 1 }, workspace: { isTrusted: true,
+    getConfiguration: () => ({ get: (key, fallback) => key === 'executablePath' ? process.execPath : fallback }) },
+    window: { withProgress: (_options, callback) => callback({ report() {} }, { onCancellationRequested() {} }) } };
+  const lines = [];
+  const cli = new CisCli(localVscode, { append: line => lines.push(line), appendLine: line => lines.push(line) },
+    { root: () => root, needsSelection: () => false }, {
+      execFile: (executable, args, options, callback) => {
+        assert.equal(options.shell, false);
+        return nativeProcesses.execFile(executable, [script, ...args], options, callback);
+      },
+      spawn: (executable, args, options) => {
+        assert.equal(options.shell, false);
+        return nativeProcesses.spawn(executable, [script, ...args], options);
+      },
+    });
+  const answer = 'Keep existing controls.\n\n- Customer: "Continue"\r\n- Back office: review\tand approve\nLiteral text: & | --actor Other $() `example` C:\\drafts\\UI — café';
+  try {
+    const wizard = await cli.query(['definition', 'answer', '--page', 'experience', '--id', 'UI-Q-003', '--answer', answer, '--actor', 'Reviewer'], { repository: false });
+    assert.equal(wizard.answer, answer);
+    const standalone = await cli.runForeground('Save UI answer',
+      ['ui-direction', 'questions', 'answer', 'UI-Q-003', '--answer', answer, '--actor', 'Reviewer'], { repository: false, details: false });
+    assert.equal(JSON.parse(standalone.stdout).answer, answer);
+    assert.ok(lines.filter(line => line.startsWith('$ ')).every(line => !line.includes('Keep existing controls') && !/[\r\n]/u.test(line)), 'Command displays redact multiline answers');
+    for (const args of [ ['definition', 'answer', '--answer', 'null\0character'], ['definition', 'answer', '--actor', 'two\nlines'], ['definition\nanswer'], ['definition', 'answer', '--answer', {}] ])
+      assert.throws(() => cli.arguments(args, { repository: false }), /A CIS argument is invalid/u);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -210,6 +243,33 @@ test('TC-VSC-013-001 TC-VSC-017-001 TC-VSC-022-001 foreground execution uses spa
     assert.equal(invocation.options.shell, false);
     assert.deepEqual(invocation.args.slice(-4), ['--repo', root, '--format', 'agent']);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('inline commands never open detail tabs on slow completion or failures', async () => {
+  let panels = 0;
+  let close;
+  let fail;
+  const localVscode = { ...vscode, ProgressLocation: { Notification: 1 }, window: {
+    withProgress: (_options, callback) => callback({ report() {} }, { onCancellationRequested() {} }),
+    createWebviewPanel: () => { panels++; throw new Error('Inline commands must stay in their existing wizard.'); },
+  } };
+  const processes = { spawn: () => {
+    const process = new NodeEventEmitter(); process.stdout = new PassThrough(); process.stderr = new PassThrough();
+    process.kill = () => {}; close = code => { process.stdout.end(); process.stderr.end(); process.emit('close', code); };
+    fail = () => { const error = new Error('Missing CLI'); error.code = 'ENOENT'; process.emit('error', error); };
+    return process;
+  } };
+  const cli = new CisCli(localVscode, { append() {}, appendLine() {} }, { root: () => process.cwd() }, processes);
+  const first = cli.runForeground('Save answer', ['technical-intent', 'decisions', 'resolve', 'TI-DEC-001'], { details: false });
+  await new Promise(resolve => setTimeout(resolve, 850));
+  assert.equal(panels, 0); close(0); assert.equal((await first).state, 'success');
+  const second = cli.runForeground('Save answer', ['technical-intent', 'decisions', 'resolve', 'TI-DEC-001'], { details: false });
+  const secondCheck = assert.rejects(second, error => error.kind === 'command-failed');
+  await new Promise(resolve => setImmediate(resolve)); close(2); await secondCheck;
+  const third = cli.runForeground('Save answer', ['technical-intent', 'decisions', 'resolve', 'TI-DEC-001'], { details: false });
+  const thirdCheck = assert.rejects(third, error => error.kind === 'missing-cli');
+  await new Promise(resolve => setImmediate(resolve)); fail(); await thirdCheck;
+  assert.equal(panels, 0);
 });
 
 test('CisCli preserves version, runner-failure, cancellation, and truncated-output evidence', async () => {
@@ -427,7 +487,7 @@ test('fresh initialized repository exposes product definition as the single next
       'agent providers': { providers: [] },
     };
     const cli = { version: async () => ({ raw: '0.3.0', compatible: true }), query: async args => responses[args.join(' ')] };
-    const provider = new extension.CisViewProvider(vscode, 'workspace', { root: () => root, needsSelection: () => false }, cli);
+    const provider = productJourneyView(root, cli);
     const items = await provider.getChildren();
     const product = items.find(item => item.label === 'Product definition');
     const next = items.find(item => item.label === 'Next: Start product definition');
@@ -457,7 +517,7 @@ test('validated BRD is projected as ready for explicit approval', async () => {
         throw new Error(`Unexpected query: ${args.join(' ')}`);
       },
     };
-    const provider = new extension.CisViewProvider(vscode, 'workspace', { root: () => root, needsSelection: () => false }, cli);
+    const provider = productJourneyView(root, cli);
     const items = await provider.getChildren();
     const next = items.find(item => item.label === 'Next: Approve business requirements');
     assert.equal(next.command.command, 'cis.brdApprove');
@@ -483,7 +543,7 @@ test('active BRD routes through high-level technical choices before technical-in
         throw new Error(`Unexpected query: ${args.join(' ')}`);
       },
     };
-    const provider = new extension.CisViewProvider(vscode, 'workspace', { root: () => root, needsSelection: () => false }, cli);
+    const provider = productJourneyView(root, cli);
     const items = await provider.getChildren();
     const product = items.find(item => item.label === 'Product definition');
     const next = items.find(item => item.label === 'Next: Define high-level technical direction');
@@ -576,7 +636,7 @@ test('journey map does not query or expose a stale backlog before solution desig
         return cli.query(args);
       },
     };
-    const workspace = new extension.CisViewProvider(vscode, 'workspace', { root: () => root, needsSelection: () => false }, workspaceCli);
+    const workspace = productJourneyView(root, workspaceCli);
     const workspaceItems = await workspace.getChildren();
     assert.ok(workspaceItems.some(item => item.label === 'Next: Generate overall solution design'));
     assert.equal(workspaceItems.some(item => item.label === 'Next: Validate high-level backlog'), false);
@@ -603,7 +663,7 @@ test('incomplete BRD offers bounded agent drafting from reference as the next ac
         throw new Error(`Unexpected query: ${args.join(' ')}`);
       },
     };
-    const provider = new extension.CisViewProvider(vscode, 'workspace', { root: () => root, needsSelection: () => false }, cli);
+    const provider = productJourneyView(root, cli);
     const items = await provider.getChildren();
     const next = items.find(item => item.label === 'Next: Draft business requirements from reference');
     assert.equal(next.command.command, 'cis.brdAgentDraft');
@@ -633,7 +693,7 @@ test('BRD open questions become the next guided product action', async () => {
         throw new Error(`Unexpected query: ${args.join(' ')}`);
       },
     };
-    const provider = new extension.CisViewProvider(vscode, 'workspace', { root: () => root, needsSelection: () => false }, cli);
+    const provider = productJourneyView(root, cli);
     const items = await provider.getChildren();
     const next = items.find(item => item.label === 'Next: Answer open BRD questions');
     assert.equal(next.command.command, 'cis.brdAnswerQuestions');
@@ -676,7 +736,7 @@ test('BRD question answers remain covered by the latest independent review', asy
         throw new Error(`Unexpected query: ${key}`);
       },
     };
-    const provider = new extension.CisViewProvider(vscode, 'workspace', { root: () => root, needsSelection: () => false }, cli);
+    const provider = productJourneyView(root, cli);
     const items = await provider.getChildren();
     const next = items.find(item => item.label === 'Next: Answer open BRD questions');
     assert.equal(next.command.command, 'cis.brdAnswerQuestions');
@@ -721,7 +781,7 @@ test('fully answered BRD questions route to bounded incorporation before approva
         throw new Error(`Unexpected query: ${key}`);
       },
     };
-    const provider = new extension.CisViewProvider(vscode, 'workspace', { root: () => root, needsSelection: () => false }, cli);
+    const provider = productJourneyView(root, cli);
     const items = await provider.getChildren();
     const next = items.find(item => item.label === 'Next: Update BRD from answered questions');
     assert.equal(next.command.command, 'cis.brdAgentIncorporateQuestions');
@@ -770,7 +830,7 @@ test('a BRD updated from question answers requires a fresh independent review', 
         throw new Error(`Unexpected query: ${key}`);
       },
     };
-    const provider = new extension.CisViewProvider(vscode, 'workspace', { root: () => root, needsSelection: () => false }, cli);
+    const provider = productJourneyView(root, cli);
     const items = await provider.getChildren();
     const next = items.find(item => item.label === 'Next: Review BRD with independent agent');
     assert.equal(next.command.command, 'cis.brdAgentReview');
@@ -818,7 +878,7 @@ test('review remediation preserves prior answered-question incorporation provena
         throw new Error(`Unexpected query: ${key}`);
       },
     };
-    const provider = new extension.CisViewProvider(vscode, 'workspace', { root: () => root, needsSelection: () => false }, cli);
+    const provider = productJourneyView(root, cli);
     const items = await provider.getChildren();
     const next = items.find(item => item.label === 'Next: Approve business requirements');
     assert.equal(next.command.command, 'cis.brdApprove');
@@ -856,7 +916,7 @@ test('an agent-authored BRD is routed to a different-provider review before ques
         throw new Error(`Unexpected query: ${key}`);
       },
     };
-    const provider = new extension.CisViewProvider(vscode, 'workspace', { root: () => root, needsSelection: () => false }, cli);
+    const provider = productJourneyView(root, cli);
     const items = await provider.getChildren();
     const next = items.find(item => item.label === 'Next: Review BRD with independent agent');
     assert.equal(next.command.command, 'cis.brdAgentReview');
@@ -909,7 +969,7 @@ test('independent BRD findings route through human dispositions before agent rev
         throw new Error(`Unexpected query: ${key}`);
       },
     };
-    const provider = new extension.CisViewProvider(vscode, 'workspace', { root: () => root, needsSelection: () => false }, cli);
+    const provider = productJourneyView(root, cli);
     let items = await provider.getChildren();
     let next = items.find(item => item.label === 'Next: Review recommendations');
     assert.equal(next.command.command, 'cis.brdReviewRecommendations');
@@ -956,7 +1016,7 @@ test('a digest-stale BRD review is superseded and routes to a fresh independent 
         throw new Error(`Unexpected query: ${key}`);
       },
     };
-    const provider = new extension.CisViewProvider(vscode, 'workspace', { root: () => root, needsSelection: () => false }, cli);
+    const provider = productJourneyView(root, cli);
     const items = await provider.getChildren();
     const next = items.find(item => item.label === 'Next: Review BRD with independent agent');
     assert.equal(next.command.command, 'cis.brdAgentReview');
@@ -1024,7 +1084,7 @@ test('journey projection routes every technical-intent, solution-design, backlog
           : { status: 'Active', valid: true, current: true, relativePath: 'docs/specs/features/HLT-FR-001.md' };
       throw new Error(`Unexpected journey query: ${args.join(' ')}`);
     } };
-    const provider = new extension.CisViewProvider(vscode, 'workspace', { root: () => root, needsSelection: () => false }, cli);
+    const provider = productJourneyView(root, cli);
     const nextCommands = async () => (await provider.getChildren()).map(item => item.command?.command).filter(Boolean);
 
     assert.ok((await nextCommands()).includes('cis.technicalIntentInit'));
@@ -1702,10 +1762,10 @@ test('TC-VSC-006-001 TC-VSC-009-001 change overview projects a single dependency
 });
 
 // Trace: TC-VSC-005-001, TC-VSC-007-001.
-test('TC-VSC-005-001 TC-VSC-007-001 six native views are declared and the Changes projection filters without mutation', async () => {
+test('TC-VSC-005-001 TC-VSC-007-001 product views are declared and grouped changes filter without mutation', async () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
   assert.deepEqual(manifest.contributes.views.cis.map(view => view.id),
-    ['cis.workspace', 'cis.journey', 'cis.changes', 'cis.evidence', 'cis.runs', 'cis.governance']);
+    ['cis.workspace', 'cis.features', 'cis.changes', 'cis.journey', 'cis.evidence', 'cis.runs', 'cis.governance']);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cis-vscode-'));
   try {
     fs.mkdirSync(path.join(root, '.cis'), { recursive: true });
@@ -1724,9 +1784,9 @@ test('TC-VSC-005-001 TC-VSC-007-001 six native views are declared and the Change
     const provider = new extension.CisViewProvider(vscode, 'changes', authority, cli);
     provider.setFilter('closed');
     const items = await provider.getChildren();
-    assert.deepEqual(items.map(item => item.label), ['CIS-2: Previous work']);
-    assert.match(items[0].description, /Closed · Closed · Complete/u);
-    assert.equal(items[0].command.command, 'cis.openChange');
+    assert.deepEqual(items[0].children.map(item => item.label), ['CIS-2: Previous work']);
+    assert.equal(items[0].children[0].description, 'Closed');
+    assert.equal(items[0].children[0].command.command, 'cis.openChange');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -1785,7 +1845,7 @@ test('existing source repository is routed through import while an empty project
 });
 
 // Trace: TC-VSC-004-001, TC-VSC-006-001, TC-VSC-016-001.
-test('TC-VSC-004-001 TC-VSC-006-001 TC-VSC-016-001 Workspace projection reports health, freshness, active change, review gate, and one next action', async () => {
+test('TC-VSC-004-001 TC-VSC-006-001 TC-VSC-016-001 Workspace projection keeps product navigation and health without selecting an arbitrary change', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cis-vscode-'));
   try {
     fs.mkdirSync(path.join(root, '.cis'), { recursive: true }); fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
@@ -1801,13 +1861,13 @@ test('TC-VSC-004-001 TC-VSC-006-001 TC-VSC-016-001 Workspace projection reports 
       'plan show CIS-1': { workItems: [{ id: 'WORK-1', title: 'Implement', status: 'InProgress', dependsOn: [] }] },
       'design status CIS-1': { gateStatus: 'Approved', approvalStatus: 'Approved', artifacts: [{ path: 'screen.png' }] },
     };
-    const cli = { version: async () => ({ raw: '0.3.0', compatible: true }), query: async args => responses[args.join(' ')] };
+    const cli = { version: async () => ({ raw: '0.3.0', compatible: true }), query: async args => args.includes('navigation') ? { workspace: { repositories: [] }, features: [] } : args[0] === 'definition' ? { pages: [] } : responses[args.join(' ')] };
     const provider = new extension.CisViewProvider(vscode, 'workspace', { root: () => root, needsSelection: () => false }, cli);
-    const labels = (await provider.getChildren()).map(item => item.label);
+    const items = await provider.getChildren(); const flatten = nodes => nodes.flatMap(node => [node, ...flatten(node.children || [])]); const labels = flatten(items).map(item => item.label);
     assert.ok(labels.includes('fixture')); assert.ok(labels.includes('CIS 0.3.0')); assert.ok(labels.includes('Doctor: warnings'));
     assert.ok(labels.includes('Local AI available')); assert.ok(labels.includes('Context graph is stale or invalid'));
-    assert.ok(labels.includes('Routing index is stale or incomplete')); assert.ok(labels.includes('CIS-1'));
-    assert.ok(labels.includes('Design gate: Approved')); assert.ok(labels.includes('Next: WORK-1'));
+    assert.ok(labels.includes('Routing index is stale or incomplete')); assert.ok(labels.includes('Product definition'));
+    assert.ok(labels.includes('High-level features')); assert.ok(!labels.includes('Next: WORK-1'));
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -1826,9 +1886,9 @@ test('Workspace projection does not classify informational graph and index findi
       'plan show CIS-1': { workItems: [] },
       'design status CIS-1': { gateStatus: 'Not applicable', approvalStatus: 'Not applicable', artifacts: [] },
     };
-    const cli = { version: async () => ({ raw: '0.3.0', compatible: true }), query: async args => responses[args.join(' ')] };
+    const cli = { version: async () => ({ raw: '0.3.0', compatible: true }), query: async args => args.includes('navigation') ? { workspace: { repositories: [] }, features: [] } : args[0] === 'definition' ? { pages: [] } : responses[args.join(' ')] };
     const provider = new extension.CisViewProvider(vscode, 'workspace', { root: () => root, needsSelection: () => false }, cli);
-    const labels = (await provider.getChildren()).map(item => item.label);
+    const items = await provider.getChildren(); const flatten = nodes => nodes.flatMap(node => [node, ...flatten(node.children || [])]); const labels = flatten(items).map(item => item.label);
     assert.ok(labels.includes('Context graph is current'));
     assert.ok(labels.includes('Routing index is current'));
     assert.ok(!labels.includes('Context graph is stale or invalid'));
@@ -1889,10 +1949,10 @@ test('TC-VSC-016-001 view projection retains the last authoritative result with 
     const provider = new extension.CisViewProvider(vscode, 'changes', { root: () => root, needsSelection: () => false }, {
       query: async () => { if (fail) throw new Error('temporary failure'); return { changes: [{ id: 'CIS-1', title: 'Feature', status: 'Proposed', relativePath: 'docs/changes/CIS-1' }] }; },
     });
-    assert.equal((await provider.getChildren())[0].label, 'CIS-1: Feature');
+    assert.equal((await provider.getChildren())[0].children[0].label, 'CIS-1: Feature');
     fail = true;
     const stale = await provider.getChildren();
-    assert.equal(stale[0].label, 'Results are stale'); assert.equal(stale[1].label, 'CIS-1: Feature');
+    assert.equal(stale[0].label, 'Results are stale'); assert.equal(stale[1].children[0].label, 'CIS-1: Feature');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -1994,6 +2054,7 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
   const originalWorkspace = { ...vscode.workspace };
   const originalRelativePattern = vscode.RelativePattern;
   const originalViewColumn = vscode.ViewColumn;
+  const originalRange = vscode.Range;
   const originalStatusBarAlignment = vscode.StatusBarAlignment;
   const originalProgressLocation = vscode.ProgressLocation;
   const originalEnv = vscode.env;
@@ -2013,9 +2074,25 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
   let brdQuestionAnswered = false;
   let reviewDecision = 'pending';
   let reviewApproved = false;
+  let failReviewFollowup = false;
+  let failReviewProvider = false;
+  let keepNotificationsOpen = false;
+  const undismissedNotification = new Promise(() => {});
+  const reviewReadOptions = [];
+  const warningMessages = [];
   let technicalQuestionsInitialized = false;
   let definitionSession = false;
   let latestDefinition;
+  let failWizardAnswer = false;
+  const wizardProgressTitles = [];
+  let sourceDecisionInput;
+  let technicalDecisionInput;
+  let failTechnicalRead = false;
+  const technicalReadOptions = [];
+  let versionReads = 0;
+  const approvedWizardPages = new Set();
+  let cancelArchitectureApproval = false;
+  let cancelNoPlannedWork = false;
   let featureApproved = false;
   let aiMode = 'local';
   let openDialogOptions;
@@ -2083,7 +2160,10 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
     fs.writeFileSync(brdDisposition, '# BRD review disposition\n');
 
     configuration.actorIdentity = 'Andrew Spiteri';
-    vscode.ViewColumn = { Active: 1 };
+    vscode.ViewColumn = { Active: 1, Beside: 2 };
+    vscode.Range = class { constructor(startLine, startCharacter, endLine, endCharacter) {
+      this.start = { line: startLine, character: startCharacter }; this.end = { line: endLine, character: endCharacter };
+    } };
     vscode.StatusBarAlignment = { Left: 1 };
     vscode.ProgressLocation = { Notification: 15 };
     vscode.env = { clipboard: { writeText: async value => clipboardWrites.push(value) } };
@@ -2109,7 +2189,7 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
       createOutputChannel: () => ({ append() {}, appendLine: value => outputLines.push(value), show() { this.shown = true; }, dispose() {} }),
       registerTreeDataProvider: (id, provider) => { treeProviders.set(id, provider); return { dispose() {} }; },
       createStatusBarItem: () => statusBar,
-      withProgress: async (_options, operation) => operation(),
+      withProgress: async (options, operation) => { wizardProgressTitles.push(options.title); return operation(); },
       showInputBox: async options => promptValue(options.prompt || ''),
       showOpenDialog: async options => {
         referenceSelections += 1;
@@ -2119,10 +2199,14 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
       showQuickPick: async (items, options) => options?.canPickMany
         ? cancelInference ? undefined : items
         : Array.isArray(items) && items.includes('Complete') ? 'Complete' : items[0],
-      showWarningMessage: async (message, _options, action) => message === 'Initialize this CIS authority?' ? authorityConfirmation
-        : action === 'Start BRD draft' ? authoringConfirmation : action,
+      showWarningMessage: async (message, _options, action) => { warningMessages.push(message);
+        if (action === 'Approve architecture' && cancelArchitectureApproval) return undefined;
+        if (action === 'Record no planned work' && cancelNoPlannedWork) return undefined;
+        if (keepNotificationsOpen && message.startsWith('CIS: The BRD review succeeded')) return undismissedNotification;
+        return message === 'Initialize this CIS authority?' ? authorityConfirmation
+        : action === 'Start BRD draft' ? authoringConfirmation : action; },
       showInformationMessage: async () => undefined,
-      showErrorMessage: async () => 'Show output',
+      showErrorMessage: async () => keepNotificationsOpen ? undismissedNotification : 'Show output',
       showTextDocument: async (uri, options) => opened.push({ id: 'text', uri, options }),
       createWebviewPanel: (kind, title, _column, options) => {
         const panel = { kind, title, options, reveal() { this.revealed = true; }, onDidDispose(handler) { this.dispose = handler; }, webview: { cspSource: 'vscode-webview:', html: '',
@@ -2138,10 +2222,21 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
       choose: async () => { needsAuthority = false; return { uri: vscode.Uri.file(root) }; },
       clear: async () => {},
     };
+    let snapshotEnabled = 0; let cacheInvalidations = 0;
     const fakeCli = {
-      version: async () => ({ raw: '0.3.0', compatible: true }),
-      query: async args => {
+      enableStartupSnapshots: () => { snapshotEnabled++; },
+      clearQueryCache: () => { cacheInvalidations++; },
+      version: async () => { versionReads++; return { raw: '0.3.0', compatible: true }; },
+      query: async (args, options) => {
         const key = args.join(' '); queries.push(key);
+        if (key.startsWith('definition status') && technicalDecisionInput) {
+          technicalReadOptions.push(options);
+          if (failTechnicalRead) throw new CisCliError('Readiness refresh interrupted.', 'stale-evidence');
+        }
+        if (key === 'agent runs --change PRODUCT --task BRD-REVIEW --summary --limit 10' && failReviewFollowup)
+          throw new CisCliError('Fixture snapshot refresh interrupted.', 'stale-evidence');
+        if (key === 'agent runs --change PRODUCT --task BRD-REVIEW --summary --limit 10' || key === 'agent show RUN-BRD-REVIEW --summary')
+          reviewReadOptions.push(options);
         if (key.startsWith('workspace init ') && args.includes('--dry-run'))
           return { status: authorityPlanBlocked ? 'invalid' : 'planned', errors: authorityPlanBlocked ? ['Fixture collision'] : [],
             collisions: [], repositoryInitialization: { filesToCreate: ['docs/README.md'] } };
@@ -2149,25 +2244,48 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
           definitionSession = true;
           return { ...await fakeCli.query(['definition', 'status', '--workspace', root]), status: 'initialized' };
         }
-        if (key.startsWith('definition answer --page ') || key.startsWith('definition prepare --page '))
+        if (key.startsWith('definition answer --page ')) {
+          if (failWizardAnswer) return { errors: ['Fixture answer could not be saved.'], applied: false };
+          const answerPage = args[args.indexOf('--page') + 1];
+          const question = { id: args[args.indexOf('--id') + 1], question: 'Choose the product direction.', status: 'Answered',
+            answer: args[args.indexOf('--answer') + 1], answeredBy: 'Andrew Spiteri' };
+          return { ...latestDefinition, status: 'answered', applied: true,
+            technicalQuestions: { complete: false, current: true, questions: [] }, uiQuestions: { complete: false, current: true, questions: [] },
+            [answerPage === 'experience' ? 'uiQuestions' : 'technicalQuestions']: { complete: false, current: true, questions: [question] },
+            preview: { ...latestDefinition.preview, fontFamily: 'Updated answer preview' } };
+        }
+        if (key.startsWith('definition prepare --page delivery --backlog-mode '))
+          return { ...latestDefinition, status: 'prepared', applied: true };
+        if (key.startsWith('definition prepare --page '))
           return { ...latestDefinition, status: 'prepared' };
-        if (key.startsWith('definition status --workspace ')) {
+        if (key.startsWith('definition status --workspace ') || key.startsWith('definition approve --page architecture ')) {
+          if (key.startsWith('definition approve ')) approvedWizardPages.add('architecture');
           const pageNames = [
             ['foundation', 'Project foundation'], ['business', 'Business definition'], ['technical', 'Technical direction'],
             ['architecture', 'Solution architecture and diagrams'], ['contracts', 'Contracts and dictionaries'],
             ['experience', 'Experience direction and UI preview'], ['delivery', 'Delivery map'], ['review', 'Review and activate'],
           ];
           return latestDefinition = {
-            status: 'status', sessionId: definitionSession ? 'DEF-1' : null, active: definitionSession,
+            status: 'status', applied: key.startsWith('definition approve '), sessionId: definitionSession ? 'DEF-1' : null, active: definitionSession,
             authorityRepositoryId: 'fixture', workspacePath: root, readyToActivate: true,
             businessInference: { canDraft: true, repositories: [
               { id: 'api', repositoryPath: path.join(root, 'api'), graphFreshness: 'fresh' },
               { id: 'web', repositoryPath: path.join(root, 'web'), graphFreshness: 'stale' },
             ] },
-            pages: pageNames.map(([id, title], index) => ({ id, title, ordinal: index + 1, status: 'Ready for Approval',
-              complete: true, current: true, primaryPath: `docs/${id}.md`, artifactPaths: [`docs/${id}.md`], issues: [] })),
+            pages: pageNames.map(([id, title], index) => ({ id, title, ordinal: index + 1, status: approvedWizardPages.has(id) ? 'Active' : 'Ready for Approval',
+              complete: true, current: true, primaryPath: `docs/${id}.md`, artifactPaths: [`docs/${id}.md`], issues: [],
+              guidance: id === 'business' ? { sourceReviews: [
+                { id: 'BRD-SRC-FIXTURE', repositoryId: 'fixture', repositoryPath: root, path: 'reference.md', assessmentLine: 5, reviewToken: 'checked-row' },
+                { id: 'BRD-SRC-ESCAPE', repositoryId: 'fixture', repositoryPath: root, path: '../outside.md' },
+                { id: 'BRD-SRC-REPO', repositoryId: 'fixture', repositoryPath: root, path: 'workspace:api' },
+              ] } : id === 'technical' ? { technicalDecisions: [
+                { id: 'TI-DEC-001', decision: 'Confirm ownership', requiredBefore: 'Change dossier creation', status: technicalDecisionInput ? 'Resolved' : 'Open', rationale: technicalDecisionInput?.resolution || 'Awaiting review.', needsReview: !technicalDecisionInput, recordedResolution: technicalDecisionInput?.resolution, documentLine: 2, reviewToken: technicalDecisionInput ? 'saved-technical' : 'checked-technical', questionnaireOverlap: true },
+              ] } : id === 'delivery' ? { summary: 'Choose delivery scope.', nextActionId: 'choose-backlog', nextStep: 'Choose the appropriate scope.', reasons: [], actions: [
+                { id: 'build-backlog', label: 'Create candidate backlog', status: 'Optional', reason: 'Review candidate outcomes.' },
+                { id: 'record-no-work', label: 'Record no planned work', status: 'Optional', reason: 'Record an empty scope.' },
+              ] } : undefined })),
             dictionaries: [{ title: 'API dictionary', applicable: true, entryCount: 1, relativePath: 'docs/references/api-dictionary.md' }],
-            diagrams: [{ title: 'System context', sourceFormat: 'mermaid', relativePath: 'docs/architecture/high-level-architecture-diagrams.md' }],
+            diagrams: [{ title: 'System context', status: approvedWizardPages.has('architecture') ? 'Active' : 'Review Required', sourceFormat: 'mermaid', relativePath: 'docs/architecture/high-level-architecture-diagrams.md' }],
             preview: { svgRelativePath: 'docs/design/ui-system-preview.svg', fontFamily: 'Inter', density: 'Balanced', radius: '6px' },
           };
         }
@@ -2180,6 +2298,11 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
           questions: [{ id: 'UI-Q-004', area: 'Layout and density', question: 'Which density?',
             status: 'Answered', answer: 'Compact, readable working surfaces.', answeredBy: 'Andrew Spiteri' }],
         };
+        if (key.startsWith('ui-direction baseline --workspace ')) return { status: 'discovered', sourceHash: 'checked-ui', repositories: [
+          { id: 'fixture', repositoryPath: root, filesRead: 1, facts: [
+            { area: 'Typography', summary: 'Poppins', evidence: [{ relativePath: 'src/styles.scss', line: 2 }] },
+          ], tokens: [], preview: { svg: '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="900"/>', width: 1200, height: 900, description: 'Reference controls.' } },
+        ], suggestions: {}, warnings: [], errors: [] };
         if (key.startsWith('ui-direction status --workspace '))
           return { status: 'Active', valid: true, current: true, validation: { effectiveStatus: 'Active', valid: true, current: true } };
         if (key.startsWith('brd backlog status --workspace ')) return { status: 'Active', items: [
@@ -2265,12 +2388,20 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
       },
       runForeground: async (title, args, options) => {
         foreground.push({ title, args, options });
+        if (failReviewProvider && args.slice(0, 3).join(' ') === 'agent review brd')
+          throw new CisCliError('Fixture provider failed.', 'command-failed', 1);
         if (switchAuthorityDuringInference && args.join(' ') === `definition prepare --page business --workspace ${root}`)
           selectedRoot = path.join(root, 'another-authority');
         if (args[0] === 'definition' && args[1] === 'activate') definitionSession = false;
         if (args[0] === 'workspace' && args[1] === 'init') fs.writeFileSync(path.join(root, '.cis', 'workspace.yml'), 'schema_version: 2\necosystem:\n  id: fixture\n  name: fixture\nproduct:\n  id: fixture\n  name: fixture\nrepositories:\n- id: fixture\n  path: .\n  documentation_root: docs\n  role: authority\n  participation: owned\n  relationship: none\n  components: []\n');
         if (args[0] === 'brd' && args[1] === 'init') fs.writeFileSync(brd, '---\nstatus: Review Required\n---\n# BRD\n');
+        if (args[0] === 'brd' && args[1] === 'approve') approvedWizardPages.add('business');
+        if (args[0] === 'technical-intent' && args[1] === 'approve') approvedWizardPages.add('technical');
         if (args[0] === 'brd' && args[1] === 'questions' && args[2] === 'answer') brdQuestionAnswered = true;
+        if (args[0] === 'brd' && args[1] === 'sources' && args[2] === 'assess')
+          sourceDecisionInput = JSON.parse(fs.readFileSync(args[args.indexOf('--input') + 1], 'utf8'));
+        if (args.slice(0, 3).join(' ') === 'technical-intent decisions resolve')
+          technicalDecisionInput = JSON.parse(fs.readFileSync(args[args.indexOf('--input') + 1], 'utf8'));
         if (args[0] === 'brd' && args[1] === 'review' && args[2] === 'decide') reviewDecision = 'accepted';
         if (args[0] === 'brd' && args[1] === 'review' && args[2] === 'accept-all') reviewDecision = 'accepted';
         if (args[0] === 'brd' && args[1] === 'review' && args[2] === 'approve') reviewApproved = true;
@@ -2281,9 +2412,10 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
     };
     const context = { workspaceState: state(), subscriptions: [] };
     extension.activate(context, { authority, cli: fakeCli });
+    assert.equal(snapshotEnabled, 1, 'activation enables the shared startup snapshot');
     await new Promise(resolve => setTimeout(resolve, 300));
 
-    assert.equal(treeProviders.size, 6);
+    assert.equal(treeProviders.size, 7);
     assert.ok(registered.size >= 25);
     const startupQueries = queries.length;
     await registered.get('cis.gettingStarted')();
@@ -2333,6 +2465,30 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
     await registered.get('cis.brdApprove')();
     await registered.get('cis.brdAgentDraft')();
     await registered.get('cis.brdAgentReview')();
+    assert.ok(opened.some(item => item.uri?.fsPath === brdReview), 'Successful review opens its retained report');
+    assert.deepEqual(reviewReadOptions.slice(-2), [{ cache: false, interactive: true }, { cache: false, interactive: true }]);
+    const errorsBeforeReviewFollowup = outputLines.filter(line => line.startsWith('ERROR')).length;
+    const reviewCallsBeforeFailure = foreground.filter(item => item.args.slice(0, 3).join(' ') === 'agent review brd').length;
+    failReviewFollowup = true;
+    keepNotificationsOpen = true;
+    let followupReturned = false;
+    const failedFollowup = registered.get('cis.brdAgentReview')().then(() => { followupReturned = true; });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(followupReturned, true, 'A follow-up warning must not hold the wizard until it is dismissed');
+    await failedFollowup;
+    failReviewFollowup = false;
+    assert.equal(foreground.filter(item => item.args.slice(0, 3).join(' ') === 'agent review brd').length, reviewCallsBeforeFailure + 1,
+      'Failed post-processing must never rerun the successful provider command');
+    assert.equal(outputLines.filter(line => line.startsWith('ERROR')).length, errorsBeforeReviewFollowup);
+    assert.ok(warningMessages.some(message => message.includes('The BRD review succeeded, but loading or preparing its results failed')));
+    failReviewProvider = true;
+    let failureReturned = false;
+    const failedProvider = registered.get('cis.brdAgentReview')().then(() => { failureReturned = true; });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(failureReturned, true, 'A command error notification must not hold the wizard until it is dismissed');
+    await failedProvider;
+    assert.ok(outputLines.some(line => line.includes('ERROR [command-failed/1]: Fixture provider failed.')));
+    failReviewProvider = false; keepNotificationsOpen = false;
     await registered.get('cis.brdAnswerQuestions')();
     const questionsPanel = panels.find(panel => panel.kind === 'cis.brdQuestions');
     assert.ok(questionsPanel);
@@ -2381,8 +2537,139 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
     assert.equal(panels.some(panel => panel.kind === 'cis.repositoryDoctor'), false, 'Opening the wizard must not open Doctor');
     const definitionPanel = panels.find(panel => panel.kind === 'cis.definitionWizard');
     assert.ok(definitionPanel, outputLines.join('\n'));
+    assert.equal(queries.filter(item => item.startsWith('ui-direction baseline')).length, 0,
+      'Normal startup and other wizard pages do not scan the UI baseline');
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'src/styles.scss'), '// Shared typography\nbody { font-family: Poppins; }\n');
+    await definitionPanel.webview.message({ command: 'navigate', value: 'experience' });
+    assert.equal(queries.filter(item => item.startsWith('ui-direction baseline')).length, 1,
+      'Entering the experience page discovers the baseline automatically');
+    assert.match(definitionPanel.webview.html, /Current interface baseline/u);
+    assert.match(definitionPanel.webview.html, /Poppins/u);
+    await definitionPanel.webview.message({ command: 'open-ui-baseline-source', value: '0:0' });
+    assert.equal(opened.at(-1).uri.fsPath, path.join(root, 'src/styles.scss'));
+    assert.equal(opened.at(-1).options.preview, false);
+    assert.equal(opened.at(-1).options.viewColumn, vscode.ViewColumn.Beside);
+    assert.equal(opened.at(-1).options.selection.start.line, 1);
+    const beforeExperienceSave = { queries: queries.length, progress: wizardProgressTitles.length, versions: versionReads, panels: panels.length };
+    const experienceAnswer = { page: 'experience', id: 'UI-Q-004', answer: 'Keep familiar controls.\nUse a compact, readable layout.' };
+    await Promise.all([
+      definitionPanel.webview.message({ command: 'save-answer', value: JSON.stringify(experienceAnswer) }),
+      definitionPanel.webview.message({ command: 'save-answer', value: JSON.stringify(experienceAnswer) }),
+    ]);
+    assert.deepEqual(queries.slice(beforeExperienceSave.queries), [
+      `definition answer --page experience --id UI-Q-004 --answer ${experienceAnswer.answer} --actor Andrew Spiteri --workspace ${root}`,
+    ], 'Experience save uses only the command response, without reloading definition, questionnaire guidance or UI discovery');
+    assert.deepEqual(wizardProgressTitles.slice(beforeExperienceSave.progress), ['Saving CIS direction']);
+    assert.match(definitionPanel.webview.html, /Keep familiar controls\./u);
+    assert.match(definitionPanel.webview.html, /Updated answer preview/u);
+    assert.match(definitionPanel.webview.html, /Poppins/u, 'The discovered baseline remains available');
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.equal(versionReads, beforeExperienceSave.versions, 'Saving does not trigger a full workspace refresh');
+    assert.equal(panels.length, beforeExperienceSave.panels);
+    const savedExperienceHtml = definitionPanel.webview.html;
+    failWizardAnswer = true;
+    await definitionPanel.webview.message({ command: 'save-answer', value: JSON.stringify(experienceAnswer) });
+    assert.equal(definitionPanel.webview.html, savedExperienceHtml, 'A failed save preserves the current form');
+    failWizardAnswer = false;
+    const jpgBytes = Buffer.from([0xff, 0xd8, 0xff, 0xda, 0, 0xff, 0xd9]);
+    const jpgDestination = { scheme: 'file', fsPath: path.join(root, 'fixture-ui-controls.jpg') };
+    const previousSaveDialog = vscode.window.showSaveDialog;
+    const previousWorkspaceFs = vscode.workspace.fs;
+    let savedImage;
+    vscode.window.showSaveDialog = async () => jpgDestination;
+    vscode.workspace.fs = { writeFile: async (uri, bytes) => { savedImage = { uri, bytes }; } };
+    await definitionPanel.webview.message({ command: 'save-ui-control-sheet', value: JSON.stringify({
+      index: 0, sourceHash: 'checked-ui', data: `data:image/jpeg;base64,${jpgBytes.toString('base64')}` }) });
+    assert.deepEqual(savedImage, { uri: jpgDestination, bytes: jpgBytes });
+    assert.equal(opened.at(-1).id, 'vscode.open');
+    assert.deepEqual(opened.at(-1).args, [jpgDestination, vscode.ViewColumn.Beside]);
+    vscode.window.showSaveDialog = previousSaveDialog;
+    vscode.workspace.fs = previousWorkspaceFs;
     await definitionPanel.webview.message({ command: 'navigate', value: 'technical' });
     await definitionPanel.webview.message({ command: 'refresh', value: '' });
+    const beforeTechnicalSave = foreground.length;
+    const statusBeforeTechnicalSave = queries.filter(item => item.startsWith('definition status')).length;
+    const queriesBeforeTechnicalSave = queries.length;
+    const versionsBeforeTechnicalSave = versionReads;
+    const panelsBeforeTechnicalSave = panels.length;
+    const technicalDecision = { id: 'TI-DEC-001', reviewToken: 'checked-technical',
+      resolution: 'Product teams own their bounded components to preserve current responsibilities.' };
+    await definitionPanel.webview.message({ command: 'save-technical-decision', value: JSON.stringify(technicalDecision) });
+    assert.deepEqual(technicalDecisionInput, { reviewToken: technicalDecision.reviewToken,
+      resolution: technicalDecision.resolution });
+    const technicalSaveCommand = foreground.at(-1).args;
+    assert.deepEqual(technicalSaveCommand.slice(0, 5), ['technical-intent', 'decisions', 'resolve', 'TI-DEC-001', '--input']);
+    assert.deepEqual(technicalSaveCommand.slice(-4), ['--actor', 'Andrew Spiteri', '--workspace', root]);
+    assert.equal(fs.existsSync(technicalSaveCommand[5]), false, 'The technical decision payload is removed after saving');
+    assert.equal(queries.filter(item => item.startsWith('definition status')).length, statusBeforeTechnicalSave + 1,
+      'Saving refreshes technical readiness');
+    assert.deepEqual(queries.slice(queriesBeforeTechnicalSave), [`definition status --workspace ${root}`], 'Saving only reloads the wizard projection');
+    assert.equal(technicalReadOptions.at(-1).cache, false);
+    assert.equal(technicalReadOptions.at(-1).interactive, true);
+    assert.equal(foreground.at(-1).options.details, false);
+    assert.match(definitionPanel.webview.html, /TI-DEC-001 saved and resolved/u);
+    assert.match(definitionPanel.webview.html, /Document decisions — 0 need attention out of 1/u);
+    assert.match(definitionPanel.webview.html, /<details open><summary>Recorded decisions \(1\)/u);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.equal(versionReads, versionsBeforeTechnicalSave, 'Saving does not trigger the workspace refresh');
+    assert.equal(panels.length, panelsBeforeTechnicalSave);
+    for (const invalid of [ { ...technicalDecision, reviewToken: 'old' }, { ...technicalDecision, resolution: '' },
+      { ...technicalDecision, id: 'unknown' } ])
+      await definitionPanel.webview.message({ command: 'save-technical-decision', value: JSON.stringify(invalid) });
+    assert.equal(foreground.length, beforeTechnicalSave + 1, 'Invalid or stale decisions cannot launch a write');
+    failTechnicalRead = true;
+    await definitionPanel.webview.message({ command: 'save-technical-decision', value: JSON.stringify({ ...technicalDecision, reviewToken: 'saved-technical' }) });
+    assert.match(definitionPanel.webview.html, /TI-DEC-001 was saved, but readiness could not refresh/u);
+    failTechnicalRead = false;
+    approvedWizardPages.clear();
+    await definitionPanel.webview.message({ command: 'refresh' });
+    await definitionPanel.webview.message({ command: 'navigate', value: 'architecture' });
+    assert.match(definitionPanel.webview.html, /Approve architecture and diagrams/u);
+    assert.doesNotMatch(definitionPanel.webview.html, /data-value="approve-(?:business|technical)"/u);
+    assert.match(definitionPanel.webview.html, /data-command="navigate" data-value="business">Go to Business definition/u);
+    assert.match(definitionPanel.webview.html, /data-command="navigate" data-value="technical">Go to Technical direction/u);
+    const approvalsBeforePrerequisites = queries.filter(query => query.startsWith('definition approve ')).length;
+    await definitionPanel.webview.message({ command: 'architecture-action', value: 'approve-architecture' });
+    assert.equal(queries.filter(query => query.startsWith('definition approve ')).length, approvalsBeforePrerequisites);
+    await definitionPanel.webview.message({ command: 'architecture-action', value: 'approve-business' });
+    await definitionPanel.webview.message({ command: 'architecture-action', value: 'approve-technical' });
+    assert.equal(approvedWizardPages.size, 0, 'Architecture actions cannot approve upstream documents');
+    await definitionPanel.webview.message({ command: 'navigate', value: 'technical' });
+    assert.match(definitionPanel.webview.html, /data-value="approve-technical" disabled/u);
+    await definitionPanel.webview.message({ command: 'technical-action', value: 'approve-technical' });
+    assert.equal(approvedWizardPages.size, 0, 'Technical approval still requires approved business requirements');
+    await definitionPanel.webview.message({ command: 'navigate', value: 'business' });
+    assert.match(definitionPanel.webview.html, /data-value="approve-business" >Approve business requirements/u);
+    assert.doesNotMatch(definitionPanel.webview.html, /data-value="approve-(?:technical|architecture)"/u);
+    await definitionPanel.webview.message({ command: 'business-action', value: 'approve-business' });
+    assert.equal(approvedWizardPages.has('business'), true);
+    assert.equal(approvedWizardPages.has('technical'), false);
+    assert.match(definitionPanel.webview.html, /id="business-approval-title">Business requirements approved/u);
+    assert.match(definitionPanel.webview.html, /role="status">Business requirements approved\./u);
+    assert.ok(foreground.some(item => item.args[0] === 'brd' && item.args[1] === 'approve'
+      && item.args.includes('Approved through the Business definition page of the high-level product-definition wizard.')));
+    await definitionPanel.webview.message({ command: 'navigate', value: 'technical' });
+    assert.match(definitionPanel.webview.html, /data-value="approve-technical" >Approve technical intent/u);
+    assert.doesNotMatch(definitionPanel.webview.html, /data-value="approve-(?:business|architecture)"/u);
+    assert.doesNotMatch(definitionPanel.webview.html, /role="status">Business requirements approved\./u);
+    await definitionPanel.webview.message({ command: 'technical-action', value: 'approve-technical' });
+    assert.equal(approvedWizardPages.has('technical'), true);
+    assert.match(definitionPanel.webview.html, /id="technical-approval-title">Technical intent approved/u);
+    assert.match(definitionPanel.webview.html, /role="status">Technical intent approved\./u);
+    assert.ok(foreground.some(item => item.args[0] === 'technical-intent' && item.args[1] === 'approve'
+      && item.args.includes('Approved through the Technical direction page of the high-level product-definition wizard.')));
+    await definitionPanel.webview.message({ command: 'navigate', value: 'architecture' });
+    assert.doesNotMatch(definitionPanel.webview.html, /data-value="approve-(?:business|technical)"/u);
+    assert.doesNotMatch(definitionPanel.webview.html, /Go to Business definition|Go to Technical direction/u);
+    cancelArchitectureApproval = true;
+    await definitionPanel.webview.message({ command: 'architecture-action', value: 'approve-architecture' });
+    assert.equal(queries.filter(query => query.startsWith('definition approve ')).length, approvalsBeforePrerequisites);
+    cancelArchitectureApproval = false;
+    await definitionPanel.webview.message({ command: 'architecture-action', value: 'approve-architecture' });
+    assert.ok(queries.includes(`definition approve --page architecture --reviewer Andrew Spiteri --workspace ${root}`));
+    assert.match(definitionPanel.webview.html, /Architecture and diagrams approved/u);
+    assert.ok(warningMessages.some(message => message.includes('overall solution design, component sheet and C4 diagrams')));
     await definitionPanel.webview.message({ command: 'save-answer',
       value: JSON.stringify({ page: 'technical', id: 'TI-Q-004', answer: 'Modular monolith with explicit boundaries.' }) });
     const statusesBeforePrepare = queries.filter(item => item.startsWith('definition status')).length;
@@ -2395,6 +2682,20 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
     assert.equal(queries.filter(item => item.startsWith('definition status')).length, statusesBeforePrepare,
       'The prepared status is reused instead of starting a second full status process');
     await definitionPanel.webview.message({ command: 'open-path', value: 'docs/specs/technical-intent-spec.md' });
+    const technicalBefore = fs.readFileSync(technicalIntent, 'utf8');
+    fs.writeFileSync(technicalIntent, '# Technical intent\n| TI-DEC-001 | Confirm ownership | Change dossier creation | Open | Awaiting review. |\n');
+    await definitionPanel.webview.message({ command: 'open-technical-decision', value: 'TI-DEC-001' });
+    assert.equal(opened.at(-1).uri.fsPath, technicalIntent);
+    assert.equal(opened.at(-1).options.preview, false);
+    assert.equal(opened.at(-1).options.viewColumn, vscode.ViewColumn.Beside);
+    assert.deepEqual(opened.at(-1).options.selection.start, { line: 1, character: 0 });
+    const openedBeforeStaleTechnical = opened.length;
+    fs.writeFileSync(technicalIntent, technicalBefore);
+    await definitionPanel.webview.message({ command: 'open-technical-decision', value: 'TI-DEC-001' });
+    await definitionPanel.webview.message({ command: 'open-technical-decision', value: 'unknown' });
+    assert.equal(opened.length, openedBeforeStaleTechnical, 'Changed or unchecked decision rows must not open a stale location');
+    await definitionPanel.webview.message({ command: 'technical-action', value: 'open-intent' });
+    assert.equal(opened.at(-1).uri.fsPath, technicalIntent);
     fs.mkdirSync(path.join(root, 'docs', 'references'), { recursive: true });
     fs.writeFileSync(path.join(root, 'docs', 'references', 'erd.md'), '# ERD');
     await definitionPanel.webview.message({ command: 'open-path', value: 'docs/references/erd.md' });
@@ -2403,6 +2704,48 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
     await definitionPanel.webview.message({ command: 'business-action', value: 'doctor' });
     await definitionPanel.webview.message({ command: 'business-action', value: 'evidence' });
     await definitionPanel.webview.message({ command: 'business-action', value: 'questions' });
+    const beforeEvidenceRefresh = foreground.length;
+    await definitionPanel.webview.message({ command: 'business-action', value: 'refresh-evidence' });
+    assert.deepEqual(foreground.slice(beforeEvidenceRefresh).map(item => item.args), [
+      ['graph', 'build', '--workspace', root], ['brd', 'reconcile', '--workspace', root],
+    ], 'Refresh updates evidence before reconciling the BRD without drafting or approving it');
+    const beforeDecision = fs.readFileSync(brd, 'utf8');
+    fs.appendFileSync(brd, '| BRD-SRC-FIXTURE | Unreviewed | TODO |\n');
+    await definitionPanel.webview.message({ command: 'open-source-decision', value: 'BRD-SRC-FIXTURE' });
+    assert.equal(opened.at(-1).uri.fsPath, brd);
+    assert.deepEqual(opened.at(-1).options.selection.start, { line: 4, character: 0 });
+    await definitionPanel.webview.message({ command: 'open-business-source', value: 'BRD-SRC-FIXTURE' });
+    assert.equal(opened.at(-1).uri.fsPath, reference);
+    assert.equal(opened.at(-1).options.preview, false, 'Source documents are pinned instead of replacing a preview tab');
+    assert.equal(opened.at(-1).options.viewColumn, vscode.ViewColumn.Beside, 'Source review opens beside the wizard');
+    assert.equal(fs.readFileSync(brd, 'utf8'), beforeDecision + '| BRD-SRC-FIXTURE | Unreviewed | TODO |\n');
+    fs.writeFileSync(brd, beforeDecision);
+    const beforeInvalidNavigation = opened.length;
+    for (const message of [
+      { command: 'open-source-decision', value: 'BRD-SRC-FIXTURE' },
+      { command: 'open-business-source', value: 'unknown' },
+      { command: 'open-business-source', value: 'BRD-SRC-ESCAPE' },
+      { command: 'open-business-source', value: 'BRD-SRC-REPO' },
+    ]) await definitionPanel.webview.message(message);
+    assert.equal(opened.length, beforeInvalidNavigation, 'Stale rows, unknown IDs, traversal and virtual evidence cannot open files');
+    const beforeSummaries = foreground.length;
+    await definitionPanel.webview.message({ command: 'summarize-business-sources' });
+    assert.equal(foreground.length, beforeSummaries + 1);
+    assert.deepEqual(foreground.at(-1).args, ['brd', 'sources', 'summarize', '--workspace', root]);
+    assert.equal(foreground.at(-1).options.cancellable, true);
+    const beforeSourceSave = foreground.length;
+    const decision = { id: 'BRD-SRC-FIXTURE', assessment: 'Reference', reason: 'Business context | reviewed.', reviewToken: 'checked-row' };
+    await definitionPanel.webview.message({ command: 'save-source-decisions', value: JSON.stringify([decision]) });
+    assert.deepEqual(sourceDecisionInput, [decision]);
+    const savedCommand = foreground.at(-1).args;
+    assert.deepEqual(savedCommand.slice(0, 4), ['brd', 'sources', 'assess', '--input']);
+    assert.deepEqual(savedCommand.slice(-2), ['--workspace', root]);
+    assert.equal(fs.existsSync(savedCommand[4]), false, 'The temporary payload is removed after saving');
+    assert.equal(foreground.length, beforeSourceSave + 1, 'A batch uses one write command');
+    for (const invalid of [ [{ ...decision, reviewToken: 'old' }], [{ ...decision, reason: '' }],
+      [{ ...decision, id: 'unknown' }], [decision, decision] ])
+      await definitionPanel.webview.message({ command: 'save-source-decisions', value: JSON.stringify(invalid) });
+    assert.equal(foreground.length, beforeSourceSave + 1, 'Invalid or stale forms cannot launch a write');
     const beforeInference = foreground.length;
     const selectionsBeforeInference = referenceSelections;
     cancelInference = true;
@@ -2424,7 +2767,7 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
         '--reference', path.join(root, 'api'), '--reference', path.join(root, 'web')],
       ['graph', 'build', '--repo', root],
     ]);
-    assert.match(definitionPanel.webview.html, /Infer your business definition/u);
+    assert.match(definitionPanel.webview.html, /Create or revisit the draft/u);
     await definitionPanel.webview.message({ command: 'navigate', value: 'technical' });
     assert.match(definitionPanel.webview.html, /Infer from existing repositories/u);
     const beforeTechnicalInference = foreground.length;
@@ -2441,7 +2784,7 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
     assert.match(definitionPanel.webview.html, /Infer solution architecture from the implementation/u);
     const beforeArchitectureInference = foreground.length;
     await Promise.all([
-      definitionPanel.webview.message({ command: 'infer-solution-design' }),
+      definitionPanel.webview.message({ command: 'architecture-action', value: 'reconcile-architecture' }),
       registered.get('cis.solutionDesignInferFromProject')(),
     ]);
     assert.deepEqual(foreground.slice(beforeArchitectureInference).map(item => item.args), [
@@ -2449,7 +2792,32 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
         '--reference', path.join(root, 'api'), '--reference', path.join(root, 'web')],
       ['definition', 'prepare', '--page', 'architecture', '--workspace', root],
       ['graph', 'build', '--repo', root],
-    ], 'Architecture inference runs once, then renders its visual diagrams');
+    ], 'Architecture reconciliation shares the inference guard, then renders its visual diagrams');
+    assert.match(definitionPanel.webview.html, /id="architecture-approval-title"/u);
+    const beforeArchitecturePrepare = foreground.length;
+    await definitionPanel.webview.message({ command: 'prepare', value: 'architecture' });
+    assert.match(definitionPanel.webview.html, /id="architecture-approval-title"/u);
+    assert.match(definitionPanel.webview.html, /Architecture diagrams prepared/u);
+    assert.equal(foreground.length, beforeArchitecturePrepare, 'Preparation reloads the wizard without a full workspace refresh');
+    await definitionPanel.webview.message({ command: 'navigate', value: 'delivery' });
+    assert.match(definitionPanel.webview.html, /data-command="delivery-action" data-value="build-backlog"/u);
+    assert.match(definitionPanel.webview.html, /data-command="delivery-action" data-value="record-no-work"/u);
+    assert.doesNotMatch(definitionPanel.webview.html, /data-command="prepare" data-value="delivery"/u);
+    const beforeNoWork = queries.length;
+    cancelNoPlannedWork = true;
+    await definitionPanel.webview.message({ command: 'delivery-action', value: 'record-no-work' });
+    assert.equal(queries.length, beforeNoWork, 'Cancelling the no-work choice does not write a decision');
+    cancelNoPlannedWork = false;
+    await Promise.all([
+      definitionPanel.webview.message({ command: 'delivery-action', value: 'record-no-work' }),
+      definitionPanel.webview.message({ command: 'delivery-action', value: 'record-no-work' }),
+    ]);
+    assert.deepEqual(queries.slice(beforeNoWork), [`definition prepare --page delivery --backlog-mode no-planned-work --actor Andrew Spiteri --workspace ${root}`]);
+    assert.match(definitionPanel.webview.html, /No planned work recorded/u);
+    const beforeCandidateBacklog = queries.length;
+    await definitionPanel.webview.message({ command: 'delivery-action', value: 'build-backlog' });
+    assert.deepEqual(queries.slice(beforeCandidateBacklog), [`definition prepare --page delivery --backlog-mode requirements --workspace ${root}`]);
+    assert.match(definitionPanel.webview.html, /Candidate backlog created/u);
     const beforeAuthorityChange = foreground.length;
     switchAuthorityDuringInference = true;
     await registered.get('cis.brdInferFromProject')();
@@ -2537,7 +2905,9 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
     await registered.get('cis.agentResume')({ cis: { runId: 'RUN-1' } });
     await workspaceEvents.folders();
     await workspaceEvents.trust();
+    const invalidationsBeforeNotifications = cacheInvalidations;
     watchers[0].change(); watchers[0].create(); watchers[0].delete();
+    assert.equal(cacheInvalidations, invalidationsBeforeNotifications + 3, 'input notifications invalidate immediately before the display debounce');
     await registered.get('cis.open')({ file: path.join(root, '..', 'outside.md') });
 
     assert.ok(queries.includes('repo doctor'));
@@ -2580,9 +2950,20 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
     Object.assign(vscode.workspace, originalWorkspace);
     vscode.RelativePattern = originalRelativePattern;
     vscode.ViewColumn = originalViewColumn;
+    vscode.Range = originalRange;
     vscode.StatusBarAlignment = originalStatusBarAlignment;
     vscode.ProgressLocation = originalProgressLocation;
     vscode.env = originalEnv;
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+// The step-by-step journey projection remains independently tested; the product
+// sidebar now exposes persistent features and repositories instead of one next task.
+function productJourneyView(root, cli) {
+  const provider = new extension.CisViewProvider(vscode, 'journey', { root: () => root, needsSelection: () => false }, cli);
+  return { getChildren: async () => {
+    const product = await provider.productJourney(root, repositoryMetadata(root, 'docs/cis'));
+    return [product.group, provider.node(`Next: ${product.next.label}`, product.next)];
+  } };
+}

@@ -3,7 +3,7 @@ title: "cis definition prepare"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-04"
+last_reviewed: "2026-09-15"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-definition-prepare
@@ -12,7 +12,7 @@ cis:
 # `cis definition prepare`
 
 ```text
-cis definition prepare --page <foundation|business|technical|architecture|contracts|experience|delivery|review> [--workspace <path>] [--format <human|json|agent>]
+cis definition prepare --page <foundation|business|technical|architecture|contracts|experience|delivery|review> [--backlog-mode <requirements|no-planned-work>] [--actor <human>] [--workspace <path>] [--format <human|json|agent>]
 ```
 
 Prepares or refreshes one page from the exact current upstream draft. Technical and experience
@@ -20,10 +20,27 @@ pages initialize their questionnaires and generate their governed documents afte
 is resolved. Architecture generates the solution-design bundle and high-level diagrams. Delivery
 builds the high-level backlog. The command never records human approval.
 
+The delivery page also supports an explicit `--backlog-mode no-planned-work --actor <human>`
+choice for a product baseline with no planned delivery work. It creates a review-only empty
+scope and retains the ordinary upstream and final-activation gates. `--backlog-mode requirements`
+creates candidate outcomes for review. The option is valid only on the delivery page. An existing
+no-work decision is preserved when the mode is omitted, and source changes require renewed human
+review rather than automatic renewal. Preparation errors are returned with the delivery page's
+findings, rather than reported as a successful build.
+
 For an existing system, use **Architecture → Infer from existing repositories** or
 `cis agent author solution-design` first. Architecture preparation preserves the inferred narrative
-and renders four SVG views from its diagram model. It repairs missing images and preserves modified
+and renders the C4 context, container and scoped component SVG views from its diagram model. It repairs missing images and preserves modified
 assets for reconciliation. Upstream review and activation gates remain unchanged.
+
+If technical direction changes after architecture inference, Prepare preserves the existing
+narrative and reports that reconciliation is required. In the wizard, use **Reconcile architecture
+with technical direction** to run CIS inference against the current direction and selected owned
+repositories. CIS updates the design and component sheet together, then prepares the C4 diagrams.
+Review the resulting draft before approving it. Refresh only rechecks state; it does not rewrite
+architecture. A cancelled or failed reconciliation remains pending and cannot make the bundle
+current or approvable. Architecture preparation stays on its page for review and reports any
+remaining blockers instead of silently continuing.
 
 Preparing `business`, `technical` or `contracts` discovers draft inventories in the product-owned
 application repositories and consolidates their implementation facts into the authority's

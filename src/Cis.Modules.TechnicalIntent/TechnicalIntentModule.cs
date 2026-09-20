@@ -32,12 +32,46 @@ public sealed class TechnicalIntentModule : ICisModule
         var service = services.GetRequiredService<TechnicalIntentService>();
         var command = new Command(Name, Description);
         command.Subcommands.Add(CreateQuestions(services.GetRequiredService<TechnicalIntentQuestionnaireService>()));
+        command.Subcommands.Add(CreateDecisions(service));
         command.Subcommands.Add(CreateSimple("init", "Generate or reconcile the BRD-, classification-, standards-, graph-, module-, and integration-derived technical-intent scaffold.", service.Initialize));
         command.Subcommands.Add(CreateSimple("validate", "Validate technical-intent completeness, currency, and approval readiness.", service.Validate));
         command.Subcommands.Add(CreateSimple("status", "Report effective technical-intent lifecycle and drift status.", service.Status));
         command.Subcommands.Add(CreateRefresh(services.GetRequiredService<GovernanceRefreshService>()));
         command.Subcommands.Add(CreateApprove(service));
         commands.Add(command);
+    }
+
+    private static Command CreateDecisions(TechnicalIntentService service)
+    {
+        var command = new Command("decisions", "Review and record human resolutions for technical document decisions.");
+        var resolve = new Command("resolve", "Save one reviewed technical decision without approving the technical intent.");
+        var id = new Argument<string>("id");
+        var input = new Option<string>("--input") { Required = true, Description = "JSON file with resolution and reviewToken from current status; a separate reason is optional." };
+        var actor = new Option<string>("--actor") { Required = true, Description = "Human decision-maker identity." };
+        var workspace = WorkspaceOption(); var format = FormatOption();
+        resolve.Arguments.Add(id); resolve.Options.Add(input); resolve.Options.Add(actor); resolve.Options.Add(workspace); resolve.Options.Add(format);
+        resolve.SetAction(parse =>
+        {
+            var selected = SelectFormat(parse.GetValue(format)); if (selected is null) return 2;
+            var workspacePath = parse.GetValue(workspace) ?? Directory.GetCurrentDirectory();
+            TechnicalIntentResult result;
+            try
+            {
+                using var stream = File.OpenRead(parse.GetValue(input)!);
+                var buffer = new byte[256 * 1024 + 1]; var count = stream.ReadAtLeast(buffer, buffer.Length, throwOnEndOfStream: false);
+                if (count == buffer.Length) throw new JsonException("Decision input exceeds 256 KiB.");
+                using var json = JsonDocument.Parse(buffer.AsMemory(0, count));
+                var data = json.RootElement;
+                string Value(string name) => data.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString()! : "";
+                result = service.ResolveDecision(workspacePath, new(parse.GetValue(id) ?? "", Value("resolution"), Value("reason"), Value("reviewToken"), parse.GetValue(actor) ?? ""));
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException or ArgumentException)
+            {
+                result = new("invalid", workspacePath, null, null, null, [], [], ["Read a bounded JSON object containing resolution and reviewToken from --input."], false);
+            }
+            Render(result, selected); return result.ExitCode;
+        });
+        command.Subcommands.Add(resolve); return command;
     }
 
     private static Command CreateQuestions(TechnicalIntentQuestionnaireService service)

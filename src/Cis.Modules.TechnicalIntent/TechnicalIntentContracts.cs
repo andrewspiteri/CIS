@@ -12,7 +12,10 @@ public sealed record TechnicalIntentValidation(
     string EffectiveStatus,
     string DocumentStatus,
     IReadOnlyList<string> Errors,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings)
+{
+    public IReadOnlyList<Cis.Abstractions.CisTechnicalDecisionReview> Decisions { get; init; } = [];
+}
 
 public sealed record TechnicalIntentResult(
     string Status,

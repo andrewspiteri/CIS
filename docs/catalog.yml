@@ -986,6 +986,11 @@ documents:
     type: command-reference
     status: active
     authority: canonical
+  - id: change-impact-studio:manual:cis-workspace-snapshot
+    path: docs/manual/cis_workspace_snapshot.md
+    type: command-reference
+    status: active
+    authority: canonical
   - id: change-impact-studio:manual:cis-graph-build
     path: docs/manual/cis_graph_build.md
     type: command-reference
@@ -1068,6 +1073,16 @@ documents:
     authority: canonical
   - id: change-impact-studio:manual:cis-brd-status
     path: docs/manual/cis_brd_status.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-brd-sources-assess
+    path: docs/manual/cis_brd_sources_assess.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-brd-sources-summarize
+    path: docs/manual/cis_brd_sources_summarize.md
     type: command-reference
     status: active
     authority: canonical
@@ -1749,6 +1764,11 @@ documents:
     type: command-reference
     status: active
     authority: canonical
+  - id: change-impact-studio:manual:cis-technical-intent-decisions-resolve
+    path: docs/manual/cis_technical_intent_decisions_resolve.md
+    type: command-reference
+    status: active
+    authority: canonical
   - id: change-impact-studio:manual:cis-technical-intent-refresh
     path: docs/manual/cis_technical_intent_refresh.md
     type: command-reference
@@ -1781,6 +1801,11 @@ documents:
     authority: canonical
   - id: change-impact-studio:manual:cis-solution-design-approve
     path: docs/manual/cis_solution_design_approve.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-solution-design-diagrams
+    path: docs/manual/cis_solution_design_diagrams.md
     type: command-reference
     status: active
     authority: canonical
@@ -2296,6 +2321,11 @@ documents:
     type: command-reference
     status: active
     authority: canonical
+  - id: change-impact-studio:manual:cis-ui-direction-baseline
+    path: docs/manual/cis_ui_direction_baseline.md
+    type: command-reference
+    status: active
+    authority: canonical
   - id: change-impact-studio:manual:cis-ui-direction-init
     path: docs/manual/cis_ui_direction_init.md
     type: command-reference
@@ -2346,6 +2376,11 @@ documents:
     type: command-reference
     status: active
     authority: canonical
+  - id: change-impact-studio:manual:cis-definition-approve
+    path: docs/manual/cis_definition_approve.md
+    type: command-reference
+    status: active
+    authority: canonical
   - id: change-impact-studio:manual:cis-agent-author-solution-design
     path: docs/manual/cis_agent_author_solution_design.md
     type: command-reference
@@ -2353,6 +2388,46 @@ documents:
     authority: canonical
   - id: change-impact-studio:manual:cis-agent-discover-solution-design
     path: docs/manual/cis_agent_discover_solution_design.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-brd-feature-intake
+    path: docs/manual/cis_brd_feature_intake.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-brd-feature-wizard-list
+    path: docs/manual/cis_brd_feature_wizard_list.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-brd-feature-wizard-status
+    path: docs/manual/cis_brd_feature_wizard_status.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-brd-feature-wizard-save
+    path: docs/manual/cis_brd_feature_wizard_save.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-brd-feature-wizard-screens
+    path: docs/manual/cis_brd_feature_wizard_screens.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-brd-feature-wizard-architecture
+    path: docs/manual/cis_brd_feature_wizard_architecture.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-brd-feature-wizard-navigation
+    path: docs/manual/cis_brd_feature_wizard_navigation.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-brd-feature-wizard-reimport
+    path: docs/manual/cis_brd_feature_wizard_reimport.md
     type: command-reference
     status: active
     authority: canonical

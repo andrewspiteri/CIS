@@ -1002,12 +1002,13 @@ public sealed partial class RepositoryClassifier
         while (pending.Count > 0)
         {
             var directory = pending.Pop();
-            IEnumerable<string> files;
-            IEnumerable<string> directories;
+            FileSystemInfo[] entries;
             try
             {
-                files = Directory.EnumerateFiles(directory).ToArray();
-                directories = Directory.EnumerateDirectories(directory).ToArray();
+                entries = new DirectoryInfo(directory).EnumerateFileSystemInfos("*", new EnumerationOptions
+                {
+                    AttributesToSkip = FileAttributes.ReparsePoint, IgnoreInaccessible = false
+                }).ToArray();
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
@@ -1015,17 +1016,16 @@ public sealed partial class RepositoryClassifier
                 continue;
             }
 
-            foreach (var file in files)
+            foreach (var file in entries.OfType<FileInfo>())
             {
-                yield return file;
+                yield return file.FullName;
             }
 
-            foreach (var child in directories)
+            foreach (var child in entries.OfType<DirectoryInfo>())
             {
-                if (!ExcludedDirectories.Contains(Path.GetFileName(child))
-                    && (File.GetAttributes(child) & FileAttributes.ReparsePoint) == 0)
+                if (!ExcludedDirectories.Contains(child.Name))
                 {
-                    pending.Push(child);
+                    pending.Push(child.FullName);
                 }
             }
         }

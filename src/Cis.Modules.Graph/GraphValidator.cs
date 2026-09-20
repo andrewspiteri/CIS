@@ -243,6 +243,9 @@ public sealed partial class GraphValidator
     }
 
     public GraphValidationResult Status(string repositoryPath)
+        => GraphReadScope.Read(this, nameof(Status), repositoryPath, () => StatusCore(repositoryPath));
+
+    private GraphValidationResult StatusCore(string repositoryPath)
     {
         var resolution = _repositoryContextResolver.Resolve(repositoryPath);
         if (!resolution.IsSuccess)
@@ -804,7 +807,8 @@ public sealed partial class GraphValidator
                 continue;
             }
 
-            if (!File.Exists(absolutePath))
+            var inputState = GraphInputInspection.Read(input.Path, absolutePath);
+            if (!inputState.Exists)
             {
                 diagnostics.Add(Diagnostic(
                     "CIS-GRAPH-VALIDATE-STALE-002",
@@ -814,9 +818,9 @@ public sealed partial class GraphValidator
                 continue;
             }
 
-            try
+            if (inputState.Error is null)
             {
-                if (!string.Equals(GraphBuilder.HashInput(input.Path, absolutePath), input.Hash, StringComparison.Ordinal))
+                if (!string.Equals(inputState.Hash, input.Hash, StringComparison.Ordinal))
                 {
                     diagnostics.Add(Diagnostic(
                         "CIS-GRAPH-VALIDATE-STALE-003",
@@ -825,13 +829,13 @@ public sealed partial class GraphValidator
                         input.Path));
                 }
             }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            else
             {
                 diagnostics.Add(Diagnostic(
                     "CIS-GRAPH-VALIDATE-STALE-004",
                     "warning",
                     $"Graph input cannot be read: {input.Path}",
-                    exception.Message));
+                    inputState.Error));
             }
         }
 

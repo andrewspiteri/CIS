@@ -7,7 +7,7 @@ using System.Text.RegularExpressions;
 namespace Cis.Modules.SolutionDesign;
 
 /// <summary>Bounded, data-only architecture views. No arbitrary SVG, script or Mermaid is executed.</summary>
-public sealed record ArchitectureDiagramModel(IReadOnlyList<ArchitectureView> Views)
+public sealed record ArchitectureDiagramModel(IReadOnlyList<ArchitectureView> Views, int SchemaVersion = 1)
 {
     public const string Marker = "<!-- cis:architecture-views";
     private static readonly string[] RequiredIds = ["system-context", "component-topology", "integration-trust", "deployment-operations"];
@@ -23,6 +23,8 @@ public sealed record ArchitectureDiagramModel(IReadOnlyList<ArchitectureView> Vi
             var json = matches[0].Groups["json"].Value;
             if (json.Length > 100_000) throw new InvalidDataException("Architecture diagram model exceeds its bounded size.");
             var model = JsonSerializer.Deserialize<ArchitectureDiagramModel>(json, JsonOptions);
+            if (model?.SchemaVersion == 2) { C4Architecture.Validate(model); return model; }
+            if (model?.SchemaVersion != 1) throw new InvalidDataException("Unsupported architecture diagram schema version.");
             if (model?.Views is null || model.Views.Count != 4 || model.Views.Any(view => view is null)
                 || !model.Views.Select(view => view.Id).Order(StringComparer.Ordinal).SequenceEqual(RequiredIds.Order(StringComparer.Ordinal)))
                 throw new InvalidDataException("Architecture diagrams must contain exactly the four required named views.");
@@ -48,7 +50,7 @@ public sealed record ArchitectureDiagramModel(IReadOnlyList<ArchitectureView> Vi
     public IReadOnlyList<ArchitectureImage> Render()
         => Views.Select(view =>
         {
-            var svg = RenderSvg(view);
+            var svg = SchemaVersion == 2 ? C4Architecture.RenderSvg(this, view) : RenderSvg(view);
             var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(svg))).ToLowerInvariant();
             return new ArchitectureImage(view.Id, view.Title, $"architecture-diagrams/{view.Id}-{hash}.svg", svg, view.Notes);
         }).ToArray();
@@ -155,7 +157,9 @@ public sealed record ArchitectureDiagramModel(IReadOnlyList<ArchitectureView> Vi
     private static string Escape(string text) => WebUtility.HtmlEncode(text);
 }
 
-public sealed record ArchitectureView(string Id, string Title, string Notes, IReadOnlyList<ArchitectureNode> Nodes, IReadOnlyList<ArchitectureEdge> Edges);
-public sealed record ArchitectureNode(string Id, string Label, int Layer, string Status);
-public sealed record ArchitectureEdge(string From, string To, string Label, string Status);
+public sealed record ArchitectureView(string Id, string Title, string Notes, IReadOnlyList<ArchitectureNode> Nodes, IReadOnlyList<ArchitectureEdge> Edges,
+    string? Level = null, string? ScopeId = null);
+public sealed record ArchitectureNode(string Id, string Label, int Layer, string Status, string? Kind = null,
+    string? Description = null, string? Technology = null, string? ParentId = null);
+public sealed record ArchitectureEdge(string From, string To, string Label, string Status, string? Technology = null);
 public sealed record ArchitectureImage(string Id, string Title, string RelativePath, string Content, string Notes);

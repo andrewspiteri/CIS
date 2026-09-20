@@ -34,6 +34,8 @@ public sealed class CisHostBuilder
         var services = new ServiceCollection();
         var catalog = new CisModuleCatalog(_modules);
         services.AddSingleton<ICisModuleCatalog>(catalog);
+        var rootCommand = new RootCommand("cis - Change Impact Studio modular engineering workflow.");
+        services.AddSingleton<ICisCommandDispatcher>(new CisCommandDispatcher(rootCommand));
 
         foreach (var module in _modules)
         {
@@ -41,7 +43,6 @@ public sealed class CisHostBuilder
         }
 
         var provider = services.BuildServiceProvider(validateScopes: true);
-        var rootCommand = new RootCommand("cis - Change Impact Studio modular engineering workflow.");
         var registry = new CisCommandRegistry(rootCommand);
 
         foreach (var module in _modules)

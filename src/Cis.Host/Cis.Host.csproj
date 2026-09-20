@@ -58,6 +58,9 @@
   <ItemGroup>
     <None Include="..\..\README.md" Pack="true" PackagePath="README.md" />
   </ItemGroup>
+  <ItemGroup Condition="'$(CisFunctionProfiling)' == 'true'">
+    <ProjectReference Include="..\..\tools\function-profiler\Runtime\Runtime.csproj" />
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <PackageReference Include="System.CommandLine" />

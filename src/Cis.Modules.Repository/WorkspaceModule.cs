@@ -12,7 +12,7 @@ public sealed class WorkspaceModule : ICisModule
 
     public string Name => "workspace";
 
-    public string Description => "Initialize one product authority inside a named software ecosystem.";
+    public string Description => "Initialize a product authority and read shared workspace projections.";
 
     public void RegisterServices(IServiceCollection services)
     {
@@ -29,6 +29,8 @@ public sealed class WorkspaceModule : ICisModule
         var workspace = new Command(Name, Description);
         workspace.Subcommands.Add(CreateInitCommand(
             services.GetRequiredService<WorkspaceInitializer>()));
+        if (services.GetService<ICisCommandDispatcher>() is { } dispatcher)
+            workspace.Subcommands.Add(WorkspaceSnapshot.CreateCommand(dispatcher));
         commands.Add(workspace);
     }
 

@@ -28,7 +28,7 @@ or ownership boundaries.
 | 4. Solution architecture and diagrams | Define modules, responsibilities, records, trust boundaries, integration points, deployment, and operations. | Overall solution design, component sheet, and high-level Mermaid diagram sheet. | The architecture bundle and four derived diagrams are complete/current. |
 | 5. Contracts and dictionaries | Start the classification-selected cross-feature vocabulary. | Dictionary index plus applicable API, event, permission, data, route, state, ownership, problem, configuration, package, and traceability references. | At least one applicable reference is indexed. |
 | 6. Experience direction and UI preview | Resolve shell, visual language, typography, colors, components, states, responsiveness, and accessibility. | UI questionnaire, UI direction, one-page Markdown summary, and self-contained SVG preview. | The questionnaire and direction are complete/current and the preview matches their source digest. |
-| 7. Delivery map | Convert the baseline into outcome-sized feature preparation order. | High-level backlog with routing, classifications, dependencies, and shared obligations. | The backlog is valid/current against the same draft baseline. |
+| 7. Delivery map | Record the planned delivery scope for the baseline. | Candidate backlog with routing and obligations, or an explicit named no-planned-work record. | The chosen scope is valid/current against the same draft baseline. |
 | 8. Review and activate | Review every page together and revise any page without losing place. | One activation record across the exact baseline. | All seven prior pages are complete/current. |
 
 ## Draft coordination
@@ -101,6 +101,12 @@ Managed BRD source-assessment and feature-traceability blocks are likewise prove
 new product intent. Reconciling an approved downstream feature into those blocks must not revoke the
 activation; edits to human-authored business requirements still do.
 Individual document approvals therefore cannot accidentally bypass the final product-definition review.
+Before signing the diagram set, activation rebinds its source hash to the approved solution-design
+and component-sheet files. Approval metadata changes must not leave the architecture page stale.
+For earlier activations with a pre-approval source hash, status may recognize the existing approval
+only while the consolidated baseline is unchanged, the solution is Active and current, and the
+diagram presentation and local assets still match the current renderer. This compatibility check
+is read-only; source, diagram, or renderer changes retain the ordinary stale state.
 After activation, any material edit follows the ordinary owning artifact's drift and renewed-review
 rules. The user may reopen the wizard to begin or resume a revision.
 

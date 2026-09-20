@@ -65,6 +65,7 @@ public sealed class UiDirectionQuestionnaireService
     private readonly DocumentationCatalogMerger _catalogMerger;
     private readonly IUiDirectionSolutionDesignSource _solutionDesign;
     private readonly Func<DateTimeOffset> _clock;
+    private readonly UiBaselineDiscovery _baseline;
 
     public UiDirectionQuestionnaireService(ICisWorkspaceRegistry workspaceRegistry,
         ICisRepositoryContextResolver repositoryResolver, DocumentationCatalogMerger catalogMerger,
@@ -75,6 +76,7 @@ public sealed class UiDirectionQuestionnaireService
         _catalogMerger = catalogMerger;
         _solutionDesign = solutionDesign;
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
+        _baseline = new UiBaselineDiscovery(workspaceRegistry);
     }
 
     public UiDirectionQuestionnaireResult Initialize(string workspacePath)
@@ -88,8 +90,13 @@ public sealed class UiDirectionQuestionnaireService
         var previous = existing is null ? new Dictionary<string, UiDirectionQuestion>(StringComparer.Ordinal) : Parse(existing);
         var sourceChanged = existing is not null && ReadNested(existing, "solution_design_hash") != state.SolutionVersion;
         var derived = Derive(state);
-        var questions = Definitions.Select(definition =>
+        var baseline = _baseline.Discover(state.Workspace!.WorkspacePath);
+        // Code observations are proposals for the common direction, not design authority.
+        if (baseline.Suggestions.ContainsKey("UI-Q-007")) derived.Remove("UI-Q-007");
+        var questions = Definitions.Select(original =>
         {
+            var definition = baseline.Suggestions.TryGetValue(original.Id, out var suggestion)
+                ? original with { Suggestion = suggestion } : original;
             if (previous.TryGetValue(definition.Id, out var item) && !string.IsNullOrWhiteSpace(item.Answer))
             {
                 if (item.ResolutionSource == "repository-evidence")
@@ -115,6 +122,8 @@ public sealed class UiDirectionQuestionnaireService
     }
 
     public UiDirectionQuestionnaireResult Status(string workspacePath) => StatusInternal(workspacePath, "status", false);
+
+    public CisUiBaselineResult Baseline(string workspacePath) => _baseline.Discover(workspacePath);
 
     public UiDirectionQuestionnaireResult Answer(string workspacePath, string id, string answer, string actor)
     {

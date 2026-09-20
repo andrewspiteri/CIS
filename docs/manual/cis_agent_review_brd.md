@@ -3,7 +3,7 @@ title: "cis agent review brd"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-31"
+last_reviewed: "2026-09-14"
 review_cadence: "on command or provider-policy change"
 cis:
   stable_id: change-impact-studio:manual:cis-agent-review-brd
@@ -64,6 +64,12 @@ CIS retains the JSON result and a human-readable Markdown rendering beneath:
 .cis/local/agents/runs/<run-id>/result.json
 .cis/local/agents/runs/<run-id>/brd-review.md
 ```
+
+After a successful review, the VS Code extension loads that run directly, initializes
+its pending recommendation record when it has findings, and opens the report before
+refreshing workspace views. A failure in this follow-up reports that the review itself
+succeeded. Reopen the retained run or its recommendations to continue; a view refresh
+failure does not require another provider execution.
 
 The review is advisory derived evidence. It cannot edit or approve the BRD, answer open
 questions, assess sources on behalf of a stakeholder, validate business currency, or

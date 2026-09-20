@@ -1252,6 +1252,34 @@ public sealed class GraphBuilderTests
     }
 
     [Fact]
+    public void SharedInputInspection_RechecksMissingAndRecreatedInputsAfterReadScope()
+    {
+        using var repository = TemporaryRepository.CreateInitializedApi();
+        Assert.Equal(0, CreateBuilder().Build(repository.Path).ExitCode);
+        var validator = new GraphValidator(new CisRepositoryContextResolver());
+        var snapshots = new GraphSnapshotReader(new CisRepositoryContextResolver());
+        var input = Path.Combine(repository.Path, "src", "Orders.Api", "Program.cs");
+        var content = File.ReadAllText(input);
+        using (GraphReadScope.Enter())
+        {
+            Assert.Equal("fresh", validator.Status(repository.Path).Freshness);
+            Assert.Equal("fresh", snapshots.ReadMetadata(repository.Path).Freshness);
+        }
+        File.Delete(input);
+        using (GraphReadScope.Enter())
+        {
+            Assert.Equal("stale", validator.Status(repository.Path).Freshness);
+            Assert.Equal("stale", snapshots.ReadMetadata(repository.Path).Freshness);
+        }
+        File.WriteAllText(input, content);
+        using (GraphReadScope.Enter())
+        {
+            Assert.Equal("fresh", snapshots.ReadMetadata(repository.Path).Freshness);
+            Assert.Equal("fresh", validator.Status(repository.Path).Freshness);
+        }
+    }
+
+    [Fact]
     public void ReadScope_SharesNestedGraphReadsAndRechecksContentAfterDisposal()
     {
         using var repository = TemporaryRepository.CreateInitializedApiWithDeliveryEvidence();
@@ -1267,11 +1295,13 @@ public sealed class GraphBuilderTests
             Assert.Equal("invalid-repository", snapshots.Read(string.Empty).Status);
             first = snapshots.Read(repository.Path);
             validation = validator.Validate(repository.Path, false);
+            var status = validator.Status(repository.Path);
             using (GraphReadScope.Enter())
             {
                 Assert.Same(first, snapshots.Read(repository.Path + Path.DirectorySeparatorChar));
                 Assert.Same(first.Graph, store.Read(repository.Path).Graph);
                 Assert.Same(validation, validator.Validate(repository.Path, false));
+                Assert.Same(status, validator.Status(repository.Path + Path.DirectorySeparatorChar));
                 Assert.True(validator.Validate(repository.Path, true).Strict);
             }
             Assert.Same(first, snapshots.Read(repository.Path));
@@ -1290,6 +1320,7 @@ public sealed class GraphBuilderTests
             Assert.NotSame(first, changed);
             Assert.Equal("stale", changed.Freshness);
             Assert.Equal("stale", validator.Validate(repository.Path, false).Freshness);
+            Assert.Equal("stale", validator.Status(repository.Path).Freshness);
             Assert.Equal(5, validator.Validate(repository.Path, true).ExitCode);
         }
 

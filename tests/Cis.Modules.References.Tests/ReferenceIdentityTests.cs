@@ -7,6 +7,29 @@ namespace Cis.Modules.References.Tests;
 
 public sealed class ReferenceIdentityTests
 {
+    [Fact]
+    public void Validate_RechecksSharedEvidenceAndKeepsRepositoryScopesSeparate()
+    {
+        using var fixture = new Fixture();
+        fixture.Table("command-dictionary", "Command ID | Status | Evidence | Repository",
+            "CMD-A | Draft | src/Feature.ts:1 | product-a",
+            "CMD-B | Draft | src/Feature.ts:2 | product-a",
+            "CMD-C | Draft | src/Feature.ts | product-b");
+        var service = fixture.Service("command-dictionary");
+        Assert.Equal(0, service.Validate(fixture.Authority, strict: true).ExitCode);
+        var source = Path.Combine(fixture.Root, "product-a/src/Feature.ts");
+        File.Delete(source);
+
+        var missing = service.Validate(fixture.Authority, strict: true);
+
+        Assert.Equal(5, missing.ExitCode);
+        Assert.Contains(missing.Diagnostics, finding => finding.Code == "CIS-REF-EVIDENCE-001"
+            && finding.Message.Contains("product-a", StringComparison.Ordinal));
+        Assert.DoesNotContain(missing.Diagnostics, finding => finding.Message.Contains("product-b", StringComparison.Ordinal));
+        File.WriteAllText(source, "export const restored = true;");
+        Assert.Equal(0, service.Validate(fixture.Authority, strict: true).ExitCode);
+    }
+
     public static TheoryData<string, string, string, string> CompositeRows => new()
     {
         { "data-dictionary", "Entity | Field | Type | Status | Evidence", "Account | balance | decimal \\| null | Draft | src/Feature.ts", "Account | openedAt | Date | Draft | src/Feature.ts" },

@@ -55,6 +55,8 @@ public sealed partial class AgentExecutionTests
             Assert.Equal("SOLUTION-DESIGN-DRAFT", result.Run!.Manifest.TaskId);
             Assert.Single(result.Envelope!.ImplementationEvidence!);
             Assert.Contains("cis:architecture-views", provider.LastRequest!.Prompt, StringComparison.Ordinal);
+            Assert.Contains("schemaVersion 2", provider.LastRequest.Prompt, StringComparison.Ordinal);
+            Assert.Contains("C3 scopeId is ONE container ID from C2", provider.LastRequest.Prompt, StringComparison.Ordinal);
             Assert.Contains("deployment configuration", provider.LastRequest.Prompt, StringComparison.Ordinal);
             Assert.Contains("every required", provider.LastRequest.Prompt.ToLowerInvariant(), StringComparison.Ordinal);
             Assert.Contains("Observed component responsibility", repository.Read(sheet), StringComparison.Ordinal);

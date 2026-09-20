@@ -34,6 +34,7 @@ public sealed partial class SolutionDesignWorkflowTests
         Assert.Equal(0, application.Invoke(["solution-design", "validate", "--help"]));
         Assert.Equal(0, application.Invoke(["solution-design", "status", "--help"]));
         Assert.Equal(0, application.Invoke(["solution-design", "approve", "--help"]));
+        Assert.Equal(0, application.Invoke(["solution-design", "diagrams", "--help"]));
     }
 
     [Fact]

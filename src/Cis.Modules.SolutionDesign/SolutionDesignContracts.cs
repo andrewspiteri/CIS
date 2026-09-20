@@ -18,7 +18,10 @@ public sealed record SolutionDesignValidation(
     string DesignStatus,
     string ComponentSheetStatus,
     IReadOnlyList<string> Errors,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings)
+{
+    public bool InferenceReconciliationRequired { get; init; }
+}
 
 public sealed record SolutionDesignResult(
     string Status,

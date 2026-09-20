@@ -15,6 +15,7 @@ public sealed class UiDirectionModule : ICisModule
 
     public void RegisterServices(IServiceCollection services)
     {
+        services.AddSingleton<ICisUiBaselineDiscovery, UiBaselineDiscovery>();
         services.TryAddSingleton<IUiDirectionSolutionDesignSource, UiDirectionSolutionDesignSource>();
         services.AddSingleton<UiDirectionQuestionnaireService>();
         services.AddSingleton<UiDirectionService>();
@@ -26,6 +27,12 @@ public sealed class UiDirectionModule : ICisModule
         var questionnaire = services.GetRequiredService<UiDirectionQuestionnaireService>();
         var service = services.GetRequiredService<UiDirectionService>();
         var command = new Command(Name, Description);
+
+        var baseline = new Command("baseline", "Discover the existing owned UI implementation without recording design decisions.");
+        var baselineWorkspace = Workspace(); var baselineFormat = Format();
+        baseline.Options.Add(baselineWorkspace); baseline.Options.Add(baselineFormat);
+        baseline.SetAction(parse => Render(questionnaire.Baseline(parse.GetValue(baselineWorkspace)!), parse.GetValue(baselineFormat)!));
+        command.Subcommands.Add(baseline);
 
         var questions = new Command("questions", "Capture high-level experience and visual-direction choices.");
         questions.Subcommands.Add(SimpleQuestionnaire("init", "Initialize or reconcile the UI-direction questionnaire.", questionnaire.Initialize));
@@ -90,6 +97,24 @@ public sealed class UiDirectionModule : ICisModule
             Console.WriteLine($"UI direction questionnaire: {result.Status}; {result.AnsweredCount}/{result.AnsweredCount + result.UnansweredCount} resolved; current={result.Current}");
             if (!summary) foreach (var item in result.Questions) Console.WriteLine($"- {item.Id} {item.Area}: {item.Status}");
             foreach (var warning in result.Warnings) Console.WriteLine($"Warning: {warning}"); foreach (var error in result.Errors) Console.WriteLine($"Error: {error}");
+        }
+        else { Console.Error.WriteLine("Unsupported format. Use human, json, or agent."); return 2; }
+        return result.ExitCode;
+    }
+
+    private static int Render(CisUiBaselineResult result, string format)
+    {
+        if (format.Equals("json", StringComparison.OrdinalIgnoreCase)) Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+        else if (format.Equals("agent", StringComparison.OrdinalIgnoreCase) || format.Equals("human", StringComparison.OrdinalIgnoreCase))
+        {
+            Console.WriteLine($"status={result.Status};exitCode={result.ExitCode};repositories={result.Repositories.Count};cached={result.Cached.ToString().ToLowerInvariant()};sourceHash={result.SourceHash}");
+            foreach (var repository in result.Repositories)
+            {
+                Console.WriteLine($"repository={Clean(repository.Id)};files={repository.FilesRead};candidates={repository.CandidateFiles};limited={repository.Limited.ToString().ToLowerInvariant()}");
+                foreach (var fact in repository.Facts) Console.WriteLine($"observed={Clean(fact.Area)};summary={Clean(fact.Summary)}");
+            }
+            foreach (var warning in result.Warnings) Console.WriteLine($"warning={Clean(warning)}");
+            foreach (var error in result.Errors) Console.WriteLine($"error={Clean(error)}");
         }
         else { Console.Error.WriteLine("Unsupported format. Use human, json, or agent."); return 2; }
         return result.ExitCode;

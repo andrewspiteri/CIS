@@ -9,6 +9,204 @@ namespace Cis.Modules.Brd.Tests;
 public sealed class BrdWorkflowTests
 {
     [Fact]
+    public void SourceSummaries_AreLocalCachedAndInvalidatedByDocumentChanges()
+    {
+        const string evidence = "Customers can open fixed term deposits and select maturity instructions.";
+        using var environment = WorkspaceEnvironment.Create(1, (repository, _) =>
+            repository.Write("BRD.md", "# Business requirements\n\n## Overview\n\n" + evidence));
+        environment.Service.Initialize(environment.Authority.Path, "Product BRD");
+        var before = File.ReadAllText(environment.CanonicalPath);
+        var initial = Assert.Single(environment.Service.Status(environment.Authority.Path).Validation!.SourceReviews);
+        Assert.Equal("excerpt", initial.Summary!.Kind); Assert.Contains(evidence, initial.Summary.Text, StringComparison.Ordinal);
+        var local = new SourceSummaryGeneration(evidence);
+        var service = new BrdSourceSummaryService(environment.Service, environment.Registry, local);
+        var generated = service.Generate(environment.Authority.Path);
+        Assert.Equal(1, generated.Generated); Assert.Equal(1, local.Calls);
+        Assert.Equal("local-model", Assert.Single(generated.Sources).Summary.Kind);
+        Assert.False(local.Request!.AllowRemote); Assert.Equal("ollama", local.Request.Provider);
+        Assert.Contains("untrusted evidence", local.Request.Prompt, StringComparison.Ordinal);
+        Assert.Equal(0, service.Generate(environment.Authority.Path).Generated); Assert.Equal(1, local.Calls);
+        Assert.Equal("local-model", Assert.Single(environment.Service.Status(environment.Authority.Path).Validation!.SourceReviews).Summary!.Kind);
+        Assert.Equal(before, File.ReadAllText(environment.CanonicalPath));
+        environment.Participants[0].Write("BRD.md", "# Business requirements\n\nUpdated deposit scope.");
+        environment.Builder.Build(environment.Participants[0].Path);
+        var updated = Assert.Single(environment.Service.Status(environment.Authority.Path).Validation!.SourceReviews);
+        Assert.Equal("excerpt", updated.Summary!.Kind); Assert.NotEqual(initial.Summary.ContentHash, updated.Summary.ContentHash);
+    }
+
+    [Fact]
+    public void SourceSummaries_KeepExcerptsWhenLocalModelIsUnavailableOrUnsupported()
+    {
+        const string evidence = "Customers can open fixed term deposits and select maturity instructions.";
+        using var environment = WorkspaceEnvironment.Create(1, (repository, _) => repository.Write("BRD.md", "# Business requirements\n\n" + evidence));
+        environment.Service.Initialize(environment.Authority.Path, "Product BRD");
+        var remote = new SourceSummaryGeneration(evidence) { LocalAvailable = false };
+        var result = new BrdSourceSummaryService(environment.Service, environment.Registry, remote).Generate(environment.Authority.Path);
+        Assert.Equal(0, remote.Calls); Assert.Equal(0, result.Generated); Assert.NotEmpty(result.Warnings);
+        Assert.Equal("excerpt", Assert.Single(result.Sources).Summary.Kind);
+        var unsupported = new SourceSummaryGeneration("A quote that is absent from the document.");
+        result = new BrdSourceSummaryService(environment.Service, environment.Registry, unsupported).Generate(environment.Authority.Path);
+        Assert.Equal(0, result.Generated); Assert.NotEmpty(result.Warnings);
+        var changed = new SourceSummaryGeneration(evidence) { BeforeReply = () => environment.Participants[0].Write("BRD.md", "# Business requirements\n\nChanged while summarizing.") };
+        result = new BrdSourceSummaryService(environment.Service, environment.Registry, changed).Generate(environment.Authority.Path);
+        Assert.Equal(0, result.Generated); Assert.Contains(result.Warnings, warning => warning.Contains("changed during summarization", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void SourceSummaries_DoNotReadOutsideRootsOrSendSensitiveMaterial()
+    {
+        using var environment = WorkspaceEnvironment.Create(1, (repository, _) =>
+            repository.Write("BRD.md", "# Business requirements\n\n-----BEGIN PRIVATE KEY-----\nSensitive fixture\n-----END PRIVATE KEY-----"));
+        environment.Service.Initialize(environment.Authority.Path, "Product BRD");
+        var local = new SourceSummaryGeneration("Sensitive fixture");
+        var result = new BrdSourceSummaryService(environment.Service, environment.Registry, local).Generate(environment.Authority.Path);
+        Assert.Equal(0, local.Calls); Assert.Equal("unavailable", Assert.Single(result.Sources).Summary.Kind);
+        Assert.DoesNotContain("PRIVATE KEY", result.Sources[0].Summary.Text, StringComparison.Ordinal);
+        var candidate = new BrdCandidate("source", "brd", "repo", environment.Authority.Path, "../outside.md", "hash", [], false);
+        Assert.False(BrdSourceSummaryService.Describe(environment.Authority.Path, candidate).CanGenerate);
+        Assert.Equal("repository", BrdSourceSummaryService.Describe(environment.Authority.Path, candidate with { Path = "workspace:repo" }).Kind);
+    }
+
+    [Fact]
+    public void SourceSummaries_FallBackToOriginalSentencesAndExcludeDocumentMetadata()
+    {
+        const string first = "Customers can open fixed term deposits and select maturity instructions.";
+        const string second = "Backoffice staff can review each deposit before its activation is completed.";
+        using var environment = WorkspaceEnvironment.Create(1, (repository, _) => repository.Write("BRD.md",
+            "# Design\n\n| Ticket | Author | Date | Status | Weight |\n|---|---|---|---|---|\n"
+            + "| KAN-112 | Example | 2026-09-11 | Draft | Medium |\n\n## 1. Business Requirements\n\n"
+            + "| ID | Requirement |\n|---|---|\n| BR-01 | " + first + " |\n| BR-02 | " + second + " |"));
+        environment.Service.Initialize(environment.Authority.Path, "Product BRD");
+        var local = new SourceSummaryGeneration("A fabricated quote which does not appear in the source.") { SelectSentences = true };
+        var result = new BrdSourceSummaryService(environment.Service, environment.Registry, local).Generate(environment.Authority.Path);
+        Assert.Equal(1, result.Generated); Assert.Equal(2, local.Calls); Assert.Empty(result.Warnings);
+        Assert.Equal(first + " " + second, Assert.Single(result.Sources).Summary.Text);
+        Assert.DoesNotContain("KAN-112", local.Request!.Prompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("BR-01", local.Request.Prompt, StringComparison.Ordinal);
+        Assert.False(local.Request.AllowRemote);
+    }
+
+    private sealed class SourceSummaryGeneration(string quote) : ICisTextGenerationService
+    {
+        public int Calls { get; private set; }
+        public bool LocalAvailable { get; init; } = true;
+        public bool SelectSentences { get; init; }
+        public Action? BeforeReply { get; init; }
+        public CisTextGenerationRequest? Request { get; private set; }
+        public CisAiStatus GetStatus() => new([
+            new("remote", "available", "https://remote.invalid", false, [new("remote-model")], null),
+            new("ollama", LocalAvailable ? "available" : "unavailable", "http://localhost:11434", true, [new("fixture-model")], null),
+        ]);
+        public CisTextGenerationResult Generate(CisTextGenerationRequest request)
+        {
+            Calls++; Request = request; BeforeReply?.Invoke();
+            if (SelectSentences && request.Prompt.Contains("sentenceIds", StringComparison.Ordinal))
+                return new("generated", "ollama", "fixture-model", "{\"sentenceIds\":[1,2]}", null, true);
+            return new("generated", "ollama", "fixture-model", System.Text.Json.JsonSerializer.Serialize(new {
+                summary = "The document describes opening fixed term deposits and choosing what happens when they mature.", evidenceQuotes = new[] { quote },
+            }), null, true);
+        }
+    }
+
+    [Fact]
+    public void SourceDecisions_SaveOnlyExplicitRowsAndPreserveTheRestOfTheDocument()
+    {
+        using var environment = WorkspaceEnvironment.Create(1, (repository, _) => {
+            repository.Write("BRD-one.md", "# Business requirements\n\nDeposit opening.\n");
+            repository.Write("BRD-two.md", "# Business requirements\n\nDeposit maturity.\n");
+        });
+        Assert.Equal(0, environment.Service.Initialize(environment.Authority.Path, "Product BRD").ExitCode);
+        var before = File.ReadAllText(environment.CanonicalPath);
+        var sources = environment.Service.Status(environment.Authority.Path).Validation!.SourceReviews;
+        var decisions = sources.Select((source, index) => new CisBrdSourceDecision(source.Id,
+            index == 0 ? "Adopted" : "Reference", "Used for deposit rules | independently checked.\nBusiness context.", source.ReviewToken!)).ToArray();
+        var saved = environment.Service.AssessSources(environment.Authority.Path, decisions);
+        Assert.Equal(0, saved.ExitCode); Assert.True(saved.Applied);
+        var after = File.ReadAllText(environment.CanonicalPath);
+        var ignoredLines = sources.Select(source => source.AssessmentLine!.Value - 1).ToHashSet();
+        Assert.Equal(before.Split('\n').Where((_, index) => !ignoredLines.Contains(index)),
+            after.Split('\n').Where((_, index) => !ignoredLines.Contains(index)));
+        var reviewed = environment.Service.Status(environment.Authority.Path).Validation!.SourceReviews;
+        Assert.All(reviewed, source => {
+            Assert.False(source.NeedsReview);
+            Assert.Equal("Used for deposit rules | independently checked. Business context.", source.Rationale);
+            Assert.NotEqual(sources.Single(item => item.Id == source.Id).ReviewToken, source.ReviewToken);
+        });
+        Assert.NotEqual("Active", environment.Service.Status(environment.Authority.Path).Validation!.DocumentStatus);
+    }
+
+    [Fact]
+    public void SourceDecisions_RejectStaleDuplicateAndInvalidBatchesWithoutPartialWrites()
+    {
+        using var environment = WorkspaceEnvironment.Create(1, (repository, _) => {
+            repository.Write("BRD-one.md", "# Business requirements\n\nDeposit opening.\n");
+            repository.Write("BRD-two.md", "# Business requirements\n\nDeposit maturity.\n");
+        });
+        environment.Service.Initialize(environment.Authority.Path, "Product BRD");
+        var sources = environment.Service.Status(environment.Authority.Path).Validation!.SourceReviews;
+        var first = new CisBrdSourceDecision(sources[0].Id, "Reference", "Background for deposit operations.", sources[0].ReviewToken!);
+        var second = new CisBrdSourceDecision(sources[1].Id, "Rejected", "Superseded policy outside this product.", sources[1].ReviewToken!);
+        var before = File.ReadAllText(environment.CanonicalPath);
+        foreach (var batch in new[] {
+            new[] { first, second with { ReviewToken = "stale" } }, new[] { first, first },
+            new[] { first, second with { Reason = "TODO" } }, new[] { first, second with { Assessment = "Anything" } },
+            new[] { first, second with { Id = "unknown" } }, new[] { first, second with { Reason = "--> injected" } },
+        }) {
+            var rejected = environment.Service.AssessSources(environment.Authority.Path, batch);
+            Assert.NotEqual(0, rejected.ExitCode); Assert.False(rejected.Applied);
+            Assert.Equal(before, File.ReadAllText(environment.CanonicalPath));
+        }
+        Assert.True(environment.Service.AssessSources(environment.Authority.Path, [first]).Applied);
+        var latest = File.ReadAllText(environment.CanonicalPath);
+        Assert.False(environment.Service.AssessSources(environment.Authority.Path, [first, second]).Applied);
+        Assert.Equal(latest, File.ReadAllText(environment.CanonicalPath));
+        Assert.True(environment.Service.AssessSources(environment.Authority.Path, [second]).Applied);
+    }
+
+    [Fact]
+    public void SourceDecisions_CommandDispatchAndChangedEvidenceAreChecked()
+    {
+        using var environment = WorkspaceEnvironment.Create(1, (repository, _) =>
+            repository.Write("BRD.md", "# Business requirements\n\nDeposit opening.\n"));
+        environment.Service.Initialize(environment.Authority.Path, "Product BRD");
+        var source = Assert.Single(environment.Service.Status(environment.Authority.Path).Validation!.SourceReviews);
+        var decision = new CisBrdSourceDecision(source.Id, "Reference", "Reviewed deposit context.", source.ReviewToken!);
+        var input = Path.Combine(environment.Authority.Path, "decisions.json");
+        File.WriteAllText(input, System.Text.Json.JsonSerializer.Serialize(new[] { decision },
+            new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)));
+        using var application = new CisHostBuilder().AddModule(new RepositoryModule()).AddModule(new WorkspaceModule())
+            .AddModule(new DocsModule()).AddModule(new GraphModule()).AddModule(new BrdModule()).Build();
+        Assert.Equal(0, application.Invoke(["brd", "sources", "assess", "--input", input, "--workspace", environment.Authority.Path, "--format", "json"]));
+        var current = Assert.Single(environment.Service.Status(environment.Authority.Path).Validation!.SourceReviews);
+        environment.Participants[0].Write("BRD.md", "# Business requirements\n\nDifferent deposit policy.\n");
+        environment.Builder.Build(environment.Participants[0].Path);
+        var before = File.ReadAllText(environment.CanonicalPath);
+        Assert.False(environment.Service.AssessSources(environment.Authority.Path, [decision with { ReviewToken = current.ReviewToken! }]).Applied);
+        Assert.Equal(before, File.ReadAllText(environment.CanonicalPath));
+        File.WriteAllText(input, "not-json");
+        Assert.NotEqual(0, application.Invoke(["brd", "sources", "assess", "--input", input, "--workspace", environment.Authority.Path]));
+    }
+
+    [Fact]
+    public void Status_ProjectsSourceDecisionsAndEditorLocationsWithoutChangingTheBrd()
+    {
+        using var environment = WorkspaceEnvironment.Create(1, (repository, _) =>
+            repository.Write("BRD.md", "# Business requirements\n\nCustomers open fixed term deposits.\n"));
+        Assert.Equal(0, environment.Service.Initialize(environment.Authority.Path, "Product BRD").ExitCode);
+        var before = File.ReadAllText(environment.CanonicalPath);
+        var status = environment.Service.Status(environment.Authority.Path);
+        var source = Assert.Single(status.Validation!.SourceReviews, item => item.Path == "BRD.md");
+        Assert.True(source.NeedsReview);
+        Assert.False(source.RequiresReconciliation);
+        Assert.Equal(2, source.Issues.Count);
+        Assert.Contains(source.Id, before.Split('\n')[source.AssessmentLine!.Value - 1], StringComparison.Ordinal);
+        Assert.Equal(before, File.ReadAllText(environment.CanonicalPath));
+        CompleteHumanReview(environment.CanonicalPath, hasCandidate: true);
+        var reviewed = environment.Service.Status(environment.Authority.Path);
+        Assert.False(Assert.Single(reviewed.Validation!.SourceReviews, item => item.Id == source.Id).NeedsReview);
+    }
+
+    [Fact]
     public void BacklogValidation_FailsWhenAnUpstreamGateMakesTheBacklogNonCurrent()
     {
         var result = new BrdBacklogResult("validated", "workspace", "authority", "docs/plans/high-level-backlog.md", [],
@@ -59,6 +257,8 @@ public sealed class BrdWorkflowTests
         Assert.Equal(0, application.Invoke(["brd", "init", "--help"]));
         Assert.Equal(0, application.Invoke(["brd", "reconcile", "--help"]));
         Assert.Equal(0, application.Invoke(["brd", "status", "--help"]));
+        Assert.Equal(0, application.Invoke(["brd", "sources", "assess", "--help"]));
+        Assert.Equal(0, application.Invoke(["brd", "sources", "summarize", "--help"]));
         Assert.Equal(0, application.Invoke(["brd", "validate", "--help"]));
         Assert.Equal(0, application.Invoke(["brd", "questions", "list", "--help"]));
         Assert.Equal(0, application.Invoke(["brd", "questions", "guidance", "--help"]));
@@ -607,6 +807,65 @@ public sealed class BrdWorkflowTests
             "A visitor shall sign in and maintain a renewable session.",
             "A visitor shall sign in through a changed journey.", StringComparison.Ordinal));
         Assert.Equal("Stale", backlog.Status(environment.Authority.Path).Validation!.EffectiveStatus);
+    }
+
+    [Fact]
+    public void Backlog_NoPlannedWorkRequiresHumanChoicePreservesScopeAndDetectsDrift()
+    {
+        using var environment = WorkspaceEnvironment.Create(participants: 0);
+        Assert.Equal(0, environment.Service.Initialize(environment.Authority.Path, "Existing product").ExitCode);
+        CompleteHumanReview(environment.CanonicalPath, hasCandidate: false);
+        var brd = Regex.Replace(File.ReadAllText(environment.CanonicalPath), "(?ms)^## Functional requirements\\s*$.*?(?=^## )",
+            "## Functional requirements\n\n- **BR-FR-001 — View deposits:** A customer shall view deposits.\n\n");
+        File.WriteAllText(environment.CanonicalPath, brd);
+        var service = new BrdBacklogService(environment.Service, environment.Registry,
+            new CisRepositoryContextResolver(), new DocumentationCatalogMerger(), [new ReadyCheck()]);
+        Assert.NotEqual(0, service.Build(environment.Authority.Path, "unknown", null).ExitCode);
+        Assert.NotEqual(0, service.Build(environment.Authority.Path, "no-planned-work", null).ExitCode);
+        Assert.Equal(5, service.Build(environment.Authority.Path, "no-planned-work", "Owner").ExitCode);
+        Assert.Equal(0, environment.Service.Approve(environment.Authority.Path, "Owner", "Baseline reviewed").ExitCode);
+        var result = service.Build(environment.Authority.Path, "no-planned-work", "Owner");
+        Assert.Equal(0, result.ExitCode);
+        Assert.Empty(result.Items);
+        Assert.True(result.Validation!.Valid);
+        Assert.True(result.Validation.Current);
+        Assert.Equal("Ready for Approval", result.Validation.EffectiveStatus);
+        Assert.Equal("no-planned-work", result.Mode);
+        Assert.Equal("Owner", result.NoPlannedWorkBy);
+        var path = Path.Combine(environment.Authority.Path, result.RelativePath!);
+        var recorded = File.ReadAllText(path);
+        Assert.False(service.Build(environment.Authority.Path).Applied);
+        Assert.False(service.Build(environment.Authority.Path, "no-planned-work", "Owner").Applied);
+        Assert.Equal(recorded, File.ReadAllText(path));
+        Assert.Equal("Active", service.Approve(environment.Authority.Path, "Owner", "Empty scope reviewed").Validation!.EffectiveStatus);
+        var approved = File.ReadAllText(path);
+        Assert.Empty(service.Build(environment.Authority.Path).Items);
+        Assert.Equal(approved, File.ReadAllText(path));
+        File.AppendAllText(path, "\n## Human notes\nKeep the support roadmap separate.\n");
+        Assert.False(service.Status(environment.Authority.Path).Validation!.Current);
+        var technical = Path.Combine(Path.GetDirectoryName(environment.CanonicalPath)!, "technical-intent-spec.md");
+        File.AppendAllText(technical, "\nA newly reviewed technical constraint.\n");
+        var beforeRefresh = File.ReadAllText(path);
+        Assert.Equal(5, service.Build(environment.Authority.Path).ExitCode);
+        Assert.Equal(beforeRefresh, File.ReadAllText(path));
+        var renewed = service.Build(environment.Authority.Path, "no-planned-work", "Owner");
+        Assert.Equal(0, renewed.ExitCode);
+        Assert.True(renewed.Validation!.Current);
+        Assert.Equal("Ready for Approval", renewed.Validation.EffectiveStatus);
+        Assert.Contains("Keep the support roadmap separate.", File.ReadAllText(path), StringComparison.Ordinal);
+        var good = File.ReadAllText(path);
+        File.WriteAllText(path, Regex.Replace(good, "(?m)^  no_planned_work_by:.*$", "  no_planned_work_by: null"));
+        Assert.False(service.Validate(environment.Authority.Path).Validation!.Valid);
+        File.WriteAllText(path, good);
+        var candidates = service.Build(environment.Authority.Path, "requirements", null);
+        Assert.Single(candidates.Items);
+        Assert.Equal("requirements", candidates.Mode);
+        Assert.Contains("Keep the support roadmap separate.", File.ReadAllText(path), StringComparison.Ordinal);
+        var planned = File.ReadAllText(path);
+        Assert.Equal(5, service.Build(environment.Authority.Path, "no-planned-work", "Owner").ExitCode);
+        Assert.Equal(planned, File.ReadAllText(path));
+        File.WriteAllText(path, planned.Replace("backlog_mode: requirements", "backlog_mode: no-planned-work", StringComparison.Ordinal));
+        Assert.False(service.Validate(environment.Authority.Path).Validation!.Valid);
     }
 
     [Fact]

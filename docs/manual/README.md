@@ -29,6 +29,14 @@ Each loaded module owns one top-level command group. The following leaf commands
 
 | Command | Purpose |
 | --- | --- |
+| [`cis brd feature intake`](cis_brd_feature_intake.md) | Introduce a prepared feature BRD and create or connect its implementation repository. |
+| [`cis brd feature wizard list`](cis_brd_feature_wizard_list.md) | Find and resume saved feature requests. |
+| [`cis brd feature wizard status`](cis_brd_feature_wizard_status.md) | Report the eight feature-definition pages and outstanding work. |
+| [`cis brd feature wizard screens`](cis_brd_feature_wizard_screens.md) | Generate and inspect proposed feature screens against the existing UI baseline. |
+| [`cis brd feature wizard architecture`](cis_brd_feature_wizard_architecture.md) | Generate feature-specific C4 context, container and component diagrams. |
+| [`cis brd feature wizard save`](cis_brd_feature_wizard_save.md) | Save reviewed feature-page answers with drift and concurrency checks. |
+| [`cis brd feature wizard navigation`](cis_brd_feature_wizard_navigation.md) | Navigate product features, repository work and saved definition progress. |
+| [`cis brd feature wizard reimport`](cis_brd_feature_wizard_reimport.md) | Preview and apply an updated source BRD while preserving feature answers and history. |
 | [`cis ai providers`](cis_ai_providers.md) | Governed AI routing command. |
 | [`cis ai models`](cis_ai_models.md) | Governed AI routing command. |
 | [`cis ai routes`](cis_ai_routes.md) | Governed AI routing command. |
@@ -107,6 +115,7 @@ Each loaded module owns one top-level command group. The following leaf commands
 | [`cis skills import`](cis_skills_import.md) | Import validated skill bundles from local paths, ZIP archives, or GitHub repositories. |
 | [`cis skills audit`](cis_skills_audit.md) | Isolate duplicate, overlapping, and conflicting skills with local-first model review and optional quarantine. |
 | [`cis workspace init`](cis_workspace_init.md) | Initialize one product authority with explicit product and ecosystem identities. |
+| [`cis workspace snapshot`](cis_workspace_snapshot.md) | Share checked workspace reads across the startup projections in one process. |
 | [`cis ai status`](cis_ai_status.md) | Report local and explicitly configured remote model providers without invoking generation. |
 | [`cis api discover`](cis_api_discover.md) | Correlate source, API dictionary rows, and OpenAPI into normalized local state. |
 | [`cis api inventory`](cis_api_inventory.md) | Read and filter the normalized API inventory without rescanning. |
@@ -158,6 +167,8 @@ Each loaded module owns one top-level command group. The following leaf commands
 | [`cis brd discover`](cis_brd_discover.md) | Find possible BRD evidence without claiming currency. |
 | [`cis brd init`](cis_brd_init.md) | Create or reconcile the canonical review-required BRD. |
 | [`cis brd status`](cis_brd_status.md) | Report effective BRD lifecycle and drift state. |
+| [`cis brd sources assess`](cis_brd_sources_assess.md) | Save explicit human source decisions from the wizard or a checked JSON batch. |
+| [`cis brd sources summarize`](cis_brd_sources_summarize.md) | Cache local-model document summaries for source review. |
 | [`cis brd validate`](cis_brd_validate.md) | Validate BRD content, evidence assessment, and baselines. |
 | [`cis brd approve`](cis_brd_approve.md) | Record explicit human approval of a valid BRD. |
 | [`cis brd backlog build`](cis_brd_backlog_build.md) | Decompose the Active BRD into traceable high-level product outcomes. |
@@ -171,18 +182,22 @@ Each loaded module owns one top-level command group. The following leaf commands
 | [`cis technical-intent init`](cis_technical_intent_init.md) | Generate or reconcile the BRD-, classification-, standards-, and graph-derived technical-intent skeleton. |
 | [`cis technical-intent validate`](cis_technical_intent_validate.md) | Validate technical-intent completeness, decisions, currency, and approval evidence. |
 | [`cis technical-intent status`](cis_technical_intent_status.md) | Report effective technical-intent lifecycle and drift state. |
+| [`cis technical-intent decisions resolve`](cis_technical_intent_decisions_resolve.md) | Save one human-reviewed document decision, reusing relevant questionnaire answers. |
 | [`cis technical-intent refresh`](cis_technical_intent_refresh.md) | Refresh unchanged BRD, technical-intent, and backlog baselines without duplicate approval. |
 | [`cis technical-intent approve`](cis_technical_intent_approve.md) | Record explicit human approval of valid, current technical direction. |
 | [`cis solution-design init`](cis_solution_design_init.md) | Generate or reconcile the atomic overall solution-design and component-sheet bundle. |
 | [`cis solution-design validate`](cis_solution_design_validate.md) | Validate architecture completeness, component traceability, currency, and bundle integrity. |
 | [`cis solution-design status`](cis_solution_design_status.md) | Report lifecycle and drift for both solution-design artifacts. |
+| [`cis solution-design diagrams`](cis_solution_design_diagrams.md) | Embed C4 context, container and scoped component SVGs in a review-only design. |
 | [`cis solution-design approve`](cis_solution_design_approve.md) | Record one human approval for the exact overall design and component sheet. |
 | [`cis ui-direction questions`](cis_ui_direction_questions.md) | Capture or override the high-level UI look-and-feel choices that code cannot safely establish. |
+| [`cis ui-direction baseline`](cis_ui_direction_baseline.md) | Discover existing interface styles, shells and components for the wizard's UI review. |
 | [`cis definition init`](cis_definition_init.md) | Start or resume the eight-page high-level product-definition wizard. |
 | [`cis definition status`](cis_definition_status.md) | Report page, artifact, diagram, dictionary, preview, and consolidated readiness state. |
 | [`cis definition prepare`](cis_definition_prepare.md) | Prepare or refresh one page from its governed upstream draft. |
 | [`cis definition answer`](cis_definition_answer.md) | Save or revise one technical or experience direction in place. |
 | [`cis definition activate`](cis_definition_activate.md) | Approve and activate the exact complete product baseline transactionally. |
+| [`cis definition approve`](cis_definition_approve.md) | Approve the solution design, component sheet and diagrams together after upstream approval. |
 | [`cis ui-direction init`](cis_ui_direction_init.md) | Generate or reconcile the workspace-level UI direction from approved architecture and resolved choices. |
 | [`cis ui-direction validate`](cis_ui_direction_validate.md) | Validate UI-direction completeness, provenance, source currency, and approval integrity. |
 | [`cis ui-direction status`](cis_ui_direction_status.md) | Report lifecycle and drift for high-level UI direction. |

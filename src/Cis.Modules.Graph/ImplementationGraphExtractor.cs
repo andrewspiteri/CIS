@@ -66,18 +66,21 @@ internal static partial class ImplementationGraphExtractor
         pending.Push(repositoryPath);
         while (pending.TryPop(out var directory))
         {
-            foreach (var child in Directory.EnumerateDirectories(directory).Order(StringComparer.OrdinalIgnoreCase))
+            var entries = new DirectoryInfo(directory).EnumerateFileSystemInfos("*", new EnumerationOptions
             {
-                var relative = Path.GetRelativePath(repositoryPath, child).Replace('\\', '/');
-                if (!IsExcludedDirectory(relative)
-                    && !new DirectoryInfo(child).Attributes.HasFlag(FileAttributes.ReparsePoint))
+                AttributesToSkip = FileAttributes.ReparsePoint, IgnoreInaccessible = false
+            }).ToArray();
+            foreach (var child in entries.OfType<DirectoryInfo>().OrderBy(entry => entry.FullName, StringComparer.OrdinalIgnoreCase))
+            {
+                var relative = Path.GetRelativePath(repositoryPath, child.FullName).Replace('\\', '/');
+                if (!IsExcludedDirectory(relative))
                 {
-                    pending.Push(child);
+                    pending.Push(child.FullName);
                 }
             }
 
-            files.AddRange(Directory.EnumerateFiles(directory)
-                .Select(path => Path.GetRelativePath(repositoryPath, path).Replace('\\', '/'))
+            files.AddRange(entries.OfType<FileInfo>()
+                .Select(file => Path.GetRelativePath(repositoryPath, file.FullName).Replace('\\', '/'))
                 .Where(IsGraphInput));
         }
 

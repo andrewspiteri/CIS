@@ -11,7 +11,7 @@ public sealed class CisApplication : IDisposable
 {
     private readonly IServiceProvider _services;
     private readonly RootCommand _rootCommand;
-    private static readonly object ConsoleSync = new();
+    internal static readonly object ConsoleSync = new();
 
     internal CisApplication(RootCommand rootCommand, IServiceProvider services)
     {
@@ -26,7 +26,7 @@ public sealed class CisApplication : IDisposable
         var savings = _services.GetService(typeof(ICisTokenSavingsCollector)) as ICisTokenSavingsCollector;
         if (recorder is null)
         {
-            return _rootCommand.Parse(args).Invoke();
+            lock (ConsoleSync) return _rootCommand.Parse(args).Invoke();
         }
 
         lock (ConsoleSync)

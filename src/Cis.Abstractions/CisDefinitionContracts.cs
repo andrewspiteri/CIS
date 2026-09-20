@@ -11,7 +11,20 @@ public sealed record CisDefinitionPage(
     bool Current,
     string? PrimaryPath,
     IReadOnlyList<string> ArtifactPaths,
-    IReadOnlyList<string> Issues);
+    IReadOnlyList<string> Issues)
+{
+    public CisDefinitionPageGuidance? Guidance { get; init; }
+}
+
+public sealed record CisDefinitionActionGuidance(string Id, string Label, string Status, string Reason);
+
+public sealed record CisDefinitionPageGuidance(
+    string Summary, string NextActionId, string NextStep, IReadOnlyList<string> Reasons,
+    IReadOnlyList<CisDefinitionActionGuidance> Actions)
+{
+    public IReadOnlyList<CisBrdSourceReview> SourceReviews { get; init; } = [];
+    public IReadOnlyList<CisTechnicalDecisionReview> TechnicalDecisions { get; init; } = [];
+}
 
 public sealed record CisDefinitionDictionary(
     string Kind,

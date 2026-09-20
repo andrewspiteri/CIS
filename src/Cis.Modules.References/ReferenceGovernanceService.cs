@@ -104,6 +104,10 @@ public sealed partial class ReferenceGovernanceService
 
         var diagnostics = state.Diagnostics.ToList();
         var evidenceRoots = ResolveEvidenceRoots(resolution.Context, state.Families, diagnostics);
+        // A read-only validation may cite one file hundreds of times. The root is part
+        // of the identity, and this cache is discarded before the next validation.
+        var checkedEvidence = new Dictionary<string, bool>(OperatingSystem.IsWindows()
+            ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         foreach (var family in state.Families.Where(item => item.CanonicalAvailable))
         {
             foreach (var duplicate in family.CanonicalEntries.GroupBy(EntryKey, StringComparer.Ordinal).Where(item => item.Count() > 1))
@@ -136,8 +140,16 @@ public sealed partial class ReferenceGovernanceService
                     if (Uri.TryCreate(evidence, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https") continue;
                     var relative = Regex.Replace(evidence.Split('#')[0].Trim('`', ' '), @":\d+(?:-\d+)?$", "");
                     if (relative.Length == 0) continue;
-                    if (CisPathSafety.TryResolveUnderRoot(evidenceRoot, relative, out var evidencePath)
-                        && !CisPathSafety.ContainsReparsePoint(evidenceRoot, evidencePath) && File.Exists(evidencePath)) continue;
+                    if (CisPathSafety.TryResolveUnderRoot(evidenceRoot, relative, out var evidencePath))
+                    {
+                        var key = evidenceRoot + "\0" + evidencePath;
+                        if (!checkedEvidence.TryGetValue(key, out var valid))
+                        {
+                            valid = !CisPathSafety.ContainsReparsePoint(evidenceRoot, evidencePath) && File.Exists(evidencePath);
+                            checkedEvidence.Add(key, valid);
+                        }
+                        if (valid) continue;
+                    }
                     diagnostics.Add(Diagnostic("CIS-REF-EVIDENCE-001", "warning", family.Kind,
                         $"Canonical evidence path is missing or unsafe in repository '{entry.RepositoryId ?? state.RepositoryId}': {relative}", "Repair or retire the evidence locator.", [$"{entry.Path}:{entry.Line}"]));
                 }

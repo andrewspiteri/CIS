@@ -5,131 +5,481 @@
   "version": "0.3.0",
   "publisher": "andrewspiteri",
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/andrewspiteri/CIS.git" },
-  "bugs": { "url": "https://github.com/andrewspiteri/CIS/issues" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/andrewspiteri/CIS.git"
+  },
+  "bugs": {
+    "url": "https://github.com/andrewspiteri/CIS/issues"
+  },
   "homepage": "https://github.com/andrewspiteri/CIS#readme",
-  "engines": { "vscode": "^1.95.0" },
-  "categories": ["Other"],
-  "keywords": ["change-impact", "architecture", "ai-delivery", "planning"],
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "change-impact",
+    "architecture",
+    "ai-delivery",
+    "planning"
+  ],
   "main": "./extension.js",
-  "extensionKind": ["workspace"],
+  "extensionKind": [
+    "workspace"
+  ],
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",
       "description": "Canonical Markdown navigation remains available; all CIS process execution is disabled.",
-      "restrictedConfigurations": ["cis.executablePath"]
+      "restrictedConfigurations": [
+        "cis.executablePath"
+      ]
     }
   },
-  "activationEvents": ["onView:cis.workspace", "onView:cis.journey", "onView:cis.changes", "onView:cis.evidence", "onView:cis.runs", "onView:cis.governance", "onCommand:cis.refresh", "onCommand:cis.definitionWizard", "onCommand:cis.gettingStarted"],
+  "activationEvents": [
+    "onView:cis.workspace",
+    "onView:cis.journey",
+    "onView:cis.changes",
+    "onView:cis.evidence",
+    "onView:cis.runs",
+    "onView:cis.governance",
+    "onCommand:cis.refresh",
+    "onCommand:cis.definitionWizard",
+    "onCommand:cis.gettingStarted",
+    "onView:cis.features"
+  ],
   "contributes": {
     "commands": [
-      { "command": "cis.gettingStarted", "title": "CIS: Getting Started", "icon": "$(book)" },
-      { "command": "cis.openGuide", "title": "CIS: How to Use CIS" },
-      { "command": "cis.authorityInit", "title": "CIS: Initialize Authority" },
-      { "command": "cis.refresh", "title": "CIS: Refresh Workspace" },
-      { "command": "cis.selectAuthority", "title": "CIS: Select Authority Repository" },
-      { "command": "cis.clearAuthority", "title": "CIS: Clear Authority Repository" },
-      { "command": "cis.open", "title": "CIS: Open Canonical Markdown" },
-      { "command": "cis.preview", "title": "CIS: Preview Canonical Markdown" },
-      { "command": "cis.repoInit", "title": "CIS: Initialize Repository" },
-      { "command": "cis.repoImport", "title": "CIS: Import Existing Repository" },
-      { "command": "cis.productStart", "title": "CIS: Start Product Definition" },
-      { "command": "cis.definitionWizard", "title": "CIS: Open High-Level Product Definition Wizard" },
-      { "command": "cis.brdValidate", "title": "CIS: Validate Business Requirements" },
-      { "command": "cis.brdApprove", "title": "CIS: Approve Business Requirements" },
-      { "command": "cis.brdAgentDraft", "title": "CIS: Draft Business Requirements from Reference with Agent" },
-      { "command": "cis.brdInferFromProject", "title": "CIS: Infer Business Definition from Existing Project" },
-      { "command": "cis.brdAgentReview", "title": "CIS: Review Business Requirements with Independent Agent" },
-      { "command": "cis.brdReviewRecommendations", "title": "CIS: Disposition BRD Review Recommendations" },
-      { "command": "cis.brdAgentRevise", "title": "CIS: Apply Approved BRD Recommendations with Agent" },
-      { "command": "cis.brdAnswerQuestions", "title": "CIS: Answer BRD Open Questions" },
-      { "command": "cis.brdAgentIncorporateQuestions", "title": "CIS: Update BRD from Answered Questions with Agent" },
-      { "command": "cis.technicalIntentQuestions", "title": "CIS: Define High-Level Technical Direction" },
-      { "command": "cis.technicalIntentInit", "title": "CIS: Generate Technical Intent Skeleton" },
-      { "command": "cis.technicalIntentInferFromProject", "title": "CIS: Infer Technical Intent from Existing Repositories" },
-      { "command": "cis.technicalIntentValidate", "title": "CIS: Validate Technical Intent" },
-      { "command": "cis.technicalIntentApprove", "title": "CIS: Approve Technical Intent" },
-      { "command": "cis.solutionDesignInit", "title": "CIS: Generate Overall Solution Design and Component Sheet" },
-      { "command": "cis.solutionDesignInferFromProject", "title": "CIS: Infer Solution Architecture from Existing Repositories" },
-      { "command": "cis.solutionDesignValidate", "title": "CIS: Validate Solution-Design Bundle" },
-      { "command": "cis.solutionDesignApprove", "title": "CIS: Approve Solution-Design Bundle" },
-      { "command": "cis.uiDirectionQuestions", "title": "CIS: Define High-Level UI Look and Feel" },
-      { "command": "cis.uiDirectionInit", "title": "CIS: Generate High-Level UI Direction" },
-      { "command": "cis.uiDirectionValidate", "title": "CIS: Validate High-Level UI Direction" },
-      { "command": "cis.uiDirectionApprove", "title": "CIS: Approve High-Level UI Direction" },
-      { "command": "cis.backlogBuild", "title": "CIS: Build High-Level Backlog" },
-      { "command": "cis.backlogValidate", "title": "CIS: Validate High-Level Backlog" },
-      { "command": "cis.backlogApprove", "title": "CIS: Approve High-Level Backlog" },
-      { "command": "cis.featureStart", "title": "CIS: Start Feature Specification" },
-      { "command": "cis.featureAgentDraft", "title": "CIS: Draft Feature Specification with Agent" },
-      { "command": "cis.featureValidate", "title": "CIS: Validate Feature Specification" },
-      { "command": "cis.featureApprove", "title": "CIS: Approve Feature Specification" },
-      { "command": "cis.repoDoctor", "title": "CIS: Run Repository Doctor" },
-      { "command": "cis.graphBuild", "title": "CIS: Build Context Graph" },
-      { "command": "cis.indexBuild", "title": "CIS: Build Routing Index" },
-      { "command": "cis.contextSearch", "title": "CIS: Search Context" },
-      { "command": "cis.graphRelated", "title": "CIS: Explore Graph Relationships" },
-      { "command": "cis.filterChanges", "title": "CIS: Filter Changes" },
-      { "command": "cis.trackerStatus", "title": "CIS: Show Tracker Status" },
-      { "command": "cis.aiStatus", "title": "CIS: Show AI Provider Status" },
-      { "command": "cis.agentProviders", "title": "CIS: Show Agent Providers" },
-      { "command": "cis.agentDiagnose", "title": "CIS: Diagnose Agent Provider" },
-      { "command": "cis.agentAuthenticate", "title": "CIS: Authenticate Agent Provider" },
-      { "command": "cis.requestAgentWork", "title": "CIS: Request Agent Work" },
-      { "command": "cis.agentShow", "title": "CIS: Show Agent Run" },
-      { "command": "cis.agentCancel", "title": "CIS: Cancel Agent Run" },
-      { "command": "cis.agentRecover", "title": "CIS: Recover Agent Run" },
-      { "command": "cis.agentResume", "title": "CIS: Resume Agent Run" },
-      { "command": "cis.workflowStatus", "title": "CIS: Show Workflow Run Status" },
-      { "command": "cis.testStatus", "title": "CIS: Show Test Status" },
-      { "command": "cis.securityStatus", "title": "CIS: Show Security Status" },
-      { "command": "cis.verificationStatus", "title": "CIS: Show Verification Status" },
-      { "command": "cis.governanceInventory", "title": "CIS: Show Governance Inventory" },
-      { "command": "cis.designReview", "title": "CIS: Review Visual Design" },
-      { "command": "cis.designDecision", "title": "CIS: Record Visual Design Decision" },
-      { "command": "cis.taskTransition", "title": "CIS: Transition Planned Task" },
-      { "command": "cis.openTask", "title": "CIS: Open Planned Task Detail" },
-      { "command": "cis.openChangeCanonical", "title": "CIS: Open Canonical Change Dossier" },
-      { "command": "cis.openChange", "title": "CIS: Open Change Overview" }
+      {
+        "command": "cis.gettingStarted",
+        "title": "CIS: Getting Started",
+        "icon": "$(book)"
+      },
+      {
+        "command": "cis.openGuide",
+        "title": "CIS: How to Use CIS"
+      },
+      {
+        "command": "cis.authorityInit",
+        "title": "CIS: Initialize Authority"
+      },
+      {
+        "command": "cis.refresh",
+        "title": "CIS: Refresh Workspace"
+      },
+      {
+        "command": "cis.selectAuthority",
+        "title": "CIS: Select Authority Repository"
+      },
+      {
+        "command": "cis.clearAuthority",
+        "title": "CIS: Clear Authority Repository"
+      },
+      {
+        "command": "cis.open",
+        "title": "CIS: Open Canonical Markdown"
+      },
+      {
+        "command": "cis.preview",
+        "title": "CIS: Preview Canonical Markdown"
+      },
+      {
+        "command": "cis.repoInit",
+        "title": "CIS: Initialize Repository"
+      },
+      {
+        "command": "cis.repoImport",
+        "title": "CIS: Import Existing Repository"
+      },
+      {
+        "command": "cis.productStart",
+        "title": "CIS: Start Product Definition"
+      },
+      {
+        "command": "cis.definitionWizard",
+        "title": "CIS: Open High-Level Product Definition Wizard"
+      },
+      {
+        "command": "cis.brdValidate",
+        "title": "CIS: Validate Business Requirements"
+      },
+      {
+        "command": "cis.brdApprove",
+        "title": "CIS: Approve Business Requirements"
+      },
+      {
+        "command": "cis.brdAgentDraft",
+        "title": "CIS: Draft Business Requirements from Reference with Agent"
+      },
+      {
+        "command": "cis.brdInferFromProject",
+        "title": "CIS: Infer Business Definition from Existing Project"
+      },
+      {
+        "command": "cis.brdAgentReview",
+        "title": "CIS: Review Business Requirements with Independent Agent"
+      },
+      {
+        "command": "cis.brdReviewRecommendations",
+        "title": "CIS: Disposition BRD Review Recommendations"
+      },
+      {
+        "command": "cis.brdAgentRevise",
+        "title": "CIS: Apply Approved BRD Recommendations with Agent"
+      },
+      {
+        "command": "cis.brdAnswerQuestions",
+        "title": "CIS: Answer BRD Open Questions"
+      },
+      {
+        "command": "cis.brdAgentIncorporateQuestions",
+        "title": "CIS: Update BRD from Answered Questions with Agent"
+      },
+      {
+        "command": "cis.technicalIntentQuestions",
+        "title": "CIS: Define High-Level Technical Direction"
+      },
+      {
+        "command": "cis.technicalIntentInit",
+        "title": "CIS: Generate Technical Intent Skeleton"
+      },
+      {
+        "command": "cis.technicalIntentInferFromProject",
+        "title": "CIS: Infer Technical Intent from Existing Repositories"
+      },
+      {
+        "command": "cis.technicalIntentValidate",
+        "title": "CIS: Validate Technical Intent"
+      },
+      {
+        "command": "cis.technicalIntentApprove",
+        "title": "CIS: Approve Technical Intent"
+      },
+      {
+        "command": "cis.solutionDesignInit",
+        "title": "CIS: Generate Overall Solution Design and Component Sheet"
+      },
+      {
+        "command": "cis.solutionDesignInferFromProject",
+        "title": "CIS: Infer Solution Architecture from Existing Repositories"
+      },
+      {
+        "command": "cis.solutionDesignValidate",
+        "title": "CIS: Validate Solution-Design Bundle"
+      },
+      {
+        "command": "cis.solutionDesignApprove",
+        "title": "CIS: Approve Solution-Design Bundle"
+      },
+      {
+        "command": "cis.uiDirectionQuestions",
+        "title": "CIS: Define High-Level UI Look and Feel"
+      },
+      {
+        "command": "cis.uiDirectionInit",
+        "title": "CIS: Generate High-Level UI Direction"
+      },
+      {
+        "command": "cis.uiDirectionValidate",
+        "title": "CIS: Validate High-Level UI Direction"
+      },
+      {
+        "command": "cis.uiDirectionApprove",
+        "title": "CIS: Approve High-Level UI Direction"
+      },
+      {
+        "command": "cis.backlogBuild",
+        "title": "CIS: Build High-Level Backlog"
+      },
+      {
+        "command": "cis.backlogValidate",
+        "title": "CIS: Validate High-Level Backlog"
+      },
+      {
+        "command": "cis.backlogApprove",
+        "title": "CIS: Approve High-Level Backlog"
+      },
+      {
+        "command": "cis.featureStart",
+        "title": "CIS: Start Feature Specification"
+      },
+      {
+        "command": "cis.featureAdd",
+        "title": "CIS: Add Feature from BRD",
+        "icon": "$(add)"
+      },
+      {
+        "command": "cis.featureWizard",
+        "title": "CIS: Open Feature Definition Wizard",
+        "icon": "$(add)"
+      },
+      {
+        "command": "cis.featureAgentDraft",
+        "title": "CIS: Draft Feature Specification with Agent"
+      },
+      {
+        "command": "cis.featureValidate",
+        "title": "CIS: Validate Feature Specification"
+      },
+      {
+        "command": "cis.featureApprove",
+        "title": "CIS: Approve Feature Specification"
+      },
+      {
+        "command": "cis.repoDoctor",
+        "title": "CIS: Run Repository Doctor"
+      },
+      {
+        "command": "cis.graphBuild",
+        "title": "CIS: Build Context Graph"
+      },
+      {
+        "command": "cis.indexBuild",
+        "title": "CIS: Build Routing Index"
+      },
+      {
+        "command": "cis.contextSearch",
+        "title": "CIS: Search Context"
+      },
+      {
+        "command": "cis.graphRelated",
+        "title": "CIS: Explore Graph Relationships"
+      },
+      {
+        "command": "cis.filterChanges",
+        "title": "CIS: Filter Changes"
+      },
+      {
+        "command": "cis.trackerStatus",
+        "title": "CIS: Show Tracker Status"
+      },
+      {
+        "command": "cis.aiStatus",
+        "title": "CIS: Show AI Provider Status"
+      },
+      {
+        "command": "cis.agentProviders",
+        "title": "CIS: Show Agent Providers"
+      },
+      {
+        "command": "cis.agentDiagnose",
+        "title": "CIS: Diagnose Agent Provider"
+      },
+      {
+        "command": "cis.agentAuthenticate",
+        "title": "CIS: Authenticate Agent Provider"
+      },
+      {
+        "command": "cis.requestAgentWork",
+        "title": "CIS: Request Agent Work"
+      },
+      {
+        "command": "cis.agentShow",
+        "title": "CIS: Show Agent Run"
+      },
+      {
+        "command": "cis.agentCancel",
+        "title": "CIS: Cancel Agent Run"
+      },
+      {
+        "command": "cis.agentRecover",
+        "title": "CIS: Recover Agent Run"
+      },
+      {
+        "command": "cis.agentResume",
+        "title": "CIS: Resume Agent Run"
+      },
+      {
+        "command": "cis.workflowStatus",
+        "title": "CIS: Show Workflow Run Status"
+      },
+      {
+        "command": "cis.testStatus",
+        "title": "CIS: Show Test Status"
+      },
+      {
+        "command": "cis.securityStatus",
+        "title": "CIS: Show Security Status"
+      },
+      {
+        "command": "cis.verificationStatus",
+        "title": "CIS: Show Verification Status"
+      },
+      {
+        "command": "cis.governanceInventory",
+        "title": "CIS: Show Governance Inventory"
+      },
+      {
+        "command": "cis.designReview",
+        "title": "CIS: Review Visual Design"
+      },
+      {
+        "command": "cis.designDecision",
+        "title": "CIS: Record Visual Design Decision"
+      },
+      {
+        "command": "cis.taskTransition",
+        "title": "CIS: Transition Planned Task"
+      },
+      {
+        "command": "cis.openTask",
+        "title": "CIS: Open Planned Task Detail"
+      },
+      {
+        "command": "cis.openChangeCanonical",
+        "title": "CIS: Open Canonical Change Dossier"
+      },
+      {
+        "command": "cis.openChange",
+        "title": "CIS: Open Change Overview"
+      },
+      {
+        "command": "cis.openRepository",
+        "title": "CIS: Open Product Repository in New Window"
+      }
     ],
     "viewsContainers": {
-      "activitybar": [{ "id": "cis", "title": "Change Impact Studio", "icon": "media/cis.svg" }]
+      "activitybar": [
+        {
+          "id": "cis",
+          "title": "Change Impact Studio",
+          "icon": "media/cis.svg"
+        }
+      ]
     },
     "views": {
       "cis": [
-        { "id": "cis.workspace", "name": "Workspace" },
-        { "id": "cis.journey", "name": "Journey Map" },
-        { "id": "cis.changes", "name": "Changes" },
-        { "id": "cis.evidence", "name": "Evidence" },
-        { "id": "cis.runs", "name": "Runs" },
-        { "id": "cis.governance", "name": "Governance" }
+        {
+          "id": "cis.workspace",
+          "name": "Product"
+        },
+        {
+          "id": "cis.features",
+          "name": "High-level features"
+        },
+        {
+          "id": "cis.changes",
+          "name": "Delivery changes"
+        },
+        {
+          "id": "cis.journey",
+          "name": "Workflow guide",
+          "visibility": "collapsed"
+        },
+        {
+          "id": "cis.evidence",
+          "name": "Documents",
+          "visibility": "collapsed"
+        },
+        {
+          "id": "cis.runs",
+          "name": "Runs",
+          "visibility": "collapsed"
+        },
+        {
+          "id": "cis.governance",
+          "name": "Governance",
+          "visibility": "collapsed"
+        }
       ]
     },
     "menus": {
       "view/title": [
-        { "command": "cis.gettingStarted", "when": "view == cis.workspace", "group": "navigation@0" },
-        { "command": "cis.refresh", "when": "view =~ /cis\\.(workspace|journey|changes|evidence|runs|governance)/", "group": "navigation" },
-        { "command": "cis.selectAuthority", "when": "view == cis.workspace", "group": "navigation@2" },
-        { "command": "cis.filterChanges", "when": "view == cis.changes", "group": "navigation@2" },
-        { "command": "cis.contextSearch", "when": "view == cis.evidence", "group": "navigation@2" },
-        { "command": "cis.requestAgentWork", "when": "view == cis.runs", "group": "navigation@2" }
+        {
+          "command": "cis.featureAdd",
+          "when": "view == cis.features",
+          "group": "navigation@0"
+        },
+        {
+          "command": "cis.gettingStarted",
+          "when": "view == cis.workspace",
+          "group": "navigation@0"
+        },
+        {
+          "command": "cis.refresh",
+          "when": "view =~ /cis\\.(workspace|features|journey|changes|evidence|runs|governance)/",
+          "group": "navigation"
+        },
+        {
+          "command": "cis.selectAuthority",
+          "when": "view == cis.workspace",
+          "group": "navigation@2"
+        },
+        {
+          "command": "cis.filterChanges",
+          "when": "view == cis.changes",
+          "group": "navigation@2"
+        },
+        {
+          "command": "cis.contextSearch",
+          "when": "view == cis.evidence",
+          "group": "navigation@2"
+        },
+        {
+          "command": "cis.requestAgentWork",
+          "when": "view == cis.runs",
+          "group": "navigation@2"
+        }
       ],
       "view/item/context": [
-        { "command": "cis.open", "when": "viewItem == cis.file", "group": "inline" },
-        { "command": "cis.preview", "when": "viewItem == cis.file", "group": "navigation" },
-        { "command": "cis.openChange", "when": "viewItem == cis.change", "group": "inline" },
-        { "command": "cis.agentAuthenticate", "when": "viewItem == cis.agentProvider.auth", "group": "inline" },
-        { "command": "cis.agentShow", "when": "viewItem == cis.agentRun", "group": "inline" },
-        { "command": "cis.agentCancel", "when": "viewItem == cis.agentRun", "group": "navigation" },
-        { "command": "cis.agentResume", "when": "viewItem == cis.agentRun", "group": "navigation" }
+        {
+          "command": "cis.open",
+          "when": "viewItem == cis.file",
+          "group": "inline"
+        },
+        {
+          "command": "cis.preview",
+          "when": "viewItem == cis.file",
+          "group": "navigation"
+        },
+        {
+          "command": "cis.openChange",
+          "when": "viewItem == cis.change",
+          "group": "inline"
+        },
+        {
+          "command": "cis.agentAuthenticate",
+          "when": "viewItem == cis.agentProvider.auth",
+          "group": "inline"
+        },
+        {
+          "command": "cis.agentShow",
+          "when": "viewItem == cis.agentRun",
+          "group": "inline"
+        },
+        {
+          "command": "cis.agentCancel",
+          "when": "viewItem == cis.agentRun",
+          "group": "navigation"
+        },
+        {
+          "command": "cis.agentResume",
+          "when": "viewItem == cis.agentRun",
+          "group": "navigation"
+        }
       ]
     },
     "configuration": {
       "title": "Change Impact Studio",
       "properties": {
-        "cis.executablePath": { "type": "string", "default": "cis", "description": "Path to the CIS CLI executable. Arguments are not accepted; use a wrapper executable when needed." },
-        "cis.documentationRoot": { "type": "string", "default": "docs/cis", "description": "Repository-relative documentation root shown before initialization metadata is available." },
-        "cis.actorIdentity": { "type": "string", "default": "", "scope": "resource", "description": "Human identity passed to CIS commands that require durable actor provenance. Leave blank to prompt each time." }
+        "cis.executablePath": {
+          "type": "string",
+          "default": "cis",
+          "description": "Path to the CIS CLI executable. Arguments are not accepted; use a wrapper executable when needed."
+        },
+        "cis.documentationRoot": {
+          "type": "string",
+          "default": "docs/cis",
+          "description": "Repository-relative documentation root shown before initialization metadata is available."
+        },
+        "cis.actorIdentity": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "description": "Human identity passed to CIS commands that require durable actor provenance. Leave blank to prompt each time."
+        }
       }
     }
   },

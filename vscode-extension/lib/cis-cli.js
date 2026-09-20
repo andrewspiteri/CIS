@@ -6,10 +6,30 @@ const { bound, redact, validateArgument, validateExecutable } = require('./secur
 const { openCommandProgressPanel } = require('./webview');
 
 const OUTPUT_LIMIT = 4 * 1024 * 1024;
+const SNAPSHOT_OUTPUT_LIMIT = 16 * OUTPUT_LIMIT;
 // Read projections remain valid for the current repository generation. The extension
 // clears this cache when a watched repository input changes or a CIS mutation runs.
 const QUERY_CACHE_TTL_MS = Number.POSITIVE_INFINITY;
 const COMPATIBLE_CLI = Object.freeze({ major: 0, minimumMinor: 3 });
+// Only these exact projections are bundled by workspace snapshot schema 1.
+// Specific runs, filtered lists and custom options must go directly to their command.
+const SNAPSHOT_QUERIES = new Set([
+  [['brd', 'status'], '--workspace'],
+  [['technical-intent', 'questions', 'status', '--summary'], '--workspace'],
+  [['technical-intent', 'status'], '--workspace'],
+  [['change', 'list'], '--repo'],
+  [['agent', 'providers'], '--repo'],
+  [['agent', 'runs', '--summary', '--limit', '10'], '--repo'],
+  [['repo', 'doctor'], '--repo'],
+  [['skills', 'inventory', '--summary'], '--repo'],
+  [['brd', 'questions', 'list'], '--workspace'],
+  [['standards', 'inventory', '--summary'], '--repo'],
+  [['references', 'validate'], '--repo'],
+  [['agent', 'runs', '--change', 'PRODUCT', '--summary', '--latest-per-task', '--limit', '10'], '--repo'],
+  [['definition', 'status'], '--workspace'],
+  [['brd', 'questions', 'guidance'], '--workspace'],
+  [['brd', 'feature', 'wizard', 'navigation'], '--workspace'],
+].map(query => JSON.stringify(query)));
 
 class CisCliError extends Error {
   constructor(message, kind, exitCode, details, data) {
@@ -31,7 +51,13 @@ class CisCli {
     this.queryCache = new Map();
     this.versionCache = undefined;
     this.commandQueues = new Map();
+    this.queryGeneration = 0;
+    this.startupSnapshots = false;
+    this.workspaceSnapshot = undefined;
+    this.snapshotUnsupported = new Set();
   }
+
+  enableStartupSnapshots() { this.startupSnapshots = true; }
 
   executable() {
     return validateExecutable(this.vscode.workspace.getConfiguration('cis').get('executablePath', 'cis'));
@@ -50,7 +76,10 @@ class CisCli {
   }
 
   arguments(args, options = {}) {
-    const validated = args.map(validateArgument);
+    // Questionnaire answers are text data passed as a single argv value, never through a shell.
+    const validated = args.map((value, index) => validateArgument(value, {
+      allowLineBreaks: index > 0 && args[index - 1] === '--answer',
+    }));
     if (options.repository !== false && !validated.includes('--repo')) validated.push('--repo', this.root());
     if (options.format !== false && !validated.includes('--format')) validated.push('--format', options.format || 'json');
     return validated;
@@ -91,19 +120,29 @@ class CisCli {
     const executable = this.executable();
     const commandArgs = this.arguments(args, options);
     const timeout = options.timeout || 30_000;
-    const cacheable = options.cache !== false && isCacheableQuery(args);
+    const outputLimit = args[0] === 'workspace' && args[1] === 'snapshot' ? SNAPSHOT_OUTPUT_LIMIT : OUTPUT_LIMIT;
+    const readOnly = isCacheableQuery(args);
+    const cacheable = options.cache !== false && readOnly;
     const cacheKey = cacheable ? JSON.stringify([executable, root, commandArgs, timeout, options.acceptStructuredFailure === true]) : undefined;
     const cached = cacheKey ? this.queryCache.get(cacheKey) : undefined;
     if (cached && (cached.expiresAt === Infinity || cached.expiresAt > Date.now())) return cached.promise;
-    if (!cacheable) this.clearQueryCache();
-    const operation = this.scheduleCommand(commandArgs, root, () => new Promise((resolve, reject) => {
+    if (!readOnly) this.clearQueryCache();
+    const queuedAt = performance.now();
+    const execute = () => this.scheduleCommand(commandArgs, root, () => new Promise((resolve, reject) => {
+      const startedAt = performance.now();
       this.output.appendLine(`$ ${safeCommandDisplay(executable, commandArgs)}`);
       this.processes.execFile(executable, commandArgs,
-        { cwd: root, windowsHide: true, timeout, maxBuffer: OUTPUT_LIMIT, shell: false },
+        { cwd: root, windowsHide: true, timeout, maxBuffer: outputLimit, shell: false },
         (error, stdout, stderr) => {
           const safeError = bound(stderr, 16_384).trim();
           if (safeError) this.output.appendLine(safeError);
           const exitCode = typeof error?.code === 'number' ? error.code : error ? 1 : 0;
+          this.output.appendLine(`[timing] run=${Math.round(performance.now() - startedAt)}ms; queue=${Math.round(startedAt - queuedAt)}ms; exit=${exitCode}`);
+          // System.CommandLine may print help (non-JSON stdout) for an unknown
+          // optional command, using exit 1 or 2 depending on the CLI version.
+          if (error && args[0] === 'workspace' && args[1] === 'snapshot' && [1, 2].includes(exitCode)
+              && /Unrecognized command or argument 'snapshot'/u.test(safeError))
+            return reject(new CisCliError(safeError, 'unsupported-snapshot', exitCode, safeError));
           const text = String(stdout || '').trim();
           let data;
           if (text) {
@@ -124,7 +163,21 @@ class CisCli {
             return reject(new CisCliError('CIS returned no structured result.', 'invalid-evidence', exitCode));
           resolve({ ...data, _process: { exitCode } });
         });
-    }), options.interactive === true || !cacheable);
+    }), options.interactive === true || !readOnly);
+    const snapshotKey = this.startupSnapshots && cacheable && options.interactive !== true
+      && timeout === 30_000 ? snapshotQueryKey(commandArgs, root) : undefined;
+    const operation = snapshotKey
+      ? this.readCurrentWorkspaceSnapshot(executable, root).then(snapshot => {
+        const projection = snapshot?.get(snapshotKey);
+        if (!projection) return execute();
+        if (!projection.data || typeof projection.data !== 'object' || Array.isArray(projection.data))
+          throw new CisCliError('CIS returned no structured result for this snapshot query.', 'invalid-evidence', projection.exitCode, bound(projection.standardError));
+        if (projection.exitCode !== 0 && options.acceptStructuredFailure !== true)
+          throw new CisCliError(messageFrom(projection.data, projection.standardError), 'command-failed',
+            projection.exitCode, bound(projection.standardError), projection.data);
+        return { ...projection.data, _process: { exitCode: projection.exitCode,
+          ...(projection.exitCode !== 0 ? { failed: true } : {}) } };
+      }) : execute();
     if (!cacheKey) return operation;
     const entry = { promise: undefined, expiresAt: Infinity };
     entry.promise = operation.then(result => {
@@ -135,6 +188,58 @@ class CisCli {
       throw error;
     });
     this.queryCache.set(cacheKey, entry);
+    return entry.promise;
+  }
+
+  async readCurrentWorkspaceSnapshot(executable, root) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const generation = this.queryGeneration;
+      const snapshot = await this.readWorkspaceSnapshot(executable, root);
+      if (normalizedPath(this.authority.root()) !== normalizedPath(root) || this.executable() !== executable)
+        throw new CisCliError('The selected CIS authority or executable changed. Refresh the selected workspace.', 'stale-evidence');
+      if (generation === this.queryGeneration) return snapshot;
+      // Reject the obsolete data, but allow one fresh read after trailing file events.
+      // Concurrent callers share the replacement snapshot through readWorkspaceSnapshot.
+      if (attempt === 0 && !this.workspaceSnapshot)
+        this.output.appendLine('[snapshot] Inputs changed during loading; retrying once with current evidence.');
+    }
+    throw new CisCliError('CIS inputs kept changing during the workspace refresh. Refresh again when changes settle.', 'stale-evidence');
+  }
+
+  readWorkspaceSnapshot(executable, root) {
+    const key = JSON.stringify([executable, normalizedPath(root)]);
+    if (this.snapshotUnsupported.has(key)) return Promise.resolve(undefined);
+    if (this.workspaceSnapshot?.key === key) return this.workspaceSnapshot.promise;
+    const entry = { key, promise: undefined };
+    entry.promise = this.query(['workspace', 'snapshot', '--repo', root],
+      { repository: false, cache: false, timeout: 120_000 }).then(result => {
+      if (result.schemaVersion !== 1 || normalizedPath(result.repositoryPath) !== normalizedPath(root)
+          || !Array.isArray(result.entries))
+        throw new CisCliError('CIS returned an unsupported workspace snapshot.', 'invalid-evidence');
+      const projections = new Map();
+      for (const projection of result.entries) {
+        if (!Array.isArray(projection.arguments) || !projection.arguments.every(arg => typeof arg === 'string')
+            || !['--repo', '--workspace'].includes(projection.scope) || !Number.isInteger(projection.exitCode))
+          throw new CisCliError('CIS returned a malformed snapshot query.', 'invalid-evidence');
+        const projectionKey = JSON.stringify([projection.arguments, projection.scope]);
+        if (projections.has(projectionKey)) throw new CisCliError('CIS returned duplicate snapshot queries.', 'invalid-evidence');
+        projections.set(projectionKey, projection);
+        this.output.appendLine(`[snapshot] ${safeCommandDisplay('', projection.arguments).trim()}; run=${Math.round(projection.durationMs || 0)}ms; exit=${projection.exitCode}`);
+        if (projection.standardError) this.output.appendLine(bound(projection.standardError, 16_384));
+      }
+      return projections;
+    }).catch(error => {
+      if (this.workspaceSnapshot === entry) this.workspaceSnapshot = undefined;
+      // Older compatible CLIs do not expose this optional endpoint. Other failures
+      // remain visible rather than silently replacing a failed check with a second one.
+      if (error.kind === 'unsupported-snapshot') {
+        this.snapshotUnsupported.add(key);
+        this.output.appendLine('CIS CLI does not support workspace snapshots; using individual queries.');
+        return undefined;
+      }
+      throw error;
+    });
+    this.workspaceSnapshot = entry;
     return entry.promise;
   }
 
@@ -172,6 +277,8 @@ class CisCli {
   }
 
   clearQueryCache() {
+    this.queryGeneration++;
+    this.workspaceSnapshot = undefined;
     this.queryCache.clear();
     this.versionCache = undefined;
   }
@@ -197,7 +304,7 @@ class CisCli {
       const detailModel = (state, extra = {}) => ({ state, command, cancellable: options.cancellable === true,
         durationMs: Date.now() - started, stdout: bound(stdout, 32_768), stderr: bound(stderr, 32_768), truncated, ...extra });
       const ensureDetail = () => {
-        if (!detail && typeof this.vscode.window.createWebviewPanel === 'function')
+        if (options.details !== false && !detail && typeof this.vscode.window.createWebviewPanel === 'function')
           detail = openCommandProgressPanel(this.vscode, title, detailModel('running'), cancelRun);
         return detail;
       };
@@ -248,7 +355,11 @@ class CisCli {
 function isCacheableQuery(args) {
   const command = args.join(' ');
   return [
+    /^workspace snapshot(?: |$)/u,
     /^repo doctor(?: |$)/u,
+    /^repo list(?: |$)/u,
+    /^brd feature wizard (?:navigation|list|status)(?: |$)/u,
+    /^brd feature wizard screens status(?: |$)/u,
     /^change (?:list|show)(?: |$)/u,
     /^plan show(?: |$)/u,
     /^design (?:status|validate)(?: |$)/u,
@@ -265,12 +376,36 @@ function isCacheableQuery(args) {
     /^skills inventory(?: |$)/u,
     /^standards inventory(?: |$)/u,
     /^references (?:validate|inventory|status)(?: |$)/u,
-    /^brd (?:status|questions guidance|questions status|review status|backlog status|feature status)(?: |$)/u,
+    /^brd (?:status|questions (?:guidance|status|list)|review (?:status|freshness)|backlog status|feature status)(?: |$)/u,
     /^technical-intent (?:status|questions status)(?: |$)/u,
     /^solution-design status(?: |$)/u,
-    /^ui-direction (?:status|questions status)(?: |$)/u,
+    /^ui-direction (?:baseline|status|questions status)(?: |$)/u,
     /^definition status(?: |$)/u,
   ].some(pattern => pattern.test(command));
+}
+
+function normalizedPath(value) {
+  if (typeof value !== 'string' || !value) return undefined;
+  const resolved = path.resolve(value);
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+function snapshotQueryKey(args, root) {
+  if (!root || !['brd', 'technical-intent', 'repo', 'change', 'agent', 'skills', 'standards', 'references', 'definition'].includes(args[0]))
+    return undefined;
+  const query = []; let scope; let format;
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (arg === '--repo' || arg === '--workspace') {
+      if (scope || normalizedPath(args[++index]) !== normalizedPath(root)) return undefined;
+      scope = arg;
+    } else if (arg === '--format') {
+      if (format) return undefined;
+      format = args[++index];
+    } else query.push(arg);
+  }
+  const key = scope && format === 'json' ? JSON.stringify([query, scope]) : undefined;
+  return SNAPSHOT_QUERIES.has(key) ? key : undefined;
 }
 
 function foregroundFailureMessage(stdout, stderr, exitCode) {

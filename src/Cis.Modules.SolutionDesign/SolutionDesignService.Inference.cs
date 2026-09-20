@@ -6,6 +6,7 @@ namespace Cis.Modules.SolutionDesign;
 public sealed partial class SolutionDesignService
 {
     internal const string InferredMarker = "<!-- cis:solution-design-implementation-authored -->";
+    private const string ReconciliationPendingMarker = "<!-- cis:solution-design-reconciliation-pending -->";
     private static readonly string[] DesignHeadings = ["Architecture drivers", "System context and boundaries", "Logical component topology",
         "Data ownership and consistency", "Integration architecture", "Security and trust boundaries", "Deployment, operations, and recovery",
         "Quality and verification architecture", "UI design handoff", "Traceability", "Design decisions and accepted exceptions"];
@@ -48,23 +49,36 @@ public sealed partial class SolutionDesignService
             if (!PreservesHumanSections(pair.Original, pair.Proposed, pair.Start, pair.End))
                 errors.Add("Preserve human content outside the managed architecture block; add review questions without replacing existing notes.");
             if (Placeholder(pair.Proposed)) errors.Add("Replace architecture placeholders with evidence or explicit unresolved observations.");
-            if (CisBrdPresentation.HasVisibleLinksOrSourceIds(pair.Proposed)) errors.Add("Keep architecture source links inside HTML comments.");
+            try
+            {
+                var visible = pair.Path == state.DesignPath ? ArchitectureDiagramPresentation.WithoutPreservedBlock(pair.Original, pair.Proposed) : pair.Proposed;
+                if (CisBrdPresentation.HasVisibleLinksOrSourceIds(visible)) errors.Add("Keep architecture source links inside HTML comments.");
+            }
+            catch (InvalidDataException exception) { errors.Add(exception.Message); }
         }
         var components = ParseComponents(proposedComponents);
         if (!components.Select(item => item.Id).Order(StringComparer.Ordinal).SequenceEqual(state.Components.Select(item => item.Id).Order(StringComparer.Ordinal)))
             errors.Add("Preserve the technical intent's component identities; propose ownership changes for upstream review.");
         if (components.Any(item => !proposedDesign.Contains($"`{item.Id}`", StringComparison.Ordinal)))
             errors.Add("The overall architecture must explain every component identity in the component sheet.");
-        try { ArchitectureDiagramModel.ReadRequired(proposedDesign); }
+        ArchitectureDiagramModel? model = null;
+        try
+        {
+            model = ArchitectureDiagramModel.ReadRequired(proposedDesign);
+            if (model.SchemaVersion != 2) errors.Add("New architecture inference requires schemaVersion 2 C4 context, container and scoped component views.");
+        }
         catch (InvalidDataException exception) { errors.Add(exception.Message); }
         if (errors.Count > 0) return new(errors.Distinct(StringComparer.Ordinal).ToArray());
         var nextDesign = Stamp(proposedDesign); var nextComponents = Stamp(proposedComponents);
         try
         {
+            var images = model!.Render();
+            nextDesign = ArchitectureDiagramPresentation.Embed(nextDesign, images);
+            ArchitectureDiagramPresentation.WriteAssets(state.Authority!.RepositoryPath, state.DesignPath!, images);
             Write(state.DesignPath!, nextDesign);
             Write(state.ComponentSheetPath!, nextComponents);
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException)
         {
             // Restore the pair on a bounded write failure; never report a partial bundle as applied.
             Write(state.DesignPath!, originalDesign); Write(state.ComponentSheetPath!, originalComponents);
@@ -73,8 +87,12 @@ public sealed partial class SolutionDesignService
         return new([], true);
     }
 
-    private static string Stamp(string content) => content.Contains(InferredMarker, StringComparison.Ordinal)
-        ? content : content.TrimEnd() + "\n\n" + InferredMarker + "\n";
+    private static string Stamp(string content)
+    {
+        var reconciled = content.Replace(ReconciliationPendingMarker, "", StringComparison.Ordinal).TrimEnd();
+        return reconciled.Contains(InferredMarker, StringComparison.Ordinal)
+            ? reconciled + "\n" : reconciled + "\n\n" + InferredMarker + "\n";
+    }
     private static string FrontMatterBlock(string content) => Regex.Match(content, @"\A---\r?\n.*?\r?\n---(?:\r?\n|\z)",
         RegexOptions.Singleline | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)).Value;
 

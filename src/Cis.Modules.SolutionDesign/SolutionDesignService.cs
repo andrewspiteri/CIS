@@ -148,7 +148,7 @@ public sealed partial class SolutionDesignService : IChangeReadinessCheck, ICisS
         return new ChangeReadinessResult("solution-design", true, ready, errors);
     }
 
-    private SolutionDesignResult ValidateInternal(string workspacePath, string operation, bool applied)
+    private SolutionDesignResult ValidateInternal(string workspacePath, string operation, bool applied, bool validateDiagramDisplay = true)
     {
         var state = Resolve(workspacePath);
         if (state.Errors.Count > 0) return Error("invalid", state, state.Errors);
@@ -178,9 +178,14 @@ public sealed partial class SolutionDesignService : IChangeReadinessCheck, ICisS
         foreach (var heading in new[] { "Component catalogue", "Component responsibility profiles", "Component interaction catalogue", "Ownership rules", "Component-specific notes and accepted exceptions" })
             if (string.IsNullOrWhiteSpace(ExtractSection(components, heading))) errors.Add($"Component sheet section is missing or empty: {heading}");
         if (Placeholder(design) || Placeholder(components)) errors.Add("Solution-design artifacts contain TODO, TBD, or incomplete placeholders.");
-        if (design.Contains(InferredMarker, StringComparison.Ordinal))
+        if (design.Contains(InferredMarker, StringComparison.Ordinal) || design.Contains(ArchitectureDiagramModel.Marker, StringComparison.Ordinal))
         {
-            try { ArchitectureDiagramModel.ReadRequired(design); }
+            try
+            {
+                var model = ArchitectureDiagramModel.ReadRequired(design);
+                if (validateDiagramDisplay && model.SchemaVersion == 2 && !Equivalent(ArchitectureDiagramPresentation.Embed(design, model.Render()), design))
+                    errors.Add("C4 diagram display is missing or stale. Run solution-design diagrams on the review-only draft.");
+            }
             catch (InvalidDataException exception) { errors.Add(exception.Message); }
         }
 
@@ -191,10 +196,14 @@ public sealed partial class SolutionDesignService : IChangeReadinessCheck, ICisS
         foreach (var component in parsedComponents.Where(component => !design.Contains($"`{component.Id}`", StringComparison.Ordinal)))
             errors.Add($"Overall solution design does not reference component `{component.Id}`.");
 
-        var current = state.ReadinessErrors.Count == 0
-            && ReadNested(design, "technical_intent_hash") == state.TechnicalIntentVersion
+        var sourceCurrent = ReadNested(design, "technical_intent_hash") == state.TechnicalIntentVersion
             && ReadNested(components, "technical_intent_hash") == state.TechnicalIntentVersion;
+        var reconciliationRequired = design.Contains(ReconciliationPendingMarker, StringComparison.Ordinal)
+            || components.Contains(ReconciliationPendingMarker, StringComparison.Ordinal)
+            || !sourceCurrent && (design.Contains(InferredMarker, StringComparison.Ordinal) || components.Contains(InferredMarker, StringComparison.Ordinal));
+        var current = state.ReadinessErrors.Count == 0 && sourceCurrent && !reconciliationRequired;
         if (!current) warnings.Add("The solution-design bundle differs from the current Active technical intent.");
+        if (reconciliationRequired) warnings.Add("The inferred architecture needs reconciliation with the updated technical direction. Use Reconcile architecture with technical direction in the wizard, or run cis agent author solution-design. Prepare only refreshes diagrams after reconciliation.");
         var designStatus = ReadFrontMatter(design, "status") ?? "Unknown";
         var componentStatus = ReadFrontMatter(components, "status") ?? "Unknown";
         if (!designStatus.Equals(componentStatus, StringComparison.OrdinalIgnoreCase))
@@ -223,7 +232,8 @@ public sealed partial class SolutionDesignService : IChangeReadinessCheck, ICisS
         return new SolutionDesignResult(operation, state.Workspace!.WorkspacePath, state.Authority.Id,
             designRelative, componentsRelative, state.TechnicalIntentVersion, parsedComponents,
             new SolutionDesignValidation(valid, current, effective, designStatus, componentStatus,
-                errors.Distinct(StringComparer.Ordinal).Order().ToArray(), warnings.Distinct(StringComparer.Ordinal).Order().ToArray()), [], applied);
+                errors.Distinct(StringComparer.Ordinal).Order().ToArray(), warnings.Distinct(StringComparer.Ordinal).Order().ToArray())
+            { InferenceReconciliationRequired = reconciliationRequired }, [], applied);
     }
 
     private State Resolve(string workspacePath)
@@ -390,7 +400,9 @@ This document is one half of the governed overall solution-design bundle. The ov
         // Inference owns the narrative. Ordinary preparation must preserve it and expose source drift.
         if (existing.Contains(InferredMarker, StringComparison.Ordinal))
             return existingDraft && ReadNested(existing, "technical_intent_hash") != ReadNested(generated, "technical_intent_hash")
-                ? ResetApproval(ReplaceNested(existing, "technical_intent_hash", ReadNested(generated, "technical_intent_hash")!)) : existing;
+                ? ResetApproval(ReplaceNested(existing, "technical_intent_hash", ReadNested(generated, "technical_intent_hash")!))
+                    + (existing.Contains(ReconciliationPendingMarker, StringComparison.Ordinal) ? "" : "\n" + ReconciliationPendingMarker + "\n")
+                : existing;
         var next = ReplaceBlock(existing, start, end, ReadBlock(generated, start, end));
         next = ReplaceNested(next, "technical_intent_hash", ReadNested(generated, "technical_intent_hash")!);
         if (!Equivalent(existing, next)) next = ResetApproval(next);

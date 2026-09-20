@@ -7,7 +7,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Cis.Modules.Brd;
 
-public sealed class BrdModule : ICisModule
+public sealed partial class BrdModule : ICisModule
 {
     private static readonly string[] Formats = ["human", "json", "agent"];
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -24,6 +24,8 @@ public sealed class BrdModule : ICisModule
     {
         services.TryAddSingleton<DocumentationCatalogMerger>();
         services.AddSingleton<BrdService>();
+        services.AddSingleton(provider => new BrdSourceSummaryService(provider.GetRequiredService<BrdService>(),
+            provider.GetRequiredService<ICisWorkspaceRegistry>(), provider.GetService<ICisTextGenerationService>() ?? new UnavailableTextGenerationService()));
         services.AddSingleton<ICisBrdSourceEvidenceReconciler>(provider => provider.GetRequiredService<BrdService>());
         services.AddSingleton<BrdReviewDispositionService>();
         services.AddSingleton<ICisBrdReviewFreshness>(provider => provider.GetRequiredService<BrdReviewDispositionService>());
@@ -32,6 +34,7 @@ public sealed class BrdModule : ICisModule
             provider.GetRequiredService<ICisWorkspaceRegistry>(),
             provider.GetService<ICisTextGenerationService>()));
         services.AddSingleton<BrdBacklogService>();
+        services.AddSingleton<FeatureIntakeService>();
         services.AddSingleton<ICisFeatureApprovalAuthority, BrdFeatureApprovalAuthority>();
     }
 
@@ -57,9 +60,63 @@ public sealed class BrdModule : ICisModule
             services.GetRequiredService<BrdQuestionGuidanceService>()));
         brd.Subcommands.Add(CreateReviewCommand(services.GetRequiredService<BrdReviewDispositionService>()));
         brd.Subcommands.Add(CreateApproveCommand(service));
+        brd.Subcommands.Add(CreateSourceDecisionsCommand(service, services.GetRequiredService<BrdSourceSummaryService>()));
         brd.Subcommands.Add(CreateBacklogCommand(services.GetRequiredService<BrdBacklogService>()));
-        brd.Subcommands.Add(CreateFeatureCommand(services.GetRequiredService<BrdBacklogService>()));
+        var feature = CreateFeatureCommand(services.GetRequiredService<BrdBacklogService>());
+        feature.Subcommands.Add(CreateFeatureIntakeCommand(services.GetRequiredService<FeatureIntakeService>()));
+        feature.Subcommands.Add(CreateFeatureWizardCommand(services.GetRequiredService<FeatureIntakeService>()));
+        brd.Subcommands.Add(feature);
         commands.Add(brd);
+    }
+
+    private static Command CreateSourceDecisionsCommand(BrdService service, BrdSourceSummaryService summaries)
+    {
+        var sources = new Command("sources", "Record explicit human assessments of BRD source documents.");
+        var assess = new Command("assess", "Save a reviewed batch of source decisions atomically without approving the BRD.");
+        var input = new Option<string>("--input") { Required = true, Description = "JSON array of id, assessment, reason and reviewToken from current BRD status." };
+        var workspace = WorkspaceOption(); var format = FormatOption();
+        assess.Options.Add(input); assess.Options.Add(workspace); assess.Options.Add(format);
+        assess.SetAction(parse =>
+        {
+            var selected = GetFormat(parse.GetValue(format)); if (selected is null) return 2;
+            BrdResult result;
+            var root = parse.GetValue(workspace) ?? Directory.GetCurrentDirectory();
+            try
+            {
+                var file = parse.GetValue(input)!;
+                if (new FileInfo(file).Length > 1_048_576) throw new JsonException("Decision input exceeds 1 MiB.");
+                var decisions = JsonSerializer.Deserialize<CisBrdSourceDecision[]>(File.ReadAllText(file), JsonOptions)
+                    ?? throw new JsonException("Expected a source-decision array.");
+                result = service.AssessSources(root, decisions);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException)
+            {
+                result = new("invalid", root, null, null, null, null, [], [error.Message], Applied: false);
+            }
+            Render(result, selected); return result.ExitCode;
+        });
+        sources.Subcommands.Add(assess);
+        var summarize = new Command("summarize", "Generate missing document summaries with a local model and cache them by source content.");
+        var summaryWorkspace = WorkspaceOption(); var summaryFormat = FormatOption();
+        var summaryLimit = new Option<int>("--limit") { DefaultValueFactory = _ => 100, Description = "Maximum missing summaries to generate (1–100)." };
+        summarize.Options.Add(summaryWorkspace); summarize.Options.Add(summaryFormat); summarize.Options.Add(summaryLimit);
+        summarize.SetAction(parse =>
+        {
+            var selected = GetFormat(parse.GetValue(summaryFormat)); if (selected is null) return 2;
+            var result = summaries.Generate(parse.GetValue(summaryWorkspace) ?? Directory.GetCurrentDirectory(), parse.GetValue(summaryLimit));
+            if (selected == "json") Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+            else
+            {
+                Console.WriteLine(selected == "agent" ? $"status={result.Status};exitCode={result.ExitCode};generated={result.Generated};reused={result.Reused};sources={result.Sources.Count}"
+                    : $"Source summaries: {result.Generated} generated, {result.Reused} cached.");
+                foreach (var source in result.Sources) Console.WriteLine(selected == "agent"
+                    ? $"source={Clean(source.Id)};kind={source.Summary.Kind};summary={Clean(source.Summary.Text)}" : $"{source.Id}: {source.Summary.Text}");
+                foreach (var warning in result.Warnings) Console.WriteLine(selected == "agent" ? $"warning={Clean(warning)}" : $"Warning: {warning}");
+                foreach (var error in result.Errors) Console.WriteLine(selected == "agent" ? $"error={Clean(error)}" : $"Error: {error}");
+            }
+            return result.ExitCode;
+        });
+        sources.Subcommands.Add(summarize); return sources;
     }
 
     private static Command CreateReviewCommand(BrdReviewDispositionService service)
@@ -234,7 +291,7 @@ public sealed class BrdModule : ICisModule
     private static Command CreateBacklogCommand(BrdBacklogService service)
     {
         var backlog = new Command("backlog", "Build and govern a high-level product backlog from the Active BRD and technical intent.");
-        backlog.Subcommands.Add(CreateBacklogSimpleCommand("build", "Build or reconcile one high-level outcome per functional BRD requirement.", service.Build));
+        backlog.Subcommands.Add(CreateBacklogBuildCommand(service));
         backlog.Subcommands.Add(CreateBacklogSimpleCommand("validate", "Validate BRD coverage, provenance, dependencies, and lifecycle readiness.", service.Validate));
         backlog.Subcommands.Add(CreateBacklogSimpleCommand("status", "Report high-level backlog lifecycle and source currency.", service.Status));
         backlog.Subcommands.Add(CreateBacklogApproveCommand(service));
@@ -255,6 +312,22 @@ public sealed class BrdModule : ICisModule
             var result = service.StartFeature(parseResult.GetValue(workspace) ?? Directory.GetCurrentDirectory(),
                 parseResult.GetValue(item) ?? string.Empty, parseResult.GetValue(slug));
             RenderFeature(result, selected); return result.ExitCode;
+        });
+        return command;
+    }
+
+    private static Command CreateBacklogBuildCommand(BrdBacklogService service)
+    {
+        var command = new Command("build", "Build candidate outcomes or record an explicit no-planned-work baseline.");
+        var workspace = WorkspaceOption(); var format = FormatOption();
+        var mode = new Option<string?>("--mode") { Description = "requirements or no-planned-work; omission preserves a recorded no-work choice." };
+        var actor = new Option<string?>("--actor") { Description = "Human recording the no-planned-work choice." };
+        command.Options.Add(workspace); command.Options.Add(format); command.Options.Add(mode); command.Options.Add(actor);
+        command.SetAction(parse =>
+        {
+            var selected = GetFormat(parse.GetValue(format)); if (selected is null) return 2;
+            var result = service.Build(parse.GetValue(workspace) ?? Directory.GetCurrentDirectory(), parse.GetValue(mode), parse.GetValue(actor));
+            RenderBacklog(result, selected); return result.ExitCode;
         });
         return command;
     }

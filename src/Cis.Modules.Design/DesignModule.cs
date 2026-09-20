@@ -21,6 +21,9 @@ public sealed class DesignModule : ICisModule
         services.AddSingleton<DesignTemplateCatalog>();
         services.AddSingleton<IDesignProcessRunner, NodeDesignProcessRunner>();
         services.AddSingleton<DesignService>();
+        services.AddSingleton<ICisFeatureScreenGenerator>(provider => new FeatureScreenGenerator(
+            provider.GetService<ICisTextGenerationService>() ?? new UnavailableTextGenerationService(),
+            provider.GetServices<ICisUiBaselineDiscovery>(), provider.GetRequiredService<IDesignProcessRunner>()));
     }
 
     public void RegisterCommands(ICisCommandRegistry commands, IServiceProvider services)

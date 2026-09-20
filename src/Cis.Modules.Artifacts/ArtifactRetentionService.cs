@@ -39,6 +39,27 @@ public sealed class ArtifactRetentionService
         return inventory with { Status = inventory.Errors.Count == 0 ? "planned" : inventory.Status };
     }
 
+    // Doctor only needs eligibility. Content digests remain mandatory in explicit plans
+    // and destructive operations; a health check must not read every retained file.
+    internal (IReadOnlyList<string> Candidates, IReadOnlyList<string> Errors) InspectRetention(string repositoryPath)
+    {
+        var context = Resolve(repositoryPath, out var errors);
+        if (context is null) return ([], errors);
+        var rules = ReadRules(context, errors);
+        var candidates = new List<string>();
+        foreach (var rule in rules)
+        {
+            if (rule.Action == "preserve")
+            {
+                _ = FullLocalPath(context, rule.Path, errors);
+                continue;
+            }
+            candidates.AddRange(RankEntries(context, rule, errors, candidatesOnly: true)
+                .Where(entry => entry.Candidate).Select(entry => Relative(context, entry.Metadata.Path)));
+        }
+        return (candidates, errors);
+    }
+
     public ArtifactOperationResult Compact(string repositoryPath, string family, bool confirmed)
     {
         var context = Resolve(repositoryPath, out var errors);
@@ -185,18 +206,51 @@ public sealed class ArtifactRetentionService
     }
 
     private IReadOnlyList<LocalArtifactEntry> ReadEntries(CisRepositoryContext context, ArtifactRetentionRule rule, List<string> errors)
+        => RankEntries(context, rule, errors).Select(entry => new LocalArtifactEntry(
+            rule.Family, Relative(context, entry.Metadata.Path), entry.Metadata.Kind,
+            entry.Metadata.Size, HashEntry(entry.Metadata.Path), entry.Metadata.LastWrite.ToUniversalTime().ToString("O"),
+            entry.Candidate, entry.Candidate ? rule.Action : "retain")).ToArray();
+
+    private IReadOnlyList<(EntryMetadata Metadata, bool Candidate)> RankEntries(
+        CisRepositoryContext context, ArtifactRetentionRule rule, List<string> errors, bool candidatesOnly = false)
     {
         var full = FullLocalPath(context, rule.Path, errors);
         if (full is null || !File.Exists(full) && !Directory.Exists(full)) return [];
-        var children = File.Exists(full) ? new[] { full } : CisPathSafety.EnumerateFileSystemEntries(full, recursive: false).ToArray();
-        var ranked = children.Select(path => new { Path = path, LastWrite = LastWrite(path) }).OrderByDescending(item => item.LastWrite).ThenBy(item => item.Path, StringComparer.OrdinalIgnoreCase).ToArray();
+        FileSystemInfo[] children = File.Exists(full) ? [new FileInfo(full)] :
+            new DirectoryInfo(full).EnumerateFileSystemInfos("*", MetadataOptions(recursive: false)).ToArray();
+        // If every entry is protected by KeepLatest, no age or size can make one eligible.
+        // Doctor can avoid traversing large retained trees; explicit plans still report them.
+        if (candidatesOnly && children.Length <= rule.KeepLatest) return [];
+        var ranked = children.Select(ReadEntryMetadata).OrderByDescending(item => item.LastWrite)
+            .ThenBy(item => item.Path, StringComparer.OrdinalIgnoreCase).ToArray();
         var cutoff = _clock().ToUniversalTime().AddDays(-rule.RetainDays);
-        return ranked.Select((item, index) =>
+        return ranked.Select((item, index) => (item,
+            rule.Action != "preserve" && index >= rule.KeepLatest && item.LastWrite.ToUniversalTime() < cutoff)).ToArray();
+    }
+
+    private sealed record EntryMetadata(string Path, string Kind, long Size, DateTimeOffset LastWrite);
+
+    private static EnumerationOptions MetadataOptions(bool recursive) => new()
+    {
+        RecurseSubdirectories = recursive, IgnoreInaccessible = false,
+        AttributesToSkip = FileAttributes.ReparsePoint, ReturnSpecialDirectories = false
+    };
+
+    private static EntryMetadata ReadEntryMetadata(FileSystemInfo entry)
+    {
+        if (entry is FileInfo file) return new(file.FullName, "file", file.Length, file.LastWriteTimeUtc);
+        var directory = (DirectoryInfo)entry;
+        long size = 0;
+        DateTime? latest = null;
+        // FileInfo from enumeration already contains metadata. Reopening a path to stat it
+        // separately for size and timestamp turned one traversal into thousands of syscalls.
+        foreach (var child in directory.EnumerateFiles("*", MetadataOptions(recursive: true)))
         {
-            var candidate = rule.Action != "preserve" && index >= rule.KeepLatest && item.LastWrite.ToUniversalTime() < cutoff;
-            return new LocalArtifactEntry(rule.Family, Relative(context, item.Path), Directory.Exists(item.Path) ? "directory" : "file",
-                Size(item.Path), HashEntry(item.Path), item.LastWrite.ToUniversalTime().ToString("O"), candidate, candidate ? rule.Action : "retain");
-        }).ToArray();
+            size = checked(size + child.Length);
+            var written = child.LastWriteTimeUtc;
+            if (latest is null || written > latest) latest = written;
+        }
+        return new(directory.FullName, "directory", size, latest ?? directory.LastWriteTimeUtc);
     }
 
     private static void AddToArchive(CisRepositoryContext context, ZipArchive archive, LocalArtifactEntry candidate)
@@ -307,8 +361,6 @@ public sealed class ArtifactRetentionService
         var errors = new List<string>(); var full = FullLocalPath(context, relative, errors) ?? throw new InvalidOperationException(string.Join("; ", errors));
         if (File.Exists(full)) File.Delete(full); else if (Directory.Exists(full)) Directory.Delete(full, true);
     }
-    private static DateTimeOffset LastWrite(string path) => File.Exists(path) ? File.GetLastWriteTimeUtc(path) : CisPathSafety.EnumerateFiles(path).Select(File.GetLastWriteTimeUtc).DefaultIfEmpty(Directory.GetLastWriteTimeUtc(path)).Max();
-    private static long Size(string path) => File.Exists(path) ? new FileInfo(path).Length : CisPathSafety.EnumerateFiles(path).Sum(file => new FileInfo(file).Length);
     private static string HashEntry(string path)
     {
         if (File.Exists(path)) return Sha256File(path);

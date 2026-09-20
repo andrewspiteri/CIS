@@ -30,7 +30,7 @@ approval and activation gates are unchanged. Active architecture is protected.
 
 The provider writes only `architecture/overall-solution-design.md` and `references/component-sheet.md`
 under the documentation root. CIS checks the exact originals, evidence digests, lifecycle, stable
-component IDs, required sections, human notes, implementation-area coverage and four diagram models
+component IDs, required sections, human notes, implementation-area coverage and the scoped C4 model
 before applying the pair. Rejection leaves the pair unchanged and retains the isolated candidate.
 `cis agent resume` can repair the same run while its original bundle and context remain unchanged.
 
@@ -40,10 +40,18 @@ Source citations stay in comments. Snapshots exclude manifests, deployment confi
 dependencies, generated files and sensitive paths; unsupported deployment and recovery claims remain
 unresolved. No repository code or build is executed by discovery.
 
-After authoring, run `cis definition prepare --page architecture --workspace <authority>` to render
-the context, component, integration/trust and deployment/operations views as passive local SVGs.
-The wizard performs this step automatically and displays the images. Repeated preparation preserves
-the inferred narrative and repairs missing images. Review both documents and all four views together.
+CIS renders passive local SVGs and embeds them directly inside the overall design when applying the
+bundle. Its schemaVersion 2 model follows C4: one system context, one container view and one or more
+component views, each scoped to a single container. Context shows people and software systems;
+containers identify applications and data stores; components explain the internals of selected
+applications. Views label responsibilities, technology below context level, directed relationships
+and uncertainty. They do not imply a deployment layout or turn logical ownership IDs into services.
+
+Run `cis definition prepare --page architecture --workspace <authority>` to refresh the wizard's
+companion diagram document. The wizard performs this automatically after inference. Repeated
+preparation repairs missing images. `cis solution-design diagrams` repairs the embedded C4 display
+in review-only drafts. Legacy four-view models remain readable; new inference requires C4.
+Review both documents and their diagrams together.
 
 Use `cis agent discover solution-design` to inspect the local disclosure envelope before choosing a
 provider. This inference command never answers technical decisions, approves content or activates

@@ -6,6 +6,9 @@ internal sealed record WireframeScreen(string Id, string FrontendType, string Na
 
 internal static class DesignRendererScaffolder
 {
+    // Definition previews and governed delivery designs share the same control primitives.
+    internal static string ControlPrimitives => Template[Template.IndexOf("function esc(", StringComparison.Ordinal)..Template.IndexOf("function pageHeader(", StringComparison.Ordinal)];
+
     public static string Render(
         string feature,
         IReadOnlyList<WireframeScreen> screens,
@@ -215,6 +218,25 @@ function card(title, body, x, y, w, h) {
   return rect(x, y, w, h, tokens.bg, tokens.border, tokens.radiusMd)
     + text(title, x + 24, y + 34, 18, tokens.dark, 650)
     + text(body, x + 24, y + 64, 13, tokens.muted, 400);
+}
+function dataTable(columns, rows, x, y, w) {
+  const cw = w / columns.length;
+  let svg = rect(x, y, w, 70 + rows.length * 92, tokens.bg, tokens.border, tokens.radiusMd);
+  const cell = (value, cx, cy, weight) => {
+    const limit = Math.max(10, Math.floor((cw - 32) / 7));
+    const words = String(value).split(/\s+/); const lines = [''];
+    for (const word of words) {
+      if (lines.at(-1).length + word.length > limit && lines.at(-1)) lines.push('');
+      lines[lines.length - 1] += (lines.at(-1) ? ' ' : '') + word;
+    }
+    return lines.slice(0, 3).map((line, i) => text(line.slice(0, limit), cx + 16, cy + i * 17, 13, tokens.slate, weight)).join('');
+  };
+  columns.forEach((column, i) => { svg += cell(column, x + i * cw, y + 27, 650); });
+  rows.forEach((row, i) => {
+    svg += line(x, y + 70 + i * 92, x + w, y + 70 + i * 92);
+    row.forEach((value, j) => { svg += cell(value, x + j * cw, y + 106 + i * 92, 400); });
+  });
+  return svg;
 }
 function pageHeader(screen, x = canvasX, w = canvasWidth) {
   return text(screen.name, x, 166, 34, tokens.dark, 650)

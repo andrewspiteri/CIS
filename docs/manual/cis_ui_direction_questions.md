@@ -3,7 +3,7 @@ title: "cis ui-direction questions"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-03"
+last_reviewed: "2026-09-14"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-ui-direction-questions
@@ -22,3 +22,9 @@ reconciles the twelve-question canonical questionnaire. Existing-project facts m
 approved surfaces and UI-framework profiles; all remaining choices require a named human answer.
 An answer can be edited and saved again. Source drift reopens prior human answers for review rather
 than silently carrying them into a changed architecture.
+
+Initialization also checks the owned UI implementation through [`cis ui-direction baseline`](cis_ui_direction_baseline.md).
+Observed shell, styles, typography, components and responsive behavior prefill advisory
+directions. When code supplies an existing component system, it is presented for human
+confirmation instead of automatically adopting a generic framework-profile choice.
+Existing human answers are preserved. Discovery never resolves subjective choices itself.

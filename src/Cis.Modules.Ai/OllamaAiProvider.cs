@@ -57,7 +57,7 @@ internal sealed class OllamaAiProvider : ICisAiProvider
                 model,
                 prompt = request.Prompt,
                 stream = false,
-                format = request.JsonMode ? "json" : null,
+                format = request.JsonSchema is { } schema ? (object)JsonSerializer.Deserialize<JsonElement>(schema) : request.JsonMode ? "json" : null,
                 options = new
                 {
                     temperature = 0.1,

@@ -20,6 +20,7 @@ public sealed class UiDirectionWorkflowTests
         using var fixture = Fixture.Create();
         using var application = new CisHostBuilder().AddModule(new FixtureModule(fixture)).AddModule(new UiDirectionModule()).Build();
         Assert.Equal(0, application.Invoke(["ui-direction", "questions", "init", "--help"]));
+        Assert.Equal(0, application.Invoke(["ui-direction", "baseline", "--help"]));
         Assert.Equal(0, application.Invoke(["ui-direction", "questions", "answer", "--help"]));
         Assert.Equal(0, application.Invoke(["ui-direction", "init", "--help"]));
         Assert.Equal(0, application.Invoke(["ui-direction", "validate", "--help"]));
@@ -85,6 +86,31 @@ public sealed class UiDirectionWorkflowTests
         var result = fixture.Service.Initialize(fixture.Root);
         Assert.Equal("blocked", result.Status); Assert.Equal(5, result.ExitCode);
         Assert.Contains(result.Errors, error => error.Contains("complete, current UI-direction questionnaire", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ExistingUiPrefillsReviewSuggestionsWithoutOverwritingHumanDirection()
+    {
+        using var fixture = Fixture.Create();
+        File.WriteAllText(Path.Combine(fixture.Root, "package.json"), """{"dependencies":{"@angular/core":"20"}}""");
+        Directory.CreateDirectory(Path.Combine(fixture.Root, "src"));
+        File.WriteAllText(Path.Combine(fixture.Root, "src/shell.html"), "<app-general-sidebar></app-general-sidebar>");
+        File.WriteAllText(Path.Combine(fixture.Root, "src/styles.scss"), ":root { --brand: #123456; } body { font-family: 'Poppins', sans-serif; }");
+        var result = fixture.Questionnaire.Initialize(fixture.Root);
+        var shell = Assert.Single(result.Questions, item => item.Id == "UI-Q-003");
+        Assert.Equal("Unanswered", shell.Status); Assert.Null(shell.Answer);
+        Assert.Contains("app-general-sidebar", shell.SuggestedAnswer);
+        var framework = Assert.Single(result.Questions, item => item.Id == "UI-Q-007");
+        Assert.Equal("Unanswered", framework.Status);
+        Assert.Contains("Angular", framework.SuggestedAnswer);
+        Assert.DoesNotContain("Next.js", framework.SuggestedAnswer);
+        fixture.Questionnaire.Answer(fixture.Root, shell.Id, "Keep the existing shell; simplify its labels.", "Design owner");
+        File.AppendAllText(Path.Combine(fixture.Root, "src/styles.scss"), "\n:root { --brand: #654321; }");
+        var refreshed = fixture.Questionnaire.Initialize(fixture.Root);
+        var human = Assert.Single(refreshed.Questions, item => item.Id == shell.Id);
+        Assert.Equal("Keep the existing shell; simplify its labels.", human.Answer);
+        Assert.Equal("Design owner", human.AnsweredBy);
+        Assert.False(refreshed.Complete);
     }
 
     private sealed class Fixture : IDisposable

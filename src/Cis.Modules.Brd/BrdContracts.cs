@@ -1,3 +1,5 @@
+using Cis.Abstractions;
+
 namespace Cis.Modules.Brd;
 
 public sealed record BrdCandidate(
@@ -33,6 +35,8 @@ public sealed record BrdDiscoveryResult(
     IReadOnlyList<string> Warnings,
     IReadOnlyList<string> Errors)
 {
+    public IReadOnlyList<string> DeferredRepositoryIds { get; init; } = [];
+
     public int ExitCode => Errors.Count > 0
         ? Errors.Any(error => error.Contains("graph", StringComparison.OrdinalIgnoreCase)) ? 4 : 2
         : 0;
@@ -44,7 +48,12 @@ public sealed record BrdValidation(
     string EffectiveStatus,
     string DocumentStatus,
     IReadOnlyList<string> Errors,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings)
+{
+    public IReadOnlyList<CisBrdSourceReview> SourceReviews { get; init; } = [];
+    public IReadOnlyList<string> ContentIssues { get; init; } = [];
+    public int UnansweredQuestionCount { get; init; }
+}
 
 public sealed record BrdResult(
     string Status,

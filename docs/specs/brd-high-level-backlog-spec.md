@@ -3,7 +3,7 @@ title: "BRD High-Level Backlog"
 type: specification
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-23"
+last_reviewed: "2026-09-15"
 review_cadence: "on BRD decomposition workflow change"
 cis:
   stable_id: change-impact-studio:spec:brd-high-level-backlog
@@ -44,11 +44,38 @@ token matching is word-aware so terms such as `possession` do not imply session 
 
 ## Lifecycle and gates
 
+Prepared feature BRDs can enter through `cis brd feature intake` or the VS Code
+**Add Feature from BRD** form, independently of an existing backlog row. Intake
+records a separate canonical Draft request, the unchanged source, a selected new
+or existing owned repository, integration targets and unresolved source decisions.
+This allows new work to be introduced after a `no-planned-work` baseline. It does
+not silently add delivery outcomes or approve the source. Scope review and governed
+backlog reconciliation precede the ordinary feature-specification gates below.
+
+The extension wraps intake and subsequent scope review in an eight-page feature wizard.
+The CLI projects foundation, business, technical, architecture, contracts, experience,
+delivery and final-review readiness from the canonical request. Answers carry human
+identity and the exact checked baseline; suggestions never count as answers. Missing
+answers, placeholders, unsafe source paths and baseline drift remain explicit. Page saves
+evaluate the baseline once and return fresh page state without a whole-workspace reload.
+Editor navigation and unsaved drafts are resumable, and cannot establish canonical review.
+Final review accepts the proposed definition only; existing backlog and specification
+approval gates remain in force. Any page change invalidates the recorded final review.
+
 Build requires an Active/current BRD, Active/current technical intent, and Active/current
 overall solution design plus component sheet. The backlog
 records hashes of both sources. Validation requires complete one-to-one functional
 requirement coverage, known acyclic dependencies, affected repositories, bounded
 frontend classifications, and no placeholders.
+
+An explicit `no-planned-work` mode is a supported alternative for a baseline with no new delivery
+scope. Its canonical record has zero items, a named human and recorded time, the normal source
+digests and global obligations. This mode waives item-per-requirement coverage only: it never
+asserts implementation completeness or removes the upstream, approval or activation gates.
+Missing human provenance or any delivery items make this mode invalid. It cannot replace an
+existing nonempty backlog. Ordinary refresh preserves the decision; changed source digests
+require explicit renewed review. Switching to requirements mode creates review-only candidate
+outcomes and preserves notes outside the managed blocks.
 
 Build or source change produces `Review Required`. Explicit `cis brd backlog approve`
 records reviewer, rationale, timestamp, and approved-content digest. Source drift or a

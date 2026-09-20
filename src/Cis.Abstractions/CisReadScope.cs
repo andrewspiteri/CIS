@@ -5,7 +5,8 @@ namespace Cis.Abstractions;
 /// <summary>
 /// Shares reads within one synchronous, read-only projection. Nested projections
 /// reuse the same read results; disposing the outer scope releases it. Never span writes
-/// or separate commands with this scope: their freshness must be evaluated again.
+/// or separate requests with this scope: their freshness must be evaluated again.
+/// A bounded aggregate of read-only queries is one projection (workspace snapshot).
 /// </summary>
 public sealed class CisReadScope : IDisposable
 {

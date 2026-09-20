@@ -72,10 +72,15 @@ public static class CisPathSafety
         foreach (var segment in relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
         {
             current = Path.Combine(current, segment);
-            if (!File.Exists(current) && !Directory.Exists(current)) continue;
             try
             {
                 if (File.GetAttributes(current).HasFlag(FileAttributes.ReparsePoint)) return true;
+            }
+            catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+            {
+                // Missing targets are checked by the caller; one attribute lookup also
+                // avoids two additional filesystem probes for every existing segment.
+                continue;
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {

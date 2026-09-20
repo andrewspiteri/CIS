@@ -27,6 +27,7 @@ public sealed partial class DefinitionWizardTests
         Assert.Equal(0, application.Invoke(["definition", "prepare", "--help"]));
         Assert.Equal(0, application.Invoke(["definition", "answer", "--help"]));
         Assert.Equal(0, application.Invoke(["definition", "activate", "--help"]));
+        Assert.Equal(0, application.Invoke(["definition", "approve", "--help"]));
     }
 
     [Fact]

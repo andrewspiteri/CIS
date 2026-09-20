@@ -22,6 +22,7 @@ public sealed class SolutionDesignModule : ICisModule
     {
         services.TryAddSingleton<ISolutionDesignTechnicalIntentSource, SolutionDesignTechnicalIntentSource>();
         services.AddSingleton<SolutionDesignService>();
+        services.AddSingleton<ICisFeatureArchitectureGenerator, FeatureArchitectureGenerator>();
         services.AddSingleton<ICisSolutionDesignDrafts>(provider => provider.GetRequiredService<SolutionDesignService>());
         services.AddSingleton<IChangeReadinessCheck>(provider => provider.GetRequiredService<SolutionDesignService>());
     }
@@ -34,6 +35,12 @@ public sealed class SolutionDesignModule : ICisModule
         command.Subcommands.Add(CreateSimple("validate", "Validate structure, traceability, source currency, and approval readiness for both design artifacts.", service.Validate));
         command.Subcommands.Add(CreateSimple("status", "Report lifecycle and drift for the overall design and component sheet.", service.Status));
         command.Subcommands.Add(CreateApprove(service));
+        var diagrams = new Command("diagrams", "Render C4 SVGs inside a review-only overall design; optionally replace its data model.");
+        var workspace = WorkspaceOption(); var format = FormatOption();
+        var model = new Option<string?>("--model") { Description = "Optional path to a reviewed schemaVersion 2 C4 JSON model." };
+        diagrams.Options.Add(workspace); diagrams.Options.Add(format); diagrams.Options.Add(model);
+        diagrams.SetAction(result => Render(service.RenderDiagrams(result.GetValue(workspace) ?? Directory.GetCurrentDirectory(), result.GetValue(model)), result.GetValue(format) ?? "human"));
+        command.Subcommands.Add(diagrams);
         commands.Add(command);
     }
 

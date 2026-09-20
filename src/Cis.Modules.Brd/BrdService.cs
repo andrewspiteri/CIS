@@ -113,7 +113,12 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
         var warnings = new List<string>();
         var errors = new List<string>();
         var baselines = new List<BrdRepositoryBaseline>();
-        foreach (var repository in workspace.Repositories)
+        var pending = FeatureIntakeService.PendingRepositoryIds(workspace);
+        // Never remove a repository already included in the canonical product baseline.
+        var recordedRepositories = File.Exists(canonicalPath) ? ParseBaselineRows(File.ReadAllText(canonicalPath)).Keys.ToHashSet(StringComparer.Ordinal) : [];
+        var deferred = pending.Where(id => !recordedRepositories.Contains(id)).Order(StringComparer.Ordinal).ToArray();
+        var baselineRepositories = workspace.Repositories.Where(repository => !deferred.Contains(repository.Id, StringComparer.Ordinal)).ToArray();
+        foreach (var repository in baselineRepositories)
         {
             var validation = validateGraph
                 ? _graphValidator.Validate(repository.RepositoryPath, strict: false)
@@ -162,7 +167,7 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
                 .Select(diagnostic => $"[{repository.Id}] {diagnostic.Message}"));
         }
 
-        var productRepositories = workspace.Repositories.Where(repository => repository.IsProductOwned).ToArray();
+        var productRepositories = baselineRepositories.Where(repository => repository.IsProductOwned).ToArray();
         var fileCandidates = productRepositories
             .SelectMany(repository => FindCandidates(repository, authority, canonicalPath, warnings))
             .ToArray();
@@ -189,7 +194,7 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
             candidates,
             baselines,
             warnings.Distinct(StringComparer.Ordinal).Order().ToArray(),
-            errors.Distinct(StringComparer.Ordinal).Order().ToArray());
+            errors.Distinct(StringComparer.Ordinal).Order().ToArray()) { DeferredRepositoryIds = deferred };
     }
 
     CisBrdSourceEvidenceReconciliation ICisBrdSourceEvidenceReconciler.ReconcileSourceEvidence(string repositoryPath)
@@ -559,6 +564,7 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
         var questionErrors = new List<string>();
         var openQuestions = ParseQuestions(ExtractSection(content, "Open questions"), questionErrors);
         errors.AddRange(questionErrors);
+        var contentIssues = errors.ToArray();
         foreach (var question in openQuestions.Where(item => item.Status == "Unanswered"))
             errors.Add($"BRD open question {question.Id} is unanswered: {question.Question}");
 
@@ -645,7 +651,12 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
             effectiveStatus,
             documentStatus,
             errors.Distinct(StringComparer.Ordinal).Order().ToArray(),
-            warnings.Distinct(StringComparer.Ordinal).Order().ToArray());
+            warnings.Distinct(StringComparer.Ordinal).Order().ToArray())
+        {
+            SourceReviews = DescribeSourceReviews(content, discovery.Candidates, sources, authority.RepositoryPath),
+            ContentIssues = contentIssues,
+            UnansweredQuestionCount = openQuestions.Count(item => item.Status == "Unanswered"),
+        };
         return new BrdResult(
             operation,
             workspace.WorkspacePath,
@@ -928,6 +939,8 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
         var inspected = 0;
         foreach (var path in EnumerateCandidateFiles(repository.RepositoryPath))
         {
+            var relativePath = NormalizePath(Path.GetRelativePath(repository.RepositoryPath, path));
+            if (FeatureIntakeService.IsIntakeSource(repository, relativePath)) continue;
             var normalizedAbsolute = "/" + NormalizePath(path).TrimStart('/') + "/";
             if (ExcludedSegments.Any(segment => normalizedAbsolute.Contains(segment, StringComparison.OrdinalIgnoreCase))
                 || new[] { "SKILL.md", "AGENTS.md", "CLAUDE.md" }.Contains(Path.GetFileName(path), StringComparer.OrdinalIgnoreCase))
@@ -953,7 +966,6 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
                 continue;
             }
 
-            var relativePath = NormalizePath(Path.GetRelativePath(repository.RepositoryPath, path));
             var evidence = DetectCandidateEvidence(relativePath, content);
             if (evidence.Kind == "feature-specification"
                 && !string.IsNullOrWhiteSpace(ReadNestedFrontMatter(content, "high_level_item"))

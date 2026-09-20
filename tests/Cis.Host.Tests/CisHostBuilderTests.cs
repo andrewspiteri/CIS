@@ -43,6 +43,43 @@ public sealed class CisHostBuilderTests
         Assert.Equal(2, exitCode);
     }
 
+    [Fact]
+    public void DispatcherPreservesStructuredFailuresAndRestoresOutputAfterExceptions()
+    {
+        var module = new CaptureProbeModule();
+        using var application = new CisHostBuilder().AddModule(module).Build();
+        var failed = module.Dispatcher!.Capture(["capture-probe", "blocked"]);
+        Assert.Equal(5, failed.ExitCode);
+        Assert.Equal("{\"status\":\"blocked\"}", failed.StandardOutput.Trim());
+        Assert.Equal("existing finding", failed.StandardError.Trim());
+        var thrown = module.Dispatcher.Capture(["capture-probe", "throw"]);
+        Assert.Equal(1, thrown.ExitCode);
+        Assert.Contains("InvalidOperationException", thrown.StandardError);
+        Assert.DoesNotContain("sensitive exception detail", thrown.StandardError);
+        Assert.Equal(failed, module.Dispatcher.Capture(["capture-probe", "blocked"]));
+        Assert.NotEqual(0, module.Dispatcher.Capture(["not-loaded"]).ExitCode);
+    }
+
+    private sealed class CaptureProbeModule : ICisModule
+    {
+        public string Name => "capture-probe";
+        public string Description => "Capture test.";
+        public ICisCommandDispatcher? Dispatcher { get; private set; }
+        public void RegisterServices(IServiceCollection services) { }
+        public void RegisterCommands(ICisCommandRegistry commands, IServiceProvider services)
+        {
+            Dispatcher = services.GetRequiredService<ICisCommandDispatcher>();
+            var command = new Command(Name);
+            var blocked = new Command("blocked");
+            blocked.SetAction(_ => { Console.WriteLine("{\"status\":\"blocked\"}"); Console.Error.WriteLine("existing finding"); return 5; });
+            var throws = new Command("throw");
+            throws.SetAction((Func<ParseResult, int>)(_ => throw new InvalidOperationException("sensitive exception detail")));
+            command.Subcommands.Add(blocked);
+            command.Subcommands.Add(throws);
+            commands.Add(command);
+        }
+    }
+
     private sealed class DuplicateHostModule : ICisModule
     {
         public string Name => "HOST";

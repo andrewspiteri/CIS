@@ -28,6 +28,7 @@ public sealed class DefinitionModule : ICisModule
         root.Subcommands.Add(Simple("status", "Report all wizard pages, artifacts, diagrams, dictionaries, and activation readiness.", service.Status));
         root.Subcommands.Add(Prepare(service));
         root.Subcommands.Add(Answer(service));
+        root.Subcommands.Add(Approve(service));
         root.Subcommands.Add(Activate(service));
         commands.Add(root);
     }
@@ -44,8 +45,11 @@ public sealed class DefinitionModule : ICisModule
     {
         var command = new Command("prepare", "Prepare or refresh one wizard page from its governed upstream pages.");
         var page = new Option<string>("--page") { Required = true }; var workspace = Workspace(); var format = Format();
+        var backlogMode = new Option<string?>("--backlog-mode") { Description = "Delivery only: requirements or no-planned-work." };
+        var actor = new Option<string?>("--actor") { Description = "Human recording the no-planned-work choice." };
         command.Options.Add(page); command.Options.Add(workspace); command.Options.Add(format);
-        command.SetAction(parse => Render(service.Prepare(parse.GetValue(workspace)!, parse.GetValue(page)!), parse.GetValue(format)!));
+        command.Options.Add(backlogMode); command.Options.Add(actor);
+        command.SetAction(parse => Render(service.Prepare(parse.GetValue(workspace)!, parse.GetValue(page)!, parse.GetValue(backlogMode), parse.GetValue(actor)), parse.GetValue(format)!));
         return command;
     }
 
@@ -68,6 +72,20 @@ public sealed class DefinitionModule : ICisModule
         var reviewer = new Option<string>("--reviewer") { Required = true }; var workspace = Workspace(); var format = Format();
         command.Options.Add(reviewer); command.Options.Add(workspace); command.Options.Add(format);
         command.SetAction(parse => Render(service.Activate(parse.GetValue(workspace)!, parse.GetValue(reviewer)!), parse.GetValue(format)!));
+        return command;
+    }
+
+    private static Command Approve(DefinitionWizardService service)
+    {
+        var command = new Command("approve", "Approve the architecture, component sheet and diagrams without activating the remaining definition pages.");
+        var page = new Option<string>("--page") { Required = true };
+        var reviewer = new Option<string>("--reviewer") { Required = true }; var workspace = Workspace(); var format = Format();
+        command.Options.Add(page); command.Options.Add(reviewer); command.Options.Add(workspace); command.Options.Add(format);
+        command.SetAction(parse =>
+        {
+            if (parse.GetValue(page) != "architecture") { Console.Error.WriteLine("Only --page architecture supports this approval command."); return 2; }
+            return Render(service.ApproveArchitecture(parse.GetValue(workspace)!, parse.GetValue(reviewer)!), parse.GetValue(format)!);
+        });
         return command;
     }
 

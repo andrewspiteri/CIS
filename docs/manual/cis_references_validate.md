@@ -3,7 +3,7 @@ title: "cis references validate"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-08"
+last_reviewed: "2026-09-09"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-references-validate
@@ -32,6 +32,10 @@ Participant evidence in an authority dictionary is resolved relative to that reg
 product-owned repository. Blank, unknown or dependency repository IDs fail validation.
 Evidence cannot escape its repository or use linked paths. Classification descriptions
 such as `@azure/functions package dependency` are labels, not file locators.
+
+Repeated evidence locators share one existence and symlink/junction check per resolved
+repository/path during this validation. The cache ends with the command: subsequent calls
+recheck deleted, restored or replaced paths. Row validation and diagnostics remain unchanged.
 
 Source extraction remains local to `--repo`. A participant row cannot satisfy an authority
 source observation. Current (non-Draft) foreign rows receive an explicit warning that their

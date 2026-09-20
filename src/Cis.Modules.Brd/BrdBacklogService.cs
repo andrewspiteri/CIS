@@ -8,7 +8,7 @@ using Cis.Modules.Repository;
 
 namespace Cis.Modules.Brd;
 
-public sealed class BrdBacklogService
+public sealed partial class BrdBacklogService
 {
     private const string ItemsStart = "<!-- cis:brd-backlog-items:start -->";
     private const string ItemsEnd = "<!-- cis:brd-backlog-items:end -->";
@@ -45,20 +45,52 @@ public sealed class BrdBacklogService
     }
 
     public BrdBacklogResult Build(string workspacePath)
+        => Build(workspacePath, null, null);
+
+    public BrdBacklogResult Build(string workspacePath, string? mode, string? actor)
     {
         var state = Resolve(workspacePath);
         if (state.Errors.Count > 0) return Error("invalid", state, state.Errors);
+        if (mode is not (null or "requirements" or "no-planned-work"))
+            return Error("invalid", state, ["Backlog mode must be requirements or no-planned-work."]);
+        if (mode == "no-planned-work" && (string.IsNullOrWhiteSpace(actor) || actor.Length > 200 || Placeholder(actor) || actor.IndexOfAny(['\r', '\n', '\0']) >= 0))
+            return Error("invalid", state, ["A human actor is required to record no planned work (up to 200 characters, on one line)."]);
         var readinessErrors = ReadinessErrors(state);
         if (readinessErrors.Count > 0) return Error("blocked", state, readinessErrors);
 
+        var existingContent = File.Exists(state.BacklogPath!) ? File.ReadAllText(state.BacklogPath!) : null;
+        var existingNoWork = existingContent is not null && ReadNestedFrontMatter(existingContent, "backlog_mode") == "no-planned-work";
+        if (mode is null && existingNoWork)
+        {
+            var preserved = ValidateInternal(workspacePath, "unchanged", false);
+            return preserved.Validation is { Valid: true, Current: true } ? preserved
+                : preserved with { Status = "blocked", Errors = ["Review the no-planned-work decision against the current baseline. Record it again with a human actor, or explicitly build in requirements mode."] };
+        }
+        if (mode == "no-planned-work" && existingContent is not null && (!existingNoWork || ParseItems(existingContent).Count > 0))
+            return Error("blocked", state, ["An existing backlog cannot be cleared by recording no planned work. Review its items and retained feature links first."]);
+        if (existingNoWork && ReadNestedFrontMatter(existingContent!, "stable_id") != $"{state.Authority!.Id}:plan:high-level-backlog")
+            return Error("collision", state, ["The existing no-planned-work record has a different canonical identity."]);
+        if (existingNoWork && new[] { ItemsStart, ItemsEnd, ObligationsStart, ObligationsEnd }.Any(marker =>
+                !existingContent!.Contains(marker, StringComparison.Ordinal) || existingContent.IndexOf(marker, StringComparison.Ordinal) != existingContent.LastIndexOf(marker, StringComparison.Ordinal)))
+            return Error("blocked", state, ["Repair the no-planned-work record's managed markers before refreshing it."]);
+        if (existingNoWork && (existingContent!.IndexOf(ItemsStart, StringComparison.Ordinal) > existingContent.IndexOf(ItemsEnd, StringComparison.Ordinal)
+                || existingContent.IndexOf(ObligationsStart, StringComparison.Ordinal) > existingContent.IndexOf(ObligationsEnd, StringComparison.Ordinal)))
+            return Error("blocked", state, ["Repair the no-planned-work record's managed block order before refreshing it."]);
+        if (CisPathSafety.ContainsReparsePoint(state.Authority!.RepositoryPath, state.BacklogPath!))
+            return Error("blocked", state, ["The backlog path is unsafe."]);
+        if (mode == "no-planned-work" && existingNoWork && ReadNoWorkValue(existingContent!, "no_planned_work_by") == actor!.Trim())
+        {
+            var recorded = ValidateInternal(workspacePath, "unchanged", false);
+            if (recorded.Validation is { Valid: true, Current: true }) return recorded;
+        }
+
         var brdContent = File.ReadAllText(state.BrdPath!);
         var requirements = ParseRequirements(brdContent, "Functional requirements");
-        if (requirements.Count == 0)
+        if (requirements.Count == 0 && mode != "no-planned-work")
             return Error("blocked", state, ["The Active BRD contains no structured functional requirements."]);
         var obligations = ParseRequirements(brdContent, "Quality, regulatory, and operational requirements")
             .Concat(ParseRequirements(brdContent, "Success measures"))
             .ToArray();
-        var existingContent = File.Exists(state.BacklogPath!) ? File.ReadAllText(state.BacklogPath!) : null;
         var existing = existingContent is not null
             ? ParseItems(existingContent).ToDictionary(item => item.RequirementId, StringComparer.Ordinal)
             : new Dictionary<string, BrdBacklogItem>(StringComparer.Ordinal);
@@ -71,10 +103,12 @@ public sealed class BrdBacklogService
         var migrateDependencies = existingContent is not null
             && ReadNestedFrontMatter(existingContent, "backlog_schema") != "3"
             && !string.Equals(ReadFrontMatter(existingContent, "status"), "Active", StringComparison.OrdinalIgnoreCase);
-        var items = requirements.Select(requirement => CreateItem(requirement, requirements, routableRepositories,
+        var items = mode == "no-planned-work" ? [] : requirements.Select(requirement => CreateItem(requirement, requirements, routableRepositories,
             repositoryRoles, existing, migrateDependencies)).ToArray();
         var title = ReadFrontMatter(brdContent, "title") ?? "Business Requirements";
-        var next = Render(title, state, items, obligations);
+        var next = Render(title, state, items, obligations, mode == "no-planned-work" ? actor!.Trim() : null,
+            mode == "no-planned-work" ? _clock().ToUniversalTime().ToString("O") : null);
+        if (existingNoWork) next = ReconcileNoWorkRecord(existingContent!, next, mode!);
         var approvalCanCarryForward = existingContent is not null
             && HasCurrentApproval(existingContent)
             && ContentDigest(existingContent) == ContentDigest(next)
@@ -279,12 +313,23 @@ public sealed class BrdBacklogService
         if (!content.Contains(ObligationsStart, StringComparison.Ordinal) || !content.Contains(ObligationsEnd, StringComparison.Ordinal))
             errors.Add("Managed global-obligation markers are missing.");
         var items = ParseItems(content);
+        var mode = ReadNestedFrontMatter(content, "backlog_mode") ?? "requirements";
+        var noWork = mode == "no-planned-work";
+        if (mode is not ("requirements" or "no-planned-work")) errors.Add("Unknown high-level backlog mode.");
+        if (noWork)
+        {
+            if (items.Count > 0) errors.Add("A no-planned-work record cannot contain delivery items.");
+            var recordedBy = ReadNoWorkValue(content, "no_planned_work_by");
+            if (string.IsNullOrWhiteSpace(recordedBy) || recordedBy == "null" || Placeholder(recordedBy)
+                || !DateTimeOffset.TryParse(ReadNoWorkValue(content, "no_planned_work_at"), out _))
+                errors.Add("No planned work requires a named human decision and its recorded time.");
+        }
         var brdContent = File.ReadAllText(state.BrdPath!);
         var requirements = ParseRequirements(brdContent, "Functional requirements");
         var requiredIds = requirements.Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
         foreach (var duplicate in items.GroupBy(item => item.RequirementId, StringComparer.Ordinal).Where(group => group.Count() > 1))
             errors.Add($"BRD requirement is covered by more than one high-level item: {duplicate.Key}");
-        foreach (var missing in requiredIds.Except(items.Select(item => item.RequirementId), StringComparer.Ordinal))
+        foreach (var missing in noWork ? [] : requiredIds.Except(items.Select(item => item.RequirementId), StringComparer.Ordinal))
             errors.Add($"BRD functional requirement has no high-level item: {missing}");
         foreach (var unknown in items.Select(item => item.RequirementId).Except(requiredIds, StringComparer.Ordinal))
             errors.Add($"High-level item references an unknown BRD requirement: {unknown}");
@@ -338,7 +383,8 @@ public sealed class BrdBacklogService
         var validation = new BrdBacklogValidation(valid, current, effective, documentStatus,
             errors.Distinct(StringComparer.Ordinal).Order().ToArray(), warnings.Distinct(StringComparer.Ordinal).Order().ToArray());
         return new BrdBacklogResult(operation, state.Workspace!.WorkspacePath, state.Authority!.Id,
-            state.RelativePath, items, validation, [], applied);
+            state.RelativePath, items, validation, [], applied)
+        { Mode = mode, NoPlannedWorkBy = ReadNoWorkValue(content, "no_planned_work_by"), NoPlannedWorkAt = ReadNoWorkValue(content, "no_planned_work_at") };
     }
 
     private State Resolve(string workspacePath)
@@ -593,7 +639,8 @@ public sealed class BrdBacklogService
             $@"(?i)(?<![A-Za-z0-9]){Regex.Escape(term).Replace("\\ ", @"\s+")}(?![A-Za-z0-9])",
             RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)));
 
-    private static string Render(string brdTitle, State state, IReadOnlyList<BrdBacklogItem> items, IReadOnlyList<Requirement> obligations)
+    private static string Render(string brdTitle, State state, IReadOnlyList<BrdBacklogItem> items, IReadOnlyList<Requirement> obligations,
+        string? noWorkActor = null, string? noWorkAt = null)
     {
         var builder = new StringBuilder();
         builder.AppendLine("---");
@@ -606,6 +653,12 @@ public sealed class BrdBacklogService
         builder.AppendLine("cis:");
         builder.AppendLine($"  stable_id: {state.Authority!.Id}:plan:high-level-backlog");
         builder.AppendLine("  backlog_schema: 3");
+        if (noWorkActor is not null)
+        {
+            builder.AppendLine("  backlog_mode: no-planned-work");
+            builder.AppendLine($"  no_planned_work_by: {JsonSerializer.Serialize(noWorkActor)}");
+            builder.AppendLine($"  no_planned_work_at: {JsonSerializer.Serialize(noWorkAt)}");
+        }
         builder.AppendLine($"  brd_hash: {BrdBaseline(File.ReadAllText(state.BrdPath!))}");
         builder.AppendLine($"  technical_intent_hash: {TechnicalIntentBaseline(File.ReadAllText(state.TechnicalIntentPath!))}");
         builder.AppendLine("  approved_by: null");
@@ -616,11 +669,14 @@ public sealed class BrdBacklogService
         builder.AppendLine();
         builder.AppendLine($"# {brdTitle} High-Level Backlog");
         builder.AppendLine();
-        builder.AppendLine("This reviewed bridge decomposes each functional BRD requirement into one high-level product outcome. It is not an executable implementation plan. Accepted items become feature specifications and then change dossiers with bounded tasks.");
+        builder.AppendLine(noWorkActor is null
+            ? "This reviewed bridge decomposes each functional BRD requirement into one high-level product outcome. It is not an executable implementation plan. Accepted items become feature specifications and then change dossiers with bounded tasks."
+            : "This record states the delivery scope for the current product baseline. A no-planned-work decision does not claim that every requirement is implemented, verified or defect-free. It records that no new delivery work is currently planned. Any future work requires a new reviewed scope.");
         builder.AppendLine();
         builder.AppendLine("## High-level items");
         builder.AppendLine();
         builder.AppendLine(ItemsStart);
+        if (noWorkActor is not null) builder.AppendLine($"No planned work recorded by {Cell(noWorkActor)}. Review this decision as part of product-definition activation.\n");
         builder.AppendLine("| ID | BRD requirement | Outcome | Priority | Repositories | Frontend types | Depends on | Feature specification | Notes |");
         builder.AppendLine("| --- | --- | --- | --- | --- | --- | --- | --- | --- |");
         foreach (var item in items)
@@ -639,7 +695,8 @@ public sealed class BrdBacklogService
         builder.AppendLine();
         builder.AppendLine("## Review rules");
         builder.AppendLine();
-        builder.AppendLine("- Every functional BRD requirement must appear exactly once.");
+        builder.AppendLine(noWorkActor is null ? "- Every functional BRD requirement must appear exactly once."
+            : "- In requirements mode, every functional requirement has one candidate outcome. In no-planned-work mode, there are no delivery items and a human decision is required.");
         builder.AppendLine("- Reviewers may add dependencies, notes, and a feature-specification path without changing stable item identity.");
         builder.AppendLine("- Frontend types identify public, customer, and backoffice scope; a later feature specification splits mixed UI scope into one requirement row per type.");
         builder.AppendLine("- Approval authorizes feature-specification preparation, not implementation, deployment, or release.");

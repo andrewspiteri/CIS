@@ -1007,7 +1007,7 @@ public sealed partial class RepositoryInitializer : Cis.Abstractions.ICisObserve
         return string.IsNullOrWhiteSpace(id) ? "repository" : id;
     }
 
-    private static string CreateDocumentationReadme(string repositoryId) =>
+    internal static string CreateDocumentationReadme(string repositoryId) =>
         "---\n" +
         $"title: \"{repositoryId} Engineering Documentation\"\n" +
         "type: navigation\nstatus: Active\nowner: Repository maintainer\n" +

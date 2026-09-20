@@ -17,6 +17,29 @@ function api() {
     ProgressLocation: { Notification: 1 }, window: { withProgress: (_options, run) => run({ report() {} }, { onCancellationRequested() {} }) } };
 }
 
+test('startup BRD reads preserve queued and completed governance projections across refreshes', async () => {
+  const started = []; const messages = [];
+  const cli = new CisCli(api(), { appendLine: message => messages.push(message) }, { root: () => root }, {
+    execFile: (_exe, args, _options, callback) => {
+      started.push(args.slice(0, args.indexOf('--repo')).join(' '));
+      setImmediate(() => callback(null, '{"status":"ready"}', ''));
+    },
+  });
+  const startup = [ ['brd', 'status'], ['repo', 'doctor'], ['skills', 'inventory', '--summary'],
+    ['brd', 'questions', 'list'], ['standards', 'inventory', '--summary'], ['references', 'validate'],
+    ['brd', 'review', 'freshness', 'RUN-1'], ['agent', 'show', 'RUN-1', '--summary'], ['ui-direction', 'baseline'] ];
+  await Promise.all(startup.map(args => cli.query(args)));
+  await Promise.all(startup.map(args => cli.query(args)));
+  assert.equal(started.length, startup.length);
+  assert.equal(messages.filter(m => m.startsWith('[timing]')).length, startup.length);
+  await cli.query(['brd', 'status'], { cache: false });
+  await cli.query(['repo', 'doctor']);
+  assert.equal(started.length, startup.length + 1, 'an uncached read must not invalidate unrelated reads');
+  await cli.query(['brd', 'questions', 'answer', 'Q-1', '--answer', 'Confirmed']);
+  await cli.query(['repo', 'doctor']);
+  assert.equal(started.length, startup.length + 3, 'a real mutation must invalidate cached governance');
+});
+
 test('repository queries serialize writes and reads, share duplicate reads, and recover after failure', async () => {
   const started = [];
   const cli = new CisCli(api(), { appendLine() {} }, { root: () => root }, {
@@ -149,6 +172,10 @@ test('wizard host drops repeated preparation and refresh messages until completi
   assert.deepEqual(actions, ['prepare', 'refresh']);
   await receive({ command: 'open-business-dictionary', value: '0:0' });
   assert.deepEqual(actions, ['prepare', 'refresh', 'open-business-dictionary']);
+  messages.length = 0;
+  await receive({ command: 'navigate', value: 'business' });
+  assert.equal(messages.at(-1)?.busy, false, 'Even same-page navigation must acknowledge completion');
+  assert.deepEqual(actions, ['prepare', 'refresh', 'open-business-dictionary']);
 });
 
 test('wizard script disables controls before posting a click and restores their prior disabled state', () => {
@@ -161,10 +188,11 @@ test('wizard script disables controls before posting a click and restores their 
   let click; let message;
   vm.runInNewContext(script, {
     acquireVsCodeApi: () => ({ postMessage: value => sent.push(value) }),
-    document: { body: { setAttribute() {} }, getElementById: () => notice, querySelectorAll: () => controls,
+    document: { body: { setAttribute() {} }, getElementById: () => notice, querySelectorAll: selector => ['[data-source-id]', '[data-control-sheet]', '[data-technical-decision-id]'].includes(selector) ? [] : controls,
       addEventListener: (_event, callback) => { click = callback; } },
     window: { addEventListener: (_event, callback) => { message = callback; } },
   });
+  assert.equal(sent.shift().command, 'wizard-ready');
   const event = { target: { closest: () => prepare } };
   click(event); click(event);
   assert.equal(sent.length, 1);
@@ -176,4 +204,63 @@ test('wizard script disables controls before posting a click and restores their 
   assert.equal(notice.hidden, true);
   click(event);
   assert.equal(sent.length, 2);
+});
+
+test('wizard reload recovers a lost completion message without unlocking active work', async () => {
+  for (const fails of [false, true]) {
+    let receive, visible, frame, html, finish; let actions = 0;
+    const ready = []; const errors = []; const dropped = [];
+    const gate = new Promise(resolve => { finish = resolve; });
+    const panel = { onDidChangeViewState: callback => { visible = callback; }, webview: {
+      cspSource: 'test:',
+      set html(value) { html = value; frame = undefined; }, get html() { return html; },
+      postMessage: async message => { if (frame) frame.message({ data: message }); else dropped.push(message); },
+      onDidReceiveMessage: callback => { receive = callback; },
+    } };
+    const local = { Uri: { file: value => value }, ViewColumn: { Active: 1 }, window: {
+      createWebviewPanel: () => panel,
+      showErrorMessage: message => { errors.push(message); return new Promise(() => {}); },
+    } };
+    const controller = openDefinitionWizardPanel(local, root, model, async () => {
+      actions++; await gate; controller.update(model);
+      if (fails) throw new Error('Refresh failed after the action');
+    }, async () => {});
+    const mount = () => {
+      const prepare = { disabled: false, dataset: { command: 'prepare', value: 'business' } };
+      const unavailable = { disabled: true, dataset: {} };
+      const notice = { hidden: !html.includes('setBusy(true)') };
+      frame = { prepare, unavailable, notice };
+      vm.runInNewContext(/<script nonce="[^"]+">([\s\S]*?)<\/script>/u.exec(html)[1], {
+        acquireVsCodeApi: () => ({ postMessage: message => ready.push(message) }),
+        document: { body: { setAttribute() {} }, getElementById: () => notice,
+          querySelectorAll: selector => ['[data-source-id]', '[data-control-sheet]', '[data-technical-decision-id]'].includes(selector) ? [] : [prepare, unavailable],
+          addEventListener: (_event, callback) => { frame.click = callback; } },
+        window: { addEventListener: (_event, callback) => { frame.message = callback; } },
+      });
+      return frame;
+    };
+    const action = receive({ command: 'prepare', value: 'business' });
+    controller.update(model);
+    let current = mount();
+    await receive(ready.shift());
+    assert.equal(current.prepare.disabled, true, 'Readiness must preserve an action still running');
+    await receive({ command: 'refresh' });
+    assert.equal(actions, 1);
+    finish();
+    await tick();
+    assert.equal(controller.isBusy(), false, 'Notification dismissal must not delay completion');
+    await action;
+    assert.ok(dropped.some(message => message.busy === false), 'Completion arrived before the replacement page loaded');
+    current = mount();
+    assert.equal(current.notice.hidden, false, 'Replacement HTML contains the prior busy state');
+    await receive(ready.shift());
+    assert.equal(current.notice.hidden, true);
+    assert.equal(current.prepare.disabled, false);
+    assert.equal(current.unavailable.disabled, true);
+    assert.equal(errors.length, fails ? 1 : 0);
+    current.message({ data: { command: 'wizard-busy', busy: true } });
+    visible({ webviewPanel: { visible: true } });
+    assert.equal(current.prepare.disabled, false, 'Revealing the retained wizard resynchronizes its state');
+    assert.equal(actions, 1, 'Resynchronization must never restart the action');
+  }
 });

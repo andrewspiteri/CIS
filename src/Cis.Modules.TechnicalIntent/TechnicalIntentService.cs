@@ -170,7 +170,8 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck, ICis
         => ValidateInternal(workspacePath, "validated", applied: false);
 
     public TechnicalIntentResult Status(string workspacePath)
-        => ValidateInternal(workspacePath, "status", applied: false);
+        => CisReadScope.Read(this, nameof(Status), workspacePath,
+            () => ValidateInternal(workspacePath, "status", applied: false));
 
     public TechnicalIntentResult Approve(string workspacePath, string reviewer, string reason)
     {
@@ -237,7 +238,8 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck, ICis
                     ["Canonical technical intent was not found. Run `cis technical-intent init`."], state.Warnings),
                 state.Baselines, state.Warnings, [], false);
 
-        var content = CisTechnicalIntentPresentation.RestoreManagedEvidence(File.ReadAllText(state.CanonicalPath));
+        var document = File.ReadAllText(state.CanonicalPath);
+        var content = CisTechnicalIntentPresentation.RestoreManagedEvidence(document);
         var errors = new List<string>();
         var warnings = new List<string>(state.Warnings);
         var stableId = $"{state.Authority.Id}:spec:technical-intent";
@@ -328,18 +330,28 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck, ICis
         }
 
         var decisionSection = ExtractSection(content, "Open technical decisions");
+        var decisions = new List<CisTechnicalDecisionReview>();
+        var documentRows = document.Split('\n').Select((line, index) => (Cells: Cells(line), Line: index + 1))
+            .Where(row => row.Cells.Length == 5 && row.Cells[0].StartsWith("TI-DEC-", StringComparison.Ordinal))
+            .ToLookup(row => row.Cells[0], StringComparer.Ordinal);
         foreach (var decision in ParseDecisionRows(decisionSection))
         {
+            var findings = new List<string>();
             if (decision.Status.Equals("Open", StringComparison.OrdinalIgnoreCase)
                 || decision.Status.Equals("Proposed", StringComparison.OrdinalIgnoreCase))
-                errors.Add($"Technical decision remains unresolved: {decision.Id}");
+                findings.Add($"Technical decision remains unresolved: {decision.Id}");
             else if (decision.Status.Equals("Deferred", StringComparison.OrdinalIgnoreCase)
                      && decision.RequiredBefore.Contains("change dossier", StringComparison.OrdinalIgnoreCase))
-                errors.Add($"Technical decision cannot be deferred beyond its required gate: {decision.Id}");
+                findings.Add($"Technical decision cannot be deferred beyond its required gate: {decision.Id}");
             else if (decision.Status is not ("Resolved" or "Accepted" or "Deferred"))
-                errors.Add($"Technical decision has unsupported status '{decision.Status}': {decision.Id}");
+                findings.Add($"Technical decision has unsupported status '{decision.Status}': {decision.Id}");
             if (string.IsNullOrWhiteSpace(decision.Resolution) || PlaceholderPattern().IsMatch(decision.Resolution))
-                errors.Add($"Technical decision requires a resolution or deferral rationale: {decision.Id}");
+                findings.Add($"Technical decision requires a resolution or deferral rationale: {decision.Id}");
+            var locations = documentRows[decision.Id].ToArray();
+            if (locations.Length != 1) findings.Add($"Technical decision row is ambiguous: {decision.Id}");
+            errors.AddRange(findings);
+            decisions.Add(DescribeDecision(new(decision.Id, decision.Decision, decision.RequiredBefore, decision.Status,
+                decision.Resolution, findings.Count > 0, locations.Length == 1 ? locations[0].Line : null, findings), state, document));
         }
 
         var recorded = ParseBaselines(content);
@@ -382,7 +394,7 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck, ICis
             : valid && current ? "Ready for Approval" : "Review Required";
         var validation = new TechnicalIntentValidation(valid, current, effective, documentStatus,
             errors.Distinct(StringComparer.Ordinal).Order().ToArray(),
-            warnings.Distinct(StringComparer.Ordinal).Order().ToArray());
+            warnings.Distinct(StringComparer.Ordinal).Order().ToArray()) { Decisions = decisions };
         return new TechnicalIntentResult(operation, state.Workspace!.WorkspacePath, state.Authority.Id,
             relativePath, validation, state.Baselines, validation.Warnings, [], applied);
     }
@@ -441,7 +453,8 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck, ICis
         var standards = new List<KnownStandard>();
         var classifier = new RepositoryClassifier();
 
-        foreach (var repository in workspace.Repositories)
+        foreach (var repository in workspace.Repositories.Where(repository =>
+                     brdResult.Discovery?.DeferredRepositoryIds.Contains(repository.Id, StringComparer.Ordinal) != true))
         {
             try
             {
@@ -1644,13 +1657,14 @@ cis:
         {
             var cells = Cells(line);
             if (cells.Length == 5 && cells[0].StartsWith("TI-DEC-", StringComparison.Ordinal))
-                rows.Add(new DecisionRow(cells[0], cells[2], cells[3], cells[4]));
+                rows.Add(new DecisionRow(cells[0], cells[1], cells[2], cells[3], cells[4]));
         }
         return rows;
     }
 
     private static string[] Cells(string line)
-        => !line.TrimStart().StartsWith('|') ? [] : line.Trim().Trim('|').Split('|').Select(cell => cell.Trim().Replace("\\|", "|", StringComparison.Ordinal)).ToArray();
+        => !line.TrimStart().StartsWith('|') ? [] : Regex.Split(line.Trim().Trim('|'), @"(?<!\\)\|", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
+            .Select(cell => cell.Trim().Replace("\\|", "|", StringComparison.Ordinal)).ToArray();
 
     private static string ExtractSection(string content, string heading)
     {
@@ -1829,7 +1843,7 @@ cis:
         BusinessEvidence? Brd, QuestionnaireSnapshot? Questionnaire, bool ScaffoldEligible,
         IReadOnlyList<string> Warnings, IReadOnlyList<string> Errors, IReadOnlyList<string> ReadinessErrors);
 
-    private sealed record DecisionRow(string Id, string RequiredBefore, string Status, string Resolution);
+    private sealed record DecisionRow(string Id, string Decision, string RequiredBefore, string Status, string Resolution);
     private sealed record BusinessEvidence(string Title, string RelativePath, string Digest, string Summary,
         IReadOnlyList<string> Outcomes, IReadOnlyList<BusinessCapability> Capabilities,
         IReadOnlyList<string> RequirementIds, string Content);

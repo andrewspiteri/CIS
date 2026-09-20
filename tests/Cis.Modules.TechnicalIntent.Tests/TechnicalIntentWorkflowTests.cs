@@ -14,6 +14,97 @@ namespace Cis.Modules.TechnicalIntent.Tests;
 public sealed class TechnicalIntentWorkflowTests
 {
     [Fact]
+    public void DecisionReview_ReusesRecordedAnswersByMeaningWithoutResolvingAdditionalChoices()
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true);
+        environment.Intent.Initialize(environment.Authority.Path);
+        var content = File.ReadAllText(environment.TechnicalIntentPath);
+        content = content.Replace("<!-- cis:technical-intent-decision-evidence:end -->", "| TI-DEC-900 | Choose the financial correction and reconciliation policy when ledger and statements disagree. | Financial changes | Open | A human policy decision is required. |\n| TI-DEC-901 | Choose failure behavior for signing and replay protection. | Integration changes | Proposed | Recovery requires review. |\n| TI-DEC-902 | Confirm privacy export, erasure and retention scope. | Privacy changes | Open | Scope requires review. |\n| TI-DEC-903 | Choose ownership for a new document publishing workflow. | Workflow changes | Open | Ownership requires review. |\n<!-- cis:technical-intent-decision-evidence:end -->", StringComparison.Ordinal);
+        File.WriteAllText(environment.TechnicalIntentPath, content);
+        var reviews = environment.Intent.Status(environment.Authority.Path).Validation!.Decisions;
+        var architecture = reviews.Single(item => item.Id == "TI-DEC-001");
+        Assert.True(architecture.QuestionnaireOverlap); Assert.Equal(5, architecture.RelatedAnswers.Count);
+        Assert.Contains(architecture.RelatedAnswers.Single(answer => answer.Id == "TI-Q-004").Answer, architecture.SuggestedResolution);
+        Assert.NotNull(architecture.ReviewToken);
+        var additional = reviews.Single(item => item.Id == "TI-DEC-900");
+        Assert.False(additional.QuestionnaireOverlap); Assert.Empty(additional.RelatedAnswers); Assert.True(additional.NeedsReview);
+        Assert.Contains("auditable adjustments", additional.SuggestedResolution);
+        Assert.Contains("bounded backoff", reviews.Single(item => item.Id == "TI-DEC-901").SuggestedResolution);
+        Assert.Contains("record-specific retention", reviews.Single(item => item.Id == "TI-DEC-902").SuggestedResolution);
+        Assert.Contains("accountable owner", reviews.Single(item => item.Id == "TI-DEC-903").SuggestedResolution);
+        Assert.All(reviews, item => Assert.False(string.IsNullOrWhiteSpace(item.SuggestedResolution)));
+        Assert.Equal(content, File.ReadAllText(environment.TechnicalIntentPath));
+    }
+
+    [Fact]
+    public void ResolveDecision_SavesOnlySelectedRowAndAuditWithPipesNewlinesAndHumanIdentity()
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true);
+        environment.Intent.Initialize(environment.Authority.Path);
+        var before = File.ReadAllText(environment.TechnicalIntentPath);
+        var decisions = environment.Intent.Status(environment.Authority.Path).Validation!.Decisions;
+        var selected = decisions.First(); var untouched = decisions.Skip(1).Select(item => item.Rationale).ToArray();
+        var resolution = "Keep the reviewed API | worker boundary.\nPreserve contract ownership.";
+        var saved = environment.Intent.ResolveDecision(environment.Authority.Path, new(selected.Id, resolution, "Retains the established product boundaries.", selected.ReviewToken!, "Design owner"));
+        Assert.True(saved.Applied); Assert.Equal(0, saved.ExitCode);
+        var after = File.ReadAllText(environment.TechnicalIntentPath);
+        foreach (var rationale in untouched) Assert.Contains(rationale, after);
+        Assert.Contains("API \\| worker", after); Assert.Contains("Recorded by: Design owner", after);
+        Assert.Equal(before[..before.IndexOf("## Open technical decisions", StringComparison.Ordinal)], after[..after.IndexOf("## Open technical decisions", StringComparison.Ordinal)]);
+        var review = environment.Intent.Status(environment.Authority.Path).Validation!.Decisions.Single(item => item.Id == selected.Id);
+        Assert.Equal("Resolved", review.Status); Assert.False(review.NeedsReview);
+        Assert.Equal(resolution, review.RecordedResolution); Assert.Equal("Design owner", review.RecordedBy);
+        Assert.NotEqual(selected.ReviewToken, review.ReviewToken);
+        Assert.Equal(untouched, environment.Intent.Status(environment.Authority.Path).Validation!.Decisions.Skip(1).Select(item => item.Rationale));
+    }
+
+    [Fact]
+    public void ResolveDecision_RejectsStaleEvidenceAmbiguousRowsAndMissingHumanInput()
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true);
+        environment.Intent.Initialize(environment.Authority.Path);
+        var review = environment.Intent.Status(environment.Authority.Path).Validation!.Decisions.First();
+        var input = new Cis.Abstractions.CisTechnicalDecisionResolution(review.Id, "Keep the existing architecture.", "Preserves the current boundaries.", review.ReviewToken!, "Owner");
+        var before = File.ReadAllText(environment.TechnicalIntentPath);
+        Assert.False(environment.Intent.ResolveDecision(environment.Authority.Path, input with { Resolution = "" }).Applied);
+        Assert.False(environment.Intent.ResolveDecision(environment.Authority.Path, input with { Reason = "<!-- hidden -->" }).Applied);
+        Assert.False(environment.Intent.ResolveDecision(environment.Authority.Path, input with { Actor = "" }).Applied);
+        Assert.False(environment.Intent.ResolveDecision(environment.Authority.Path, input with { Resolution = "<!-- hidden -->" }).Applied);
+        Assert.Equal(before, File.ReadAllText(environment.TechnicalIntentPath));
+        environment.Questionnaire.Answer(environment.Authority.Path, "TI-Q-004", "Maintain the existing modular architecture.", "Owner");
+        Assert.Equal("conflict", environment.Intent.ResolveDecision(environment.Authority.Path, input).Status);
+        Assert.Equal(before, File.ReadAllText(environment.TechnicalIntentPath));
+        var row = before.Split('\n').Single(line => line.StartsWith("| " + review.Id + " |", StringComparison.Ordinal));
+        var duplicate = before.Replace("<!-- cis:technical-intent-decision-evidence:end -->", row + "\n<!-- cis:technical-intent-decision-evidence:end -->", StringComparison.Ordinal);
+        File.WriteAllText(environment.TechnicalIntentPath, duplicate);
+        Assert.All(environment.Intent.Status(environment.Authority.Path).Validation!.Decisions.Where(item => item.Id == review.Id), item => { Assert.Null(item.ReviewToken); Assert.True(item.NeedsReview); });
+        Assert.Equal("conflict", environment.Intent.ResolveDecision(environment.Authority.Path, input).Status);
+        Assert.Equal(duplicate, File.ReadAllText(environment.TechnicalIntentPath));
+    }
+
+    [Fact]
+    public void ResolveDecision_CommandDispatchSavesReviewedJsonAndRejectsMalformedInput()
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true);
+        environment.Intent.Initialize(environment.Authority.Path);
+        var review = environment.Intent.Status(environment.Authority.Path).Validation!.Decisions.First();
+        using var application = new CisHostBuilder().AddModule(new RepositoryModule()).AddModule(new WorkspaceModule())
+            .AddModule(new DocsModule()).AddModule(new GraphModule()).AddModule(new BrdModule()).AddModule(new TechnicalIntentModule()).Build();
+        var inputPath = Path.Combine(environment.Authority.Path, "decision-input.json");
+        File.WriteAllText(inputPath, System.Text.Json.JsonSerializer.Serialize(new { resolution = "Retain the reviewed component boundaries to preserve established ownership.", reviewToken = review.ReviewToken }));
+        Assert.Equal(0, application.Invoke(["technical-intent", "decisions", "resolve", review.Id, "--input", inputPath, "--actor", "Owner", "--workspace", environment.Authority.Path, "--format", "json"]));
+        var saved = environment.Intent.Status(environment.Authority.Path).Validation!.Decisions.Single(item => item.Id == review.Id);
+        Assert.Equal("Resolved", saved.Status);
+        Assert.Equal("Retain the reviewed component boundaries to preserve established ownership.", saved.RecordedResolution);
+        Assert.Equal("", saved.RecordedReason);
+        Assert.DoesNotContain("Reason:", saved.Rationale);
+        var content = File.ReadAllText(environment.TechnicalIntentPath);
+        File.WriteAllText(inputPath, "[]");
+        Assert.Equal(2, application.Invoke(["technical-intent", "decisions", "resolve", review.Id, "--input", inputPath, "--actor", "Owner", "--workspace", environment.Authority.Path, "--format", "json"]));
+        Assert.Equal(content, File.ReadAllText(environment.TechnicalIntentPath));
+    }
+
+    [Fact]
     public void ExistingDiscovery_DraftsBeforeBusinessApprovalWithoutWeakeningApprovalOrAnswerGates()
     {
         using var environment = WorkspaceEnvironment.Create(approveBrd: false);
@@ -51,6 +142,16 @@ public sealed class TechnicalIntentWorkflowTests
         Assert.Contains("Observed service owns its transaction boundary.", refreshed, StringComparison.Ordinal);
         Assert.Contains("| Open |", refreshed, StringComparison.Ordinal);
         Assert.DoesNotContain("| Accepted |", refreshed, StringComparison.Ordinal);
+        Assert.True(environment.Questionnaire.Status(environment.Authority.Path).Complete);
+        var review = environment.Intent.Status(environment.Authority.Path).Validation!;
+        Assert.False(review.Valid);
+        Assert.NotEmpty(review.Decisions);
+        Assert.All(review.Decisions, decision =>
+        {
+            Assert.True(decision.NeedsReview); Assert.NotEmpty(decision.Decision); Assert.NotEmpty(decision.Issues);
+            Assert.True(decision.DocumentLine > 0);
+            Assert.StartsWith("| " + decision.Id + " |", refreshed.Split('\n')[decision.DocumentLine!.Value - 1].TrimStart(), StringComparison.Ordinal);
+        });
         Assert.Equal("blocked", environment.Intent.Approve(environment.Authority.Path, "Owner", "Review").Status);
     }
 
@@ -70,6 +171,7 @@ public sealed class TechnicalIntentWorkflowTests
         Assert.Equal(0, application.Invoke(["technical-intent", "questions", "init", "--help"]));
         Assert.Equal(0, application.Invoke(["technical-intent", "questions", "status", "--help"]));
         Assert.Equal(0, application.Invoke(["technical-intent", "questions", "answer", "--help"]));
+        Assert.Equal(0, application.Invoke(["technical-intent", "decisions", "resolve", "--help"]));
         Assert.Equal(0, application.Invoke(["technical-intent", "validate", "--help"]));
         Assert.Equal(0, application.Invoke(["technical-intent", "status", "--help"]));
         Assert.Equal(0, application.Invoke(["technical-intent", "refresh", "--help"]));
@@ -306,6 +408,8 @@ public sealed class TechnicalIntentWorkflowTests
         var initialized = environment.Intent.Initialize(environment.Authority.Path);
         Assert.True(initialized.Applied);
         Assert.True(initialized.Validation!.Valid);
+        Assert.NotEmpty(initialized.Validation.Decisions);
+        Assert.All(initialized.Validation.Decisions, decision => { Assert.False(decision.NeedsReview); Assert.Empty(decision.Issues); });
         Assert.Equal("Ready for Approval", initialized.Validation.EffectiveStatus);
         var scaffold = File.ReadAllText(environment.TechnicalIntentPath);
         Assert.Contains("technical_intent_schema: 4", scaffold, StringComparison.Ordinal);

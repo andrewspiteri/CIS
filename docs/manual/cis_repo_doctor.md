@@ -3,7 +3,7 @@ title: "cis repo doctor"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-09"
+last_reviewed: "2026-09-09"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-repo-doctor
@@ -31,6 +31,12 @@ cis repo doctor [--repo <path>] [--root <repository-relative-path>] [--refresh]
 | `-?`, `-h`, `--help` | No | — | Shows command help without running checks. |
 
 There is no LLM-enablement option. Doctor always probes Ollama and warns when it is unavailable.
+
+Artifact retention checks use file metadata to determine eligibility without opening and
+hashing retained file contents. Families with no more entries than their keep-latest count are
+fully protected, so Doctor skips their recursive size and timestamp traversal. For other families,
+nested timestamps, retention age and keep-latest rules are evaluated. Explicit `cis artifacts inventory` and `cis artifacts plan`
+continue to calculate full sizes and content digests; archive and cleanup verification is unchanged.
 
 The expensive initialization reconciliation is cached under
 `.cis/local/status/repository-initialization.json`. The entry binds the repository file

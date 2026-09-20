@@ -1,5 +1,14 @@
 'use strict';
 
+const { renderSourceReviewForm, sourceReviewScript } = require('./business-source-form');
+const { mountUiControlSheets } = require('./ui-control-sheet');
+const { experienceState, experienceAction, renderExperienceGuidance } = require('./experience-guidance');
+const { technicalDecisionFormScript } = require('./technical-decision-form');
+const { renderTechnicalPage } = require('./technical-guidance');
+const { renderDocumentApproval, renderArchitectureApproval } = require('./architecture-approval');
+const { renderDeliveryPage } = require('./delivery-guidance');
+const { renderUiBaseline, uiBaselineQuestions } = require('./ui-baseline');
+
 const { escapeHtml, isValidWebviewMessage, nonce, resolveWithin } = require('./security');
 const { doctorFixId, parseDoctorCommand } = require('./doctor-commands');
 
@@ -124,23 +133,30 @@ function openUiDirectionQuestionsPanel(vscode, status, onAction) {
   return controller;
 }
 
-function openDefinitionWizardPanel(vscode, root, model, onAction, onPath, initialPage) {
+function openDefinitionWizardPanel(vscode, root, model, onAction, onPath, initialPage, onNavigate) {
   const panel = vscode.window.createWebviewPanel('cis.definitionWizard', 'High-level product definition', vscode.ViewColumn.Active, {
     enableScripts: true,
     retainContextWhenHidden: true,
     localResourceRoots: [vscode.Uri.file(root)],
   });
   const scriptNonce = nonce();
-  const allowed = new Set(['activate', 'business-action', 'infer-technical-intent', 'infer-solution-design', 'navigate', 'open-path', 'open-business-dictionary', 'prepare', 'refresh', 'save-answer']);
+  const allowed = new Set(['wizard-ready', 'activate', 'business-action', 'technical-action', 'open-technical-decision', 'open-business-source', 'summarize-business-sources', 'open-source-decision', 'save-source-decisions', 'infer-technical-intent', 'infer-solution-design', 'navigate', 'open-path', 'open-business-dictionary', 'prepare', 'refresh', 'save-answer']);
+  allowed.add('open-ui-baseline-source');
+  allowed.add('save-ui-control-sheet');
+  allowed.add('save-technical-decision');
+  allowed.add('architecture-action');
+  allowed.add('delivery-action');
   let currentModel = model;
   let currentPage = initialPage || model?.currentPage || 'foundation';
   let busy = false;
   let disposed = false;
+  let receive;
   panel.onDidDispose?.(() => { disposed = true; });
-  const setBusy = value => {
-    busy = value;
+  const sendBusy = () => {
     if (!disposed) panel.webview.postMessage?.({ command: 'wizard-busy', busy })?.catch(() => {});
   };
+  const setBusy = value => { busy = value; sendBusy(); };
+  panel.onDidChangeViewState?.(event => { if (event.webviewPanel.visible) sendBusy(); });
   const controller = {
     panel,
     update(nextModel, requestedPage) {
@@ -150,46 +166,80 @@ function openDefinitionWizardPanel(vscode, root, model, onAction, onPath, initia
     },
     page() { return currentPage; },
     isBusy() { return busy; },
+    navigate(page) { return receive({ command: 'navigate', value: page }); },
   };
-  controller.update(model, currentPage);
-  panel.webview.onDidReceiveMessage(async message => {
-    if (disposed || busy || !isValidWebviewMessage(message, allowed)) return;
-    if (message.command === 'navigate') {
-      currentPage = String(message.value || 'foundation');
-      controller.update(currentModel, currentPage);
-      return;
-    }
+  panel.webview.onDidReceiveMessage(receive = async message => {
+    if (disposed || !isValidWebviewMessage(message, allowed)) return;
+    // Replacing webview HTML can lose the completion message before its listener exists.
+    // Reconcile on every document load, even while a real action is still running.
+    if (message.command === 'wizard-ready') { sendBusy(); return; }
+    if (busy) return;
     setBusy(true);
     try {
-      if (message.command === 'open-path') await onPath(message.value);
+      if (message.command === 'navigate') {
+        currentPage = String(message.value || 'foundation');
+        controller.update(currentModel, currentPage);
+        await onNavigate?.(currentPage, controller);
+      } else if (message.command === 'open-path') await onPath(message.value);
       else await onAction(message.command, message.value, controller);
-    } catch (error) { await vscode.window.showErrorMessage(`CIS: ${error.message}`); }
+    } catch (error) {
+      // A notification is not ongoing work; dismissal must not keep the wizard locked.
+      void Promise.resolve(vscode.window.showErrorMessage(`CIS: ${error.message}`)).catch(() => {});
+    }
     finally { setBusy(false); }
   });
+  controller.update(model, currentPage);
   return controller;
 }
 
 function renderDefinitionWizardHtml(webview, root, model, currentPage, scriptNonce, vscode, busy = false) {
-  const pages = Array.isArray(model?.pages) ? [...model.pages].sort((a, b) => Number(a.ordinal) - Number(b.ordinal)) : [];
+  const uiState = experienceState(model || {}, root);
+  const pages = Array.isArray(model?.pages) ? model.pages.map(page => page.id === 'experience' ? { ...page, status: uiState.badge } : page).sort((a, b) => Number(a.ordinal) - Number(b.ordinal)) : [];
   const selected = pages.find(page => page.id === currentPage) || pages[0] || { id: 'foundation', ordinal: 1, title: 'Project foundation', status: 'Not started', artifactPaths: [], issues: [] };
-  const statusClass = selected.complete && selected.current ? 'good' : selected.issues?.length ? 'bad' : 'warn';
+  const statusClass = selected.complete && selected.current ? 'good' : selected.guidance ? 'warn' : selected.issues?.length ? 'bad' : 'warn';
   const nav = pages.map(page => `<button type="button" class="step ${page.id === selected.id ? 'current' : ''}" data-command="navigate" data-value="${escapeHtml(page.id)}" aria-current="${page.id === selected.id ? 'step' : 'false'}"><span>${escapeHtml(String(page.ordinal))}</span><span><strong>${escapeHtml(page.title)}</strong><small>${escapeHtml(page.status || 'Not started')}</small></span><i class="${page.complete && page.current ? 'complete' : ''}" aria-hidden="true"></i></button>`).join('');
   const artifacts = (selected.artifactPaths || []).map(item => `<li><button class="link" type="button" data-command="open-path" data-value="${escapeHtml(item)}">${escapeHtml(item)}</button></li>`).join('');
   const issues = (selected.issues || []).map(item => `<li>${escapeHtml(item)}</li>`).join('');
   const pageBody = renderDefinitionPageBody(webview, root, model, selected, vscode);
+  const guidance = selected.id === 'experience' ? renderExperienceGuidance(uiState) : renderDefinitionGuidance(selected);
   const previous = pages.find(page => Number(page.ordinal) === Number(selected.ordinal) - 1);
   const next = pages.find(page => Number(page.ordinal) === Number(selected.ordinal) + 1);
+  const architectureReconciliation = selected.id === 'architecture' && selected.guidance?.nextActionId === 'reconcile-architecture';
   const footer = `<footer class="wizard-footer">
     <button type="button" class="secondary" data-command="navigate" data-value="${escapeHtml(previous?.id || selected.id)}" ${previous ? '' : 'disabled'}>Back</button>
     <div class="footer-primary">
       <button type="button" class="secondary" data-command="refresh">Refresh</button>
-      ${selected.id === 'business' ? '' : selected.id !== 'review' ? `<button type="button" data-command="prepare" data-value="${escapeHtml(selected.id)}">${selected.complete && selected.current ? 'Save and continue' : 'Prepare or refresh page'}</button>` : model?.readyToActivate && model?.active !== false ? '<button type="button" data-command="activate">Approve and activate</button>' : model?.readyToActivate ? '<span class="badge good">Baseline active</span>' : '<button type="button" class="secondary" data-command="refresh">Recheck readiness</button>'}
-      ${next && selected.complete && selected.current ? `<button type="button" data-command="navigate" data-value="${escapeHtml(next.id)}">Continue</button>` : ''}
+      ${architectureReconciliation ? '<button type="button" data-command="architecture-action" data-value="reconcile-architecture">Reconcile architecture with technical direction</button>' : selected.id === 'experience' ? experienceAction(uiState.action) : ['business', 'technical', 'delivery'].includes(selected.id) ? '' : selected.id !== 'review' ? `<button type="button" data-command="prepare" data-value="${escapeHtml(selected.id)}">${selected.id === 'architecture' ? 'Prepare diagrams' : selected.complete && selected.current ? 'Save and continue' : 'Prepare or refresh page'}</button>` : model?.readyToActivate && model?.active !== false ? '<button type="button" data-command="activate">Approve and activate</button>' : model?.readyToActivate ? '<span class="badge good">Baseline active</span>' : '<button type="button" class="secondary" data-command="refresh">Recheck readiness</button>'}
+      ${next && selected.id !== 'experience' && selected.complete && selected.current ? `<button type="button" data-command="navigate" data-value="${escapeHtml(next.id)}">Continue</button>` : ''}
     </div></footer>`;
   const body = `<header class="hero"><div><span class="eyebrow">High-level product definition · ${escapeHtml(model?.sessionId || 'new draft')}</span><h1>${escapeHtml(selected.title)}</h1><p>Build one coherent business, technical, architecture, contract, experience and delivery baseline before the feature loop.</p></div><span class="badge ${statusClass}">${escapeHtml(selected.status || 'Not started')}</span></header>
-    <div class="wizard-layout"><nav class="wizard-steps" aria-label="Definition wizard pages">${nav}</nav><section class="wizard-page" aria-labelledby="page-title"><div class="section-heading"><div><span class="eyebrow">Page ${escapeHtml(String(selected.ordinal))} of ${escapeHtml(String(pages.length || 8))}</span><h2 id="page-title">${escapeHtml(selected.title)}</h2></div><span class="badge ${statusClass}">${selected.complete && selected.current ? 'Complete and current' : 'Needs attention'}</span></div>
-    ${pageBody}${artifacts ? `<details><summary>Canonical artifacts (${(selected.artifactPaths || []).length})</summary><ul class="links">${artifacts}</ul></details>` : ''}${issues ? `<section class="notice warning"><strong>What needs attention</strong><ul>${issues}</ul></section>` : ''}</section></div><p id="wizard-progress" role="status" aria-live="polite" ${busy ? '' : 'hidden'}>CIS is working. Please wait for this action to finish.</p>${footer}`;
+    <div class="wizard-layout"><nav class="wizard-steps" aria-label="Definition wizard pages">${nav}</nav><section class="wizard-page" aria-labelledby="page-title"><div class="section-heading"><div><span class="eyebrow">Page ${escapeHtml(String(selected.ordinal))} of ${escapeHtml(String(pages.length || 8))}</span><h2 id="page-title">${escapeHtml(selected.title)}</h2></div><span class="badge ${statusClass}">${selected.complete && selected.current ? 'Complete and current' : selected.id === 'experience' ? escapeHtml(uiState.badge) : 'Needs attention'}</span></div>
+    ${guidance}${!guidance && selected.id !== 'experience' && issues ? `<section class="notice warning"><strong>What needs attention</strong><ul>${issues}</ul></section>` : ''}${pageBody}${artifacts ? `<details><summary>Canonical artifacts (${(selected.artifactPaths || []).length})</summary><ul class="links">${artifacts}</ul></details>` : ''}${(guidance || selected.id === 'experience') && issues ? `<details><summary>Full validation details (${(selected.issues || []).length})</summary><ul>${issues}</ul></details>` : ''}</section></div><p id="wizard-progress" role="status" aria-live="polite" ${busy ? '' : 'hidden'}>CIS is working. Please wait for this action to finish.</p>${footer}`;
   return studioDocument(webview, 'High-level product definition', body, scriptNonce, definitionWizardScript(scriptNonce, busy));
+}
+
+function businessAction(page, id, fallback, enabled = true) {
+  const action = page.guidance?.actions?.find(item => item.id === id);
+  const status = action?.status || 'Available';
+  const next = page.guidance?.nextActionId === id;
+  const badge = ['Complete', 'Ready'].includes(status) ? 'good' : status === 'Needed' ? 'warn' : '';
+  return `<div class="wizard-action"><span class="badge ${badge}">${escapeHtml(next ? `Next · ${status}` : status)}</span><button type="button" class="${next ? '' : 'secondary'}" data-command="${page.id === 'technical' ? 'technical-action' : 'business-action'}" data-value="${escapeHtml(id)}" ${enabled ? '' : 'disabled'}>${escapeHtml(action?.label || fallback)}</button>${action?.reason ? `<p class="muted">${escapeHtml(action.reason)}</p>` : ''}</div>`;
+}
+
+function renderDefinitionGuidance(page) {
+  const guidance = page.guidance;
+  if (!guidance) return '';
+  const action = guidance.actions?.find(item => item.id === guidance.nextActionId);
+  const nextButton = action && action.id !== 'continue'
+    ? `<button type="button" data-command="${page.id === 'architecture' ? 'architecture-action' : page.id === 'technical' ? 'technical-action' : 'business-action'}" data-value="${escapeHtml(action.id)}">${escapeHtml(action.label)}</button>` : '';
+  return `<section class="card readiness" aria-labelledby="readiness-title"><span class="eyebrow">${page.complete && page.current ? 'Ready to continue' : 'What needs attention'}</span><h3 id="readiness-title">${escapeHtml(guidance.summary)}</h3>${guidance.reasons?.length ? `<ul>${guidance.reasons.map(reason => `<li>${escapeHtml(reason)}</li>`).join('')}</ul>` : ''}<h4>Next step</h4><p>${escapeHtml(guidance.nextStep)}</p>${nextButton}<p class="muted">Needed actions address this page's findings. Complete actions can be repeated, and optional actions remain available.</p></section>`;
+}
+
+function renderBusinessSources(page) {
+  const sources = page.guidance?.sourceReviews?.slice().sort((a, b) => Number(b.needsReview) - Number(a.needsReview)
+    || String(a.repositoryId).localeCompare(String(b.repositoryId)) || String(a.path).localeCompare(String(b.path)));
+  if (!Array.isArray(sources) || !sources.length) return '';
+  return renderSourceReviewForm(sources, escapeHtml);
 }
 
 function renderDefinitionPageBody(webview, root, model, page, vscode) {
@@ -202,20 +252,25 @@ function renderDefinitionPageBody(webview, root, model, page, vscode) {
     const inference = model.businessInference;
     const repositories = inference?.repositories || [];
     const canInfer = inference?.canDraft === true && repositories.length > 0;
-    const hint = !inference ? 'Update the CIS CLI to discover existing-project inference sources.'
-      : !inference.canDraft ? 'Inference is available for Draft or Review Required business definitions. Open the current BRD to review its lifecycle.'
-        : !repositories.length ? 'For an existing system, import its product repositories first. For a new product, draft from reference documents or edit the BRD.'
-          : `Use the ${repositories.length} product repositories below to infer actors, workflows, business rules and scope from the existing system. You can change the selection before starting.`;
     const preparation = inference?.lastPreparation || [];
     const inventories = preparation.flatMap((report, reportIndex) => (report.inventories || []).map((item, itemIndex) => ({ ...item, repository: report.repositoryPath, key: `${reportIndex}:${itemIndex}` })));
-    const preparationCard = `<section class="card"><span class="eyebrow">1. Prepare existing-system context</span><h3>Discover the dictionaries first</h3><p>Populate draft API contracts, data fields, relationships, workflow states, permissions and screen routes from the owned repositories. Inspect this evidence before inferring the BRD. Reviewed dictionaries are preserved; source declarations do not establish intended business policy.</p><div class="actions"><button type="button" data-command="business-action" data-value="prepare-evidence" ${repositories.length ? '' : 'disabled'}>Prepare existing-system context</button></div>${inventories.length ? `<details><summary>Last preparation: ${preparation.length} repositories — inspect dictionary counts and files</summary><p>Counts show discovered source rows. Rerun preparation after source changes. Open the listed files to review the dictionaries.</p><table><thead><tr><th>Repository / dictionary</th><th>Discovered rows</th><th>Result</th></tr></thead><tbody>${inventories.map(item => `<tr><td>${escapeHtml(item.repository)}<br><button type="button" class="secondary" data-command="open-business-dictionary" data-value="${escapeHtml(item.key)}">${escapeHtml(item.path)}</button></td><td>${escapeHtml(item.discoveredRows)}</td><td>${escapeHtml(item.action)}</td></tr>`).join('')}</tbody></table></details>` : '<p>No preparation has been recorded yet.</p>'}${preparation.flatMap(report => report.warnings || []).map(warning => `<p>${escapeHtml(warning)}</p>`).join('')}<p>Infer from existing project also runs this preparation automatically. The later contracts page reviews and extends these dictionaries.</p></section>`;
-    return `${preparationCard}<section class="card"><span class="eyebrow">Start with existing evidence</span><h3>Infer your business definition</h3><p>${escapeHtml(hint)}</p>${repositories.length ? `<ul>${repositories.map(repository => `<li>${escapeHtml(repository.id)}</li>`).join('')}</ul>` : ''}<div class="actions"><button type="button" data-command="business-action" data-value="infer-brd" ${canInfer ? '' : 'disabled'}>Infer from existing project</button><button type="button" class="secondary" data-command="business-action" data-value="draft-brd">Draft from references</button></div><p>The agent produces a Review Required BRD with source citations. Business intent that the evidence cannot establish remains an open question.</p></section><section class="card"><h3>Review the business definition</h3><p>Review the draft and source evidence, run an independent review, then resolve the open questions. Continue when this page is complete.</p><div class="actions"><button type="button" data-command="business-action" data-value="open-brd">Open BRD and source evidence</button><button type="button" class="secondary" data-command="business-action" data-value="review-brd">Independent review</button><button type="button" class="secondary" data-command="business-action" data-value="questions">Answer ${questions.filter(item => String(item.status).toLowerCase() === 'unanswered').length} open questions</button></div></section>`;
+    const action = (id, label, enabled = true) => businessAction(page, id, label, enabled);
+    const preparationCard = `<section class="card"><span class="eyebrow">Existing-system context</span><h3>Dictionaries and implementation evidence</h3><p>Use the owned repositories to discover API contracts, data, workflow states, permissions and screen routes. Inference also runs this preparation automatically.</p>
+      <div class="actions">${action('prepare-evidence', 'Prepare existing-system context', repositories.length > 0)}</div>
+      ${inventories.length ? `<details><summary>Last preparation: ${preparation.length} repositories — inspect dictionary counts and files</summary><table><thead><tr><th>Repository / dictionary</th><th>Discovered entries</th><th>Result</th></tr></thead><tbody>${inventories.map(item => `<tr><td>${escapeHtml(item.repository)}<br><button type="button" class="secondary" data-command="open-business-dictionary" data-value="${escapeHtml(item.key)}">${escapeHtml(item.path)}</button></td><td>${escapeHtml(item.discoveredRows)}</td><td>${escapeHtml(item.action)}</td></tr>`).join('')}</tbody></table></details>` : '<p>No preparation has been recorded yet.</p>'}
+      ${preparation.flatMap(report => report.warnings || []).map(warning => `<p>${escapeHtml(warning)}</p>`).join('')}</section>`;
+    return `${renderDocumentApproval(model, 'business')}${preparationCard}<section class="card"><span class="eyebrow">Business narrative</span><h3>Create or revisit the draft</h3><p>Existing repositories can inform actors, workflows, business rules and scope. Drafting produces a Review Required BRD; unresolved policy stays as an open question.</p>
+      ${repositories.length ? `<details><summary>Implementation sources (${repositories.length})</summary><ul>${repositories.map(repository => `<li>${escapeHtml(repository.id)}</li>`).join('')}</ul></details>` : '<p>Import the product repositories for implementation inference, or draft a new product from references.</p>'}
+      <div class="actions">${action('infer-brd', 'Infer from existing project', canInfer)}${action('draft-brd', 'Draft from references')}</div></section>
+      <section class="card"><h3>Complete the business review</h3><div class="actions">${action('refresh-evidence', 'Refresh BRD evidence')}${action('source-decisions', 'Review source decisions', (page.guidance?.sourceReviews || []).length > 0)}${action('open-brd', 'Read or edit the BRD')}${action('questions', `Answer ${questions.filter(item => String(item.status).toLowerCase() === 'unanswered').length} open questions`)}${action('review-brd', 'Independent review')}</div></section>
+      ${renderBusinessSources(page)}`;
   }
-  if (page.id === 'technical') return `<section class="card"><span class="eyebrow">Existing product</span><h3>Infer technical intent from the implementation</h3><p>CIS reads the owned repositories to explain the current architecture, modules, data flows, integrations, security, operations and verification. Source citations stay in comments. Observed behavior, proposed changes and unavailable evidence remain distinct.</p><div class="actions"><button type="button" data-command="infer-technical-intent" ${(model.businessInference?.repositories || []).length ? '' : 'disabled'}>Infer from existing repositories</button></div><p>You can draft while reviewing the BRD. Approval still requires the reviewed business baseline and resolved technical choices. Review the inferred document before answering the remaining questions.</p></section>${renderWizardQuestions(model.technicalQuestions?.questions, 'technical')}`;
+  if (page.id === 'technical') return renderDocumentApproval(model, 'technical') + renderTechnicalPage(root, page, model,
+    (id, label, enabled = true) => businessAction(page, id, label, enabled), renderWizardQuestions);
   if (page.id === 'architecture') {
     const diagrams = model.diagrams || [];
     const canInfer = (model.businessInference?.repositories || []).length > 0 && page.status !== 'Active';
-    return `<section class="card"><span class="eyebrow">Existing product</span><h3>Infer solution architecture from the implementation</h3><p>CIS reads the owned repositories and populated dictionaries to explain component responsibilities, end-to-end flows, data ownership, integrations, trust boundaries and operations. It drafts the overall design and component sheet together and generates four visual diagrams.</p><div class="actions"><button type="button" data-command="infer-solution-design" ${canInfer ? '' : 'disabled'}>Infer from existing repositories</button></div><p>Review the business and technical baseline alongside the inferred architecture. Observed behavior, proposed changes and unresolved deployment details are labelled. Source citations stay in comments; approval remains a separate whole-bundle review. Use Prepare or refresh page to project completed technical direction for a new product, or refresh diagrams after reviewing an inferred draft.</p></section><section class="cards two"><article class="card"><h3>Overall solution design</h3><p>Review module ownership, data boundaries, integrations, trust boundaries, deployment and recovery direction.</p></article><article class="card"><h3>Component sheet</h3><p>Review responsibility and ownership for every component and its interactions.</p></article></section><section><h3>Architecture diagrams</h3><div class="cards two">${diagrams.map(item => {
+    return `${renderArchitectureApproval(model)}<section class="card"><span class="eyebrow">Existing product</span><h3>Infer solution architecture from the implementation</h3><p>CIS reads the owned repositories and populated dictionaries to explain component responsibilities, end-to-end flows, data ownership, integrations, trust boundaries and operations. It drafts the overall design and component sheet together and embeds C4 system context, container and component diagrams in the overall design.</p><div class="actions"><button type="button" data-command="infer-solution-design" ${canInfer ? '' : 'disabled'}>Infer from existing repositories</button></div><p>Review the business and technical baseline alongside the inferred architecture. Observed behavior, proposed changes and unresolved deployment details are labelled. Source citations stay in comments; approval remains a separate whole-bundle review. Use Prepare or refresh page to project completed technical direction for a new product, or refresh diagrams after reviewing an inferred draft.</p></section><section class="cards two"><article class="card"><h3>Overall solution design</h3><p>Review module ownership, data boundaries, integrations, trust boundaries, deployment and recovery direction.</p></article><article class="card"><h3>Component sheet</h3><p>Review responsibility and ownership for every component and its interactions.</p></article></section><section><h3>Architecture diagrams</h3><div class="cards two">${diagrams.map(item => {
       const file = item.svgRelativePath && resolveWithin(root, item.svgRelativePath);
       const preview = file ? `<figure class="ui-preview"><img src="${escapeHtml(webview.asWebviewUri(vscode.Uri.file(file)).toString())}" alt="${escapeHtml(item.title)}"></figure>` : '';
       return `<article class="card"><span class="eyebrow">${escapeHtml(item.sourceFormat)} · ${escapeHtml(item.status || 'Review Required')}</span><h4>${escapeHtml(item.title)}</h4>${preview}<button type="button" class="link" data-command="open-path" data-value="${escapeHtml(item.relativePath)}">${file ? 'Preview diagrams at full size' : 'Open canonical diagram source'}</button></article>`;
@@ -225,15 +280,17 @@ function renderDefinitionPageBody(webview, root, model, page, vscode) {
     return `<p>These shared references start before feature delivery and are extended by each applicable feature.</p><div class="dictionary-grid">${(model.dictionaries || []).map(item => `<article class="card"><div class="section-heading"><h3>${escapeHtml(item.title)}</h3><span class="badge ${item.applicable ? 'good' : 'warn'}">${item.applicable ? `${item.entryCount} entries` : 'Not applicable'}</span></div>${item.applicable ? `<button type="button" class="link" data-command="open-path" data-value="${escapeHtml(item.relativePath)}">${escapeHtml(item.kind === 'erd' ? 'Preview entity diagrams' : item.relativePath)}</button>` : '<span class="muted">Not selected by repository classification</span>'}</article>`).join('')}</div>`;
   }
   if (page.id === 'experience') {
+    const state = experienceState(model, root);
     const preview = model.preview;
-    let image = '<article class="card empty">Complete the UI-direction questionnaire and prepare this page to generate the one-page preview.</article>';
-    if (preview?.svgRelativePath) {
-      const file = resolveWithin(root, preview.svgRelativePath);
-      if (file) image = `<figure class="ui-preview"><img src="${escapeHtml(webview.asWebviewUri(vscode.Uri.file(file)).toString())}" alt="One-page high-level product UI preview"><figcaption>${escapeHtml(preview.fontFamily)} · ${escapeHtml(preview.density)} · ${escapeHtml(preview.radius)} radius</figcaption></figure>`;
+    let recorded = '';
+    if (state.canonicalFile) {
+      const image = `<figure class="ui-preview"><img src="${escapeHtml(webview.asWebviewUri(vscode.Uri.file(state.canonicalFile)).toString())}" alt="One-page high-level product UI preview"><figcaption>${state.canonicalStale ? 'Previous preview — refresh required · ' : ''}${escapeHtml(preview.fontFamily)} · ${escapeHtml(preview.density)} · ${escapeHtml(preview.radius)} radius</figcaption></figure>`;
+      recorded = state.sheets ? `<details><summary>Recorded UI direction preview${state.canonicalStale ? ' — stale' : ''}</summary>${image}</details>` : image;
     }
-    return `${renderWizardQuestions(model.uiQuestions?.questions, 'experience')}<section><h3>One-page visual system preview</h3>${image}</section>`;
+    const questions = state.questions.length ? `<section id="ui-direction-questions" tabindex="-1"><h3>UI direction questions</h3>${renderWizardQuestions(uiBaselineQuestions(model), 'experience')}</section>` : '';
+    return `<section><h3>One-page visual system preview</h3>${renderUiBaseline(model.uiBaseline, { ...model, experienceGuidance: true })}${recorded}</section>${questions}`;
   }
-  if (page.id === 'delivery') return `<section class="card"><h3>High-level delivery map</h3><p>Review the outcome backlog, repository routing, frontend classifications, dependencies, MVP boundary and shared testing, security, infrastructure and operational obligations.</p>${page.primaryPath ? `<button type="button" class="link" data-command="open-path" data-value="${escapeHtml(page.primaryPath)}">Open high-level backlog</button>` : ''}</section>`;
+  if (page.id === 'delivery') return renderDeliveryPage(page, model);
   if (page.id === 'review') {
     const complete = (model.pages || []).filter(item => item.id !== 'review' && item.complete && item.current).length;
     const activationMessage = model.readyToActivate && model.active === false
@@ -259,10 +316,21 @@ function renderWizardQuestions(questions, page) {
 function definitionWizardScript(scriptNonce, initialBusy) {
   return `<script nonce="${scriptNonce}">
 const vscode=acquireVsCodeApi();let busy=false;
-const setBusy=value=>{if(busy===value)return;busy=value;document.body.setAttribute('aria-busy',String(value));document.getElementById('wizard-progress').hidden=!value;document.querySelectorAll('button,textarea').forEach(control=>{if(value){control.dataset.cisDisabled=control.disabled?'1':'0';control.disabled=true;}else if(control.dataset.cisDisabled!==undefined){control.disabled=control.dataset.cisDisabled==='1';delete control.dataset.cisDisabled;}});};
+const sourceForm=${sourceReviewScript()};
+const technicalDecisions=${technicalDecisionFormScript()};
+const controlSheets=(${mountUiControlSheets.toString()})(document,typeof Image==='undefined'?undefined:Image,message=>vscode.postMessage(message));
+const setBusy=value=>{if(busy===value)return;busy=value;document.body.setAttribute('aria-busy',String(value));document.getElementById('wizard-progress').hidden=!value;document.querySelectorAll('button,textarea,input').forEach(control=>{if(value){control.dataset.cisDisabled=control.disabled?'1':'0';control.disabled=true;}else if(control.dataset.cisDisabled!==undefined){control.disabled=control.dataset.cisDisabled==='1';delete control.dataset.cisDisabled;}});};
 window.addEventListener('message',event=>{if(event.data?.command==='wizard-busy')setBusy(event.data.busy===true);});
 setBusy(${initialBusy});
-document.addEventListener('click',event=>{const button=event.target.closest('button');if(busy||!button||button.disabled)return;let message;if(button.dataset.saveQuestion){const area=document.getElementById('wizard-'+button.dataset.saveQuestion);message={command:'save-answer',value:JSON.stringify({page:button.dataset.page,id:button.dataset.saveQuestion,answer:area?.value||''})};}else if(button.dataset.command){message={command:button.dataset.command,value:button.dataset.value||''};}if(message){setBusy(true);vscode.postMessage(message);}});
+vscode.postMessage({command:'wizard-ready'});
+document.addEventListener('click',async event=>{
+const button=event.target.closest('button,a[data-command]');if(button?.tagName==='A')event.preventDefault();if(busy||!button||button.disabled)return;
+const decisionMessage=technicalDecisions.message(button);if(decisionMessage===null)return;if(decisionMessage){setBusy(true);vscode.postMessage(decisionMessage);return;}
+if(button.dataset.command==='focus-ui-questions'){const section=document.getElementById('ui-direction-questions');section?.scrollIntoView({block:'start'});section?.focus();return;}
+if(button.dataset.saveControlSheet!==undefined){setBusy(true);try{if(!await controlSheets.save(button.dataset.saveControlSheet))setBusy(false);}catch{setBusy(false);}return;}
+if(button.dataset.command==='business-action'&&button.dataset.value==='source-decisions'){const sources=document.getElementById('business-source-decisions');if(sources){sources.open=true;sources.scrollIntoView({block:'start'});sources.querySelector('summary')?.focus();}return;}
+if(button.dataset.command==='technical-action'&&['questions','decisions'].includes(button.dataset.value)){const section=document.getElementById(button.dataset.value==='questions'?'technical-questionnaire':'technical-decisions');if(section){section.open=true;section.scrollIntoView({block:'start'});(button.dataset.value==='questions'?section.querySelector('summary'):section)?.focus();}return;}
+let message=sourceForm.message(button);if(message===null)return;if(button.dataset.saveQuestion){const area=document.getElementById('wizard-'+button.dataset.saveQuestion);message={command:'save-answer',value:JSON.stringify({page:button.dataset.page,id:button.dataset.saveQuestion,answer:area?.value||''})};}else if(button.dataset.command){message={command:button.dataset.command,value:button.dataset.value||''};}if(message){setBusy(true);vscode.postMessage(message);}});
 </script>`;
 }
 
@@ -353,7 +421,7 @@ function renderTechnicalIntentQuestionsHtml(webview, status, scriptNonce) {
         <div class="actions"><button type="button" data-command="save-answer" data-value="${escapeHtml(question.id || '')}">${resolved ? 'Update direction' : 'Save direction'}</button></div></section></article>`;
   }).join('');
   const completed = questions.length && !unanswered.length
-    ? '<section class="completion"><strong>High-level technical direction is complete.</strong><p>CIS can now generate the technical intent, component map, interaction map, architecture guidelines, and decision baseline from these exact choices.</p></section>' : '';
+    ? '<section class="completion"><strong>The technical questionnaire is complete.</strong><p>CIS can generate technical intent from these choices. Review the technical-intent document and its open decisions in the high-level setup wizard before continuing.</p></section>' : '';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource}; style-src 'nonce-${scriptNonce}'; script-src 'nonce-${scriptNonce}';">
   <title>High-level technical direction</title><style nonce="${scriptNonce}">
@@ -719,9 +787,9 @@ function formatDuration(milliseconds) {
   return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
-function createActionPanel(vscode, kind, title, allowed, onAction, onPath) {
+function createActionPanel(vscode, kind, title, allowed, onAction, onPath, options = {}) {
   const panel = vscode.window.createWebviewPanel(kind, title, vscode.ViewColumn.Active, {
-    enableScripts: allowed.size > 0, retainContextWhenHidden: false, localResourceRoots: [],
+    enableScripts: allowed.size > 0, retainContextWhenHidden: options.retainContextWhenHidden === true, localResourceRoots: [],
   });
   if (allowed.size) panel.webview.onDidReceiveMessage(async message => {
     if (!isValidWebviewMessage(message, allowed)) return;
@@ -733,8 +801,8 @@ function createActionPanel(vscode, kind, title, allowed, onAction, onPath) {
 
 function studioDocument(webview, title, body, scriptNonce, customScript = '') {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource}; style-src 'nonce-${scriptNonce}'; script-src 'nonce-${scriptNonce}';"><title>${escapeHtml(title)}</title>
-  <style nonce="${scriptNonce}">:root{color-scheme:light dark}*{box-sizing:border-box}body{color:var(--vscode-foreground);background:var(--vscode-editor-background);font:var(--vscode-font-weight) var(--vscode-font-size)/1.5 var(--vscode-font-family);margin:0;padding:2rem;max-width:80rem}main{display:grid;gap:1rem}.hero,.section-heading{display:flex;justify-content:space-between;align-items:start;gap:1rem}.hero{border-bottom:1px solid var(--vscode-panel-border);padding-bottom:1rem}.hero h1,.card h2,.notice strong{margin:.15rem 0}.hero p{max-width:78ch}.eyebrow{display:block;color:var(--vscode-descriptionForeground);font-size:.78rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase}.badge{display:inline-block;border:1px solid var(--vscode-panel-border);border-radius:999px;padding:.15rem .62rem;font-size:.82rem;white-space:nowrap}.badge.good{color:var(--vscode-testing-iconPassed);border-color:var(--vscode-testing-iconPassed)}.badge.bad{color:var(--vscode-testing-iconFailed);border-color:var(--vscode-testing-iconFailed)}.badge.warn{color:var(--vscode-editorWarning-foreground)}.notice{display:flex;flex-direction:column;gap:.2rem;border-left:3px solid var(--vscode-focusBorder);background:var(--vscode-textBlockQuote-background);padding:.8rem 1rem}.notice.warning{border-left-color:var(--vscode-editorWarning-foreground)}.cards{display:grid;gap:1rem}.cards.two{grid-template-columns:repeat(2,minmax(0,1fr))}.card{border:1px solid var(--vscode-panel-border);border-radius:.35rem;background:var(--vscode-editorWidget-background);padding:1rem;overflow-wrap:anywhere}.card.request{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1.25rem}.card.request>div{border-top:1px solid var(--vscode-panel-border);padding-top:.65rem}.rows,.links,.criteria,.timeline-list{list-style:none;margin:.7rem 0 0;padding:0}.row{display:flex;align-items:center;justify-content:space-between;gap:1rem;border-top:1px solid var(--vscode-panel-border);padding:.7rem 0}.row-main{display:flex;flex-direction:column;align-items:start;gap:.15rem;flex:1;color:var(--vscode-foreground);background:transparent;border:0;padding:0;text-align:left}.row-main:hover strong{color:var(--vscode-textLink-activeForeground)}.muted,.timeline span{color:var(--vscode-descriptionForeground)}.empty{color:var(--vscode-descriptionForeground);padding:.5rem 0}.links{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.55rem}.criteria{list-style:disc;padding-left:1.2rem}.timeline{border-left:2px solid var(--vscode-panel-border);padding:0 0 .75rem .8rem}.timeline span,.timeline strong{display:block}.timeline p{margin:.2rem 0}.card pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:30rem;overflow:auto;color:var(--vscode-textPreformat-foreground);background:var(--vscode-textCodeBlock-background);padding:.75rem}.actions{display:flex;flex-wrap:wrap;gap:.6rem;margin-top:.2rem}button{font:inherit;cursor:pointer}button:not(.row-main):not(.link){color:var(--vscode-button-foreground);background:var(--vscode-button-background);border:1px solid transparent;border-radius:2px;padding:.48rem .85rem}button.secondary{color:var(--vscode-button-secondaryForeground)!important;background:var(--vscode-button-secondaryBackground)!important}.link{color:var(--vscode-textLink-foreground);background:transparent;border:0;padding:0;text-align:left}.link:hover{color:var(--vscode-textLink-activeForeground);text-decoration:underline}button:focus-visible{outline:2px solid var(--vscode-focusBorder);outline-offset:2px}button:disabled{cursor:default;opacity:.55}.wizard-layout{display:grid;grid-template-columns:minmax(13rem,18rem) minmax(0,1fr);gap:1.25rem}.wizard-steps{display:flex;flex-direction:column;gap:.3rem}.wizard-steps .step{display:grid;grid-template-columns:1.7rem 1fr .65rem;align-items:center;gap:.6rem;color:var(--vscode-foreground);background:transparent;border-color:transparent;text-align:left}.wizard-steps .step.current{background:var(--vscode-list-activeSelectionBackground);color:var(--vscode-list-activeSelectionForeground)}.wizard-steps .step span:first-child{display:grid;place-items:center;border:1px solid currentColor;border-radius:50%;width:1.55rem;height:1.55rem}.wizard-steps small,.wizard-steps strong{display:block}.wizard-steps i{width:.55rem;height:.55rem;border:1px solid var(--vscode-panel-border);border-radius:50%}.wizard-steps i.complete{background:var(--vscode-testing-iconPassed);border-color:var(--vscode-testing-iconPassed)}.wizard-page{display:grid;align-content:start;gap:1rem;min-width:0}.wizard-footer{position:sticky;bottom:0;display:flex;justify-content:space-between;gap:1rem;background:var(--vscode-editor-background);border-top:1px solid var(--vscode-panel-border);padding:1rem 0}.footer-primary{display:flex;justify-content:flex-end;gap:.6rem;flex-wrap:wrap}.dictionary-grid,.wizard-questions,.review-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem}.question-card{border:1px solid var(--vscode-panel-border);border-radius:.35rem;padding:1rem}.question-heading{display:flex;justify-content:space-between;gap:.75rem}.question-card label{display:block;margin:.7rem 0 .25rem;font-weight:600}.question-card textarea{width:100%;resize:vertical;color:var(--vscode-input-foreground);background:var(--vscode-input-background);border:1px solid var(--vscode-input-border);padding:.6rem;font:inherit}.ui-preview{margin:0;border:1px solid var(--vscode-panel-border);padding:.6rem}.ui-preview img{display:block;width:100%;height:auto}.ui-preview figcaption{color:var(--vscode-descriptionForeground);padding-top:.5rem}.review-page{display:flex;justify-content:space-between;align-items:center;color:var(--vscode-foreground);text-align:left}.review-page strong{color:var(--vscode-textLink-foreground)}details{padding:.4rem 0}summary{cursor:pointer}@media(max-width:48rem){body{padding:1rem}.hero,.section-heading,.question-heading{display:block}.hero>.badge,.section-heading>.badge,.question-heading>.badge{margin-top:.6rem}.cards.two,.card.request,.dictionary-grid,.wizard-questions,.review-summary{grid-template-columns:1fr}.links{grid-template-columns:1fr}.actions button{width:100%}.wizard-layout{grid-template-columns:1fr}.wizard-steps{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.wizard-footer{position:static;display:block}.wizard-footer>button,.footer-primary button{width:100%;margin-top:.5rem}}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}</style></head>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src 'nonce-${scriptNonce}'; script-src 'nonce-${scriptNonce}';"><title>${escapeHtml(title)}</title>
+  <style nonce="${scriptNonce}">:root{color-scheme:light dark}*{box-sizing:border-box}body{color:var(--vscode-foreground);background:var(--vscode-editor-background);font:var(--vscode-font-weight) var(--vscode-font-size)/1.5 var(--vscode-font-family);margin:0;padding:2rem;max-width:80rem}main{display:grid;gap:1rem}.hero,.section-heading{display:flex;justify-content:space-between;align-items:start;gap:1rem}.hero{border-bottom:1px solid var(--vscode-panel-border);padding-bottom:1rem}.hero h1,.card h2,.notice strong{margin:.15rem 0}.hero p{max-width:78ch}.eyebrow{display:block;color:var(--vscode-descriptionForeground);font-size:.78rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase}.badge{display:inline-block;border:1px solid var(--vscode-panel-border);border-radius:999px;padding:.15rem .62rem;font-size:.82rem;white-space:nowrap}.badge.good{color:var(--vscode-testing-iconPassed);border-color:var(--vscode-testing-iconPassed)}.badge.bad{color:var(--vscode-testing-iconFailed);border-color:var(--vscode-testing-iconFailed)}.badge.warn{color:var(--vscode-editorWarning-foreground)}.notice{display:flex;flex-direction:column;gap:.2rem;border-left:3px solid var(--vscode-focusBorder);background:var(--vscode-textBlockQuote-background);padding:.8rem 1rem}.notice.warning{border-left-color:var(--vscode-editorWarning-foreground)}.cards{display:grid;gap:1rem}.cards.two{grid-template-columns:repeat(2,minmax(0,1fr))}.card{border:1px solid var(--vscode-panel-border);border-radius:.35rem;background:var(--vscode-editorWidget-background);padding:1rem;overflow-wrap:anywhere}.card.request{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1.25rem}.card.request>div{border-top:1px solid var(--vscode-panel-border);padding-top:.65rem}.rows,.links,.criteria,.timeline-list{list-style:none;margin:.7rem 0 0;padding:0}.row{display:flex;align-items:center;justify-content:space-between;gap:1rem;border-top:1px solid var(--vscode-panel-border);padding:.7rem 0}.row-main{display:flex;flex-direction:column;align-items:start;gap:.15rem;flex:1;color:var(--vscode-foreground);background:transparent;border:0;padding:0;text-align:left}.row-main:hover strong{color:var(--vscode-textLink-activeForeground)}.muted,.timeline span{color:var(--vscode-descriptionForeground)}.empty{color:var(--vscode-descriptionForeground);padding:.5rem 0}.links{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.55rem}.criteria{list-style:disc;padding-left:1.2rem}.timeline{border-left:2px solid var(--vscode-panel-border);padding:0 0 .75rem .8rem}.timeline span,.timeline strong{display:block}.timeline p{margin:.2rem 0}.card pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:30rem;overflow:auto;color:var(--vscode-textPreformat-foreground);background:var(--vscode-textCodeBlock-background);padding:.75rem}.actions{display:flex;flex-wrap:wrap;gap:.6rem;margin-top:.2rem}button{font:inherit;cursor:pointer}button:not(.row-main):not(.link){color:var(--vscode-button-foreground);background:var(--vscode-button-background);border:1px solid transparent;border-radius:2px;padding:.48rem .85rem}button.secondary{color:var(--vscode-button-secondaryForeground)!important;background:var(--vscode-button-secondaryBackground)!important}.link{color:var(--vscode-textLink-foreground);background:transparent;border:0;padding:0;text-align:left}.link:hover{color:var(--vscode-textLink-activeForeground);text-decoration:underline}button:focus-visible{outline:2px solid var(--vscode-focusBorder);outline-offset:2px}button:disabled{cursor:default;opacity:.55}.source-summary{margin:16px 0;padding:14px 16px;background:var(--vscode-editor-background);border-left:2px solid var(--vscode-panel-border)}.source-summary p{margin:8px 0 0;line-height:1.6}.source-document-link{color:var(--vscode-textLink-foreground);text-decoration:underline;text-underline-offset:3px}.source-review [hidden]{display:none!important}.source-review-toolbar{position:sticky;top:0;z-index:3;background:var(--vscode-editor-background);display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 0}.source-review fieldset{border:0;padding:0;margin:22px 0 16px}.source-review legend{font-weight:600;margin-bottom:12px}.source-choices{display:flex;flex-wrap:wrap;gap:10px}.source-choice{flex:1 1 180px;display:flex;align-items:flex-start;gap:10px;border:1px solid var(--vscode-panel-border);padding:12px;border-radius:5px;cursor:pointer}.source-choice:has(input:checked){border-color:var(--vscode-focusBorder);background:var(--vscode-list-hoverBackground)}.source-choice input{width:auto;margin:4px 0}.source-choice small{display:block;color:var(--vscode-descriptionForeground);margin-top:4px}.source-review textarea{box-sizing:border-box;width:100%;font:inherit;line-height:1.5;padding:9px}.wizard-action{display:flex;flex-direction:column;align-items:flex-start;flex:1 1 16rem;gap:.55rem;padding:.5rem 0;min-width:0}.wizard-action p{margin:0;max-width:34rem}.readiness{border-left:4px solid var(--vscode-focusBorder)}.readiness h4{margin-bottom:.3rem}.wizard-layout{display:grid;grid-template-columns:minmax(13rem,18rem) minmax(0,1fr);gap:1.25rem}.wizard-steps{display:flex;flex-direction:column;gap:.3rem}.wizard-steps button.step{display:grid;grid-template-columns:1.7rem 1fr .65rem;align-items:center;gap:.6rem;color:var(--vscode-foreground);background:transparent;border-color:transparent;text-align:left}.wizard-steps .step.current{background:var(--vscode-list-activeSelectionBackground);color:var(--vscode-list-activeSelectionForeground)}.wizard-steps .step span:first-child{display:grid;place-items:center;border:1px solid currentColor;border-radius:50%;width:1.55rem;height:1.55rem}.wizard-steps small,.wizard-steps strong{display:block}.wizard-steps i{width:.55rem;height:.55rem;border:1px solid var(--vscode-panel-border);border-radius:50%}.wizard-steps i.complete{background:var(--vscode-testing-iconPassed);border-color:var(--vscode-testing-iconPassed)}.wizard-page{display:grid;align-content:start;gap:1rem;min-width:0}.wizard-footer{position:sticky;bottom:0;display:flex;justify-content:space-between;gap:1rem;background:var(--vscode-editor-background);border-top:1px solid var(--vscode-panel-border);padding:1rem 0}.footer-primary{display:flex;justify-content:flex-end;gap:.6rem;flex-wrap:wrap}.dictionary-grid,.wizard-questions,.review-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem}.question-card{border:1px solid var(--vscode-panel-border);border-radius:.35rem;padding:1rem}.question-heading{display:flex;justify-content:space-between;gap:.75rem}.question-card label{display:block;margin:.7rem 0 .25rem;font-weight:600}.question-card textarea{width:100%;resize:vertical;color:var(--vscode-input-foreground);background:var(--vscode-input-background);border:1px solid var(--vscode-input-border);padding:.6rem;font:inherit}.ui-preview{margin:0;border:1px solid var(--vscode-panel-border);padding:.6rem}.ui-preview img{display:block;width:100%;height:auto}.ui-preview figcaption{color:var(--vscode-descriptionForeground);padding-top:.5rem}.review-page{display:flex;justify-content:space-between;align-items:center;color:var(--vscode-foreground);text-align:left}.review-page strong{color:var(--vscode-textLink-foreground)}details{padding:.4rem 0}summary{cursor:pointer}@media(max-width:48rem){body{padding:1rem}.hero,.section-heading,.question-heading{display:block}.hero>.badge,.section-heading>.badge,.question-heading>.badge{margin-top:.6rem}.cards.two,.card.request,.dictionary-grid,.wizard-questions,.review-summary{grid-template-columns:1fr}.links{grid-template-columns:1fr}.actions button{width:100%}.wizard-layout{grid-template-columns:1fr}.wizard-steps{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.wizard-footer{position:static;display:block}.wizard-footer>button,.footer-primary button{width:100%;margin-top:.5rem}}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}.technical-decision-form label{display:block;font-weight:600;margin-top:1rem}.technical-decision-form textarea{box-sizing:border-box;width:100%;font:inherit;line-height:1.5;padding:.6rem;color:var(--vscode-input-foreground);background:var(--vscode-input-background);border:1px solid var(--vscode-input-border);resize:vertical}.technical-decision-form>details section{border-left:2px solid var(--vscode-panel-border);padding-left:.8rem}.technical-decision-form>details h5{font-size:1rem;margin-bottom:.3rem}.technical-decision-form [hidden]{display:none!important}</style></head>
   <body><main>${body}</main>${customScript || `<script nonce="${scriptNonce}">const vscode=acquireVsCodeApi();document.querySelectorAll('button[data-command]').forEach(button=>button.addEventListener('click',()=>vscode.postMessage({command:button.dataset.command,value:button.dataset.value||''})));</script>`}</body></html>`;
 }
 

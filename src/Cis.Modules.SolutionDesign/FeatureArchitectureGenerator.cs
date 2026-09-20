@@ -8,9 +8,10 @@ using Cis.Abstractions;
 namespace Cis.Modules.SolutionDesign;
 
 /// <summary>Feature-specific proposals rendered through the existing validated C4 renderer.</summary>
-public sealed partial class FeatureArchitectureGenerator(ICisTextGenerationService generation) : ICisFeatureArchitectureGenerator
+public sealed partial class FeatureArchitectureGenerator(ICisTextGenerationService? generation = null) : ICisFeatureArchitectureGenerator
 {
     private const string Version = "feature-architecture-3";
+    private const string LocalModelRequired = "Start a local CIS model to generate feature architecture diagrams. Previous diagrams are preserved.";
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private sealed record Cache(string Version, CisFeatureArchitectureResult Result);
     private sealed record Element(string Label, string Description, string Kind, string Evidence);
@@ -37,8 +38,9 @@ public sealed partial class FeatureArchitectureGenerator(ICisTextGenerationServi
             using var held = new FileStream(SafePath(input.WorkspacePath, ".cis/local/feature-architecture/" + input.Slug + "/generate.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             cached = Read(manifest);
             if (cached?.InputHash == hash) return cached with { Cached = true };
-            var provider = generation.GetStatus().Providers.FirstOrDefault(item => item.IsAvailable && item.IsLocal && item.Models.Count > 0)
-                ?? throw new InvalidDataException("Start a local CIS model to generate feature architecture diagrams. Previous diagrams are preserved.");
+            var textGeneration = generation ?? throw new InvalidDataException(LocalModelRequired);
+            var provider = textGeneration.GetStatus().Providers.FirstOrDefault(item => item.IsAvailable && item.IsLocal && item.Models.Count > 0)
+                ?? throw new InvalidDataException(LocalModelRequired);
             var model = provider.Models.OrderBy(item => item.SizeBytes ?? long.MaxValue).First().Name;
             var context = input.Source + input.Direction + input.ProductArchitecture + input.TechnicalIntent + input.ComponentSheet;
             if (Regex.IsMatch(context, @"-----BEGIN .*PRIVATE KEY-----|(?i)(?:api[_-]?key|password|client[_-]?secret)\s*[:=]\s*[""']?[^\s""']{12,}", RegexOptions.None, TimeSpan.FromSeconds(1)))
@@ -48,7 +50,7 @@ public sealed partial class FeatureArchitectureGenerator(ICisTextGenerationServi
             if (baseline?.SchemaVersion != 2) baseline = null;
             var known = baseline?.Views.Single(view => view.Level == "container").Nodes.ToArray() ?? [];
             if (baseline is null) throw new InvalidDataException("Prepare the product C4 architecture in the product wizard before generating feature diagrams.");
-            var proposal = GenerateProposal(input, known, provider.Name, model);
+            var proposal = GenerateProposal(input, known, provider.Name, model, textGeneration);
             File.WriteAllText(SafePath(input.WorkspacePath, ".cis/local/feature-architecture/" + input.Slug + "/last-proposal.json"), JsonSerializer.Serialize(proposal, Json), new UTF8Encoding(false));
             var diagrams = Build(input, baseline, known, proposal);
             if (!stillCurrent()) throw new InvalidDataException("The feature or product architecture changed during generation. Refresh; the previous diagrams are preserved.");
@@ -167,7 +169,8 @@ public sealed partial class FeatureArchitectureGenerator(ICisTextGenerationServi
     private sealed record Selection(string HostContainerId, IReadOnlyList<int> Sections);
     private sealed record ComponentProposal(string Label, string Description, IReadOnlyList<ComponentInteraction> Interactions);
     private sealed record ComponentInteraction(string PeerId, string Direction, string Label);
-    private Proposal GenerateProposal(CisFeatureArchitectureInput input, ArchitectureNode[] known, string provider, string model)
+    private static Proposal GenerateProposal(CisFeatureArchitectureInput input, ArchitectureNode[] known, string provider, string model,
+        ICisTextGenerationService textGeneration)
     {
         var passages = Passages(input);
         if (passages.Count < 2) throw new InvalidDataException("The feature BRD needs at least two substantive sections before generating component diagrams.");
@@ -176,7 +179,7 @@ public sealed partial class FeatureArchitectureGenerator(ICisTextGenerationServi
         {
             var remaining = (int)Math.Floor(150 - elapsed.Elapsed.TotalSeconds);
             if (remaining <= 0) throw new InvalidDataException("Architecture generation reached its time limit. Previous diagrams are preserved.");
-            var result = generation.Generate(new(prompt, provider, model, AllowRemote: false, TimeoutSeconds: Math.Min(45, remaining),
+            var result = textGeneration.Generate(new(prompt, provider, model, AllowRemote: false, TimeoutSeconds: Math.Min(45, remaining),
                 MaxOutputTokens: tokens, JsonMode: true) { JsonSchema = schema });
             if (!result.IsSuccess || !result.IsLocal || string.IsNullOrWhiteSpace(result.Text) || result.Text.Length > 30_000)
                 throw new InvalidDataException(result.Detail ?? "The local model did not return a bounded feature architecture proposal.");

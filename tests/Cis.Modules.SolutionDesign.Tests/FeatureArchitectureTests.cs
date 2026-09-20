@@ -9,6 +9,31 @@ namespace Cis.Modules.SolutionDesign.Tests;
 public sealed class FeatureArchitectureTests
 {
     [Fact]
+    public void WithoutAiModule_StatusAndCachedDiagramsRemainAvailable()
+    {
+        using var f = new Fixture();
+        var services = new ServiceCollection();
+        new SolutionDesignModule().RegisterServices(services);
+        using var provider = services.BuildServiceProvider();
+        var generator = provider.GetRequiredService<ICisFeatureArchitectureGenerator>();
+        Assert.Equal("missing", generator.Run(f.Input, false, () => true).Status);
+        var unavailable = generator.Run(f.Input, true, () => true);
+        Assert.Equal("failed", unavailable.Status);
+        Assert.Contains("Start a local CIS model", Assert.Single(unavailable.Errors), StringComparison.Ordinal);
+
+        Assert.Empty(f.Run(true).Errors);
+        var cached = generator.Run(f.Input, true, () => true);
+        Assert.True(cached.Cached);
+        Assert.Equal(3, cached.Diagrams.Count);
+        var manifest = Path.Combine(f.Root, ".cis/local/feature-architecture/referrals/preview.json");
+        var previous = File.ReadAllText(manifest);
+        f.Input = f.Input with { InputHash = "changed" };
+        Assert.Equal("stale", generator.Run(f.Input, false, () => true).Status);
+        Assert.Equal("failed", generator.Run(f.Input, true, () => true).Status);
+        Assert.Equal(previous, File.ReadAllText(manifest));
+    }
+
+    [Fact]
     public void RegistersGeneratorAndRendersFeatureC4WithExistingIdentities()
     {
         using var f = new Fixture();

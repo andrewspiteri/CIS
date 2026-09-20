@@ -47,10 +47,12 @@ public sealed record ArchitectureDiagramModel(IReadOnlyList<ArchitectureView> Vi
         catch (JsonException exception) { throw new InvalidDataException("Malformed architecture diagram JSON: " + exception.Message, exception); }
     }
 
-    public IReadOnlyList<ArchitectureImage> Render()
+    public IReadOnlyList<ArchitectureImage> Render() => Render(false);
+
+    public IReadOnlyList<ArchitectureImage> Render(bool unresolvedDirections)
         => Views.Select(view =>
         {
-            var svg = SchemaVersion == 2 ? C4Architecture.RenderSvg(this, view) : RenderSvg(view);
+            var svg = SchemaVersion == 2 ? C4Architecture.RenderSvg(this, view, unresolvedDirections) : RenderSvg(view);
             var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(svg))).ToLowerInvariant();
             return new ArchitectureImage(view.Id, view.Title, $"architecture-diagrams/{view.Id}-{hash}.svg", svg, view.Notes);
         }).ToArray();

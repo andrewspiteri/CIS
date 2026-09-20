@@ -7,7 +7,7 @@ namespace Cis.Modules.SolutionDesign;
 /// <summary>C4 scope and identity rules shared by inference, validation and rendering.</summary>
 internal static class C4Architecture
 {
-    public static void Validate(ArchitectureDiagramModel model)
+    public static void Validate(ArchitectureDiagramModel model, bool allowIncompleteFeature = false)
     {
         static bool Id(string? value) => value is not null && Regex.IsMatch(value, "^[A-Za-z][A-Za-z0-9_-]{0,39}$", RegexOptions.CultureInvariant);
         static bool Text(string? value, int max) => !string.IsNullOrWhiteSpace(value) && value.Length <= max
@@ -23,7 +23,8 @@ internal static class C4Architecture
         Require(views.Where(v => v.Level == "component").Select(v => v.ScopeId).Distinct().Count() == views.Count(v => v.Level == "component"), "use one component view per selected container.");
         foreach (var v in views)
         {
-            Require(v.Nodes is { Count: >= 2 and <= 16 } && v.Edges is { Count: >= 1 and <= 24 }, "each view needs 2–16 nodes and 1–24 directed relationships.");
+            Require(v.Nodes is { Count: >= 1 and <= 16 } && v.Nodes.Count >= (allowIncompleteFeature ? 1 : 2)
+                && v.Edges is { Count: <= 24 } && v.Edges.Count >= (allowIncompleteFeature ? 0 : 1), "each view needs bounded nodes and directed relationships; only feature drafts may leave relationships unresolved.");
             Require(v.Nodes!.All(n => n is not null && Id(n.Id) && Text(n.Label, 70) && Text(n.Description, 160)
                 && n.Layer is >= 0 and <= 3 && Status(n.Status) && n.Kind is "person" or "software-system" or "container" or "component"
                 && (n.ParentId is null || Id(n.ParentId))
@@ -32,7 +33,7 @@ internal static class C4Architecture
             Require(ids.Count == v.Nodes.Count, "node IDs must be unique within a view.");
             Require(v.Edges!.All(e => e is not null && ids.Contains(e.From) && ids.Contains(e.To) && e.From != e.To
                 && Text(e.Label, 100) && Status(e.Status) && (v.Level == "context" ? e.Technology is null : Text(e.Technology, 70))), "relationships need existing endpoints, direction, action, status and technology below context level.");
-            Require(ids.All(id => v.Edges.Any(e => e.From == id || e.To == id)), "every displayed node must participate in a relationship.");
+            Require(allowIncompleteFeature || ids.All(id => v.Edges.Any(e => e.From == id || e.To == id)), "every displayed node must participate in a relationship.");
         }
         var all = views.SelectMany(v => v.Nodes).GroupBy(n => n.Id, StringComparer.Ordinal).ToArray();
         Require(all.All(g => g.Select(n => n with { Layer = 0 }).Distinct().Count() == 1), "reuse the same identity, type and description across views; only layout may change.");
@@ -53,7 +54,7 @@ internal static class C4Architecture
             Require(v.Nodes.All(n => n.ParentId == v.ScopeId ? n.Layer is 1 or 2 : n.Layer is 0 or 3), "place elements inside the scope in layers 1/2 and supporting context in layers 0/3 so boundaries remain unambiguous.");
     }
 
-    public static string RenderSvg(ArchitectureDiagramModel model, ArchitectureView view)
+    public static string RenderSvg(ArchitectureDiagramModel model, ArchitectureView view, bool unresolvedDirections = false)
     {
         const int width = 1510, cardWidth = 270;
         var cardHeight = view.Nodes.Max(n => 66 + Wrap(n.Label, 27).Count() * 22 + Wrap(n.Description!, 35).Count() * 17
@@ -73,13 +74,15 @@ internal static class C4Architecture
         var graphEnd = 154 + rows * rowHeight;
         var ledgerTop = graphEnd + longEdges.Count(e => e) * 24 + 64;
         var notes = Wrap(view.Notes, 165).ToArray();
-        var height = ledgerTop + ((view.Edges.Count + 1) / 2) * 108 + 68 + notes.Length * 21;
+        var height = ledgerTop + Math.Max(unresolvedDirections ? 1 : 0, (view.Edges.Count + 1) / 2) * 108 + 68 + notes.Length * 21;
         var svg = new StringBuilder($"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\" role=\"img\" aria-labelledby=\"title description\">\n<title id=\"title\">{E(view.Title)}</title><desc id=\"description\">{E(view.Notes)}</desc>\n<rect width=\"100%\" height=\"100%\" fill=\"#f8fafc\"/><g font-family=\"Segoe UI, Arial, sans-serif\">\n");
         Text(svg, 35, 40, view.Title, 26, "#0f172a", true);
         var scope = model.Views.SelectMany(v => v.Nodes).First(n => n.Id == view.ScopeId);
         var level = view.Level == "context" ? "C1 · System context" : view.Level == "container" ? "C2 · Containers" : "C3 · Components";
         Text(svg, 35, 71, $"{level}   |   Scope: {scope.Label}", 16, "#334155");
-        Text(svg, 35, 99, "Solid = observed · Dashed = proposed / unresolved · Numbered arrows are explained below", 14, "#475569");
+        Text(svg, 35, 99, unresolvedDirections
+            ? "Dashed connections = candidate contracts · Direction not established · Numbered connections are explained below"
+            : "Solid = observed · Dashed = proposed / unresolved · Numbered arrows are explained below", 14, "#475569");
         if (view.Level != "context")
         {
             svg.AppendLine($"<rect x=\"397\" y=\"122\" width=\"716\" height=\"{rows * rowHeight + 16}\" rx=\"8\" fill=\"#eff6ff\" stroke=\"#2563eb\" stroke-dasharray=\"9 5\"/>");
@@ -114,7 +117,8 @@ internal static class C4Architecture
                 labelX = (x1 + 3 * c1 + 3 * c2 + x2) / 8; labelY = (y1 + y2) / 2;
             }
             var tip = forward ? -7 : 7;
-            svg.AppendLine($"<path d=\"M{x2 + tip} {y2 - 5} L{x2} {y2} L{x2 + tip} {y2 + 5}\" fill=\"none\" stroke=\"{color}\" stroke-width=\"2\"/>");
+            if (!unresolvedDirections)
+                svg.AppendLine($"<path d=\"M{x2 + tip} {y2 - 5} L{x2} {y2} L{x2 + tip} {y2 + 5}\" fill=\"none\" stroke=\"{color}\" stroke-width=\"2\"/>");
             for (var attempt = 0; attempt < 16; attempt++)
             {
                 var adjustedY = labelY + (attempt == 0 ? 0 : (attempt % 2 == 0 ? -1 : 1) * ((attempt + 1) / 2) * 25);
@@ -140,15 +144,17 @@ internal static class C4Architecture
             if (n.Technology is not null)
                 foreach (var line in Wrap(n.Technology, 35)) { Text(svg, p.X + 16, y + 3, line, 12, "#dbeafe"); y += 16; }
         }
-        Text(svg, 35, ledgerTop - 21, "Directed relationships", 21, "#0f172a", true);
+        Text(svg, 35, ledgerTop - 21, unresolvedDirections ? "Candidate relationships" : "Directed relationships", 21, "#0f172a", true);
+        if (view.Edges.Count == 0)
+            Text(svg, 35, ledgerTop, "No external connection is established by the selected feature requirements.", 14, "#475569");
         for (var i = 0; i < view.Edges.Count; i++)
         {
             var e = view.Edges[i]; var x = 35 + i % 2 * 745; var y = ledgerTop + i / 2 * 108;
-            foreach (var line in Wrap($"{i + 1}. {nodes[e.From].Label} → {nodes[e.To].Label}", 77)) { Text(svg, x, y, line, 14, "#0f172a", true); y += 18; }
+            foreach (var line in Wrap($"{i + 1}. {nodes[e.From].Label} {(unresolvedDirections ? "—" : "→")} {nodes[e.To].Label}", 77)) { Text(svg, x, y, line, 14, "#0f172a", true); y += 18; }
             foreach (var line in Wrap(e.Label, 83)) { Text(svg, x, y, line, 14, "#334155"); y += 18; }
             foreach (var line in Wrap($"{e.Technology ?? "Business interaction"} · {e.Status}", 88)) { Text(svg, x, y, line, 13, "#475569"); y += 17; }
         }
-        var noteY = ledgerTop + ((view.Edges.Count + 1) / 2) * 108 + 12;
+        var noteY = ledgerTop + Math.Max(unresolvedDirections ? 1 : 0, (view.Edges.Count + 1) / 2) * 108 + 12;
         Text(svg, 35, noteY, "Evidence and limitations", 16, "#0f172a", true);
         foreach (var line in notes) { noteY += 21; Text(svg, 35, noteY, line, 14, "#475569"); }
         return svg.AppendLine("</g></svg>").ToString().Replace("\r\n", "\n", StringComparison.Ordinal);

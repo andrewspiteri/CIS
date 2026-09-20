@@ -1,11 +1,11 @@
 ---
 title: "Provenance, Confidence, and Relationship State"
 type: article
-status: Draft
+status: Active
 series: "Repository Knowledge and Context"
 series_order: 5
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on graph-evidence change
 summary: "Why engineering relationships need evidence, extraction method, confidence, and review state instead of a single truth flag."
 cis:

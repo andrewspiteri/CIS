@@ -1,11 +1,11 @@
 ---
 title: "Binding Change Analysis to an Exact Baseline"
 type: article
-status: Draft
+status: Active
 series: "Change Impact and Planning"
 series_order: 2
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on baseline or graph-identity change
 summary: "Why impact and verification must refer to the same exact Git or graph state."
 cis:

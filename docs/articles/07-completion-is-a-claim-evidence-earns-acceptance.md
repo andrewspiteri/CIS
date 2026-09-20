@@ -1,11 +1,11 @@
 ---
 title: "Completion Is a Claim; Evidence Earns Acceptance"
 type: article
-status: Draft
+status: Active
 series: "Governed Software Change"
 series_order: 7
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-08"
+last_reviewed: "2026-09-10"
 review_cadence: on verification or assurance change
 summary: "Why implementation success and executor reports must be checked against independently observed Git and validation evidence."
 cis:

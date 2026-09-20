@@ -1,11 +1,11 @@
 ---
 title: "Planning Across Frontend, Backend, Data, Security, and Operations"
 type: article
-status: Draft
+status: Active
 series: "Change Impact and Planning"
 series_order: 6
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on task-decomposition change
 summary: "How structured requirement evidence activates distinct workstreams and preserves ownership across a complete feature."
 cis:

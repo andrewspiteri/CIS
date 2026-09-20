@@ -1,11 +1,11 @@
 ---
 title: "Conformance Is Not the Same as Compliance"
 type: article
-status: Draft
+status: Active
 series: "Standards and Engineering Policy"
 series_order: 4
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on standards-conformance change
 summary: "A conformance matrix describes enforcement routes and gaps; it does not certify every implementation or regulatory obligation."
 cis:

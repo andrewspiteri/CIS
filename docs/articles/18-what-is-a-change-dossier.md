@@ -1,11 +1,11 @@
 ---
 title: "What Is a Change Dossier?"
 type: article
-status: Draft
+status: Active
 series: "Change Impact and Planning"
 series_order: 1
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on change-lifecycle change
 summary: "A durable repository record that connects one outcome to impact, decisions, work, evidence, and acceptance."
 cis:

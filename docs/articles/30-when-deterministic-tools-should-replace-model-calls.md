@@ -1,11 +1,11 @@
 ---
 title: "When Deterministic Tools Should Replace Model Calls"
 type: article
-status: Draft
+status: Active
 series: "Human and Agent Execution"
 series_order: 5
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on AI-routing or deterministic-tool change
 summary: "Use models for interpretation where needed, not for structural facts and successful workflows that deterministic tools can establish."
 cis:

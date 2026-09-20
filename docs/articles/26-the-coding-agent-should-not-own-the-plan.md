@@ -1,11 +1,11 @@
 ---
 title: "The Coding Agent Should Not Own the Plan"
 type: article
-status: Draft
+status: Active
 series: "Human and Agent Execution"
 series_order: 1
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on agent-execution change
 summary: "Why the executor should consume reviewed work rather than discover, approve, implement, and close its own scope."
 cis:

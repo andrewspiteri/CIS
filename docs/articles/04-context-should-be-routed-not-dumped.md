@@ -1,11 +1,11 @@
 ---
 title: "Context Should Be Routed, Not Dumped"
 type: article
-status: Draft
+status: Active
 series: "Governed Software Change"
 series_order: 4
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-08"
+last_reviewed: "2026-09-10"
 review_cadence: on product or context-model change
 summary: "How provenance, typed relationships, and bounded retrieval provide better engineering context than loading an entire repository."
 cis:

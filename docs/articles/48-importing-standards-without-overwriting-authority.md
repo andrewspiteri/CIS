@@ -1,11 +1,11 @@
 ---
 title: "Importing Standards Without Overwriting Local Authority"
 type: article
-status: Draft
+status: Active
 series: "Standards and Engineering Policy"
 series_order: 7
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on standards-import change
 summary: "Stage, validate, preview, reconcile, and confirm external standards while preserving divergent repository content."
 cis:

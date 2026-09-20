@@ -1,11 +1,11 @@
 ---
 title: "Why CIS Cannot Self-Approve Its Improvements"
 type: article
-status: Draft
+status: Active
 series: "Product Evolution and Learning"
 series_order: 4
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on learning-authority change
 summary: "A tool that measures its workflow may propose changes, but approving its own source, policy, or acceptance criteria would collapse governance."
 cis:

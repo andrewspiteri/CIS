@@ -1,11 +1,11 @@
 ---
 title: "Governing a Multi-Repository Product"
 type: article
-status: Draft
+status: Active
 series: "CIS in Practice"
 series_order: 3
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on workspace-governance change
 summary: "Establish one product authority while distinguishing owned repositories from producer and consumer dependencies."
 cis:

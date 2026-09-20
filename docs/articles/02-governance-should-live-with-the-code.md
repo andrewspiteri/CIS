@@ -1,11 +1,11 @@
 ---
 title: "Governance Should Live with the Code"
 type: article
-status: Draft
+status: Active
 series: "Governed Software Change"
 series_order: 2
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-08"
+last_reviewed: "2026-09-09"
 review_cadence: on product or governance change
 summary: "Why engineering authority should be versioned, reviewable, and repository-backed while indexes and model output remain disposable."
 cis:

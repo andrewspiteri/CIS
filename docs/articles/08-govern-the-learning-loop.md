@@ -1,11 +1,11 @@
 ---
 title: "Govern the Learning Loop"
 type: article
-status: Draft
+status: Active
 series: "Governed Software Change"
 series_order: 8
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-08"
+last_reviewed: "2026-09-10"
 review_cadence: on diagnostics, feedback, or learning change
 summary: "How delivery evidence can improve future engineering work without allowing a tool or model to rewrite canonical authority."
 cis:

@@ -1,11 +1,11 @@
 ---
 title: "Keeping the Host as the Composition Root"
 type: article
-status: Draft
+status: Active
 series: "Building Change Impact Studio"
 series_order: 3
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on composition change
 summary: "Cis.Host wires modules, output, and cross-cutting infrastructure while product behavior remains in capability owners."
 cis:

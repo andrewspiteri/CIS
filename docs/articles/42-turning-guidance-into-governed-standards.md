@@ -1,11 +1,11 @@
 ---
 title: "Turning Engineering Guidance into Governed Standards"
 type: article
-status: Draft
+status: Active
 series: "Standards and Engineering Policy"
 series_order: 1
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on standards-governance change
 summary: "How ownership, applicability, stable rules, lifecycle, conformance, and exceptions turn advice into usable engineering policy."
 cis:

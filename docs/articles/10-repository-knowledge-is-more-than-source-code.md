@@ -1,11 +1,11 @@
 ---
 title: "Repository Knowledge Is More Than Source Code"
 type: article
-status: Draft
+status: Active
 series: "Repository Knowledge and Context"
 series_order: 1
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on context-model change
 summary: "A repository contains intent, contracts, decisions, tests, workflows, and operational knowledge that source analysis alone cannot recover."
 cis:

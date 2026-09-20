@@ -1,11 +1,11 @@
 ---
 title: "The Difference Between Testing, Verification, and Acceptance"
 type: article
-status: Draft
+status: Active
 series: "Verification and Assurance"
 series_order: 4
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on assurance change
 summary: "Tests exercise behavior, verification checks the approved delivery obligation, and acceptance applies human authority to the evidence."
 cis:

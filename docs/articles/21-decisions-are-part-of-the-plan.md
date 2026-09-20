@@ -1,11 +1,11 @@
 ---
 title: "Decisions Are Part of the Plan"
 type: article
-status: Draft
+status: Active
 series: "Change Impact and Planning"
 series_order: 4
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on decision-lifecycle change
 summary: "Why unresolved choices, alternatives, evidence, and rationale belong in governed change state before dependent tasks execute."
 cis:

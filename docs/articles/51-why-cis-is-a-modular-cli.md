@@ -1,11 +1,11 @@
 ---
 title: "Why CIS Is a Modular CLI"
 type: article
-status: Draft
+status: Active
 series: "Building Change Impact Studio"
 series_order: 1
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on host architecture change
 summary: "A local command-line core keeps governance scriptable, testable, editor-independent, and close to repository state."
 cis:

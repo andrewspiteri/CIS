@@ -1,11 +1,11 @@
 ---
 title: "The Friends Todo Golden Path"
 type: article
-status: Draft
+status: Active
 series: "CIS in Practice"
 series_order: 4
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on golden-path change
 summary: "Why a small multi-repository product is a demanding end-to-end test of intent, classification, contracts, execution, and assurance."
 cis:

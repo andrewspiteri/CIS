@@ -1,11 +1,11 @@
 ---
 title: "Safe Path Handling and Atomic Repository Mutation"
 type: article
-status: Draft
+status: Active
 series: "Building Change Impact Studio"
 series_order: 7
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on repository-mutation change
 summary: "Resolve containment, preview complete plans, detect collisions, confirm intent, and apply only after all validation succeeds."
 cis:

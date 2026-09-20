@@ -1,11 +1,11 @@
 ---
 title: "Architectural Decisions Behind a CIS Release"
 type: article
-status: Draft
+status: Active
 series: "Product Evolution and Learning"
 series_order: 7
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on release or ADR change
 summary: "Use change-local decisions and promoted ADRs to explain why a release changed architecture, not only what files moved."
 cis:

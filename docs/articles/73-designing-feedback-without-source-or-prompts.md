@@ -1,11 +1,11 @@
 ---
 title: "Designing Feedback Without Collecting Source or Prompts"
 type: article
-status: Draft
+status: Active
 series: "Product Evolution and Learning"
 series_order: 3
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on feedback privacy change
 summary: "Measure command reliability, latency, output, and routing opportunities with sanitized metadata instead of repository content."
 cis:

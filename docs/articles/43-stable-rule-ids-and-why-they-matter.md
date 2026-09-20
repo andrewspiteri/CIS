@@ -1,11 +1,11 @@
 ---
 title: "Stable Rule IDs and Why They Matter"
 type: article
-status: Draft
+status: Active
 series: "Standards and Engineering Policy"
 series_order: 2
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on standard-rule change
 summary: "Immutable rule identities connect expectations to plans, evaluators, evidence, exceptions, and history."
 cis:

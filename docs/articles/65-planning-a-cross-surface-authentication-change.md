@@ -1,11 +1,11 @@
 ---
 title: "Planning a Cross-Surface Authentication Change"
 type: article
-status: Draft
+status: Active
 series: "CIS in Practice"
 series_order: 5
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on authentication or planning-policy change
 summary: "A worked planning example across public discovery, identity protocol, customer UI, API, persistence, security, and operations."
 cis:

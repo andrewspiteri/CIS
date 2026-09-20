@@ -1,11 +1,11 @@
 ---
 title: "Why the VS Code Extension Is a Thin Client"
 type: article
-status: Draft
+status: Active
 series: "Building Change Impact Studio"
 series_order: 4
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on editor-client change
 summary: "The editor presents canonical Markdown and CLI JSON without creating a second product implementation."
 cis:

@@ -1,11 +1,11 @@
 ---
 title: "Building a Typed Engineering Graph"
 type: article
-status: Draft
+status: Active
 series: "Repository Knowledge and Context"
 series_order: 3
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on graph-model change
 summary: "How CIS turns documents, contracts, source, tests, and workflows into an evidence-backed local graph without replacing their sources."
 cis:

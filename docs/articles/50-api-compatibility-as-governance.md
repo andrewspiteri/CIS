@@ -1,11 +1,11 @@
 ---
 title: "API Compatibility as a Governance Problem"
 type: article
-status: Draft
+status: Active
 series: "Standards and Engineering Policy"
 series_order: 9
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on API-governance change
 summary: "Compatibility depends on supported baselines, consumers, lifecycle, ownership, and human policy—not only a schema diff."
 cis:

@@ -1,11 +1,11 @@
 ---
 title: "Independent Assurance for AI-Assisted Development"
 type: article
-status: Draft
+status: Active
 series: "Verification and Assurance"
 series_order: 8
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on assurance or agent change
 summary: "How independent evidence and risk ownership let teams use capable coding agents without trusting self-assessment."
 cis:

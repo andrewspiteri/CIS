@@ -1,11 +1,11 @@
 ---
 title: "Index First, Search Second, Load Last"
 type: article
-status: Draft
+status: Active
 series: "Repository Knowledge and Context"
 series_order: 8
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on file-routing change
 summary: "A layered repository-discovery strategy that reduces broad searches, context volume, and unnecessary model work."
 cis:

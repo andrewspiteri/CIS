@@ -1,11 +1,11 @@
 ---
 title: "Why High-Complexity Tasks Must Be Decomposed"
 type: article
-status: Draft
+status: Active
 series: "Change Impact and Planning"
 series_order: 5
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on task-planning change
 summary: "Complexity should constrain execution by creating bounded child tasks, not merely label a large instruction."
 cis:

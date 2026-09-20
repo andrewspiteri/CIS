@@ -1,11 +1,11 @@
 ---
 title: "Onboarding an Existing .NET Application"
 type: article
-status: Draft
+status: Active
 series: "CIS in Practice"
 series_order: 2
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on .NET classification or initialization change
 summary: "Use deterministic classification and reviewed starter content to govern an established C# codebase without rewriting its history."
 cis:

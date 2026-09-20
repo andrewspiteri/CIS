@@ -1,11 +1,11 @@
 ---
 title: "Governing Local and Remote AI Routes"
 type: article
-status: Draft
+status: Active
 series: "Human and Agent Execution"
 series_order: 6
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on AI-provider or privacy change
 summary: "Capability routes, local-first selection, explicit remote authorization, caching, and sanitized usage evidence."
 cis:

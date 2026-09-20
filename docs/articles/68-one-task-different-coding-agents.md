@@ -1,11 +1,11 @@
 ---
 title: "Handing One Task to Different Coding Agents"
 type: article
-status: Draft
+status: Active
 series: "CIS in Practice"
 series_order: 8
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on agent-provider change
 summary: "A comparison method that keeps task authority constant while execution providers vary."
 cis:

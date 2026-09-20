@@ -1,11 +1,11 @@
 ---
 title: "Governing a Public Cached Endpoint"
 type: article
-status: Draft
+status: Active
 series: "CIS in Practice"
 series_order: 6
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on public-cache policy change
 summary: "A practical delivery chain for an unauthenticated endpoint that cannot reach persistence directly."
 cis:

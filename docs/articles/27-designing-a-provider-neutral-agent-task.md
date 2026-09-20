@@ -1,11 +1,11 @@
 ---
 title: "Designing a Provider-Neutral Agent Task"
 type: article
-status: Draft
+status: Active
 series: "Human and Agent Execution"
 series_order: 2
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-10"
 review_cadence: on agent-provider contract change
 summary: "The task contract should carry authority and context independently of Codex, Claude, another provider, or a human executor."
 cis:

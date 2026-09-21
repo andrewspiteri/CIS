@@ -3,6 +3,23 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { deliveryAssessment, reconciledDrafts } = require('../lib/feature-delivery');
 
+test('uncertainty explains the search limit and offers a prefilled planning decision without claiming absence', () => {
+  const html = deliveryAssessment({status:'missing',featureRepositoryId:'referrals',repositoryIds:['referrals'],stories:[{
+    id:'privacy',title:'Privacy evidence',treatment:'unresolved',assessmentState:'no-matching-evidence',assessmentReason:'No matching source found; absence is not proven.',
+    requirements:['Retain document version and acknowledgement timestamp.'],owners:[],evidenceIds:[]}],evidence:[]});
+  assert.match(html,/No matching code found/u); assert.doesNotMatch(html,/Needs investigation/u);
+  assert.match(html,/Save story decision/u); assert.match(html,/value="new" selected/u);
+  assert.match(html,/value="referrals" checked/u); assert.match(html,/Retain document version/u);
+  assert.match(html,/data-delivery-field="plan"/u); assert.doesNotMatch(html,/data-delivery-field="reason"/u);
+});
+
+test('saved choices and stale evidence remain distinguishable from automated findings', () => {
+  const story={id:'privacy',title:'Privacy evidence',treatment:'unresolved',assessmentState:'inconclusive',requirements:[],owners:[],evidenceIds:[],
+    review:{treatment:'new',plan:'Build acknowledgement recording.',owners:['referrals'],actor:'Andrew',evidenceHashes:{}},reviewCurrent:true};
+  assert.match(deliveryAssessment({status:'current',stories:[story],repositoryIds:['referrals']}),/New work · Decision saved/u);
+  assert.match(deliveryAssessment({status:'stale',stories:[{...story,reviewCurrent:false}],repositoryIds:['referrals']}),/Saved decision needs recheck/u);
+});
+
 test('delivery distinguishes requirements from implementation and exposes reconciliation', () => {
   const html = deliveryAssessment(undefined);
   assert.match(html, /Reconcile with existing implementation/u);

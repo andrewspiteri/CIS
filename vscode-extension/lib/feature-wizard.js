@@ -16,7 +16,8 @@ const STEPS = [
 
 function hasUnsavedChanges(model, page) {
   const fields = page?.fields || [];
-  return (page?.id === 'delivery' && model.repositoryWorkDraft !== undefined
+  return (page?.id === 'delivery' && Object.keys(model.deliveryDrafts || {}).length > 0)
+    || (page?.id === 'delivery' && model.repositoryWorkDraft !== undefined
     && JSON.stringify(model.repositoryWorkDraft) !== JSON.stringify(model.wizard?.repositoryWork || []))
     || Object.entries(model.pageDrafts?.[page?.id] || {}).some(([id, value]) => {
     const field = fields.find(field => field.id === id);
@@ -86,7 +87,7 @@ function renderReviewPage(model) {
     ${current.id === 'architecture' ? architectureGallery(model.featureArchitecture, { busy: model.busy, dirty: hasUnsavedChanges(model, current) }) : ''}
     ${current.id === 'experience' ? gallery(model.featureScreens, { busy: model.busy, dirty: hasUnsavedChanges(model, current), drafts: model.screenDrafts }) : ''}
     <form id="feature-review-form" class="source-review feature-review-form"><fieldset ${model.busy ? 'disabled' : ''}><legend>${current.id === 'review' ? 'Review conclusion' : 'Proposed feature direction'}</legend><div class="wizard-questions feature-questions">
-      ${ownership ? field(ownership, 0) : ''}${current.id === 'delivery' ? deliveryAssessment(model.featureDelivery, { busy: model.busy }) : ''}
+      ${ownership ? field(ownership, 0) : ''}${current.id === 'delivery' ? deliveryAssessment(model.featureDelivery, { busy: model.busy, drafts: model.deliveryDrafts, focus: model.deliveryFocus }) : ''}
       ${stories.length ? `<section class="feature-delivery-stories"><h2>Required user stories</h2><p>Foundation is required regardless of release scope. MVP completes the first release. Post-MVP captures later delivery. Review the suggested categories and acceptance outlines; future candidates remain uncommitted until you decide to include them.</p><p class="muted">The BRD contains the full requirements behind each outline. These lists describe feature scope; delivery and backlog approvals remain separate.</p>${stories.map(story => field(story, 0)).join('')}</section>` : ''}
       ${!structured && summary ? field(summary, 0) : ''}${questions.map((question, index) => field(question, index + 1)).join('')}
       ${structured && summary ? `<details><summary>${h(summary.label)}</summary>${field(summary, 0)}</details>` : ''}</div></fieldset></form>
@@ -104,9 +105,10 @@ function wizardScript(page) {
       const selected = field => [...row.querySelector('[data-work-field="' + field + '"]').selectedOptions].map(option => option.value);
       return { id: row.dataset.workId, repositoryId: value('repositoryId'), title: value('title'), scope: value('scope'), dependsOn: selected('dependsOn'), changeIds: selected('changeIds') };
     }) : undefined; }
-    function postWizard(command, value) { clearTimeout(draftTimer); vscode.postMessage({ command, value: JSON.stringify({ page: ${JSON.stringify(page)}, target: value, answers: reviewFields(), screenDrafts: Object.fromEntries([...document.querySelectorAll('[data-screen-feedback]')].map(input => [input.dataset.screenFeedback, input.value])), repositoryWork: repositoryWork(), draft: typeof fields === 'function' && fields() ? JSON.parse(fields()) : undefined }) }); }
+    function postWizard(command, value) { clearTimeout(draftTimer); vscode.postMessage({ command, value: JSON.stringify({ page: ${JSON.stringify(page)}, target: value, answers: reviewFields(), deliveryDrafts: typeof deliveryFields === 'function' ? deliveryFields() : undefined, screenDrafts: Object.fromEntries([...document.querySelectorAll('[data-screen-feedback]')].map(input => [input.dataset.screenFeedback, input.value])), repositoryWork: repositoryWork(), draft: typeof fields === 'function' && fields() ? JSON.parse(fields()) : undefined }) }); }
     document.querySelectorAll('[data-wizard-action]').forEach(button => button.addEventListener('click', () => {
       if (button.dataset.wizardAction === 'move-story') button.disabled = true;
+      if (button.dataset.wizardAction === 'save-delivery-decision') button.closest('[data-delivery-story]').dataset.deliveryEdited = 'true';
       postWizard(button.dataset.wizardAction, button.dataset.value);
     }));
     const movedStory = document.querySelector('[data-story-focus]');

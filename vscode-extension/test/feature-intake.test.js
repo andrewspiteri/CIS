@@ -65,6 +65,38 @@ function fixture() {
   return { page, vscode, cli, calls, inputs, executed, plan, draft, wizard, options, value: JSON.stringify(draft), changeAuthority: () => { selectedRoot = path.resolve('different'); }, refreshes: () => refreshes };
 }
 
+test('story decisions save separately, preserve other drafts and survive reopening without a workspace reload', async () => {
+  const f=fixture(); await f.page.ready; await f.page.action('preview',f.value); await f.page.action('apply');
+  const query=f.cli.query;
+  const assessment={status:'missing',inputHash:'input-hash',repositoryIds:['backend'],stories:[{id:'privacy',title:'Privacy',treatment:'unresolved',owners:[],evidenceIds:[]}],evidence:[],errors:[]};
+  f.cli.query=async(args,options)=>args[3]==='delivery'?structuredClone(assessment):query(args,options);
+  await f.page.action('navigate',JSON.stringify({page:'business',target:'delivery'}));
+  const choice={treatment:'new',owners:['backend'],plan:'Implement document acknowledgement.',evidencePaths:''};
+  await f.page.action('remember',JSON.stringify({page:'delivery',answers:{summary:'Keep delivery notes'},deliveryDrafts:{privacy:choice,another:choice}}));
+  const reopened=openFeatureIntake(f.vscode,{...f.options,initialSlug:'referrals',initialPage:'delivery'}); await reopened.ready;
+  assert.equal(reopened.model.deliveryDrafts.privacy.plan,choice.plan);
+  const before=f.refreshes();
+  await reopened.action('save-delivery-decision',JSON.stringify({page:'delivery',target:'privacy',answers:{summary:'Keep delivery notes'},deliveryDrafts:{privacy:choice}}));
+  assert.equal(reopened.model.error,undefined);
+  assert.deepEqual(f.inputs.at(-1).draft.answers,{});
+  assert.equal(f.inputs.at(-1).draft.deliveryReview.expectedInputHash,'input-hash');
+  assert.equal(reopened.model.pageDrafts.delivery.summary,'Keep delivery notes');
+  assert.equal(reopened.model.deliveryDrafts.privacy,undefined);
+  assert.equal(reopened.model.deliveryDrafts.another.plan,choice.plan);
+  assert.equal(f.refreshes(),before); assert.equal(reopened.model.page,'delivery');
+});
+
+test('failed story saves retain the edited decision and stale ownership cannot be bypassed', async () => {
+  const f=fixture(); await f.page.ready; await f.page.action('preview',f.value); await f.page.action('apply');
+  await f.page.action('navigate',JSON.stringify({target:'delivery'}));
+  f.page.model.featureDelivery={inputHash:'input',stories:[{id:'privacy',title:'Privacy'}]};
+  const draft={treatment:'new',owners:['backend'],plan:'Keep this planning choice',evidencePaths:''};
+  f.cli.query=async()=>({errors:['Code changed before save.']});
+  await f.page.action('save-delivery-decision',JSON.stringify({page:'delivery',target:'privacy',deliveryDrafts:{privacy:draft}}));
+  assert.match(f.page.model.error,/Code changed/u); assert.equal(f.page.model.deliveryDrafts.privacy.plan,draft.plan);
+  assert.equal(f.page.model.busy,false);
+});
+
 test('delivery reconciliation saves only ownership, keeps story drafts and blocks concurrent calls', async () => {
   const f = fixture(); await f.page.ready; await f.page.action('preview', f.value); await f.page.action('apply');
   f.wizard.pages.find(p => p.id === 'delivery').fields.push({id:'delivery-ownership',label:'Ownership',answer:null,suggestedAnswer:'',required:true});

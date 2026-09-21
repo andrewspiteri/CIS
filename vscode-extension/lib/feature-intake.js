@@ -8,7 +8,7 @@ const { createActionPanel, studioDocument } = require('./webview');
 const { STEPS, navigation, renderReviewPage, wizardScript, hasUnsavedChanges } = require('./feature-wizard');
 const { REVIEW_STYLES } = require('./feature-review-text');
 const { STORY_STYLES, moveStory } = require('./feature-stories');
-const { reconciledDrafts } = require('./feature-delivery');
+const { reconciledDrafts, deliveryScript, DELIVERY_STYLES } = require('./feature-delivery');
 const { gallery, screenScript, exportScreen, SCREEN_STYLES } = require('./feature-screens');
 const { architectureGallery, ARCHITECTURE_STYLES } = require('./feature-architecture');
 
@@ -17,11 +17,11 @@ const ACTIONS = new Set(['choose-source', 'choose-repository', 'preview', 'apply
   'features-home', 'open-feature', 'add-repository-work', 'remove-repository-work',
   'reimport-source', 'apply-source-update', 'cancel-source-update', 'compare-source', 'open-source-history', 'save-continue', 'use-suggestion',
   'generate-screens', 'open-feature-screen', 'save-feature-screen', 'review-feature-screen',
-  'generate-architecture', 'open-feature-diagram', 'save-feature-diagram', 'move-story', 'reconcile-delivery', 'use-delivery-assessment']);
+  'generate-architecture', 'open-feature-diagram', 'save-feature-diagram', 'move-story', 'reconcile-delivery', 'use-delivery-assessment', 'save-delivery-decision', 'open-delivery-evidence', 'discard-delivery-decision']);
 
 function openFeatureIntake(vscode, { cli, authority, root, actorIdentity, refresh, storage, initialSlug, initialPage, createNew = false }) {
   const model = { root, repositories: [], loading: true, busy: false,
-    page: 'foundation', pageDrafts: {}, screenDrafts: {}, requests: [],
+    page: 'foundation', pageDrafts: {}, screenDrafts: {}, deliveryDrafts: {}, requests: [],
     draft: { title: '', slug: '', sourcePath: '', repositoryMode: 'new', repositoryPath: '', documentationRoot: 'docs/cis', integrationRepositories: [] } };
   const storageKey = `cis.featureWizard:${process.platform === 'win32' ? root.toLowerCase() : root}`;
   const restored = createNew ? undefined : storage?.get(storageKey);
@@ -31,6 +31,7 @@ function openFeatureIntake(vscode, { cli, authority, root, actorIdentity, refres
     model.selectedSlug = typeof restored.selectedSlug === 'string' ? restored.selectedSlug : undefined;
     model.pageDrafts = restored.pageDrafts && typeof restored.pageDrafts === 'object' ? restored.pageDrafts : {};
     model.screenDrafts = restored.screenDrafts || {};
+    model.deliveryDrafts = restored.deliveryDrafts || {};
     model.repositoryWorkDraft = restored.repositoryWorkDraft;
     model.draftSourceHash = restored.sourceHash;
     model.draftQuestions = restored.sourceQuestions;
@@ -43,7 +44,7 @@ function openFeatureIntake(vscode, { cli, authority, root, actorIdentity, refres
   function render() { if (!disposed) panel.webview.html = renderFeatureIntake(panel.webview, model, scriptNonce); }
   async function persist() {
     try {
-      const featureState = { page: model.page, pageDrafts: model.pageDrafts, screenDrafts: model.screenDrafts, repositoryWorkDraft: model.repositoryWorkDraft,
+      const featureState = { page: model.page, pageDrafts: model.pageDrafts, screenDrafts: model.screenDrafts, deliveryDrafts: model.deliveryDrafts, repositoryWorkDraft: model.repositoryWorkDraft,
         sourceHash: model.draftSourceHash, sourceQuestions: model.draftQuestions, recoveredSourceDraft: model.recoveredSourceDraft };
       await storage?.update(storageKey, { version: 1, draft: model.draft, selectedSlug: model.selectedSlug, ...featureState });
       if (model.selectedSlug) await storage?.update(`${storageKey}:${model.selectedSlug}`, featureState);
@@ -79,6 +80,7 @@ function openFeatureIntake(vscode, { cli, authority, root, actorIdentity, refres
       const saved = storage?.get(`${storageKey}:${selectedSlug}`);
       model.pageDrafts = saved?.pageDrafts || {};
       model.screenDrafts = saved?.screenDrafts || {};
+      model.deliveryDrafts = saved?.deliveryDrafts || {};
       model.repositoryWorkDraft = saved?.repositoryWorkDraft;
       model.draftSourceHash = saved?.sourceHash;
       model.draftQuestions = saved?.sourceQuestions;
@@ -87,10 +89,10 @@ function openFeatureIntake(vscode, { cli, authority, root, actorIdentity, refres
     }
     const sourceChanged = model.draftSourceHash ? model.draftSourceHash !== result.plan.sourceHash : result.sourceHistory?.length > 0;
     if (sourceChanged) model.sourceUpdate = undefined;
-    if (sourceChanged && (Object.keys(model.pageDrafts).length || model.repositoryWorkDraft !== undefined)) {
+    if (sourceChanged && (Object.keys(model.pageDrafts).length || Object.keys(model.deliveryDrafts).length || model.repositoryWorkDraft !== undefined)) {
       model.recoveredSourceDraft = { sourceHash: model.draftSourceHash, questions: model.draftQuestions,
-        answers: model.pageDrafts, repositoryWork: model.repositoryWorkDraft, earlierRecovery: model.recoveredSourceDraft };
-      model.pageDrafts = {}; model.repositoryWorkDraft = undefined;
+        answers: model.pageDrafts, deliveryDrafts: model.deliveryDrafts, repositoryWork: model.repositoryWorkDraft, earlierRecovery: model.recoveredSourceDraft };
+      model.pageDrafts = {}; model.deliveryDrafts = {}; model.repositoryWorkDraft = undefined;
       model.notice = 'The BRD was updated outside this tab. Your unsaved edits are preserved below for reference. Review them against the new questions before saving answers.';
     }
     model.draftSourceHash = result.plan.sourceHash; model.draftQuestions = result.plan.openDecisions;
@@ -101,6 +103,8 @@ function openFeatureIntake(vscode, { cli, authority, root, actorIdentity, refres
   }
   async function savePage(continueAfterSave = false) {
     if (!model.wizard || !model.selectedSlug) return;
+    if (model.page === 'delivery' && Object.keys(model.deliveryDrafts).length)
+      throw new Error('Save each edited story decision, or discard its draft, before saving the delivery page. Your edits are retained.');
     if (model.page === 'review' && model.wizard.pages.some(page => page.id !== 'review' && hasUnsavedChanges(model, page)))
       throw new Error('Save or discard the unsaved feature-page edits before recording the final review.');
     const actor = model.draft.actor || await actorIdentity(); if (!actor) return false;
@@ -116,7 +120,7 @@ function openFeatureIntake(vscode, { cli, authority, root, actorIdentity, refres
       if (result.errors?.length || result._process?.failed) throw new Error((result.errors || ['Save failed.']).join('\n'));
       model.wizard = result;
       delete model.pageDrafts[model.page];
-      if (model.page === 'delivery') model.repositoryWorkDraft = undefined;
+      if (model.page === 'delivery') { model.repositoryWorkDraft = undefined; model.deliveryDrafts = {}; }
       await vscode.commands.executeCommand('cis.refreshFeatures');
       const completedPage = result.pages.find(page => page.id === model.page);
       model.notice = completedPage?.complete ? 'Page saved and reviewed.' : 'Answers saved. Review the remaining questions on this step before continuing.';
@@ -232,7 +236,7 @@ function openFeatureIntake(vscode, { cli, authority, root, actorIdentity, refres
     if (['navigate', 'remember', 'save-page', 'refresh', 'resume', 'new-feature', 'open-document', 'product-wizard', 'start-approved-feature', 'discard-edits',
       'features-home', 'open-feature', 'add-repository-work', 'remove-repository-work',
       'reimport-source', 'apply-source-update', 'cancel-source-update', 'compare-source', 'open-source-history', 'save-continue', 'use-suggestion', 'generate-screens', 'open-feature-screen', 'review-feature-screen',
-      'generate-architecture', 'open-feature-diagram', 'save-feature-diagram', 'move-story', 'reconcile-delivery', 'use-delivery-assessment'].includes(command)
+      'generate-architecture', 'open-feature-diagram', 'save-feature-diagram', 'move-story', 'reconcile-delivery', 'use-delivery-assessment', 'save-delivery-decision', 'open-delivery-evidence', 'discard-delivery-decision'].includes(command)
       || ['open-source', 'open-request'].includes(command) && value?.startsWith('{')) {
       try {
         if (typeof value !== 'string' || value.length > 1_048_576) throw new Error('Feature wizard input is too large.');
@@ -249,6 +253,14 @@ function openFeatureIntake(vscode, { cli, authority, root, actorIdentity, refres
             || Object.values(message.screenDrafts).some(value => typeof value !== 'string' || value.length > 2000)) throw new Error('Screen feedback is invalid.');
           model.screenDrafts = { ...model.screenDrafts, ...message.screenDrafts };
         }
+        if (message.deliveryDrafts) {
+          if (model.page !== 'delivery' || typeof message.deliveryDrafts !== 'object' || Array.isArray(message.deliveryDrafts)
+            || Object.keys(message.deliveryDrafts).length > 80 || Object.values(message.deliveryDrafts).some(d => !d || typeof d.plan !== 'string' || d.plan.length > 4000
+              || typeof d.evidencePaths !== 'string' || d.evidencePaths.length > 7200 || !Array.isArray(d.owners) || d.owners.length > 8
+              || d.owners.some(id => typeof id !== 'string' || id.length > 200) || !['new', 'extend', 'reuse', 'out-of-scope'].includes(d.treatment)))
+            throw new Error('Story decision inputs are invalid or too large.');
+          model.deliveryDrafts = { ...model.deliveryDrafts, ...message.deliveryDrafts };
+        }
         if (message.repositoryWork !== undefined && model.page === 'delivery') {
           if (!Array.isArray(message.repositoryWork) || message.repositoryWork.length > 100) throw new Error('Repository work is invalid.');
           model.repositoryWorkDraft = message.repositoryWork;
@@ -260,6 +272,7 @@ function openFeatureIntake(vscode, { cli, authority, root, actorIdentity, refres
     model.busy = true; model.error = undefined;
     model.notice = undefined;
     model.storyMoveFocus = undefined;
+    model.deliveryFocus = undefined;
     try {
       assertAuthority();
       if (['choose-source', 'choose-repository', 'preview'].includes(command)) {
@@ -340,7 +353,41 @@ function openFeatureIntake(vscode, { cli, authority, root, actorIdentity, refres
         await vscode.commands.executeCommand('cis.featureAdd');
       } else if (command === 'discard-edits') {
         delete model.pageDrafts[model.page];
-        if (model.page === 'delivery') model.repositoryWorkDraft = undefined;
+        if (model.page === 'delivery') { model.repositoryWorkDraft = undefined; model.deliveryDrafts = {}; }
+      }
+      else if (command === 'discard-delivery-decision') {
+        delete model.deliveryDrafts[message.target];
+      }
+      else if (command === 'open-delivery-evidence') {
+        const evidence = model.featureDelivery?.evidence?.find(e => e.id === message.target);
+        const repository = model.wizard.repositories?.find(r => r.id === evidence?.repositoryId && r.role === 'participant' && r.participation === 'owned');
+        const target = repository && resolveWithin(repository.repositoryPath || repository.path, evidence.path);
+        if (!target || !fs.existsSync(target)) throw new Error('The code reference is unavailable. Refresh its evidence.');
+        await vscode.window.showTextDocument(vscode.Uri.file(target), { preview: false });
+      }
+      else if (command === 'save-delivery-decision') {
+        const story = model.featureDelivery?.stories?.find(s => s.id === message.target);
+        const draft = model.deliveryDrafts[message.target];
+        if (!story || !draft || !model.featureDelivery.inputHash) throw new Error('Open the story assessment before saving a delivery decision.');
+        const savedOwnership = model.wizard.pages.find(p => p.id === 'delivery')?.fields.find(f => f.id === 'delivery-ownership')?.answer;
+        const ownership = model.pageDrafts.delivery?.['delivery-ownership'];
+        if (ownership !== undefined && ownership !== (savedOwnership ?? '')) throw new Error('Reconcile with the edited ownership direction before saving story decisions. Other drafts are retained.');
+        const actor = model.draft.actor || await actorIdentity(); if (!actor) return;
+        const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'cis-delivery-decision-'));
+        const input = path.join(directory, 'decision.json');
+        try {
+          assertAuthority();
+          fs.writeFileSync(input, JSON.stringify({slug:model.selectedSlug,page:'delivery',answers:{},actor,expectedRevision:model.wizard.revision,
+            deliveryReview:{storyId:story.id,treatment:draft.treatment,owners:draft.owners,plan:draft.plan,
+              evidencePaths:draft.evidencePaths.split(/\r?\n/u).map(value=>value.trim()).filter(Boolean),expectedInputHash:model.featureDelivery.inputHash}}), {encoding:'utf8',mode:0o600});
+          const saved = await cli.query(['brd','feature','wizard','save','--input',input,'--workspace',root], {repository:false,acceptStructuredFailure:true});
+          if (saved.errors?.length || saved._process?.failed) throw new Error((saved.errors || ['Story decision could not be saved.']).join('\n'));
+          model.wizard = saved;
+          delete model.deliveryDrafts[story.id];
+          await loadDelivery();
+          model.deliveryFocus = story.id;
+          model.notice = `${story.title}: planning decision saved. The implementation is not marked complete. Use reconciled stories as draft to include it in the story lists.`;
+        } finally { if (fs.existsSync(input)) fs.unlinkSync(input); fs.rmdirSync(directory); }
       }
       else if (command === 'reconcile-delivery') {
         if (model.page !== 'delivery' || !model.wizard) throw new Error('Open Delivery and acceptance first.');
@@ -585,7 +632,7 @@ function renderFeatureIntake(webview, model, scriptNonce) {
       <div class="actions"><button type="submit" ${model.busy ? 'disabled' : ''}>Review setup</button></div></fieldset></form>`}
       ${model.busy ? '<p role="status">CIS is preparing this action…</p>' : ''}`;
   const body = `<style nonce="${scriptNonce}">#feature-form fieldset{display:grid;gap:.65rem}#feature-form label:not(.source-choice){font-weight:600;margin-top:.65rem}#feature-form input:not([type=checkbox]),#feature-form select{width:100%;font:inherit;padding:.6rem;color:var(--vscode-input-foreground);background:var(--vscode-input-background);border:1px solid var(--vscode-input-border)}#feature-form button{justify-self:start}#feature-form h3{margin-bottom:0}.feature-questions{grid-template-columns:1fr}.feature-questions label{font-weight:600}#feature-review-form fieldset{min-width:0}#feature-review-form legend{font-weight:600}.feature-page{min-width:0;display:grid;gap:1rem}.wizard-steps{position:sticky;top:1rem;align-self:start}.feature-saved{display:flex;gap:.6rem;flex-wrap:wrap}.repository-work-item{display:grid;grid-template-columns:1fr 1fr;gap:1rem;border:1px solid var(--vscode-panel-border);border-radius:.4rem;padding:1rem;margin:1rem 0}.repository-work-item legend{font-weight:600}.repository-work-item label{display:grid;gap:.4rem;font-weight:600}.repository-work-item label:has(textarea){grid-column:1/-1}.repository-work-item input,.repository-work-item select,.repository-work-item textarea{width:100%;min-width:0;font:inherit;padding:.6rem;color:var(--vscode-input-foreground);background:var(--vscode-input-background);border:1px solid var(--vscode-input-border);border-radius:.25rem}.repository-work-item select[multiple]{min-height:5rem}.repository-work-item button{justify-self:start}@media(max-width:48rem){.wizard-steps{position:static}}@media(max-width:780px){.repository-work-item{grid-template-columns:1fr}}</style>
-    <style nonce="${scriptNonce}">${REVIEW_STYLES}${STORY_STYLES}${SCREEN_STYLES}${ARCHITECTURE_STYLES}</style>
+    <style nonce="${scriptNonce}">${REVIEW_STYLES}${STORY_STYLES}${DELIVERY_STYLES}${SCREEN_STYLES}${ARCHITECTURE_STYLES}</style>
     <header class="hero feature-hero"><div><span class="eyebrow">Feature delivery</span><h1>Feature definition wizard</h1><p>${h(model.wizard?.plan?.title || model.draft.title || 'Define a new feature from its prepared BRD, using the existing product baseline.')}</p><p class="muted">Authority: ${h(model.root)}</p></div>${model.selectedSlug ? '<button type="button" class="secondary" data-wizard-action="new-feature">Add another feature</button>' : ''}</header>
     <div class="actions"><button type="button" class="secondary" data-wizard-action="features-home">All high-level features</button><button type="button" class="secondary" data-wizard-action="product-wizard">Product definition</button>${model.wizard ? `<button type="button" data-wizard-action="reimport-source" ${model.busy ? 'disabled' : ''}>Reimport BRD</button>` : ''}</div>
     ${renderSourceUpdate(model)}
@@ -614,7 +661,7 @@ function renderFeatureIntake(webview, model, scriptNonce) {
     form?.addEventListener('submit', event => { event.preventDefault(); const value = fields(); document.querySelectorAll('button').forEach(item => item.disabled = true); vscode.postMessage({ command: 'preview', value }); });
     const title = document.getElementById('title'); const identifier = document.getElementById('slug');
     title?.addEventListener('change', () => { if (!identifier.value) identifier.value = title.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 80).replace(/-$/g, ''); });
-    ${wizardScript(model.page || 'foundation')}${model.page === 'experience' ? screenScript() : ''}</script>`;
+    ${wizardScript(model.page || 'foundation')}${model.page === 'delivery' ? deliveryScript() : ''}${model.page === 'experience' ? screenScript() : ''}</script>`;
   return studioDocument(webview, 'Feature definition wizard', body, scriptNonce, script);
 }
 

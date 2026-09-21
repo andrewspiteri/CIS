@@ -1,5 +1,11 @@
 # Change Impact Studio for Visual Studio Code
 
+Delivery assessments distinguish unassessed stories, missing search matches and inconclusive
+model claims. Open a story in **Delivery and acceptance** to inspect its requirements and code,
+then use **Resolve the delivery decision** to save a prefilled new-work, extension, reuse or
+exclusion choice. Saved choices survive reopening and require review when evidence changes;
+they do not mark implementation complete. Other page drafts are preserved.
+
 This extension is a native delivery workspace over the `cis` CLI and canonical Markdown.
 It contains no planning, graph, tracker, agent, testing, security, verification, approval,
 or learning engine logic.

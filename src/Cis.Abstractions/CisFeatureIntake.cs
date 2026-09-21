@@ -32,6 +32,7 @@ public sealed record CisFeatureWizardAnswer(string Slug, string Page, Dictionary
 {
     public IReadOnlyList<CisFeatureRepositoryWork>? RepositoryWork { get; init; }
     public CisFeatureScreenReviewRequest? ScreenReview { get; init; }
+    public CisFeatureDeliveryReviewRequest? DeliveryReview { get; init; }
 }
 
 public sealed record CisFeatureRepositoryWork(string Id, string RepositoryId, string Title, string Scope,

@@ -76,17 +76,19 @@ public sealed partial class FeatureIntakeService
                 || state.Inputs.Any(input => FileHash(input.Key) != input.Value))
                 return WizardError("The feature changed while saving. Refresh before retrying.");
             var screenReview = answer.ScreenReview is null ? null : CheckScreenReview(state, answer);
+            var deliveryReview = answer.DeliveryReview is null ? null : CheckDeliveryReview(state, answer);
             var values = state.Review.Pages.ToDictionary(pair => pair.Key,
                 pair => pair.Value.Binding == state.LegacyBinding ? pair.Value with { Binding = state.Binding } : pair.Value,
                 StringComparer.Ordinal);
             var answers = new Dictionary<string, string>(values.GetValueOrDefault(answer.Page)?.Answers ?? [], StringComparer.Ordinal);
             foreach (var pair in answer.Answers) answers[pair.Key] = pair.Value.Trim();
             var now = DateTimeOffset.UtcNow.ToString("O");
-            if (screenReview is null) values[answer.Page] = new(answers, answer.Actor.Trim(), now, state.Binding);
+            if (screenReview is null && deliveryReview is null) values[answer.Page] = new(answers, answer.Actor.Trim(), now, state.Binding);
             // Every substantive page edit requires the final review to be renewed.
             if (answer.Page != "review") values.Remove("review");
             var review = state.Review with { Pages = values, RepositoryWork = answer.RepositoryWork ?? state.Review.RepositoryWork };
             if (screenReview is not null) review = review with { ScreenReviews = [.. review.ScreenReviews ?? [], screenReview] };
+            if (deliveryReview is not null) review = review with { DeliveryReviews = [.. review.DeliveryReviews ?? [], deliveryReview] };
             var content = state.Content;
             var block = RenderReview(review, state.Record.Plan);
             var start = content.IndexOf(ReviewStart, StringComparison.Ordinal);
@@ -102,6 +104,8 @@ public sealed partial class FeatureIntakeService
             try
             {
                 File.WriteAllText(temporary, content, new UTF8Encoding(false));
+                if (deliveryReview is not null && ReadDeliveryInput(ReadWizard(workspacePath, answer.Slug)).Hash != deliveryReview.InputHash)
+                    return WizardError("Implementation or direction changed while saving the story decision. Refresh and review the current evidence.");
                 if (File.ReadAllText(state.RequestPath).Replace("\r\n", "\n", StringComparison.Ordinal) != state.Content) return WizardError("The request changed while saving. Refresh before retrying.");
                 File.Move(temporary, state.RequestPath, true);
             }
@@ -284,6 +288,15 @@ public sealed partial class FeatureIntakeService
             foreach (var screen in screenReviews)
                 lines.AppendLine($"#### {screen.Title}\n\n{screen.Decision} — {screen.Actor}, {screen.SavedAt}\n\n{screen.Feedback}\n");
         }
+        if (review.DeliveryReviews is { Count: > 0 } deliveryReviews)
+        {
+            lines.AppendLine("### Delivery planning decisions\n\nThese recorded choices describe planned work, not completed implementation or scope approval. Changed evidence requires review.\n");
+            foreach (var decision in deliveryReviews)
+            {
+                lines.AppendLine($"#### {decision.Title}\n\n{decision.Treatment} — {decision.Actor}, {decision.SavedAt}\n\nRepositories: {string.Join(", ", decision.Owners)}\n\n{decision.Plan}\n");
+                lines.AppendLine("<!-- Implementation evidence: " + string.Join("; ", decision.EvidenceHashes.Select(pair => pair.Key.Replace("--", "—", StringComparison.Ordinal) + " " + pair.Value)) + " -->\n");
+            }
+        }
         lines.AppendLine(ReviewData + JsonSerializer.Serialize(review, Json) + "\n-->");
         lines.Append(ReviewEnd);
         return lines.ToString();
@@ -302,6 +315,8 @@ public sealed partial class FeatureIntakeService
         public IReadOnlyList<CisFeatureRepositoryWork>? RepositoryWork { get; init; }
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public IReadOnlyList<CisFeatureScreenReview>? ScreenReviews { get; init; }
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public IReadOnlyList<CisFeatureDeliveryReview>? DeliveryReviews { get; init; }
     }
     private sealed record WizardState(CisWorkspaceRepository Authority, CisWorkspace Workspace, string RequestPath, string Content,
         IntakeRecord Record, FeatureReview Review, string Source, string Binding, CisProductDefinitionAuthority? Baseline, Dictionary<string, string> Inputs, string LegacyBinding);

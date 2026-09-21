@@ -11,6 +11,11 @@ cis:
 
 # `cis brd feature wizard save`
 
+For a per-story delivery planning choice, pass `deliveryReview` with empty `answers`.
+This preserves page answers and repository work, validates the current implementation
+hash and records the human choice without marking the story implemented. See
+[delivery decisions](cis_brd_feature_wizard_delivery.md) for the input and wizard flow.
+
 Saves human-reviewed answers for one feature-definition page without refreshing the full workspace.
 
 ```text

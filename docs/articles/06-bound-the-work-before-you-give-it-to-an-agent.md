@@ -5,7 +5,7 @@ status: Active
 series: "Governed Software Change"
 series_order: 6
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-10"
+last_reviewed: "2026-09-22"
 review_cadence: on planning or agent-execution change
 summary: "How explicit objectives, non-goals, dependencies, validation, and task envelopes make human and agent execution safer."
 cis:
@@ -154,6 +154,54 @@ append useful evidence to the task. It cannot grant completion.
 The governed lifecycle still requires plan validation, actual Git comparison,
 verification evidence, and the applicable human acceptance. Execution produces a
 candidate change, not a verdict about that change.
+
+## Worked contrast: a prompt versus a bounded task
+
+The task record below is illustrative. It shows the information a governed task needs;
+it is not the literal CIS task schema or agent-envelope format.
+
+### Without a bounded contract
+
+> Implement Friends Todo invitation revocation. Update anything necessary and make all
+> tests pass.
+
+To act on that prompt, an agent must decide which contract is current, whether it may
+change the database, whether customer UI and email delivery belong in scope, which
+tests are sufficient, and whether a newly discovered cleanup requirement should be
+implemented. Any of those choices can expand the approved feature without a visible
+review point.
+
+### With a bounded contract
+
+```yaml
+objective: Revoke an outstanding invitation through the approved API operation.
+authority:
+  - current invitation feature specification and digest
+  - accepted authorization, contract, persistence, and test impact
+targets:
+  - invitation application behavior in todo-api
+  - focused API contract and lifecycle tests
+non_goals:
+  - customer UI
+  - email delivery
+  - changing the approved link-lifecycle decision
+depends_on:
+  - approved revocation contract
+validation:
+  - focused authorization and invitation-lifecycle tests
+  - API contract validation
+scope_expansion:
+  - preserve evidence, stop affected work, and return new impact for review
+```
+
+The executor can still choose local implementation details inside that boundary. If it
+discovers that revocation requires an unplanned migration, customer behavior, or
+deployment change, the contract tells it not to hide that discovery inside the result.
+
+The agent's changed-file list and test report become supporting evidence. They do not
+change the task digest, approve new scope, or mark the work complete. Another agent or
+a human developer can take the same task because its meaning does not depend on the
+conversation that produced it.
 
 ## Takeaway
 

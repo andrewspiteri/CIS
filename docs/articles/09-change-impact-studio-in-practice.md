@@ -5,7 +5,7 @@ status: Active
 series: "Governed Software Change"
 series_order: 9
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-21"
+last_reviewed: "2026-09-22"
 review_cadence: on golden-path or product change
 summary: "A worked example of governing a cross-repository feature from product intent through independent verification and reviewed learning."
 cis:
@@ -256,6 +256,47 @@ The workspace then reconciles product knowledge. Legitimate surprises may lead t
 reviewed updates in graph relationships, planning triggers, API classification,
 standards, tests, or agent guidance. Those updates remain proposals until approved and
 delivered through their own governed changes.
+
+## The same feature without the governed path
+
+The governed workflow is easier to understand when compared with a plausible shortcut.
+This parallel path is hypothetical; it is not a claim about an actual Friends Todo
+implementation.
+
+An issue says “let a customer invite a friend to a list.” An implementer searches the
+API repository, selects a token and expiry design, adds persistence and endpoints, then
+finds the customer repository and adds a basic form. A setting needed for expiry or
+cleanup causes an infrastructure edit late in the work. Focused tests pass, the pull
+request is merged, and the issue is closed.
+
+Nothing in that sequence requires obviously poor code. The problem is that important
+questions have no durable answer:
+
+- Was the implemented link lifecycle chosen by an authorized product or technical
+  reviewer, or inferred during coding?
+- Were revocation, forwarding, existing access, abuse controls, auditability, and error
+  states deliberately included or omitted?
+- Were public and pre-authentication routes classified before their caching and
+  persistence boundaries were implemented?
+- Was the infrastructure edit expected scope, legitimate discovery, or unrelated work?
+- Which repositories and supported contracts were examined against the same baseline?
+- What evidence supports acceptance beyond the checks selected by the implementer?
+
+The two paths can be compared at each stage:
+
+| Moment | Ungoverned shortcut | Governed path |
+|---|---|---|
+| Request | Implementation begins from a short issue | Product and feature intent expose outcomes, constraints, non-goals, and open decisions |
+| Discovery | The implementer searches where the feature seems likely to live | Bounded workspace evidence proposes impact across owned repositories |
+| Scope | Tasks emerge while coding | A reviewer dispositions findings and resolves blocking decisions before planning |
+| Execution | The implementer absorbs newly discovered work | Bounded tasks require new impact to return to review |
+| Verification | Selected tests and a completion summary support the claim | Git, contracts, required checks, and planned-versus-actual comparison supply independent evidence |
+| Completion | Merge or issue closure implies success | An authorized human records acceptance, rationale, and residual risk |
+| Learning | Surprises remain in conversation or become ad hoc rules | Evidence produces a bounded proposal that requires separate review and delivery |
+
+Governance does not guarantee that the final source code will differ. It guarantees that
+the product can explain why this implementation was authorized, what was considered,
+what remained uncertain, and why the available evidence was sufficient to accept it.
 
 ## What the example demonstrates
 

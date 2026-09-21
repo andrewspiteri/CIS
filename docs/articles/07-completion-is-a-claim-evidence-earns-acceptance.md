@@ -5,7 +5,7 @@ status: Active
 series: "Governed Software Change"
 series_order: 7
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-10"
+last_reviewed: "2026-09-22"
 review_cadence: on verification or assurance change
 summary: "Why implementation success and executor reports must be checked against independently observed Git and validation evidence."
 cis:
@@ -164,6 +164,39 @@ points to the exact checks and artifacts.
 
 An accepted change can then move through normal pull-request, merge, release, deployment,
 and operational processes. CIS does not replace those systems or infer their authority.
+
+## Worked contrast: “done” versus independently evidenced
+
+The following verification result is hypothetical. The paths illustrate the comparison;
+they are not captured Friends Todo repository evidence.
+
+An executor finishes the invitation API task and reports:
+
+> Revocation is implemented. The controller, application service, and tests were updated.
+> All focused tests pass, and no unrelated files changed.
+
+That summary helps the reviewer understand the executor's claim. It is not enough to
+accept the work.
+
+An independent comparison with the approved baseline produces a different picture:
+
+| Approved expectation or claim | Observed evidence | Consequence |
+|---|---|---|
+| Revocation behavior changes | Application code and focused lifecycle tests changed | Expected work is present |
+| Persistence supports the approved lifecycle | The planned migration is absent | Expected work is missing and requires investigation |
+| No delivery changes are required | A deployment workflow changed | Unexpected scope needs disposition |
+| Required behavior is verified | Focused tests pass; contract validation passed | Evidence supports only the exercised behavior and contract |
+| Customer error behavior remains correct | Required browser evidence was not run | The acceptance boundary is not yet satisfied |
+
+The missing migration does not prove that the implementation is wrong; the chosen
+design may not require one, or the plan may be stale. The workflow edit may be necessary.
+The unavailable browser evidence may have an acceptable explanation. Governance does
+not decide those questions from filenames alone. It prevents them from disappearing
+inside a successful executor summary.
+
+The reviewer must reconcile the plan or implementation, dispose the unexpected change,
+obtain or explicitly account for required evidence, and record residual risk. Only then
+can an authorized human decide whether the completion claim has earned acceptance.
 
 ## Takeaway
 

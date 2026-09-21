@@ -5,7 +5,7 @@ status: Active
 series: "Governed Software Change"
 series_order: 8
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-10"
+last_reviewed: "2026-09-22"
 review_cadence: on diagnostics, feedback, or learning change
 summary: "How delivery evidence can improve future engineering work without allowing a tool or model to rewrite canonical authority."
 cis:
@@ -146,6 +146,49 @@ slow a workflow.
 A governed learning loop asks whether a step is redundant or authoritative. It
 automates preservation and derivation while protecting the points where human meaning
 enters the system.
+
+## Worked contrast: learn from an unexpected workflow change
+
+This hypothetical begins with the verification discrepancy from the invitation example:
+a deployment workflow changed even though delivery was absent from approved impact.
+
+### Without a governed learning loop
+
+A model reviews the failure and concludes that every feature involving expiry needs
+delivery work. It edits agent guidance, adds a graph relationship, and changes the
+planning trigger automatically. The next change now receives an infrastructure task
+whether expiry is enforced by application reads, an existing scheduler, a managed
+service, or no delivery mechanism at all.
+
+The system appears to have learned quickly, but it has promoted one interpretation into
+policy. There is no reviewed causal claim, no bounded scope, and no clear way to distinguish
+the original evidence from the model's conclusion.
+
+### With a governed learning loop
+
+The current change first resolves its own discrepancy: accept and plan the workflow
+change, remove it, or record separate follow-up work. Learning then begins from a
+different question: why did discovery fail to surface the possible relationship?
+
+The local evidence may support a proposal such as:
+
+```yaml
+observation: Invitation expiry introduced an unexpected deployment-workflow change.
+evidence: Planned-versus-actual verification finding for the invitation change.
+hypothesis: Repository knowledge did not expose the cleanup component's delivery dependency.
+recommendation: Review the component-to-workflow relationship and add a focused planning check if it is generally valid.
+limits: One change does not establish that every expiry feature requires delivery work.
+```
+
+That record is illustrative, not the literal CIS learning schema. The ledger retains no
+source content, prompt, option value, credential, or command output. A human reviews
+whether the hypothesis is supported and whether the recommendation would improve future
+changes without weakening another rule. Rejection remains useful history. Approval
+promotes a bounded recommendation, not an automatic edit to standards, skills, or
+product source.
+
+Any resulting graph, guidance, or planning change then follows the ordinary governed
+workflow with its own impact, evidence, and acceptance.
 
 ## Takeaway
 

@@ -5,7 +5,7 @@ status: Active
 series: "Governed Software Change"
 series_order: 1
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-22"
 review_cadence: on product or governance change
 summary: "Why faster code production increases the need to govern outcomes, authority, evidence, and acceptance."
 cis:
@@ -444,6 +444,57 @@ authority expansion.
 
 This is not a retreat from automation. It is the foundation that allows automation to
 become more capable without becoming less accountable.
+
+## Worked contrast: one request, two control systems
+
+The following Friends Todo example is hypothetical. It illustrates the control problem;
+it is not captured CIS output.
+
+A product owner asks for invitation links so that a customer can share a todo list with
+a friend.
+
+### Without governance
+
+The request reaches a coding agent as one instruction:
+
+> Add invitation links. Choose a sensible design, implement it, run the tests, and open
+> a pull request when it is complete.
+
+The agent finds the API and customer web repositories. It adds an invitation table, an
+endpoint, a form, and focused tests. While implementing expiry, it also changes a
+deployment workflow to supply a new setting. The tests it selected pass, and its final
+message reports that invitations are complete.
+
+The code may be sound, but the team cannot answer several control questions from that
+result:
+
+- Who decided whether a link is single-use, reusable, or account-bound?
+- Were revocation, forwarding, existing access, abuse controls, and audit events in
+  scope?
+- Was the workflow change expected, or did implementation discover missing impact?
+- Were all three product repositories considered against the same baseline?
+- Which evidence supports acceptance beyond the executor's own tests and summary?
+
+The agent authored the change, selected much of its scope, made design choices, chose
+its evidence, and declared success. Those roles have collapsed into one execution.
+
+### With governance
+
+The same request first becomes a reviewed outcome. Product and technical authorities
+record the actors, constraints, non-goals, open decisions, and acceptance boundary. An
+exact workspace baseline anchors impact analysis. A reviewer dispositions proposed
+impact across the web, API, and infrastructure repositories. Material link-lifecycle
+choices are resolved before they become code.
+
+The approved plan then separates contract, backend, customer experience, operational,
+and verification work. Each executor receives only its bounded task and must report
+new scope rather than absorb it. After implementation, Git supplies the actual changed
+paths, required checks supply behavior evidence, and a reviewer disposes missing or
+unexpected work before accepting residual risk.
+
+The governed path can still use a coding agent for substantial implementation. The
+difference is that authorship no longer has to stand in for intent, authority, scope,
+evidence, or acceptance.
 
 ## Takeaway
 

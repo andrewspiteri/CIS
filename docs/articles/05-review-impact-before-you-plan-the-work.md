@@ -5,7 +5,7 @@ status: Active
 series: "Governed Software Change"
 series_order: 5
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-10"
+last_reviewed: "2026-09-22"
 review_cadence: on impact or planning change
 summary: "Why evidence-backed impact findings must remain proposals until reviewed against an exact baseline."
 cis:
@@ -147,6 +147,48 @@ invalid generated work. It preserves the original reviewer, rationale, path, and
 
 This is not autonomous approval. It is provenance reuse: do not ask a human to approve
 the same unchanged meaning twice, but do ask whenever the meaning or risk expands.
+
+## Worked contrast: review invitation impact before creating tasks
+
+The following finding set is hypothetical. It demonstrates disposition and planning
+readiness rather than literal CIS output.
+
+### Planning directly from the request
+
+“Invite a friend to a list” becomes three tasks:
+
+1. add an API endpoint;
+2. add invitation storage; and
+3. add a customer screen.
+
+The list is easy to estimate, but it reflects only the first implementation shape that
+came to mind. It does not show whether permissions, expiry cleanup, problem contracts,
+abuse controls, audit events, infrastructure, or documentation were considered. A later
+workflow change will look like executor overreach even if it was a necessary consequence
+that planning failed to discover.
+
+### Reviewing proposed impact first
+
+Bounded analysis starts from the approved invitation outcome and exact workspace
+baseline. It proposes findings with evidence, after which a reviewer records dispositions:
+
+| Proposed finding | Review outcome | Reason |
+|---|---|---|
+| Customer invitation and error states | Accepted | Required by the approved customer outcome |
+| API contract and problem responses | Accepted | The customer flow crosses a governed contract |
+| Authorization and list ownership | Accepted | Only an authorized list owner may issue or revoke access |
+| Persistence, expiry, and cleanup | Accepted | Link lifecycle requires durable state and expiry behavior |
+| Audit and abuse-control evidence | Accepted | Security and operational constraints require reviewable behavior |
+| Public marketing page | Rejected | A text match on “invite” does not make the page part of this feature |
+| Deployment workflow | Proposed | Evidence suggests a new setting or schedule, but ownership and need remain unresolved |
+
+Planning remains blocked while the workflow finding is still proposed. The reviewer can
+broaden analysis, reject it with evidence, or accept it and require infrastructure work.
+Only the accepted findings become task obligations; the rejected match remains recorded
+so that it is not rediscovered as unexplained scope later.
+
+The governed plan may still contain three tasks, or it may contain ten. Its value comes
+from showing why each task belongs and which investigated concerns do not.
 
 ## Takeaway
 

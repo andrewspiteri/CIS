@@ -5,7 +5,7 @@ status: Active
 series: "Governed Software Change"
 series_order: 4
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-10"
+last_reviewed: "2026-09-22"
 review_cadence: on product or context-model change
 summary: "How provenance, typed relationships, and bounded retrieval provide better engineering context than loading an entire repository."
 cis:
@@ -151,6 +151,49 @@ credentials, and sources marked sensitive are excluded rather than redacted opti
 and transmitted.
 
 The best context is not only relevant. It is permitted.
+
+## Worked contrast: prepare context for one invitation task
+
+The following context lists are hypothetical and deliberately omit repository-specific
+paths. They illustrate selection, not literal CIS context-pack output.
+
+The task is narrow: implement the approved API behavior that revokes an outstanding
+Friends Todo invitation.
+
+### Without routing
+
+An executor receives all three product repositories, the complete product handbook,
+historic design notes, every API operation, full CI logs, and prior agent conversations.
+Some documents describe abandoned sharing behavior. Several tests mention “access” but
+exercise unrelated list membership. The infrastructure repository contains settings
+and files the task is not authorized to transmit to a remote provider.
+
+The executor has more text but weaker signals. It must infer which specification is
+current, which relationship is real, and which material is permitted. A plausible
+answer can follow an obsolete note or expand into customer and infrastructure work that
+belongs to other tasks.
+
+### With routed context
+
+The task receives a bounded set selected for a stated reason:
+
+| Selected evidence | Why it is present |
+|---|---|
+| Current feature specification and digest | Establishes the approved revocation behavior and non-goals |
+| Resolved link-lifecycle decision | Explains the authorized token and revocation semantics |
+| API contract section | Defines the operation and problem responses this task must preserve |
+| Authorization policy and owning application service | Shows the relevant trust and ownership boundary |
+| Focused lifecycle and contract tests | Shows existing evidence and where changed behavior must be verified |
+
+Each item retains its source, identity, freshness, and authority. The graph path and
+traversal bounds remain visible. Unrelated UI files, broad logs, generated dependencies,
+likely secrets, and unapproved remote content are excluded. If implementation reveals
+that revocation also requires infrastructure work, the executor reports the missing
+relationship and requests scope review instead of searching and changing the rest of
+the workspace silently.
+
+The governed pack is smaller, but its limits are explicit. That makes it more useful
+than a larger collection whose authority and permissions the executor must guess.
 
 ## Takeaway
 

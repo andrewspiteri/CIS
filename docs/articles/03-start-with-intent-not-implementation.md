@@ -5,7 +5,7 @@ status: Active
 series: "Governed Software Change"
 series_order: 3
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-22"
 review_cadence: on product or governance change
 summary: "Why business outcomes and technical direction must be current before change analysis and implementation planning begin."
 cis:
@@ -198,6 +198,49 @@ Current intent gives implementers:
 The work moves from “decide everything while implementing” to “execute within reviewed
 boundaries and escalate genuine exceptions.” That is especially valuable for coding
 agents, which otherwise fill missing intent with plausible assumptions.
+
+## Worked contrast: define the invitation before its implementation
+
+This is a hypothetical feature outline, not a CIS serialization or an approved Friends
+Todo decision.
+
+### Starting with implementation
+
+> Add an `Invitations` table, create `POST /api/invitations`, email a link that expires
+> after 24 hours, and add an invitation screen.
+
+That request is concrete, but it has already selected storage, transport, expiry, and
+experience before establishing the behavior. An executor still has to guess who may
+invite, whether a link can be reused or forwarded, what revocation means, what happens
+when the recipient already has access, and which events require an audit trail. A
+polished implementation would hide rather than resolve those assumptions.
+
+### Starting with intent
+
+The reviewed feature definition begins with what must become true:
+
+- a signed-in list owner can invite another person and revoke an outstanding invitation;
+- expired or revoked access cannot be accepted;
+- authorization and auditability remain enforceable across the invitation lifecycle;
+- public or pre-authentication routes retain their applicable security and caching
+  boundaries; and
+- anonymous list administration, bulk invitations, and unrelated sharing redesign are
+  outside this change.
+
+It also keeps unresolved choices visible:
+
+- whether acceptance is single-use, reusable until expiry, or account-bound;
+- the approved expiry period and cleanup behavior;
+- whether forwarding is allowed; and
+- how an invitation behaves when the recipient already has access.
+
+Those choices must be answered by the appropriate product and technical authorities
+before dependent planning. Only then should the team decide whether the implementation
+needs a table, which operations belong in the API, which screens are required, and how
+expiry is enforced.
+
+The intent-led version does not make implementation vague. It prevents implementation
+details from masquerading as stakeholder decisions.
 
 ## Takeaway
 

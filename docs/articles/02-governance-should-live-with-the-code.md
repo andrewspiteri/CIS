@@ -5,7 +5,7 @@ status: Active
 series: "Governed Software Change"
 series_order: 2
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-09"
+last_reviewed: "2026-09-22"
 review_cadence: on product or governance change
 summary: "Why engineering authority should be versioned, reviewable, and repository-backed while indexes and model output remain disposable."
 cis:
@@ -529,6 +529,42 @@ into an operational data warehouse.
 
 The goal is not to make the repository contain everything. It is to make sure durable
 engineering meaning does not exist only somewhere else.
+
+## Worked contrast: where the invitation decision lives
+
+The following hypothetical continues the Friends Todo invitation example. It compares
+two ways of preserving the decision; it does not describe literal CIS files or output.
+
+### Without repository-backed authority
+
+The original issue says that invitation links expire after seven days. A meeting later
+concludes that expiry must be one hour, but the decision remains in notes. A coding-agent
+conversation assumes 24 hours. The issue is then closed after the pull request merges.
+
+Six months later, a developer investigating a support case finds all three statements.
+The running code shows what was implemented, but not which choice was authorized or why.
+Changing the code to match any one source could either correct a defect or reintroduce
+an abandoned requirement. The tracker history and private conversation are useful
+evidence, but neither supplies a durable authority chain.
+
+### With repository-backed authority
+
+The product authority repository owns the reviewed invitation outcome. The material
+expiry and lifecycle choice has a stable decision identity, its alternatives, reviewer,
+rationale, and relationship to the feature. The API repository owns its local contract
+and implementation evidence. The customer and infrastructure repositories retain their
+own affected facts and validation.
+
+The external issue projects the canonical task identity and current coordination state.
+The local graph links the decision, contract, implementation, and tests for discovery,
+but deleting the graph does not delete or alter the approved decision. If the expiry
+choice changes, ordinary repository review shows the exact authority and implementation
+moving together.
+
+The practical test is simple: if the tracker, local database, generated summary, and
+private conversation disappeared, could the team still determine what was decided,
+who reviewed it, which implementation it governed, and whether that authority is
+current? Repository-backed governance is intended to make the answer yes.
 
 ## Takeaway
 

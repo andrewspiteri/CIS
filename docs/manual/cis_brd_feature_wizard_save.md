@@ -32,7 +32,10 @@ persists both fields together under the existing revision check. An omitted fiel
 value; blank text leaves a required list unresolved. Saving records a proposed feature
 breakdown and does not approve or populate the governed product backlog.
 
-On the `delivery` page, the input may also contain `repositoryWork`, an array of
+On the `delivery` page, the `delivery-ownership` answer records which existing capabilities must be reused and
+which responsibilities belong to the feature. [Delivery reconciliation](cis_brd_feature_wizard_delivery.md)
+uses this saved direction without approving stories or rewriting the source BRD.
+The input may also contain `repositoryWork`, an array of
 `id`, `repositoryId`, `title`, `scope`, `dependsOn` and `changeIds` objects. IDs are
 unique within the feature. Each item targets a registered product-owned participant;
 dependency cycles, missing sibling dependencies, unknown repositories and missing or

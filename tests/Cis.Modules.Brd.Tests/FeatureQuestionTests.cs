@@ -11,7 +11,7 @@ public sealed partial class FeatureIntakeTests
         foreach (var id in new[] { "technical", "architecture", "contracts", "experience", "delivery" })
         {
             var page = status.Pages.Single(page => page.Id == id);
-            Assert.InRange(page.Fields.Count(field => field.Required), 3, id == "delivery" ? 7 : 4);
+            Assert.InRange(page.Fields.Count(field => field.Required), 3, id == "delivery" ? 8 : 4);
             Assert.Equal(page.Fields.Count, page.Fields.Select(field => field.Id).Distinct().Count());
             Assert.All(page.Fields.Where(field => field.Required), field => Assert.Null(field.Answer));
             Assert.False(page.Fields.Single(field => field.Id == "summary").Required);

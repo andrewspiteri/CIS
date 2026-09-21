@@ -2416,6 +2416,11 @@ documents:
     type: command-reference
     status: active
     authority: canonical
+  - id: change-impact-studio:manual:cis-brd-feature-wizard-delivery
+    path: docs/manual/cis_brd_feature_wizard_delivery.md
+    type: command-reference
+    status: active
+    authority: canonical
   - id: change-impact-studio:manual:cis-brd-feature-wizard-architecture
     path: docs/manual/cis_brd_feature_wizard_architecture.md
     type: command-reference

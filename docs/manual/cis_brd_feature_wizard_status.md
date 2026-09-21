@@ -29,7 +29,7 @@ previous BRD/review links in `sourceHistory`. A source update retains answers bu
 requires renewed review against the new requirements.
 
 Technical direction has four distinct questions; architecture, contracts and experience
-each have three; delivery has three user-story lists and four planning questions. Each uses stable field IDs and relevant BRD excerpts,
+each have three; delivery has three user-story lists and five planning questions. Each uses stable field IDs and relevant BRD excerpts,
 with existing product context as a fallback. Nested source sections stay with their parent,
 and excerpts retain headings and table formatting. C4 coverage is an explicit proposal.
 Suggestions do not become reviewed answers on read. Additional narrative notes are optional.
@@ -47,6 +47,11 @@ user stories and acceptance outlines from the retained feature BRD. Requirement 
 take precedence over duplicate scope summaries; matching integration sections contribute
 to the same story. Cross-cutting platform and non-functional requirements are suggested as
 Foundation. Review these proposed categories before planning repository work.
+
+BRD outlines are requirements, not proof that implementation is missing. Use the
+[delivery reconciliation](cis_brd_feature_wizard_delivery.md) action to compare them
+with code in all owned repositories. Review ownership direction, existing capability,
+remaining work and conflicts before using the assessed lists as drafts.
 
 Excluded capabilities never become later-delivery stories just because they are outside
 the MVP. Explicit future ideas appear as uncommitted candidates, and an empty Post-MVP

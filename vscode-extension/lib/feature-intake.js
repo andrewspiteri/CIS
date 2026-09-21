@@ -8,6 +8,7 @@ const { createActionPanel, studioDocument } = require('./webview');
 const { STEPS, navigation, renderReviewPage, wizardScript, hasUnsavedChanges } = require('./feature-wizard');
 const { REVIEW_STYLES } = require('./feature-review-text');
 const { STORY_STYLES, moveStory } = require('./feature-stories');
+const { reconciledDrafts } = require('./feature-delivery');
 const { gallery, screenScript, exportScreen, SCREEN_STYLES } = require('./feature-screens');
 const { architectureGallery, ARCHITECTURE_STYLES } = require('./feature-architecture');
 
@@ -16,7 +17,7 @@ const ACTIONS = new Set(['choose-source', 'choose-repository', 'preview', 'apply
   'features-home', 'open-feature', 'add-repository-work', 'remove-repository-work',
   'reimport-source', 'apply-source-update', 'cancel-source-update', 'compare-source', 'open-source-history', 'save-continue', 'use-suggestion',
   'generate-screens', 'open-feature-screen', 'save-feature-screen', 'review-feature-screen',
-  'generate-architecture', 'open-feature-diagram', 'save-feature-diagram', 'move-story']);
+  'generate-architecture', 'open-feature-diagram', 'save-feature-diagram', 'move-story', 'reconcile-delivery', 'use-delivery-assessment']);
 
 function openFeatureIntake(vscode, { cli, authority, root, actorIdentity, refresh, storage, initialSlug, initialPage, createNew = false }) {
   const model = { root, repositories: [], loading: true, busy: false,
@@ -63,6 +64,7 @@ function openFeatureIntake(vscode, { cli, authority, root, actorIdentity, refres
       if (STEPS.some(([id]) => id === initialPage)) model.page = initialPage;
       await loadScreens();
       await loadArchitecture();
+      await loadDelivery();
     } catch (error) { model.error = error.message; }
     finally { model.loading = false; render(); }
   }
@@ -73,6 +75,7 @@ function openFeatureIntake(vscode, { cli, authority, root, actorIdentity, refres
     if (model.selectedSlug !== selectedSlug) {
       model.featureScreens = undefined;
       model.featureArchitecture = undefined;
+      model.featureDelivery = undefined;
       const saved = storage?.get(`${storageKey}:${selectedSlug}`);
       model.pageDrafts = saved?.pageDrafts || {};
       model.screenDrafts = saved?.screenDrafts || {};
@@ -146,6 +149,13 @@ function openFeatureIntake(vscode, { cli, authority, root, actorIdentity, refres
       { repository: false, acceptStructuredFailure: true, cache: false });
     if (result.errors?.length || result._process?.failed) throw new Error((result.errors || ['Diagram status failed.']).join('\n'));
     model.featureArchitecture = result;
+  }
+  async function loadDelivery() {
+    if (model.page !== 'delivery' || !model.selectedSlug) return;
+    const result = await cli.query(['brd', 'feature', 'wizard', 'delivery', 'status', '--slug', model.selectedSlug, '--workspace', root],
+      { repository: false, acceptStructuredFailure: true, cache: false });
+    if (result.errors?.length || result._process?.failed) throw new Error((result.errors || ['Delivery assessment could not be read.']).join('\n'));
+    model.featureDelivery = result;
   }
   async function saveDiagram(diagram) {
     assertAuthority();
@@ -222,7 +232,7 @@ function openFeatureIntake(vscode, { cli, authority, root, actorIdentity, refres
     if (['navigate', 'remember', 'save-page', 'refresh', 'resume', 'new-feature', 'open-document', 'product-wizard', 'start-approved-feature', 'discard-edits',
       'features-home', 'open-feature', 'add-repository-work', 'remove-repository-work',
       'reimport-source', 'apply-source-update', 'cancel-source-update', 'compare-source', 'open-source-history', 'save-continue', 'use-suggestion', 'generate-screens', 'open-feature-screen', 'review-feature-screen',
-      'generate-architecture', 'open-feature-diagram', 'save-feature-diagram', 'move-story'].includes(command)
+      'generate-architecture', 'open-feature-diagram', 'save-feature-diagram', 'move-story', 'reconcile-delivery', 'use-delivery-assessment'].includes(command)
       || ['open-source', 'open-request'].includes(command) && value?.startsWith('{')) {
       try {
         if (typeof value !== 'string' || value.length > 1_048_576) throw new Error('Feature wizard input is too large.');
@@ -331,6 +341,46 @@ function openFeatureIntake(vscode, { cli, authority, root, actorIdentity, refres
       } else if (command === 'discard-edits') {
         delete model.pageDrafts[model.page];
         if (model.page === 'delivery') model.repositoryWorkDraft = undefined;
+      }
+      else if (command === 'reconcile-delivery') {
+        if (model.page !== 'delivery' || !model.wizard) throw new Error('Open Delivery and acceptance first.');
+        if (model.featureDelivery) model.featureDelivery = { ...model.featureDelivery, status: 'stale' };
+        render();
+        const ownership = model.pageDrafts.delivery?.['delivery-ownership'];
+        const current = model.wizard.pages.find(p => p.id === 'delivery')?.fields.find(f => f.id === 'delivery-ownership')?.answer;
+        if (ownership !== undefined && ownership !== current) {
+          const actor = model.draft.actor || await actorIdentity(); if (!actor) return;
+          const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'cis-feature-ownership-'));
+          const input = path.join(directory, 'answer.json');
+          try {
+            fs.writeFileSync(input, JSON.stringify({ slug: model.selectedSlug, page: 'delivery',
+              answers: { 'delivery-ownership': ownership }, actor, expectedRevision: model.wizard.revision }), { encoding: 'utf8', mode: 0o600 });
+            const saved = await cli.query(['brd', 'feature', 'wizard', 'save', '--input', input, '--workspace', root], { repository: false, acceptStructuredFailure: true });
+            if (saved.errors?.length || saved._process?.failed) throw new Error((saved.errors || ['Ownership direction could not be saved.']).join('\n'));
+            model.wizard = saved;
+          } finally { if (fs.existsSync(input)) fs.unlinkSync(input); fs.rmdirSync(directory); }
+        }
+        await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Reconciling delivery with existing implementation', cancellable: false }, async () => {
+          assertAuthority();
+          const result = await cli.query(['brd', 'feature', 'wizard', 'delivery', 'prepare', '--slug', model.selectedSlug,
+            '--expected-revision', model.wizard.revision, '--workspace', root], { repository: false, acceptStructuredFailure: true, cache: false, timeout: 900_000 });
+          if (result.errors?.length || result._process?.failed) throw new Error((result.errors || ['Delivery reconciliation failed.']).join('\n'));
+          model.featureDelivery = result;
+          model.notice = 'Review existing capabilities, remaining work and scope conflicts. Use the reconciled stories as a draft when ready.';
+        });
+      }
+      else if (command === 'use-delivery-assessment') {
+        const ownership = model.pageDrafts.delivery?.['delivery-ownership'];
+        const savedOwnership = model.wizard.pages.find(p => p.id === 'delivery')?.fields.find(f => f.id === 'delivery-ownership')?.answer;
+        if (ownership !== undefined && ownership !== savedOwnership) throw new Error('Reconcile again with the edited ownership direction before using these stories.');
+        await loadDelivery();
+        const drafts = reconciledDrafts(model);
+        if (hasUnsavedChanges(model, model.wizard.pages.find(p => p.id === 'delivery'))) {
+          const choice = await vscode.window.showWarningMessage('Replace the three story lists in this form with the reconciled drafts? Other answers and repository work are kept.', { modal: true }, 'Replace story drafts');
+          if (choice !== 'Replace story drafts') return;
+        }
+        model.pageDrafts.delivery = drafts;
+        model.notice = 'Reconciled stories added to the form. Review conflicts and save the delivery page to keep the changes.';
       }
       else if (command === 'generate-architecture') {
         if (model.page !== 'architecture' || !model.wizard) throw new Error('Open the architecture step before generating diagrams.');
@@ -479,7 +529,7 @@ function openFeatureIntake(vscode, { cli, authority, root, actorIdentity, refres
         });
       } else if (command === 'open-request' && model.result?.plan) await open(model.result.plan.requestPath);
       else if (command === 'open-source' && model.result?.plan) await open(model.result.plan.sourcePath);
-      if (['navigate', 'refresh', 'resume', 'open-feature', 'save-page', 'save-continue', 'apply-source-update'].includes(command)) { await loadScreens(); await loadArchitecture(); }
+      if (['navigate', 'refresh', 'resume', 'open-feature', 'save-page', 'save-continue', 'apply-source-update'].includes(command)) { await loadScreens(); await loadArchitecture(); await loadDelivery(); }
     } catch (error) { model.error = error.message; }
     finally { model.busy = false; await persist(); render(); }
   }
@@ -534,7 +584,7 @@ function renderFeatureIntake(webview, model, scriptNonce) {
       ${model.repositories.length ? model.repositories.map(repo => `<label class="source-choice"><input type="checkbox" name="integrationRepositories" value="${h(repo.id)}" ${d.integrationRepositories.includes(repo.id) ? 'checked' : ''}><span>${h(repo.id)}<small>${repo.participation === 'dependency' ? 'External dependency · context only' : 'Owned by this product'}</small></span></label>`).join('') : '<p>No participant repositories are registered yet.</p>'}
       <div class="actions"><button type="submit" ${model.busy ? 'disabled' : ''}>Review setup</button></div></fieldset></form>`}
       ${model.busy ? '<p role="status">CIS is preparing this action…</p>' : ''}`;
-  const body = `<style nonce="${scriptNonce}">#feature-form fieldset{display:grid;gap:.65rem}#feature-form label:not(.source-choice){font-weight:600;margin-top:.65rem}#feature-form input:not([type=checkbox]),#feature-form select{width:100%;font:inherit;padding:.6rem;color:var(--vscode-input-foreground);background:var(--vscode-input-background);border:1px solid var(--vscode-input-border)}#feature-form button{justify-self:start}#feature-form h3{margin-bottom:0}.feature-questions{grid-template-columns:1fr}.feature-questions label{font-weight:600}#feature-review-form fieldset{min-width:0}#feature-review-form legend{font-weight:600}.feature-page{min-width:0;display:grid;gap:1rem}.wizard-steps{position:sticky;top:1rem;align-self:start}.feature-saved{display:flex;gap:.6rem;flex-wrap:wrap}.repository-work-item{display:grid;grid-template-columns:1fr 1fr;gap:1rem;border:1px solid var(--vscode-panel-border);border-radius:.4rem;padding:1rem;margin:1rem 0}.repository-work-item legend{font-weight:600}.repository-work-item label{display:grid;gap:.4rem;font-weight:600}.repository-work-item label:has(textarea){grid-column:1/-1}.repository-work-item input,.repository-work-item select,.repository-work-item textarea{width:100%;min-width:0;font:inherit;padding:.6rem;color:var(--vscode-input-foreground);background:var(--vscode-input-background);border:1px solid var(--vscode-input-border);border-radius:.25rem}.repository-work-item select[multiple]{min-height:5rem}.repository-work-item button{justify-self:start}@media(max-width:780px){.repository-work-item{grid-template-columns:1fr}}</style>
+  const body = `<style nonce="${scriptNonce}">#feature-form fieldset{display:grid;gap:.65rem}#feature-form label:not(.source-choice){font-weight:600;margin-top:.65rem}#feature-form input:not([type=checkbox]),#feature-form select{width:100%;font:inherit;padding:.6rem;color:var(--vscode-input-foreground);background:var(--vscode-input-background);border:1px solid var(--vscode-input-border)}#feature-form button{justify-self:start}#feature-form h3{margin-bottom:0}.feature-questions{grid-template-columns:1fr}.feature-questions label{font-weight:600}#feature-review-form fieldset{min-width:0}#feature-review-form legend{font-weight:600}.feature-page{min-width:0;display:grid;gap:1rem}.wizard-steps{position:sticky;top:1rem;align-self:start}.feature-saved{display:flex;gap:.6rem;flex-wrap:wrap}.repository-work-item{display:grid;grid-template-columns:1fr 1fr;gap:1rem;border:1px solid var(--vscode-panel-border);border-radius:.4rem;padding:1rem;margin:1rem 0}.repository-work-item legend{font-weight:600}.repository-work-item label{display:grid;gap:.4rem;font-weight:600}.repository-work-item label:has(textarea){grid-column:1/-1}.repository-work-item input,.repository-work-item select,.repository-work-item textarea{width:100%;min-width:0;font:inherit;padding:.6rem;color:var(--vscode-input-foreground);background:var(--vscode-input-background);border:1px solid var(--vscode-input-border);border-radius:.25rem}.repository-work-item select[multiple]{min-height:5rem}.repository-work-item button{justify-self:start}@media(max-width:48rem){.wizard-steps{position:static}}@media(max-width:780px){.repository-work-item{grid-template-columns:1fr}}</style>
     <style nonce="${scriptNonce}">${REVIEW_STYLES}${STORY_STYLES}${SCREEN_STYLES}${ARCHITECTURE_STYLES}</style>
     <header class="hero feature-hero"><div><span class="eyebrow">Feature delivery</span><h1>Feature definition wizard</h1><p>${h(model.wizard?.plan?.title || model.draft.title || 'Define a new feature from its prepared BRD, using the existing product baseline.')}</p><p class="muted">Authority: ${h(model.root)}</p></div>${model.selectedSlug ? '<button type="button" class="secondary" data-wizard-action="new-feature">Add another feature</button>' : ''}</header>
     <div class="actions"><button type="button" class="secondary" data-wizard-action="features-home">All high-level features</button><button type="button" class="secondary" data-wizard-action="product-wizard">Product definition</button>${model.wizard ? `<button type="button" data-wizard-action="reimport-source" ${model.busy ? 'disabled' : ''}>Reimport BRD</button>` : ''}</div>

@@ -12,6 +12,7 @@ public sealed partial class BrdModule
         root.Subcommands.Add(CreateFeatureSourceUpdateCommand(service));
         root.Subcommands.Add(CreateFeatureScreensCommand(service));
         root.Subcommands.Add(CreateFeatureArchitectureCommand(service));
+        root.Subcommands.Add(CreateFeatureDeliveryCommand(service));
         var navigation = new Command("navigation", "List the product, repositories, feature definitions and proposed repository work.");
         var navigationWorkspace = WorkspaceOption(); var navigationFormat = FormatOption();
         navigation.Options.Add(navigationWorkspace); navigation.Options.Add(navigationFormat);
@@ -73,6 +74,35 @@ public sealed partial class BrdModule
                 {
                     Console.WriteLine($"status={result.Status};exitCode={result.ExitCode};reviewed={result.Reviewed};applied={result.Applied}");
                     foreach (var page in result.Pages) Console.WriteLine($"page={page.Id};status={page.Status};attention={Clean(string.Join("; ", page.Attention))}");
+                    foreach (var error in result.Errors) Console.WriteLine("error=" + Clean(error));
+                }
+                return result.ExitCode;
+            });
+            root.Subcommands.Add(command);
+        }
+        return root;
+    }
+
+    private static Command CreateFeatureDeliveryCommand(FeatureIntakeService service)
+    {
+        var root = new Command("delivery", "Reconcile feature requirements with existing owned implementation.");
+        foreach (var operation in new[] { "status", "prepare" })
+        {
+            var command = new Command(operation, operation == "prepare" ? "Prepare a local model assessment of existing capability and remaining work." : "Check the cached implementation assessment without model generation.");
+            var workspace = WorkspaceOption(); var format = FormatOption();
+            var slug = new Option<string>("--slug") { Required = true };
+            var revision = new Option<string?>("--expected-revision") { Required = operation == "prepare" };
+            command.Options.Add(workspace); command.Options.Add(format); command.Options.Add(slug); command.Options.Add(revision);
+            command.SetAction(parse =>
+            {
+                var selected = GetFormat(parse.GetValue(format)); if (selected is null) return 2;
+                var result = service.Delivery(parse.GetValue(workspace) ?? Directory.GetCurrentDirectory(), parse.GetValue(slug)!, operation == "prepare", parse.GetValue(revision));
+                if (selected == "json") Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+                else
+                {
+                    Console.WriteLine($"status={result.Status};stories={result.Stories.Count};cached={result.Cached};provider={result.Provider};model={result.Model};exitCode={result.ExitCode}");
+                    foreach (var story in result.Stories) Console.WriteLine($"story={story.Id};title={Clean(story.Title)};treatment={story.Treatment};owners={Clean(string.Join(',', story.Owners))}");
+                    foreach (var warning in result.Warnings) Console.WriteLine("warning=" + Clean(warning));
                     foreach (var error in result.Errors) Console.WriteLine("error=" + Clean(error));
                 }
                 return result.ExitCode;

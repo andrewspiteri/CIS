@@ -142,6 +142,8 @@ public sealed partial class FeatureIntakeTests
         Assert.Equal(0, application.Invoke(["brd", "feature", "intake", "--help"]));
         Assert.Equal(0, application.Invoke(["brd", "feature", "wizard", "screens", "prepare", "--help"]));
         Assert.Equal(0, application.Invoke(["brd", "feature", "wizard", "architecture", "prepare", "--help"]));
+        Assert.Equal(0, application.Invoke(["brd", "feature", "wizard", "delivery", "prepare", "--help"]));
+        Assert.Equal(5, application.Invoke(["brd", "feature", "wizard", "delivery", "status", "--slug", "missing", "--workspace", f.Authority, "--format", "json"]));
         Assert.Equal(5, application.Invoke(["brd", "feature", "wizard", "architecture", "status", "--slug", "missing", "--workspace", f.Authority, "--format", "json"]));
         Assert.Equal(5, application.Invoke(["brd", "feature", "wizard", "screens", "status", "--slug", "missing", "--workspace", f.Authority, "--format", "json"]));
         var input = Path.Combine(f.Root, "request.json");

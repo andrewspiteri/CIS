@@ -35,6 +35,7 @@ public sealed record CisTextGenerationRequest(
     bool JsonMode = false)
 {
     public string? JsonSchema { get; init; }
+    public int? ContextWindowTokens { get; init; }
 }
 
 public sealed record CisTextGenerationResult(

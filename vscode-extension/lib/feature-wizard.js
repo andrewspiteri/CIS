@@ -1,5 +1,7 @@
 'use strict';
 
+const { deliveryAssessment } = require('./feature-delivery');
+
 const { escapeHtml: h } = require('./security');
 const { renderReviewText } = require('./feature-review-text');
 const { gallery } = require('./feature-screens');
@@ -50,7 +52,8 @@ function renderReviewPage(model) {
   if (!current) return '<section class="card"><h2>Feature definition</h2><p>Complete feature foundation to begin reviewing this feature.</p></section>';
   const pageDraft = model.pageDrafts?.[current.id] || {};
   const stories = current.id === 'delivery' ? current.fields.filter(isStoryField) : [];
-  const questions = current.fields.filter(field => field.id !== 'summary' && !stories.includes(field));
+  const ownership = current.id === 'delivery' ? current.fields.find(field => field.id === 'delivery-ownership') : undefined;
+  const questions = current.fields.filter(field => field.id !== 'summary' && field !== ownership && !stories.includes(field));
   const summary = current.fields.find(field => field.id === 'summary');
   const structured = questions.some(field => !field.id.startsWith('decision-'));
   const field = (f, index) => {
@@ -83,6 +86,7 @@ function renderReviewPage(model) {
     ${current.id === 'architecture' ? architectureGallery(model.featureArchitecture, { busy: model.busy, dirty: hasUnsavedChanges(model, current) }) : ''}
     ${current.id === 'experience' ? gallery(model.featureScreens, { busy: model.busy, dirty: hasUnsavedChanges(model, current), drafts: model.screenDrafts }) : ''}
     <form id="feature-review-form" class="source-review feature-review-form"><fieldset ${model.busy ? 'disabled' : ''}><legend>${current.id === 'review' ? 'Review conclusion' : 'Proposed feature direction'}</legend><div class="wizard-questions feature-questions">
+      ${ownership ? field(ownership, 0) : ''}${current.id === 'delivery' ? deliveryAssessment(model.featureDelivery, { busy: model.busy }) : ''}
       ${stories.length ? `<section class="feature-delivery-stories"><h2>Required user stories</h2><p>Foundation is required regardless of release scope. MVP completes the first release. Post-MVP captures later delivery. Review the suggested categories and acceptance outlines; future candidates remain uncommitted until you decide to include them.</p><p class="muted">The BRD contains the full requirements behind each outline. These lists describe feature scope; delivery and backlog approvals remain separate.</p>${stories.map(story => field(story, 0)).join('')}</section>` : ''}
       ${!structured && summary ? field(summary, 0) : ''}${questions.map((question, index) => field(question, index + 1)).join('')}
       ${structured && summary ? `<details><summary>${h(summary.label)}</summary>${field(summary, 0)}</details>` : ''}</div></fieldset></form>

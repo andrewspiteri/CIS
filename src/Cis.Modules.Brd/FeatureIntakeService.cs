@@ -15,7 +15,8 @@ public sealed partial class FeatureIntakeService(
     DocumentationCatalogMerger catalog,
     IEnumerable<ICisProductDefinitionAuthority> definitions,
     IEnumerable<ICisFeatureScreenGenerator>? screenGenerators = null,
-    IEnumerable<ICisFeatureArchitectureGenerator>? architectureGenerators = null)
+    IEnumerable<ICisFeatureArchitectureGenerator>? architectureGenerators = null,
+    ICisTextGenerationService? textGeneration = null)
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private const string RecordMarker = "<!-- cis:feature-intake\n";

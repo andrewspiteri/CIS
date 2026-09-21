@@ -58,11 +58,7 @@ internal sealed class OllamaAiProvider : ICisAiProvider
                 prompt = request.Prompt,
                 stream = false,
                 format = request.JsonSchema is { } schema ? (object)JsonSerializer.Deserialize<JsonElement>(schema) : request.JsonMode ? "json" : null,
-                options = new
-                {
-                    temperature = 0.1,
-                    num_predict = Math.Clamp(request.MaxOutputTokens, 32, 32_768),
-                },
+                options = GenerationOptions(request),
             }).GetAwaiter().GetResult();
             if (!response.IsSuccessStatusCode)
             {
@@ -87,6 +83,13 @@ internal sealed class OllamaAiProvider : ICisAiProvider
         {
             return Failure(model, exception.Message);
         }
+    }
+
+    private static Dictionary<string, object> GenerationOptions(CisTextGenerationRequest request)
+    {
+        var options = new Dictionary<string, object> { ["temperature"] = 0.1, ["num_predict"] = Math.Clamp(request.MaxOutputTokens, 32, 32_768) };
+        if (request.ContextWindowTokens is { } tokens) options["num_ctx"] = Math.Clamp(tokens, 2048, 32768);
+        return options;
     }
 
     private static HttpClient CreateClient(Uri baseUri, TimeSpan timeout) => new()

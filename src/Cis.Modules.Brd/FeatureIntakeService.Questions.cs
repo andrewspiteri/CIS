@@ -28,6 +28,7 @@ public sealed partial class FeatureIntakeService
             new("experience-controls", "Which screens, controls, validation messages and empty or failure states are required?", "form|field|validation|duplicate|error|screen|controls"),
             new("experience-baseline", "How will the existing visual direction, responsive behaviour and accessibility requirements apply?", "accessibility|responsive|localisation|browser|hosted", "visual|design tokens|component|responsive|accessibility")],
         "delivery" => [
+            new("delivery-ownership", "Which capabilities stay in existing repositories, and what should this feature add or extend?", "authoritative ownership|source ownership|existing capability|existing implementation|responsibilit"),
             new("delivery-stories-foundation", "Foundation — required regardless of release scope", ""),
             new("delivery-stories-mvp", "MVP — required for the first release", ""),
             new("delivery-stories-post-mvp", "Post-MVP — later delivery", ""),

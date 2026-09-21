@@ -34,6 +34,7 @@ Each loaded module owns one top-level command group. The following leaf commands
 | [`cis brd feature wizard status`](cis_brd_feature_wizard_status.md) | Report the eight feature-definition pages and outstanding work. |
 | [`cis brd feature wizard screens`](cis_brd_feature_wizard_screens.md) | Generate and inspect proposed feature screens against the existing UI baseline. |
 | [`cis brd feature wizard architecture`](cis_brd_feature_wizard_architecture.md) | Generate feature-specific C4 context, container and component diagrams. |
+| [`cis brd feature wizard delivery`](cis_brd_feature_wizard_delivery.md) | Reconcile requirements with existing implementation and identify remaining work. |
 | [`cis brd feature wizard save`](cis_brd_feature_wizard_save.md) | Save reviewed feature-page answers with drift and concurrency checks. |
 | [`cis brd feature wizard navigation`](cis_brd_feature_wizard_navigation.md) | Navigate product features, repository work and saved definition progress. |
 | [`cis brd feature wizard reimport`](cis_brd_feature_wizard_reimport.md) | Preview and apply an updated source BRD while preserving feature answers and history. |

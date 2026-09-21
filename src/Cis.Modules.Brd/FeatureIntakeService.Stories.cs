@@ -14,6 +14,9 @@ public sealed partial class FeatureIntakeService
     // This is a bounded, repeatable projection of the retained feature BRD. Opening
     // the wizard must not call a model, save a decision or create backlog approvals.
     private static IReadOnlyDictionary<string, string> SuggestStories(string source)
+        => StoryGroups(source).ToDictionary(pair => StoryFieldPrefix + pair.Key, pair => RenderStories(pair.Key, pair.Value), StringComparer.Ordinal);
+
+    private static Dictionary<string, List<StoryDraft>> StoryGroups(string source)
     {
         var sections = StorySections(source);
         var groups = new Dictionary<string, List<StoryDraft>>(StringComparer.Ordinal)
@@ -66,7 +69,7 @@ public sealed partial class FeatureIntakeService
                 else groups[phase].Add(new(title, narrative, acceptance, sourceNote, candidate));
             }
         }
-        return groups.ToDictionary(pair => StoryFieldPrefix + pair.Key, pair => RenderStories(pair.Key, pair.Value), StringComparer.Ordinal);
+        return groups;
     }
 
     private static IReadOnlyList<StorySection> StorySections(string source)

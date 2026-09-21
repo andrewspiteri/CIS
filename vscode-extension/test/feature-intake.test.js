@@ -33,6 +33,7 @@ function fixture() {
       if (args[3] === 'status') return structuredClone(wizard);
       if (args[3] === 'screens') return { status: 'missing', screens: [], errors: [] };
       if (args[3] === 'architecture') return { status: 'missing', diagrams: [], errors: [] };
+      if (args[3] === 'delivery') return { status: 'missing', stories: [], evidence: [], errors: [] };
       if (args[3] === 'reimport') {
         const update = { slug: 'referrals', title: 'Referrals', incomingPath: path.resolve('updated.md'),
           previousSourcePath: plan.sourcePath, sourcePath: '.cis/inputs/features/referrals/revisions/new/source.md',
@@ -63,6 +64,29 @@ function fixture() {
   const draft = { title: 'Referrals', slug: 'referrals', sourcePath: path.resolve('prepared.md'), repositoryMode: 'new', repositoryPath: path.resolve('referrals'), documentationRoot: 'docs/cis', integrationRepositories: ['backend'] };
   return { page, vscode, cli, calls, inputs, executed, plan, draft, wizard, options, value: JSON.stringify(draft), changeAuthority: () => { selectedRoot = path.resolve('different'); }, refreshes: () => refreshes };
 }
+
+test('delivery reconciliation saves only ownership, keeps story drafts and blocks concurrent calls', async () => {
+  const f = fixture(); await f.page.ready; await f.page.action('preview', f.value); await f.page.action('apply');
+  f.wizard.pages.find(p => p.id === 'delivery').fields.push({id:'delivery-ownership',label:'Ownership',answer:null,suggestedAnswer:'',required:true});
+  await f.page.action('navigate', JSON.stringify({page:'business',target:'delivery'}));
+  const query = f.cli.query; let release; let prepares=0;
+  f.cli.query=async(args,options)=>{
+    if(args[3]==='delivery' && args[4]==='prepare') {
+      prepares++; assert.equal(args[args.indexOf('--expected-revision')+1],'revision-2');
+      return new Promise(resolve=>{release=()=>resolve({status:'current',stories:[],evidence:[],suggestedAnswers:{'delivery-stories-mvp':'Reconciled draft'},errors:[]});});
+    }
+    return query(args,options);
+  };
+  const payload=JSON.stringify({page:'delivery',answers:{'delivery-ownership':'Existing app owns maintenance','delivery-stories-mvp':'Keep my draft'},repositoryWork:[{id:'RW-1',repositoryId:'backend',title:'Keep work',scope:'Scope',dependsOn:[],changeIds:[]}]});
+  const priorRefreshes=f.refreshes();
+  const pending=f.page.action('reconcile-delivery',payload);
+  for(let i=0;!release && i<20;i++) await new Promise(resolve=>setImmediate(resolve));
+  await f.page.action('reconcile-delivery',payload); assert.equal(prepares,1); release(); await pending;
+  assert.deepEqual(f.inputs.at(-1).draft.answers,{'delivery-ownership':'Existing app owns maintenance'});
+  assert.equal(f.page.model.pageDrafts.delivery['delivery-stories-mvp'],'Keep my draft');
+  assert.equal(f.page.model.repositoryWorkDraft[0].title,'Keep work');
+  assert.equal(f.page.model.busy,false);assert.equal(f.refreshes(),priorRefreshes);
+});
 
 test('architecture step loads its own diagrams, saves direction once and prevents concurrent generation', async () => {
   const f = fixture(); await f.page.ready; await f.page.action('preview', f.value); await f.page.action('apply');
@@ -241,8 +265,9 @@ test('reimport preserves unsaved answers and repository work until explicitly sa
   assert.equal(f.page.model.pageDrafts.business.summary, 'My unsaved answer.');
   await f.page.action('discard-edits', JSON.stringify({ page: 'business' }));
   await f.page.action('navigate', JSON.stringify({ page: 'business', target: 'delivery' }));
+  const afterDeliveryStatus = f.calls.length;
   await f.page.action('reimport-source', JSON.stringify({ page: 'delivery', repositoryWork: [{ id: 'RW-001', repositoryId: 'backend', title: 'Pending', scope: 'Unsaved work', dependsOn: [], changeIds: [] }] }));
-  assert.equal(f.calls.length, count); assert.match(f.page.model.error, /Delivery and acceptance/u);
+  assert.equal(f.calls.length, afterDeliveryStatus); assert.match(f.page.model.error, /Delivery and acceptance/u);
   assert.equal(f.page.model.repositoryWorkDraft[0].scope, 'Unsaved work');
 });
 

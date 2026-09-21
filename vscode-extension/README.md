@@ -127,6 +127,14 @@ Post-MVP**; each Post-MVP story has **Promote to MVP**. These buttons move the c
 story into the other draft list without refreshing the workspace. Use **Edit user stories**
 to refine the wording, then save alongside the release questions and repository breakdown.
 
+Before treating these requirements as implementation work, use **Reconcile with existing
+implementation**. CIS compares them with code in all owned repositories, including those
+outside the original feature selection. Review proposed reuse, extensions, new work and
+scope conflicts, with owning repositories and evidence. The ownership question records
+where responsibilities must remain. Reconciliation saves only that answer, uses a local
+model, and caches its proposals. **Use reconciled stories as draft** keeps review and
+saving explicit; it never approves implementation or silently replaces saved stories.
+
 ## Install
 
 1. Install a compatible CIS CLI and run `cis --version`.

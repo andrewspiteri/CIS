@@ -7,7 +7,7 @@ const { escapeHtml: h, nonce, resolveWithin } = require('./security');
 const { createActionPanel, studioDocument } = require('./webview');
 const { STEPS, navigation, renderReviewPage, wizardScript, hasUnsavedChanges } = require('./feature-wizard');
 const { REVIEW_STYLES } = require('./feature-review-text');
-const { STORY_STYLES } = require('./feature-stories');
+const { STORY_STYLES, moveStory } = require('./feature-stories');
 const { gallery, screenScript, exportScreen, SCREEN_STYLES } = require('./feature-screens');
 const { architectureGallery, ARCHITECTURE_STYLES } = require('./feature-architecture');
 
@@ -16,7 +16,7 @@ const ACTIONS = new Set(['choose-source', 'choose-repository', 'preview', 'apply
   'features-home', 'open-feature', 'add-repository-work', 'remove-repository-work',
   'reimport-source', 'apply-source-update', 'cancel-source-update', 'compare-source', 'open-source-history', 'save-continue', 'use-suggestion',
   'generate-screens', 'open-feature-screen', 'save-feature-screen', 'review-feature-screen',
-  'generate-architecture', 'open-feature-diagram', 'save-feature-diagram']);
+  'generate-architecture', 'open-feature-diagram', 'save-feature-diagram', 'move-story']);
 
 function openFeatureIntake(vscode, { cli, authority, root, actorIdentity, refresh, storage, initialSlug, initialPage, createNew = false }) {
   const model = { root, repositories: [], loading: true, busy: false,
@@ -222,7 +222,7 @@ function openFeatureIntake(vscode, { cli, authority, root, actorIdentity, refres
     if (['navigate', 'remember', 'save-page', 'refresh', 'resume', 'new-feature', 'open-document', 'product-wizard', 'start-approved-feature', 'discard-edits',
       'features-home', 'open-feature', 'add-repository-work', 'remove-repository-work',
       'reimport-source', 'apply-source-update', 'cancel-source-update', 'compare-source', 'open-source-history', 'save-continue', 'use-suggestion', 'generate-screens', 'open-feature-screen', 'review-feature-screen',
-      'generate-architecture', 'open-feature-diagram', 'save-feature-diagram'].includes(command)
+      'generate-architecture', 'open-feature-diagram', 'save-feature-diagram', 'move-story'].includes(command)
       || ['open-source', 'open-request'].includes(command) && value?.startsWith('{')) {
       try {
         if (typeof value !== 'string' || value.length > 1_048_576) throw new Error('Feature wizard input is too large.');
@@ -249,6 +249,7 @@ function openFeatureIntake(vscode, { cli, authority, root, actorIdentity, refres
     }
     model.busy = true; model.error = undefined;
     model.notice = undefined;
+    model.storyMoveFocus = undefined;
     try {
       assertAuthority();
       if (['choose-source', 'choose-repository', 'preview'].includes(command)) {
@@ -381,6 +382,16 @@ function openFeatureIntake(vscode, { cli, authority, root, actorIdentity, refres
         const n = nonce();
         preview.webview.html = studioDocument(preview.webview, screen.plan.title,
           `<style nonce="${n}">${SCREEN_STYLES}</style>${gallery(snapshot, { standalone: true })}`, n, `<script nonce="${n}">const vscode=acquireVsCodeApi();${screenScript()}</script>`);
+      }
+      else if (command === 'move-story') {
+        const delivery = model.wizard?.pages.find(page => page.id === 'delivery');
+        if (model.page !== 'delivery' || !delivery) throw new Error('Open Delivery and acceptance before moving a story.');
+        const answers = Object.fromEntries(delivery.fields.map(field => [field.id,
+          model.pageDrafts.delivery?.[field.id] ?? field.answer ?? field.suggestedAnswer ?? '']));
+        const moved = moveStory(answers, JSON.parse(message.target));
+        model.pageDrafts.delivery = { ...answers, ...moved.fields };
+        model.storyMoveFocus = moved.focus;
+        model.notice = `Moved “${moved.title}” to ${moved.category}. Save this page to keep the change.`;
       }
       else if (command === 'save-page' || command === 'save-continue') await savePage(command === 'save-continue');
       else if (command === 'use-suggestion') {

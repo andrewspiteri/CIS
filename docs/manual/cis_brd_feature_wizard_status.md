@@ -56,8 +56,15 @@ Markdown comments. The full BRD remains the source for acceptance requirements b
 the displayed outlines. Large suggestions report when further stories need review.
 
 These suggestions are deterministic and do not call a model or write files during status.
-Expand a story to read its outline, or use **Edit user stories** to revise or move stories
-between lists. Saving preserves the reviewed text; subsequent reads never overwrite it
+Expand a story to read its outline. Each MVP card has **Move to Post-MVP**, and each
+Post-MVP card has **Promote to MVP**. The buttons move the complete story, acceptance
+text and hidden source comments into the other draft list. Foundation cards have no
+category button. Both lists update without a CLI call or workspace refresh; save the
+delivery page to record the change. Moving the last story leaves an explicit empty-list
+statement. If the displayed card no longer matches edited text, the edits are retained
+and the card is refreshed before retrying the move.
+
+Use **Edit user stories** to revise the text. Saving preserves the reviewed text; subsequent reads never overwrite it
 with regenerated suggestions. Previously saved planning answers remain available, and
 new lists require review before a structured delivery page is complete. Earlier single
 narrative reviews retain the legacy behaviour described above.

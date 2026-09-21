@@ -122,8 +122,10 @@ and implementation planning. This action does not approve the BRD or choose a st
 (required regardless of release scope), **MVP** (first release), and **Post-MVP** (later
 delivery). Expand each story to review its acceptance outline. CIS prepares the lists
 from the retained feature BRD without a model call; exclusions stay outside the lists
-and uncommitted future ideas are labelled for review. Use **Edit user stories** to refine
-or recategorize them, then save alongside the release questions and repository breakdown.
+and uncommitted future ideas are labelled for review. Each MVP story has **Move to
+Post-MVP**; each Post-MVP story has **Promote to MVP**. These buttons move the complete
+story into the other draft list without refreshing the workspace. Use **Edit user stories**
+to refine the wording, then save alongside the release questions and repository breakdown.
 
 ## Install
 

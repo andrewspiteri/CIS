@@ -49,7 +49,8 @@ function fixture() {
       const file = args[args.indexOf('--input') + 1]; const answer = JSON.parse(fs.readFileSync(file, 'utf8'));
       inputs.push({ file, draft: answer });
       const page = wizard.pages.find(page => page.id === answer.page);
-      page.fields[0].answer = answer.answers.summary; page.complete = true; page.status = 'Reviewed'; page.attention = [];
+      for (const field of page.fields) if (Object.hasOwn(answer.answers, field.id)) field.answer = answer.answers[field.id];
+      page.complete = true; page.status = 'Reviewed'; page.attention = [];
       if (answer.repositoryWork) wizard.repositoryWork = answer.repositoryWork;
       wizard.revision = 'revision-2'; return structuredClone(wizard);
     }
@@ -365,6 +366,7 @@ test('webview script is nonce protected, executable, and posts form values and d
   const form = { addEventListener: (event, fn) => { handlers[event] = fn; } };
   vm.runInNewContext(scripts[0][1], { window: { addEventListener() {} }, acquireVsCodeApi: () => ({ postMessage: message => sent.push(message) }),
     document: { getElementById: id => id === 'feature-form' ? form : undefined,
+      querySelector: () => undefined,
       querySelectorAll: selector => selector === '[data-feature-action]' ? [button] : selector === 'button[data-command]' ? [link] : selector === 'button' ? [button, link] : [] },
     FormData: class { entries() { return Object.entries(f.draft).filter(([key]) => key !== 'integrationRepositories'); } getAll() { return ['backend']; } } });
   handlers.click(); assert.equal(sent[0].command, 'choose-source'); assert.deepEqual(JSON.parse(sent[0].value), f.draft);
@@ -378,6 +380,57 @@ test('manifest and Getting Started expose the add feature flow', () => {
   const entry = manifest.contributes.menus['view/title'].find(c => c.command === 'cis.featureAdd');
   assert.match(entry.when, /cis.features/u);
   assert.equal(require('../lib/getting-started').ACTIONS.feature, 'cis.featureWizard');
+});
+
+test('moving stories updates only local drafts, survives reopening, and saves both lists together', async () => {
+  const { parseStories } = require('../lib/feature-stories');
+  const f = fixture();
+  const mvp = 'delivery-stories-mvp', later = 'delivery-stories-post-mvp', foundation = 'delivery-stories-foundation';
+  const story = '### Customer handoff\n\nAs a customer, I want an immediate redirect.\n\n- Use the current tab.\n<!-- Source: DIR-001 -->';
+  f.wizard.pages.find(p => p.id === 'delivery').fields.push(
+    { id: mvp, label: 'MVP', suggestedAnswer: story, required: true },
+    { id: later, label: 'Post-MVP', suggestedAnswer: 'No Post-MVP stories are currently selected.', required: true },
+    { id: foundation, label: 'Foundation', suggestedAnswer: '### Security\n\nProtect tenant data.', required: true });
+  await f.page.ready; await f.page.action('preview', f.value); await f.page.action('apply');
+  await f.page.action('navigate', JSON.stringify({ page: 'business', target: 'delivery' }));
+  const calls = f.calls.length, saves = f.inputs.length;
+  await f.page.action('move-story', JSON.stringify({ page: 'delivery', answers: { summary: 'Retain my release notes.' },
+    target: JSON.stringify({ fieldId: mvp, index: 0, key: parseStories(story).stories[0].key }) }));
+  assert.equal(f.page.model.error, undefined);
+  assert.equal(f.calls.length, calls); assert.equal(f.inputs.length, saves);
+  assert.equal(f.page.model.pageDrafts.delivery[later], story);
+  assert.equal(f.page.model.pageDrafts.delivery[mvp], 'No MVP stories are currently selected.');
+  assert.equal(f.page.model.pageDrafts.delivery[foundation], '### Security\n\nProtect tenant data.');
+  assert.match(f.page.model.notice, /Save this page to keep the change/u);
+  assert.equal(f.page.model.wizard.pages.find(p => p.id === 'delivery').fields.find(f => f.id === later).answer, undefined);
+  const reopened = openFeatureIntake(f.vscode, f.options); await reopened.ready;
+  assert.equal(reopened.model.pageDrafts.delivery[later], story);
+  await reopened.action('save-page', JSON.stringify({ page: 'delivery', answers: reopened.model.pageDrafts.delivery }));
+  assert.equal(f.inputs.at(-1).draft.answers[later], story);
+  assert.equal(f.inputs.at(-1).draft.answers.summary, 'Retain my release notes.');
+  assert.equal(reopened.model.wizard.pages.find(p => p.id === 'delivery').fields.find(f => f.id === later).answer, story);
+  assert.equal(reopened.model.pageDrafts.delivery, undefined);
+});
+
+test('an edited story is retained when its old card is clicked and can be moved from the refreshed card', async () => {
+  const { parseStories } = require('../lib/feature-stories');
+  const f = fixture(); const mvp = 'delivery-stories-mvp', later = 'delivery-stories-post-mvp';
+  const original = '### Capture\n\nOriginal acceptance.';
+  const edited = '### Capture\n\nMy unsaved acceptance changes.\n<!-- Source: FRM-001 -->';
+  f.wizard.pages.find(p => p.id === 'delivery').fields.push(
+    { id: mvp, label: 'MVP', suggestedAnswer: original, required: true },
+    { id: later, label: 'Post-MVP', suggestedAnswer: '', required: true });
+  await f.page.ready; await f.page.action('preview', f.value); await f.page.action('apply');
+  await f.page.action('navigate', JSON.stringify({ page: 'business', target: 'delivery' }));
+  const move = text => JSON.stringify({ page: 'delivery', answers: { [mvp]: edited, [later]: '' },
+    target: JSON.stringify({ fieldId: mvp, index: 0, key: parseStories(text).stories[0].key }) });
+  await f.page.action('move-story', move(original));
+  assert.match(f.page.model.error, /Your edits are retained/u);
+  assert.equal(f.page.model.pageDrafts.delivery[mvp], edited);
+  assert.equal(f.page.model.pageDrafts.delivery[later], '');
+  await f.page.action('move-story', move(edited));
+  assert.equal(f.page.model.error, undefined);
+  assert.equal(f.page.model.pageDrafts.delivery[later], edited);
 });
 
 test('wizard presents all eight stages, saves one page in place and resumes after reopening', async () => {

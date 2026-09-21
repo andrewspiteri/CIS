@@ -26,8 +26,9 @@ Delivery user stories use the answer fields `delivery-stories-foundation`,
 `delivery-stories-mvp`, and `delivery-stories-post-mvp`. Each holds a Markdown list
 of stories with headings, narrative and acceptance outlines. Review the prefilled
 lists, including uncommitted future candidates, and save them with the other delivery
-answers. Hidden source comments are retained. Moving a story between categories means
-moving its complete text between these fields. An omitted field preserves its saved
+answers. Hidden source comments are retained. The wizard's **Move to Post-MVP** and
+**Promote to MVP** buttons move the complete story between these draft fields; saving
+persists both fields together under the existing revision check. An omitted field preserves its saved
 value; blank text leaves a required list unresolved. Saving records a proposed feature
 breakdown and does not approve or populate the governed product backlog.
 

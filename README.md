@@ -371,14 +371,15 @@ Use these entry points rather than browsing every Markdown file:
 | Architecture and implementation principles | [Technical intent](docs/specs/technical-intent-spec.md) and [overall solution-design governance](docs/specs/overall-solution-design-governance-spec.md) |
 | Product-wide UI look, feel, shell, reuse, responsiveness, and accessibility | [High-level UI direction governance](docs/specs/high-level-ui-direction-governance-spec.md) |
 | Eight-page product-definition journey and consolidated activation | [High-level product-definition wizard](docs/specs/high-level-product-definition-wizard-spec.md) |
+| Feature intake, definition, design, delivery review, and implementation reconciliation | [`cis brd feature intake`](docs/manual/cis_brd_feature_intake.md) and [feature-wizard status](docs/manual/cis_brd_feature_wizard_status.md) |
 | Command syntax and behavior | [Command manual](docs/manual/README.md) |
 | Normative engineering rules | [`docs/standards/`](docs/standards/) and the [conformance matrix](docs/references/standards-conformance-matrix.md) |
 | Current inventories and profiles | [References index](docs/references/README.md) |
 | Product completion state | [Implementation roadmap](docs/specs/implementation-roadmap.md) |
 | Governance and CIS articles | [Articles index](docs/articles/README.md) |
 
-The articles index lists both planned and created articles. Planned titles remain plain
-text until a real draft exists. Created articles are catalogued and can be found with:
+The articles index lists all 78 publication-ready articles by topic and reading order.
+Find a specific article from the repository with:
 
 ```powershell
 git ls-files "docs/articles/*.md"
@@ -392,7 +393,19 @@ decisions, references, manuals, or implemented behavior.
 
 ### Starting a governed change
 
-Once repository context and required intent are current:
+Once repository context and required intent are current, choose the entry point that
+matches the work.
+
+For a product feature described by a prepared BRD, begin with
+[`cis brd feature intake`](docs/manual/cis_brd_feature_intake.md). Review the eight feature
+pages, reconcile proposed delivery stories with existing owned implementation, and record
+the final feature-definition review. This records review of the proposed definition; it
+does not create or approve the feature specification, approve the product backlog,
+authorize implementation, or approve a release. Complete those gates before deriving
+bounded work.
+
+For a bounded engineering change that does not start from a feature BRD, create a dossier
+directly:
 
 ```powershell
 cis graph find --text "concept or component"

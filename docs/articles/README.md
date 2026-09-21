@@ -3,7 +3,7 @@ title: "Change Impact Studio Articles"
 type: navigation
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-10"
+last_reviewed: "2026-09-21"
 review_cadence: on article publication
 cis:
   stable_id: change-impact-studio:docs:articles
@@ -29,8 +29,15 @@ then closes with practical application and product learning.
 The baselines were reconciled on 8 September 2026 against the current product boundary,
 product-definition workflow, direct agent execution, reference governance, editor client,
 and assurance behavior. The remaining short drafts were expanded to full text on
-9 September 2026. All 78 articles completed editorial and publication review on
-10 September 2026 and are Active.
+9 September 2026. All 78 articles completed editorial review and were marked
+publication-ready on 10 September 2026. They are Active but are not published by this
+repository alone.
+
+On 21 September 2026, the getting-started and feature-workflow articles were reconciled
+with feature intake, the eight-page feature-definition wizard, feature C4 and screen
+proposals, Foundation/MVP/Post-MVP delivery review, and reconciliation against existing
+owned implementation. The review preserved the distinction between a proposed feature
+definition, backlog approval, feature-specification approval, implementation, and release.
 
 | Track | Articles | Purpose |
 |---|---:|---|

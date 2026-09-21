@@ -5,7 +5,7 @@ status: Active
 series: "Change Impact and Planning"
 series_order: 7
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-10"
+last_reviewed: "2026-09-21"
 review_cadence: on feature-derivation change
 summary: "How exact feature authority can produce impact, tasks, test cases, and a validated plan without creating a second approval."
 cis:
@@ -27,6 +27,19 @@ surfaces, acceptance criteria, and explicit frontend classification where applic
 Alternative supported documents can supply numbered goals that receive deterministic IDs.
 
 The plan records the source path and SHA-256 digest instead of copying the specification.
+
+## Definition review is not feature approval
+
+The feature-definition wizard helps a team review a prepared BRD before it becomes
+delivery authority. It retains the source, records human answers, proposes screens and
+feature-specific C4 views, separates Foundation, MVP, and Post-MVP stories, and can compare
+those stories with existing owned implementation.
+
+Its final review accepts the proposed definition only. It does not approve the product
+backlog or feature specification, and it does not authorize implementation or release.
+The reviewed scope must first be reconciled into the governed backlog. A dependency-ready
+backlog item can then create a feature specification, which must be completed, validated,
+and explicitly approved before `cis plan derive` may reuse its authority.
 
 ## Derivation checks authority first
 
@@ -143,3 +156,6 @@ new judgment is required.
 - [`cis plan derive`](../manual/cis_plan_derive.md)
 - [`cis plan import-spec`](../manual/cis_plan_import_spec.md)
 - [High-level product-definition wizard](../specs/high-level-product-definition-wizard-spec.md)
+- [`cis brd feature intake`](../manual/cis_brd_feature_intake.md)
+- [`cis brd feature wizard delivery`](../manual/cis_brd_feature_wizard_delivery.md)
+- [`cis brd feature approve`](../manual/cis_brd_feature_approve.md)

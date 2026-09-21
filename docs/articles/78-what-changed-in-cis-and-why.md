@@ -5,7 +5,7 @@ status: Active
 series: "Product Evolution and Learning"
 series_order: 8
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-10"
+last_reviewed: "2026-09-21"
 review_cadence: on product release
 summary: "A repeatable product-evolution format connecting evidence, intent, decisions, implementation, verification, and future work."
 cis:
@@ -37,8 +37,10 @@ the user boundary rather than listing internal files.
 
 For the current CIS evolution, that boundary includes explicit ecosystem and product
 onboarding, the eight-page product-definition journey and activation baseline, governed
-reference sources, direct but isolated agent execution, CI and assurance evidence, and a
-VS Code client that remains subordinate to CLI and canonical repository authority.
+reference sources, a separate eight-page feature-definition journey, delivery
+reconciliation against owned implementation, direct but isolated agent execution, CI and
+assurance evidence, and a VS Code client that remains subordinate to CLI and canonical
+repository authority.
 
 ## The verification
 
@@ -87,6 +89,12 @@ The recent CIS evolution can be explained as one connected argument:
 - explicit ecosystem and product identity prevents repository layout from defining ownership;
 - owned and dependency participation bounds product inference and write-capable work;
 - the eight-page definition journey creates a single activated product baseline;
+- feature intake retains the supplied BRD and creates or connects an owned implementation
+  repository without silently approving product scope;
+- the feature-definition journey keeps business, architecture, experience, delivery, and
+  final review distinct from backlog and feature-specification approval;
+- delivery review separates Foundation, MVP, and Post-MVP scope and checks proposed work
+  against existing owned implementation before treating it as new code;
 - governed references make contract evidence stable and reviewable;
 - direct agent execution adds isolation, permissions, attempts, and explicit evidence import;
 - test, security, CI, and artifact capabilities strengthen result validity; and
@@ -142,3 +150,5 @@ was verified.
 - [Implementation roadmap](../specs/implementation-roadmap.md)
 - [Execution, assurance, diagnostics, and learning](../specs/execution-assurance-and-learning-spec.md)
 - [Versioning and release](../standards/versioning-and-release.md)
+- [`cis brd feature intake`](../manual/cis_brd_feature_intake.md)
+- [`cis brd feature wizard delivery`](../manual/cis_brd_feature_wizard_delivery.md)

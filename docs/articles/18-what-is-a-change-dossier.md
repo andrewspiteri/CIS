@@ -5,7 +5,7 @@ status: Active
 series: "Change Impact and Planning"
 series_order: 1
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-10"
+last_reviewed: "2026-09-21"
 review_cadence: on change-lifecycle change
 summary: "A durable repository record that connects one outcome to impact, decisions, work, evidence, and acceptance."
 cis:
@@ -21,9 +21,15 @@ A change dossier is the repository-owned record that connects one proposed outco
 its baseline, reviewed impact, decisions, bounded work, design, tests, verification, and
 acceptance.
 
-In a product workspace, the dossier begins after the high-level product definition and
-current technical intent establish the product-wide authority. It governs one repeatable
-feature or change without becoming a competing product definition.
+In a product workspace, the dossier begins only after product-wide authority is current.
+For feature work, intake and feature-definition review normally come first, followed by
+the governed backlog and feature-specification gates. The feature request explains the
+proposed product change; the dossier governs the approved delivery outcome, impact,
+work, and evidence. Neither document replaces the product definition.
+
+A bounded engineering change that does not originate in a feature BRD can still create a
+dossier directly. The distinction is the source of authority, not the importance of the
+change.
 
 ## One home for the change
 
@@ -169,3 +175,4 @@ Git, or CI/CD.
 - [`cis change create`](../manual/cis_change_create.md)
 - [Context model and local graph](../specs/context-model-and-graph-spec.md)
 - [High-level product-definition wizard](../specs/high-level-product-definition-wizard-spec.md)
+- [`cis brd feature intake`](../manual/cis_brd_feature_intake.md)

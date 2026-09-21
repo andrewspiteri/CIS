@@ -5,7 +5,7 @@ status: Active
 series: "CIS in Practice"
 series_order: 4
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-10"
+last_reviewed: "2026-09-21"
 review_cadence: on golden-path change
 summary: "Why a small multi-repository product is a demanding end-to-end test of intent, classification, contracts, execution, and assurance."
 cis:
@@ -22,9 +22,10 @@ the simple domain.
 
 The golden path covers explicit ecosystem and product identity, owned and dependency
 repository participation, the activated product definition, BRD and technical intent,
-graph federation, feature derivation, public/customer/backoffice classification, API
-governance, authentication protocol routes, cache policy, provider-owned dynamic routes,
-task execution, browser and integration tests, and final verification.
+graph federation, feature intake and definition, delivery reconciliation, feature
+derivation, public/customer/backoffice classification, API governance, authentication
+protocol routes, cache policy, provider-owned dynamic routes, task execution, browser and
+integration tests, and final verification.
 
 ## Why complete replay matters
 
@@ -69,11 +70,15 @@ A representative run should:
 4. validate documentation, standards, skills, and repository health;
 5. build each graph and the workspace view;
 6. define and activate the product baseline;
-7. author one feature, derive or review impact, resolve decisions, and approve work;
-8. execute representative human or agent tasks in bounded targets;
-9. reconcile test, security, CI, and artifact evidence;
-10. compare actual Git state with approved scope; and
-11. record acceptance and reviewed learning.
+7. intake one prepared feature BRD and review its eight-page feature definition;
+8. separate Foundation, MVP, and Post-MVP scope, then compare it with existing owned
+   implementation without treating model findings as approval;
+9. reconcile the reviewed scope into the backlog, complete and approve the feature
+   specification, and derive or explicitly review bounded work;
+10. execute representative human or agent tasks in bounded targets;
+11. reconcile test, security, CI, and artifact evidence;
+12. compare actual Git state with approved scope; and
+13. record acceptance and reviewed learning.
 
 Skipping the early authority stages turns the replay into an implementation demo. Skipping
 verification proves only that files were produced.
@@ -127,3 +132,5 @@ delivery is incomplete.
 - [High-level product-definition wizard](../specs/high-level-product-definition-wizard-spec.md)
 - [Delivery and assurance](../specs/delivery-and-assurance-spec.md)
 - [Change impact and bounded planning](../specs/change-impact-and-planning-spec.md)
+- [`cis brd feature intake`](../manual/cis_brd_feature_intake.md)
+- [`cis brd feature wizard delivery`](../manual/cis_brd_feature_wizard_delivery.md)

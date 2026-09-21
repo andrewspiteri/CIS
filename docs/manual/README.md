@@ -3,7 +3,7 @@ title: "CIS Command Manual"
 type: navigation
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-09"
+last_reviewed: "2026-09-21"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:root
@@ -16,8 +16,6 @@ cis:
 | Guide | Purpose |
 | --- | --- |
 | [`Change Impact Studio for Visual Studio Code`](cis_vscode_extension.md) | Install the VSIX, select repository authority, navigate the six-view workspace and journey map, request governed agent work, and troubleshoot the thin client. |
-
-- [`cis verify finalize`](cis_verify_finalize.md) — complete final lifecycle tasks, close, recapture, and record human acceptance.
 
 CIS uses the command form:
 
@@ -72,7 +70,12 @@ Each loaded module owns one top-level command group. The following leaf commands
 | [`cis agent provider authenticate`](cis_agent_provider_authenticate.md) | Start provider-native authentication without exposing credentials to CIS. |
 | [`cis agent prepare`](cis_agent_prepare.md) | Prepare a digest-bound provider-neutral task envelope. |
 | [`cis agent run`](cis_agent_run.md) | Execute one eligible task with explicit provider, mode, permission, target, and isolation. |
+| [`cis agent discover brd`](cis_agent_discover_brd.md) | Prepare local implementation and test evidence for BRD authoring without contacting a provider. |
 | [`cis agent author brd`](cis_agent_author_brd.md) | Draft a Review Required BRD from selected digest-bound references in an isolated one-file workspace. |
+| [`cis agent discover technical-intent`](cis_agent_discover_technical_intent.md) | Prepare the technical-intent scaffold and bounded implementation evidence without contacting a provider. |
+| [`cis agent author technical-intent`](cis_agent_author_technical_intent.md) | Draft review-only technical intent from selected owned implementation and test repositories. |
+| [`cis agent discover solution-design`](cis_agent_discover_solution_design.md) | Prepare local architecture evidence and a review-only solution-design scaffold without contacting a provider. |
+| [`cis agent author solution-design`](cis_agent_author_solution_design.md) | Draft the overall solution design and component sheet from selected owned repositories. |
 | [`cis agent author feature`](cis_agent_author_feature.md) | Expand one generated feature scaffold from the governed product and technical baseline in an isolated one-file workspace. |
 | [`cis agent review brd`](cis_agent_review_brd.md) | Run a different-provider, read-only BRD review and retain structured advisory findings. |
 | [`cis brd review`](cis_brd_review.md) | Approve each advisory BRD recommendation as written or edited; the final decision locks the exact remediation scope. |
@@ -94,6 +97,7 @@ Each loaded module owns one top-level command group. The following leaf commands
 | [`cis verify validate`](cis_verify_validate.md) | Verification and acceptance command. |
 | [`cis verify evidence`](cis_verify_evidence.md) | Verification and acceptance command. |
 | [`cis verify accept`](cis_verify_accept.md) | Verification and acceptance command. |
+| [`cis verify finalize`](cis_verify_finalize.md) | Complete final lifecycle tasks, close the change, recapture evidence, and record human acceptance. |
 | [`cis diagnostics sources`](cis_diagnostics_sources.md) | Bounded diagnostics command. |
 | [`cis diagnostics doctor`](cis_diagnostics_doctor.md) | Validate diagnostics source profiles and readiness. |
 | [`cis diagnostics summary`](cis_diagnostics_summary.md) | Bounded diagnostics command. |
@@ -167,6 +171,7 @@ Each loaded module owns one top-level command group. The following leaf commands
 | [`cis context pack`](cis_context_pack.md) | Create a deterministic, budget-bounded Markdown context pack. |
 | [`cis brd discover`](cis_brd_discover.md) | Find possible BRD evidence without claiming currency. |
 | [`cis brd init`](cis_brd_init.md) | Create or reconcile the canonical review-required BRD. |
+| [`cis brd reconcile`](cis_brd_reconcile.md) | Reconcile changed BRD and approved feature evidence without silently replacing human-authored requirements. |
 | [`cis brd status`](cis_brd_status.md) | Report effective BRD lifecycle and drift state. |
 | [`cis brd sources assess`](cis_brd_sources_assess.md) | Save explicit human source decisions from the wizard or a checked JSON batch. |
 | [`cis brd sources summarize`](cis_brd_sources_summarize.md) | Cache local-model document summaries for source review. |

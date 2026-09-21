@@ -5,7 +5,7 @@ status: Active
 series: "Governed Software Change"
 series_order: 9
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-10"
+last_reviewed: "2026-09-21"
 review_cadence: on golden-path or product change
 summary: "A worked example of governing a cross-repository feature from product intent through independent verification and reviewed learning."
 cis:
@@ -101,7 +101,32 @@ Important questions include:
 
 Unresolved answers remain visible decisions rather than assumptions delegated to an agent.
 
-## 3. Create a baseline-bound dossier
+## 3. Define the feature before creating work
+
+The activated product baseline says what Friends Todo is. It does not yet say that this
+invitation feature is ready for delivery.
+
+Feature intake retains the prepared feature BRD, creates or connects its owned
+implementation repository, and opens a canonical Draft request. The feature-definition
+wizard then separates the review into foundation, business, technical direction,
+architecture, contracts, experience, delivery, and final review.
+
+The architecture and screen views are proposals for review. On the delivery page, the
+team separates required foundations from first-release MVP stories and possible Post-MVP
+work. Before treating those stories as new implementation, CIS can compare them with
+bounded code evidence from every product-owned repository. A result such as **Reuse
+existing**, **Extend existing**, or **Scope conflict** is advisory evidence, not an
+automatic scope decision. Reviewers inspect its code references, correct the proposed
+stories and remaining work, resolve or retain visible conflicts, and then save the delivery
+page. Using the reconciled stories as a draft does not save or approve them.
+
+Final feature-definition review records human review of the proposed definition. It does
+not create or approve the feature specification, approve the product backlog, authorize
+implementation, or approve a release. The reviewed scope must still enter the governed
+backlog, produce a current feature specification, and pass the applicable human approval
+gate before CIS can carry that authority into a plan.
+
+## 4. Create a baseline-bound dossier
 
 The change proposal records the observable outcome, constraints, acceptance criteria,
 exact graph build, and initial roots such as the access-management feature, API contract,
@@ -120,7 +145,7 @@ cis change create `
 The dossier becomes the durable home for proposal, impact, decisions, plan, wireframes,
 design, test cases, task contracts, events, and verification.
 
-## 4. Analyse and review impact
+## 5. Analyse and review impact
 
 Bounded graph traversal proposes affected concerns across the workspace. Likely findings
 include:
@@ -145,7 +170,7 @@ callback should not inherit ordinary public application caching rules. An SDK-ow
 dynamic route family should not be forced into a static endpoint model. Those
 discoveries become product-learning candidates rather than quiet case-study exceptions.
 
-## 5. Resolve decisions
+## 6. Resolve decisions
 
 The change records options before implementation. A link-lifecycle decision might compare:
 
@@ -160,7 +185,7 @@ decisions must be resolved before plan approval.
 If the choice has durable architectural value, the resolved record can be promoted to
 an ADR without losing its originating change and alternatives.
 
-## 6. Build bounded work
+## 7. Build bounded work
 
 Planning consumes accepted impact only. The feature decomposes into ordered work such as:
 
@@ -179,7 +204,7 @@ Each work item carries accepted impact IDs, requirements, exact source digests,
 dependencies, non-goals, validation, and completion evidence. High-complexity parents
 are decomposed before execution.
 
-## 7. Prepare execution without transferring authority
+## 8. Prepare execution without transferring authority
 
 Approved tasks can be prepared for a human or coding agent. The portable envelope contains
 the task contract and bounded context. CIS can also coordinate an explicit foreground
@@ -203,7 +228,7 @@ If implementation discovers a missing repository or migration, the executor repo
 the evidence and proposed expansion. The impact and plan return to review rather than
 absorbing the surprise invisibly.
 
-## 8. Verify the actual change
+## 9. Verify the actual change
 
 After implementation, CIS compares actual Git state with planned repositories and paths.
 It identifies expected changes, missing work, unexpected changes, and validation failures.
@@ -221,7 +246,7 @@ Evidence can include:
 The agent's changed-file report is supporting information. Git and deterministic checks
 provide the independent view.
 
-## 9. Accept and learn
+## 10. Accept and learn
 
 A human reviewer examines the planned-versus-actual comparison, failed or unavailable
 checks, unexpected changes, deferrals, and residual risk. Acceptance records identity
@@ -257,6 +282,9 @@ That is governed software change in practice.
 - [Business requirements governance](../specs/business-requirements-governance-spec.md)
 - [Technical-intent governance](../specs/technical-intent-governance-spec.md)
 - [High-level product-definition wizard](../specs/high-level-product-definition-wizard-spec.md)
+- [`cis brd feature intake`](../manual/cis_brd_feature_intake.md)
+- [`cis brd feature wizard status`](../manual/cis_brd_feature_wizard_status.md)
+- [`cis brd feature wizard delivery`](../manual/cis_brd_feature_wizard_delivery.md)
 - [Provider-neutral agent execution](../specs/features/agent-execution-coordination-feature.md)
 - [Change impact and bounded planning](../specs/change-impact-and-planning-spec.md)
 - [Execution, assurance, diagnostics, and learning](../specs/execution-assurance-and-learning-spec.md)

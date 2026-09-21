@@ -5,7 +5,7 @@ status: Active
 series: "CIS in Practice"
 series_order: 1
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-10"
+last_reviewed: "2026-09-21"
 review_cadence: on repository-initialization change
 summary: "Establish governed intent, documentation, standards, and context before a new codebase accumulates undocumented decisions."
 cis:
@@ -153,10 +153,27 @@ repeat should be idempotent.
 ## Start the first governed feature
 
 Once the product-definition activation and technical intent are current, choose one small
-observable outcome. Create a baseline-bound dossier, analyse likely impact, review every
-finding, resolve material decisions, and build bounded work. This creates the first real
-trace from intent to implementation and evidence before the codebase accumulates hidden
-conventions.
+observable outcome with a prepared feature BRD.
+
+1. Preview and apply `cis brd feature intake` to retain the source and create or connect
+   the owned implementation repository.
+2. Review the eight feature-definition pages. Suggestions, diagrams, screens, and initial
+   code matches remain proposals until a person reviews them.
+3. Separate Foundation, MVP, and Post-MVP stories, then reconcile them with existing owned
+   implementation before assuming every requirement needs new code. Inspect the supporting
+   code references, revise the stories and remaining work, and save the delivery page.
+4. Record final feature-definition review. This records review of the proposal; it does not
+   create or approve the feature specification, approve the backlog, authorize
+   implementation, or approve a release.
+5. Reconcile the reviewed scope into the governed backlog, complete and approve the feature
+   specification, then derive or explicitly build bounded work.
+6. Use the resulting dossier to review impact, resolve decisions, verify the actual change,
+   and record acceptance.
+
+For a repository-level engineering change that does not begin with a product feature,
+create a baseline-bound dossier directly. In both routes, the first real delivery should
+leave a trace from current intent to reviewed scope, implementation evidence, and human
+acceptance before hidden conventions accumulate.
 
 ## Avoid greenfield shortcuts
 
@@ -177,3 +194,6 @@ Initialize safely, complete the Draft knowledge, and reconcile as the codebase d
 - [Classification-driven initialization](../specs/classification-driven-initialisation-spec.md)
 - [High-level product-definition wizard](../specs/high-level-product-definition-wizard-spec.md)
 - [`cis definition status`](../manual/cis_definition_status.md)
+- [`cis brd feature intake`](../manual/cis_brd_feature_intake.md)
+- [`cis brd feature wizard status`](../manual/cis_brd_feature_wizard_status.md)
+- [`cis brd feature wizard delivery`](../manual/cis_brd_feature_wizard_delivery.md)

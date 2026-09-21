@@ -118,6 +118,13 @@ Use **Review feature request** and **Open original BRD** to review it beside the
 Scope review and reconciliation into the governed backlog precede feature specification
 and implementation planning. This action does not approve the BRD or choose a stack.
 
+**Delivery and acceptance** presents user stories in three editable lists: **Foundation**
+(required regardless of release scope), **MVP** (first release), and **Post-MVP** (later
+delivery). Expand each story to review its acceptance outline. CIS prepares the lists
+from the retained feature BRD without a model call; exclusions stay outside the lists
+and uncommitted future ideas are labelled for review. Use **Edit user stories** to refine
+or recategorize them, then save alongside the release questions and repository breakdown.
+
 ## Install
 
 1. Install a compatible CIS CLI and run `cis --version`.

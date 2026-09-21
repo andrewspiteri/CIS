@@ -28,6 +28,9 @@ public sealed partial class FeatureIntakeService
             new("experience-controls", "Which screens, controls, validation messages and empty or failure states are required?", "form|field|validation|duplicate|error|screen|controls"),
             new("experience-baseline", "How will the existing visual direction, responsive behaviour and accessibility requirements apply?", "accessibility|responsive|localisation|browser|hosted", "visual|design tokens|component|responsive|accessibility")],
         "delivery" => [
+            new("delivery-stories-foundation", "Foundation — required regardless of release scope", ""),
+            new("delivery-stories-mvp", "MVP — required for the first release", ""),
+            new("delivery-stories-post-mvp", "Post-MVP — later delivery", ""),
             new("delivery-boundary", "What is included in the first release, and what is explicitly deferred?", "mvp|release|in.scope|out.of.scope|future|exclusion"),
             new("delivery-dependencies", "Which repository work can proceed independently, and which contracts or decisions must come first?", "dependenc|assumption|prerequisite|technical specification"),
             new("delivery-acceptance", "What measurable acceptance checks prove that the feature works?", "acceptance|testing|test scenario|success criteria"),
@@ -41,8 +44,9 @@ public sealed partial class FeatureIntakeService
         // valid; never fabricate separate human answers from it or rewrite it on read.
         var legacyNarrative = HasAnswer(saved?.Answers.GetValueOrDefault("summary"))
             && !saved!.Answers.Any(pair => pair.Key != "summary" && HasAnswer(pair.Value));
+        var stories = page == "delivery" ? SuggestStories(state.Source) : null;
         var fields = QuestionsFor(page).Select(question => new CisFeatureWizardField(question.Id, question.Label,
-            SuggestAnswer(state, page, question), saved?.Answers.GetValueOrDefault(question.Id), !legacyNarrative)).ToList();
+            stories?.GetValueOrDefault(question.Id) ?? SuggestAnswer(state, page, question), saved?.Answers.GetValueOrDefault(question.Id), !legacyNarrative)).ToList();
         fields.Insert(0, new("summary", legacyNarrative ? "Previously reviewed narrative" : "Additional review notes (optional)", "",
             saved?.Answers.GetValueOrDefault("summary"), legacyNarrative));
         return fields;

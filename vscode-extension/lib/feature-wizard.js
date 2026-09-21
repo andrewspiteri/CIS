@@ -4,6 +4,7 @@ const { escapeHtml: h } = require('./security');
 const { renderReviewText } = require('./feature-review-text');
 const { gallery } = require('./feature-screens');
 const { architectureGallery } = require('./feature-architecture');
+const { isStoryField, renderStoryList } = require('./feature-stories');
 
 const STEPS = [
   ['foundation', 'Feature foundation'], ['business', 'Business definition'], ['technical', 'Technical direction'],
@@ -48,18 +49,20 @@ function renderReviewPage(model) {
   const current = model.wizard?.pages?.find(page => page.id === model.page);
   if (!current) return '<section class="card"><h2>Feature definition</h2><p>Complete feature foundation to begin reviewing this feature.</p></section>';
   const pageDraft = model.pageDrafts?.[current.id] || {};
-  const questions = current.fields.filter(field => field.id !== 'summary');
+  const stories = current.id === 'delivery' ? current.fields.filter(isStoryField) : [];
+  const questions = current.fields.filter(field => field.id !== 'summary' && !stories.includes(field));
   const summary = current.fields.find(field => field.id === 'summary');
   const structured = questions.some(field => !field.id.startsWith('decision-'));
   const field = (f, index) => {
+    const storyGroup = stories.includes(f);
     const value = pageDraft[f.id] ?? f.answer ?? f.suggestedAnswer ?? '';
     const edited = pageDraft[f.id] !== undefined && pageDraft[f.id] !== (f.answer ?? f.suggestedAnswer ?? '');
     const label = edited ? 'Unsaved edit' : f.answer != null ? 'Saved answer' : f.suggestedAnswer ? 'Suggested from available context' : f.required === false ? 'Optional follow-up' : 'Your answer is needed';
     const contextDiffers = f.answer != null && f.suggestedAnswer && f.answer !== f.suggestedAnswer;
-    return `<article class="question-card feature-question" id="question-${h(f.id)}"><span class="eyebrow">${index ? `Question ${index} of ${questions.length} · ` : ''}${h(label)}</span><h3 id="label-${h(f.id)}">${h(f.label)}</h3>
-      ${value ? `<div class="feature-review-text">${renderReviewText(value)}</div>` : `<p class="muted">${f.required === false ? 'Add any further direction you want to record.' : 'The available documents do not establish this answer. Record the proposed direction below.'}</p>`}
+    return `<article class="question-card feature-question ${storyGroup ? 'feature-story-group' : ''}" id="question-${h(f.id)}"><span class="eyebrow">${index ? `Question ${index} of ${questions.length} · ` : ''}${h(label)}</span><h3 id="label-${h(f.id)}">${h(f.label)}</h3>
+      ${value ? storyGroup ? renderStoryList(value) : `<div class="feature-review-text">${renderReviewText(value)}</div>` : `<p class="muted">${storyGroup ? 'The BRD does not establish this story list. Add the required stories, or explicitly record why none are needed.' : f.required === false ? 'Add any further direction you want to record.' : 'The available documents do not establish this answer. Record the proposed direction below.'}</p>`}
       ${contextDiffers ? `<details class="feature-source-context"><summary>Compare with the current BRD and product context</summary><div class="feature-review-text">${renderReviewText(f.suggestedAnswer)}</div><button type="button" class="secondary" data-wizard-action="use-suggestion" data-value="${h(f.id)}" ${model.busy ? 'disabled' : ''}>Use this text as my draft</button></details>` : ''}
-      <details class="feature-answer-editor" ${!value || edited ? 'open' : ''}><summary>${value ? 'Edit answer' : 'Enter answer'}</summary><label class="muted" for="answer-${h(f.id)}">${value ? 'Review and edit the prefilled text. Saving records your reviewed answer.' : 'Proposed answer'}</label><textarea id="answer-${h(f.id)}" name="${h(f.id)}" aria-labelledby="label-${h(f.id)}" rows="6" maxlength="24000">${h(value)}</textarea></details></article>`;
+      <details class="feature-answer-editor" ${!value || edited ? 'open' : ''}><summary>${storyGroup ? 'Edit user stories' : value ? 'Edit answer' : 'Enter answer'}</summary><label class="muted" for="answer-${h(f.id)}">${storyGroup ? 'Edit the prefilled stories and acceptance outlines. To change a category, move the complete story into the appropriate list. Saving records your reviewed breakdown.' : value ? 'Review and edit the prefilled text. Saving records your reviewed answer.' : 'Proposed answer'}</label><textarea id="answer-${h(f.id)}" name="${h(f.id)}" aria-labelledby="label-${h(f.id)}" rows="6" maxlength="24000">${h(value)}</textarea></details></article>`;
   };
   const documents = current.documents.filter(document => document.exists);
   const unsaved = model.wizard.pages.filter(page => page.id !== 'review' && hasUnsavedChanges(model, page));
@@ -77,12 +80,13 @@ function renderReviewPage(model) {
     ${questions.length ? `<section class="card"><h3>Questions in this step</h3><div class="feature-question-index">${questions.map((question, index) => `<button type="button" class="link" data-question-target="${h(question.id)}">${index + 1}. ${h(question.label)}</button>`).join('')}</div></section>` : ''}
     ${current.id === 'review' ? `<section class="card"><h3>Feature review summary</h3><div class="review-summary">${model.wizard.pages.filter(page => page.id !== 'review').map(page => `<button type="button" class="secondary review-page" data-wizard-action="navigate" data-value="${page.id}"><strong>${h(page.title)}</strong><span>${h(page.status)}</span></button>`).join('')}</div><p>Recording this review concludes the proposed feature definition. The high-level backlog and feature specification retain their own approval gates.</p></section>` : ''}
     ${current.id === 'review' && unsaved.length ? `<p class="notice warning">Save or discard the unsaved changes in ${h(unsaved.map(page => page.title).join(', '))} before recording the review.</p>` : ''}
-    ${current.id === 'delivery' ? renderRepositoryWork(model) : ''}
     ${current.id === 'architecture' ? architectureGallery(model.featureArchitecture, { busy: model.busy, dirty: hasUnsavedChanges(model, current) }) : ''}
     ${current.id === 'experience' ? gallery(model.featureScreens, { busy: model.busy, dirty: hasUnsavedChanges(model, current), drafts: model.screenDrafts }) : ''}
     <form id="feature-review-form" class="source-review feature-review-form"><fieldset ${model.busy ? 'disabled' : ''}><legend>${current.id === 'review' ? 'Review conclusion' : 'Proposed feature direction'}</legend><div class="wizard-questions feature-questions">
+      ${stories.length ? `<section class="feature-delivery-stories"><h2>Required user stories</h2><p>Foundation is required regardless of release scope. MVP completes the first release. Post-MVP captures later delivery. Review the suggested categories and acceptance outlines; future candidates remain uncommitted until you decide to include them.</p><p class="muted">The BRD contains the full requirements behind each outline. These lists describe feature scope; delivery and backlog approvals remain separate.</p>${stories.map(story => field(story, 0)).join('')}</section>` : ''}
       ${!structured && summary ? field(summary, 0) : ''}${questions.map((question, index) => field(question, index + 1)).join('')}
       ${structured && summary ? `<details><summary>${h(summary.label)}</summary>${field(summary, 0)}</details>` : ''}</div></fieldset></form>
+    ${current.id === 'delivery' ? renderRepositoryWork(model) : ''}
     ${current.id === 'review' || current.id === 'delivery' ? `<section class="card"><h3>Next delivery actions</h3><p>Reconcile this feature's proposed changes into the product baseline and approve its backlog outcome. Then continue through the governed feature specification.</p><div class="actions"><button type="button" class="secondary" data-wizard-action="product-wizard">Open product wizard</button><button type="button" class="secondary" data-wizard-action="start-approved-feature" ${model.wizard.reviewed ? '' : 'disabled'}>Continue with an approved backlog outcome</button></div></section>` : ''}
     <footer class="feature-review-actions"><span class="muted">${next ? `Next: ${h(next[1])}. Incomplete answers are saved and remain on this step for review.` : 'Record the final review when all preceding steps are complete.'}</span><button type="submit" form="feature-review-form" ${model.busy || cannotFinish ? 'disabled' : ''}>${primary}</button>${next ? `<button type="button" class="secondary" data-wizard-action="save-page" ${model.busy ? 'disabled' : ''}>Save without leaving</button>` : ''}<button type="button" class="secondary" data-wizard-action="navigate" data-value="${previous[0]}" ${model.busy ? 'disabled' : ''}>Back</button>${next ? `<button type="button" class="secondary" data-wizard-action="navigate" data-value="${next[0]}" ${model.busy ? 'disabled' : ''}>View next step →</button>` : ''}<button type="button" class="secondary" data-wizard-action="refresh" ${model.busy ? 'disabled' : ''}>Refresh status</button>${hasUnsavedChanges(model, current) ? '<button type="button" class="secondary" data-wizard-action="discard-edits">Discard unsaved edits</button>' : ''}</footer>`;
 }

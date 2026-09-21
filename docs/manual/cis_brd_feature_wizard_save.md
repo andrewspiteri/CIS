@@ -3,7 +3,7 @@ title: "cis brd feature wizard save"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-20"
+last_reviewed: "2026-09-21"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-brd-feature-wizard-save
@@ -21,6 +21,15 @@ cis brd feature wizard save --input <answers.json> --workspace <authority>
 The JSON input contains `slug`, `page`, `answers` (field ID to text), `actor` and the exact `expectedRevision` from status. Pages are business, technical, architecture, contracts, experience, delivery and review. Save accepts partial answers; blank answers and placeholders remain unresolved. It preserves source requirements and product approvals, writes a managed review block in the canonical feature request and returns the updated page projection. Stale revisions, unknown fields, unsafe paths and concurrent edits are rejected without overwriting work. Baseline evaluation occurs once per save; checked input hashes guard the write. Final review requires all prior pages and a current activated product baseline. It records review of a proposed definition, not backlog, implementation or release approval.
 
 Open **CIS: Open Feature Definition Wizard** in VS Code for the guided interface.
+
+Delivery user stories use the answer fields `delivery-stories-foundation`,
+`delivery-stories-mvp`, and `delivery-stories-post-mvp`. Each holds a Markdown list
+of stories with headings, narrative and acceptance outlines. Review the prefilled
+lists, including uncommitted future candidates, and save them with the other delivery
+answers. Hidden source comments are retained. Moving a story between categories means
+moving its complete text between these fields. An omitted field preserves its saved
+value; blank text leaves a required list unresolved. Saving records a proposed feature
+breakdown and does not approve or populate the governed product backlog.
 
 On the `delivery` page, the input may also contain `repositoryWork`, an array of
 `id`, `repositoryId`, `title`, `scope`, `dependsOn` and `changeIds` objects. IDs are

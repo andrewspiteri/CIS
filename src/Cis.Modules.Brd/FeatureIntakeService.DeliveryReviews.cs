@@ -56,7 +56,9 @@ public sealed partial class FeatureIntakeService
                     try { if (FileHash(DeliveryReference(state, reference.Key).Absolute) != reference.Value) current = false; }
                     catch (InvalidDataException) { current = false; }
                 }
-            return story with { Review = review, ReviewCurrent = current };
+            return story with { Review = review, ReviewCurrent = current,
+                RequirementChecks = story.Requirements.Select((requirement, index) => new CisFeatureDeliveryRequirementCheck(index + 1, requirement,
+                    input.Evidence.Where(e => e.StoryIds.Contains(story.Id) && e.RequirementNumbers.Contains(index + 1)).Select(e => e.Id).ToArray())).ToArray() };
         }).ToArray();
         var warnings = result.Warnings.ToList();
         if (stories.Any(s => s.Review is not null && !s.ReviewCurrent))

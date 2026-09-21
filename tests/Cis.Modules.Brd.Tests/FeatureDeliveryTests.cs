@@ -138,8 +138,9 @@ public sealed partial class FeatureIntakeTests
             var evidenceId = found ? evidence.GetProperty("id").GetString() : null;
             var stories = context.RootElement.GetProperty("stories").EnumerateArray().Select(s => new
             {
-                id = s.GetProperty("id").GetString(), treatment = Mode is "conflict" or "new" ? Mode : "extend",
-                existingCapability = "Existing product maintenance is available.", remainingWork = "Add only the integration and required policy fields.",
+                id = s.GetProperty("id").GetString(), treatment = Mode is "conflict" or "new" or "reuse" ? Mode : "extend",
+                existingCapability = Mode == "hook-overclaim" ? "Click Tracking is already implemented in the frontend component." : Mode == "hook-grounded" ? "selectProduct navigates to the deposit page." : "Existing product maintenance is available.",
+                remainingWork = "Add only the integration and required policy fields.",
                 owners = new[] { Mode == "foreign-owner" ? "unknown" : owner },
                 evidenceIds = Mode == "missing-evidence" || !found ? Array.Empty<string>() : new[] { evidenceId },
                 conflict = Mode == "conflict" ? "The product catalogue source and saved ownership direction differ." : null,

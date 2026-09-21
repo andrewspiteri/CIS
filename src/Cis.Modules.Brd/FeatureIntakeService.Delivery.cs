@@ -7,7 +7,7 @@ namespace Cis.Modules.Brd;
 
 public sealed partial class FeatureIntakeService
 {
-    private const string DeliveryVersion = "feature-delivery-8";
+    private const string DeliveryVersion = "feature-delivery-10";
     private const string DeliveryMaintenanceDeclaration = @"\b(?:create|update|save|delete|publish)\w*\s*(?:<[^>]+>)?\s*\([^;{}\n]*\)\s*(?::[^;{}\n]+)?\s*(?:\{|=>)";
     private sealed record DeliveryDraft(string Id, string Phase, StoryDraft Story);
     private sealed record DeliveryFile(string RepositoryId, string Path, string Absolute, long Length, long Modified);
@@ -105,7 +105,7 @@ public sealed partial class FeatureIntakeService
                     {
                         var path = Path.GetRelativePath(repo.RepositoryPath, file.FullName).Replace('\\', '/');
                         if (path.StartsWith(repo.DocumentationRoot.TrimEnd('/') + "/", StringComparison.OrdinalIgnoreCase)
-                            || Regex.IsMatch(path, @"(?:^|/)(?:tests?|__tests__|migrations?|fixtures?|scripts?|seeds?|mock-api)(?:/|\.)|\.(?:test|spec|d|generated|mock)\.", RegexOptions.IgnoreCase)) continue;
+                            || Regex.IsMatch(path, @"(?:^|/)(?:tests?|__tests__|e2e|migrations?|fixtures?|scripts?|seeds?|mock-api)(?:/|\.|[-_])|\.(?:test|spec|d|generated|mock)\.|[-_]tests?\.", RegexOptions.IgnoreCase)) continue;
                         if (++count > 20000) { pending.Clear(); warnings.Add($"Implementation inventory for {repo.Id} exceeded 20,000 files; review coverage."); break; }
                         files.Add(new(repo.Id, path, file.FullName, file.Length, file.LastWriteTimeUtc.Ticks));
                     }
@@ -169,6 +169,10 @@ public sealed partial class FeatureIntakeService
             + "Assess every story. Release phase and implementation treatment are independent. Never recreate existing maintenance screens, data ownership, CRUD or services simply because a BRD describes them. "
             + "Separate existing operations from missing fields, adapters, synchronisation, snapshots and the feature's new runtime behaviour. Use only supplied repository and evidence IDs. "
             + "Reuse means the whole story is already supported; otherwise choose extend, unresolved or conflict. Missing evidence is not proof that a capability is new. "
+            + "Each excerpt has a kind, relevance summary and requirementNumbers. An integration-point is only related code where the feature might connect, not evidence that the feature exists. "
+            + "For example a product selection handler does not establish click recording, deduplication or retention, and a payment identifier does not establish a referral identifier. "
+            + "Do not claim reuse when any requirement lacks relevant evidence. Name any observed integration hook separately from new runtime behaviour. "
+            + "When only integration points are supplied, existingCapability must name an observed identifier from symbols and its actual operation, or say unknown. Never say the story is implemented. "
             + "Do not include excluded systems just because their code exists. Keep code evidence separate from requirements and proposed direction. "
             + "An ownership clarification is human direction: if the older BRD assigns maintenance elsewhere, report conflict and propose only the delta consistent with the clarification. "
             + "Do not silently remove that contradictory requirement or approve any choice. Existing repositories omitted from the integration selection can still own work. "
@@ -234,13 +238,18 @@ public sealed partial class FeatureIntakeService
                 continue;
             }
             var assessment = proposal.Stories.SingleOrDefault(s => s.Id == draft.Id);
+            var unsupportedHookClaim = DeliveryUnsupportedHookClaim(assessment, candidates, draft.Story.Title);
             var valid = assessment is not null && Text(assessment.ExistingCapability) && Text(assessment.RemainingWork)
                 && (assessment.Conflict is null || Text(assessment.Conflict)) && assessment.Owners is { Count: > 0 and <= 10 }
                 && assessment.EvidenceIds is { Count: <= 12 } && assessment.Owners.All(id => input.Repositories.Any(r => r.Id == id))
                 && assessment.EvidenceIds.All(id => candidates.Any(e => e.Id == id))
                 && assessment.Confidence is "high" or "medium" && assessment.Treatment is "reuse" or "extend" or "new" or "unresolved" or "conflict";
+            valid &= !unsupportedHookClaim;
             if (valid && assessment!.Treatment is "reuse" or "extend")
                 valid = assessment.EvidenceIds!.Count > 0 && assessment.EvidenceIds.All(id => input.Evidence.Any(e => e.Id == id && assessment.Owners!.Contains(e.RepositoryId)));
+            if (valid && assessment!.Treatment == "reuse")
+                valid = candidates.Any(e => assessment.EvidenceIds!.Contains(e.Id) && e.Kind == "capability-candidate")
+                    && Enumerable.Range(1, draft.Story.Acceptance.Count).All(n => candidates.Any(e => assessment.EvidenceIds!.Contains(e.Id) && e.RequirementNumbers.Contains(n)));
             if (valid) valid = !StoryMatch(assessment!.ExistingCapability, @"\b(?:shall|must)\b");
             if (valid && assessment!.Treatment == "new" && retainedOwner && candidates.Count > 0) valid = false;
             if (valid && assessment!.Treatment == "conflict")
@@ -250,11 +259,15 @@ public sealed partial class FeatureIntakeService
                 assessment.Treatment == "conflict" ? "Reconcile this requirement with the recorded ownership decision before planning implementation. Preserve the existing capability; do not create a competing owner." : assessment.RemainingWork,
                 assessment.Owners!, assessment.EvidenceIds!, assessment.Treatment == "conflict" ? assessment.Conflict : null)
                 { AssessmentState = assessment.Treatment == "unresolved" ? "inconclusive" : "proposed", AssessmentReason = assessment.Treatment == "unresolved" ? "The model did not determine implementation coverage. This is uncertainty in its assessment, not a confirmed product defect." : "Model proposal based on the displayed code excerpts; review against the complete acceptance requirements.", Requirements = draft.Story.Acceptance }
-                : new(draft.Id, draft.Phase, draft.Story.Title, "unresolved", candidates.Count > 0 ? "Related code was found; complete requirement coverage has not been established." : "No matching code was found within the searched files and limits.",
-                    "Review these requirements: " + string.Join(" ", draft.Story.Acceptance.Take(2)),
-                    candidates.Select(e => e.RepositoryId).Distinct().ToArray(), candidates.Select(e => e.Id).ToArray(), null)
+                : new(draft.Id, draft.Phase, draft.Story.Title, "unresolved", candidates.Count > 0
+                    ? $"Found {candidates.Count} code lead{(candidates.Count == 1 ? "" : "s")} for review. " + (candidates.All(e => e.Kind == "integration-point") ? "The code may provide possible integration points; it does not establish this capability." : "The selected operations do not establish complete requirement coverage.")
+                    : "No relevant operation or data concept was found within the searched files and limits.",
+                    $"Trace the related code against all {draft.Story.Acceptance.Count} acceptance requirements. Record which behaviour can be reused, the additions needed and their responsible repositories. The requirement checks identify where supporting code is still unestablished.",
+                    [], candidates.Select(e => e.Id).ToArray(), null)
                 { AssessmentState = candidates.Count == 0 ? "no-matching-evidence" : assessment is null ? "not-assessed" : "inconclusive",
-                    AssessmentReason = DeliveryAssessmentReason(assessment, candidates.Count), Requirements = draft.Story.Acceptance });
+                    AssessmentReason = unsupportedHookClaim
+                        ? "The model treated a possible integration point as implemented capability without establishing the claimed behaviour. CIS rejected that claim; inspect the named operation and the requirements below."
+                        : DeliveryAssessmentReason(assessment, candidates.Count), Requirements = draft.Story.Acceptance });
         }
         var warnings = input.Warnings.ToList();
         if (stories.Any(s => s.Treatment is "unresolved" or "conflict")) warnings.Add("Resolve the flagged scope conflicts and evidence gaps before treating these stories as an implementation plan.");
@@ -270,6 +283,7 @@ public sealed partial class FeatureIntakeService
         if (assessment.Confidence == "low") return "The model reported low confidence. CIS has not established whether this is existing or new work.";
         if (assessment.Owners is not { Count: > 0 }) return "The model did not identify an owning repository. Choose the delivery owner after reviewing the requirements.";
         if (assessment.Treatment is "reuse" or "extend" && assessment.EvidenceIds is not { Count: > 0 }) return "The model proposed existing capability without supporting code references. CIS rejected that unsupported claim.";
+        if (assessment.Treatment == "reuse") return "The model proposed complete reuse without relevant capability evidence for every requirement. Related integration points do not establish full implementation.";
         if (StoryMatch(assessment.ExistingCapability ?? "", @"\b(?:shall|must)\b")) return "The model repeated a requirement as if it were existing behaviour. CIS rejected that claim; a requirement is not implementation evidence.";
         return "The model's proposal did not pass the ownership, confidence or evidence checks. Review the displayed requirements and code before recording a delivery decision.";
     }

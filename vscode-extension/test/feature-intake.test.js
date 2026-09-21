@@ -86,6 +86,41 @@ test('story decisions save separately, preserve other drafts and survive reopeni
   assert.equal(f.refreshes(),before); assert.equal(reopened.model.page,'delivery');
 });
 
+test('repository-first story drafts persist without redrawing or running commands and survive navigation and reopening', async () => {
+  const f=fixture(); await f.page.ready; await f.page.action('preview',f.value); await f.page.action('apply');
+  await f.page.action('navigate',JSON.stringify({target:'delivery'}));
+  const choice={treatment:'',owners:['backend'],plan:'Keep this draft before choosing treatment.',evidencePaths:'backend/products.ts'};
+  const beforeHtml=f.page.panel.webview.html, beforeCalls=f.calls.length, beforeRefresh=f.refreshes();
+  await f.page.action('remember',JSON.stringify({page:'delivery',deliveryDrafts:{privacy:choice}}));
+  assert.equal(f.page.model.error,undefined);
+  assert.deepEqual(f.page.model.deliveryDrafts.privacy,choice);
+  assert.equal(f.page.panel.webview.html,beforeHtml,'remember must not replace the editing surface');
+  assert.equal(f.calls.length,beforeCalls); assert.equal(f.refreshes(),beforeRefresh);
+  await f.page.action('navigate',JSON.stringify({page:'delivery',target:'business',deliveryDrafts:{privacy:choice}}));
+  assert.equal(f.page.model.page,'business');
+  const reopened=openFeatureIntake(f.vscode,{...f.options,initialSlug:'referrals',initialPage:'delivery'}); await reopened.ready;
+  assert.deepEqual(reopened.model.deliveryDrafts.privacy,choice);
+  const completed={...choice,treatment:'extend'};
+  await reopened.action('remember',JSON.stringify({page:'delivery',deliveryDrafts:{privacy:completed}}));
+  assert.deepEqual(reopened.model.deliveryDrafts.privacy,completed);
+});
+
+test('saving without a treatment keeps the incomplete story open and never submits a canonical decision', async () => {
+  const f=fixture(); await f.page.ready; await f.page.action('preview',f.value); await f.page.action('apply');
+  await f.page.action('navigate',JSON.stringify({target:'delivery'}));
+  f.page.model.featureDelivery={inputHash:'input',stories:[{id:'privacy',title:'Privacy'}]};
+  const choice={treatment:'',owners:['backend'],plan:'Keep my work.',evidencePaths:''};
+  const beforeCalls=f.calls.length, beforeInputs=f.inputs.length;
+  await f.page.action('save-delivery-decision',JSON.stringify({page:'delivery',target:'privacy',deliveryDrafts:{privacy:choice}}));
+  assert.match(f.page.model.error,/Choose a planned treatment/u);
+  assert.deepEqual(f.page.model.deliveryDrafts.privacy,choice);
+  assert.equal(f.page.model.deliveryFocus,'privacy'); assert.equal(f.page.model.busy,false);
+  assert.equal(f.calls.length,beforeCalls); assert.equal(f.inputs.length,beforeInputs);
+  await f.page.action('remember',JSON.stringify({page:'delivery',deliveryDrafts:{privacy:{...choice,treatment:'invalid'}}}));
+  assert.match(f.page.model.error,/inputs are invalid/u);
+  assert.deepEqual(f.page.model.deliveryDrafts.privacy,choice);
+});
+
 test('failed story saves retain the edited decision and stale ownership cannot be bypassed', async () => {
   const f=fixture(); await f.page.ready; await f.page.action('preview',f.value); await f.page.action('apply');
   await f.page.action('navigate',JSON.stringify({target:'delivery'}));

@@ -257,7 +257,7 @@ function openFeatureIntake(vscode, { cli, authority, root, actorIdentity, refres
           if (model.page !== 'delivery' || typeof message.deliveryDrafts !== 'object' || Array.isArray(message.deliveryDrafts)
             || Object.keys(message.deliveryDrafts).length > 80 || Object.values(message.deliveryDrafts).some(d => !d || typeof d.plan !== 'string' || d.plan.length > 4000
               || typeof d.evidencePaths !== 'string' || d.evidencePaths.length > 7200 || !Array.isArray(d.owners) || d.owners.length > 8
-              || d.owners.some(id => typeof id !== 'string' || id.length > 200) || !['new', 'extend', 'reuse', 'out-of-scope'].includes(d.treatment)))
+              || d.owners.some(id => typeof id !== 'string' || id.length > 200) || !['', 'new', 'extend', 'reuse', 'out-of-scope'].includes(d.treatment)))
             throw new Error('Story decision inputs are invalid or too large.');
           model.deliveryDrafts = { ...model.deliveryDrafts, ...message.deliveryDrafts };
         }
@@ -369,6 +369,8 @@ function openFeatureIntake(vscode, { cli, authority, root, actorIdentity, refres
         const story = model.featureDelivery?.stories?.find(s => s.id === message.target);
         const draft = model.deliveryDrafts[message.target];
         if (!story || !draft || !model.featureDelivery.inputHash) throw new Error('Open the story assessment before saving a delivery decision.');
+        model.deliveryFocus = story.id;
+        if (!draft.treatment) throw new Error('Choose a planned treatment before saving this story decision. Your repository selections and other edits are retained.');
         const savedOwnership = model.wizard.pages.find(p => p.id === 'delivery')?.fields.find(f => f.id === 'delivery-ownership')?.answer;
         const ownership = model.pageDrafts.delivery?.['delivery-ownership'];
         if (ownership !== undefined && ownership !== (savedOwnership ?? '')) throw new Error('Reconcile with the edited ownership direction before saving story decisions. Other drafts are retained.');

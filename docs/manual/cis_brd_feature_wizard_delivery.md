@@ -72,6 +72,9 @@ or **Exclude from this feature**. Planned work and code references are prefilled
 suggestions. A valid model proposal also suggests treatment and owners. For an inconclusive
 assessment, choose these explicitly: a code match does not automatically select extension
 or assign ownership, and no match does not automatically select new work.
+You can select repositories or edit the plan before choosing a treatment. These partial
+drafts are retained without refreshing the form, including when you reopen the wizard.
+**Save story decision** requires a treatment; an incomplete attempt keeps your edits.
 Edit the suggestions, then select **Save story decision**. New work does not require an
 existing-code reference. Reuse and extension require an existing file in an owned repository.
 Keep relevant paths or add one per line using `repository-id/path/to/file`. The planned work

@@ -288,7 +288,7 @@ preview SDKs. Node.js 22 is required for the Visual Studio Code extension and co
 release build.
 
 ```powershell
-git clone https://github.com/AndrewSpiteri/change-impact-studio.git
+git clone https://github.com/andrewspiteri/CIS.git change-impact-studio
 Set-Location change-impact-studio
 
 dotnet --version

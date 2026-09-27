@@ -16,4 +16,5 @@ public sealed record RepositoryImportRequest(
     string? MergeReviewHash = null,
     string? MergeEditsPath = null,
     RepositoryGuidanceModel? MergeModel = null,
-    bool MinimalImport = true);
+    // Preserve existing in-process callers; CLI imports explicitly select minimal mode.
+    bool MinimalImport = false);

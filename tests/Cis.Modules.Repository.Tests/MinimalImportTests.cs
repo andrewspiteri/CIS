@@ -5,7 +5,7 @@ namespace Cis.Modules.Repository.Tests;
 public sealed class MinimalImportTests
 {
     [Fact]
-    public void DefaultImportPreservesExistingDirectivesAndProducesASmallLocalReport()
+    public void MinimalImportPreservesExistingDirectivesAndProducesASmallLocalReport()
     {
         using var repo = new Fixture();
         const string original = "# Team\r\nUse parrctx first for navigation.\r\nKeep approved architecture and release gates.\r\n";
@@ -282,7 +282,7 @@ public sealed class MinimalImportTests
 
     private static RepositoryImporter Importer() => new(new RepositoryInitializer(), new WorkspaceRegistry(new CisRepositoryContextResolver()));
     private static RepositoryImportRequest Request(Fixture repo) => new(repo.Path, "docs/cis", [repo.Path], true, false,
-        "owned", "none", EcosystemId: "example", ProductId: "example");
+        "owned", "none", EcosystemId: "example", ProductId: "example", MinimalImport: true);
     private sealed class Fixture : IDisposable
     {
         public string Path { get; } = Directory.CreateTempSubdirectory("cis-minimal-import-").FullName;

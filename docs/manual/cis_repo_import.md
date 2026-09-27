@@ -32,6 +32,10 @@ cis repo import --source <path> [<path>...] --root <repository-relative-path>
 
 ## Workflow
 
+The CLI defaults to minimal import. In-process callers of `RepositoryImportRequest`
+retain the full starter mode for compatibility; they must set `MinimalImport: true`
+to select minimal import and supply the reviewed preview hash when applying it.
+
 The command resolves and deduplicates every source path, plans initialization for the
 complete batch, and rejects the batch before mutation when any source is invalid or has
 an initialization collision. It then merges the repositories into

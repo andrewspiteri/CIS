@@ -34,7 +34,7 @@ test('business readiness is above tools, explains blockers, and identifies optio
   assert.match(html, /Optional<\/span><button[^>]+data-value="infer-brd"[^>]*>Infer from existing project/u);
   assert.match(html, /Complete<\/span><button[^>]+data-value="prepare-evidence"[^>]*>Prepare existing-system context/u);
   assert.doesNotMatch(html, /data-value="(?:infer-brd|prepare-evidence)" disabled/u);
-  assert.match(html, /<details><summary>Full validation details/u);
+  assert.match(html, /<section class="notice warning" aria-label="Validation findings">/u);
   assert.doesNotMatch(html, /Answer 0 open questions/u);
 });
 
@@ -58,7 +58,7 @@ test('document summaries are readable and escaped, with generation separate from
   const value = model();
   value.pages[0].guidance.sourceReviews[0].summary = { kind: 'local-model', text: 'Describes deposit maturity instructions. <script>untrusted</script>', canGenerate: false };
   let html = render(value);
-  assert.match(html, /Local model summary/u);
+  assert.match(html, /Local model overview/u);
   assert.match(html, /Describes deposit maturity instructions\. &lt;script&gt;/u);
   assert.doesNotMatch(html, /data-command="summarize-business-sources"/u);
   value.pages[0].guidance.sourceReviews[0].summary = { kind: 'excerpt', text: 'Customers select maturity instructions.', canGenerate: true };

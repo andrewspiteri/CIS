@@ -90,7 +90,8 @@ public sealed class RepositoryDoctor
             repositoryPath,
             documentationRoot,
             DryRun: true,
-            Confirmed: false));
+            Confirmed: false, MergeAgents: RepositoryInitializer.UsesMinimalImport(repositoryPath),
+            MinimalImport: RepositoryInitializer.UsesMinimalImport(repositoryPath)));
 
         foreach (var error in result.Errors)
         {
@@ -166,7 +167,7 @@ public sealed class RepositoryDoctor
             {
                 foreach (var finding in check.Inspect(context))
                 {
-                    findings.Add(finding);
+                    findings.Add(DescribeDeferredCapability(context, finding));
                 }
             }
             catch (Exception exception) when (exception is IOException
@@ -184,6 +185,38 @@ public sealed class RepositoryDoctor
                     "manual"));
             }
         }
+    }
+
+    internal static CisRepositoryDoctorFinding DescribeDeferredCapability(CisRepositoryContext context, CisRepositoryDoctorFinding finding)
+    {
+        if (!RepositoryInitializer.UsesMinimalImport(context.RepositoryPath)) return finding;
+        var relative = finding.Code switch
+        {
+            "CIS-SEC-DOCTOR-001" => context.DocumentationRoot + "/references/security-suite-profile.md",
+            "CIS-SEC-DOCTOR-002" => context.DocumentationRoot + "/references/accepted-security-findings.md",
+            "CIS-TEST-DOCTOR-001" => context.DocumentationRoot + "/references/test-suite-profile.md",
+            "CIS-STD-LOAD-001" => context.DocumentationRoot + "/references/standards-conformance-matrix.md",
+            "CIS-SKILL-ROOT-001" => ".github/skills",
+            "CIS-AGENT-DOCTOR-001" => context.DocumentationRoot + "/references/agent-provider-profile.md",
+            "CIS-ARTIFACT-DOCTOR-001" => context.DocumentationRoot + "/references/local-artifact-retention.md",
+            _ => null,
+        };
+        if (relative is null || !CisPathSafety.TryResolveUnderRoot(context.RepositoryPath, relative, out var path)
+            || CisPathSafety.ContainsReparsePoint(context.RepositoryPath, path) || File.Exists(path) || Directory.Exists(path)) return finding;
+        var manifest = new StarterManifestStore().Read(Path.Combine(context.RepositoryPath, ".cis", "starter-manifest.yml"));
+        if (manifest.Errors.Count > 0 || manifest.Manifest is null || manifest.Manifest.ManagedArtifacts.Any(item =>
+                item.Path.Equals(relative, StringComparison.OrdinalIgnoreCase)
+                || relative == ".github/skills" && item.Path.StartsWith(".github/skills/", StringComparison.OrdinalIgnoreCase))) return finding;
+        if (finding.Code == "CIS-SEC-DOCTOR-002"
+            && File.Exists(Path.Combine(context.DocumentationPath, "references", "security-suite-profile.md"))) return finding;
+        if (finding.Code == "CIS-STD-LOAD-001" && Directory.Exists(Path.Combine(context.DocumentationPath, "standards"))
+            && Directory.EnumerateFiles(Path.Combine(context.DocumentationPath, "standards"), "*.md").Any()) return finding;
+        return finding with {
+            Severity = "warning",
+            Message = $"CIS {finding.Category} setup is deferred after minimal import: {relative} is not installed. Existing project rules and gates remain required.",
+            SuggestedFix = "Configure this CIS capability in a separate reviewed change before using it. This pending setup is not a passed validation check.",
+            Fixability = "setup-pending",
+        };
     }
 
     private static void AddOllamaFinding(

@@ -338,6 +338,7 @@ public sealed partial class SkillAuditService
     private static string CreatePrompt(IReadOnlyList<AuditPair> pairs)
     {
         var builder = new StringBuilder();
+        builder.AppendLine(HumanReadableContentPolicy.Instructions("repository maintainer", "advisory skill audit findings", "review"));
         builder.AppendLine("Review only the supplied repository skill pair. Identify meaningful duplicates, overlapping responsibility, or contradictory instructions.");
         builder.AppendLine("Return JSON only, with at most one finding: {\"findings\":[{\"left\":\"name\",\"right\":\"name\",\"kind\":\"duplicate|overlap|conflict\",\"confidence\":0.0,\"summary\":\"concise\",\"evidence\":[\"left paraphrase\",\"right paraphrase\"]}]}.");
         builder.AppendLine("If there is no material finding, return exactly {\"findings\":[]}. Do not include analysis, alternatives, markdown, or code fences. Keep each evidence item under 160 characters.");
@@ -358,9 +359,9 @@ public sealed partial class SkillAuditService
 
     private static void AppendSkill(StringBuilder builder, string side, AuditSkill skill)
     {
-        builder.AppendLine($"{side} NAME: {skill.Name}");
-        builder.AppendLine($"{side} DESCRIPTION: {skill.Description}");
-        builder.AppendLine($"{side} BODY: {Truncate(skill.Body, MaximumBodyCharactersPerSkill)}");
+        builder.AppendLine(HumanReadableContentPolicy.Evidence($"{side} NAME: {skill.Name}"));
+        builder.AppendLine(HumanReadableContentPolicy.Evidence($"{side} DESCRIPTION: {skill.Description}"));
+        builder.AppendLine(HumanReadableContentPolicy.Evidence($"{side} BODY: {Truncate(skill.Body, MaximumBodyCharactersPerSkill)}"));
     }
 
     private static IReadOnlyList<SkillAuditFinding> ParseModelFindings(

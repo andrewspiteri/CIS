@@ -150,7 +150,7 @@ public sealed class RepositoryInitializerTests
             [participant.Path],
             DryRun: false,
             Confirmed: true,
-            "owned", "none")).ExitCode);
+            "owned", "none", MinimalImport: false)).ExitCode);
 
         var result = initializer.Initialize(new WorkspaceInitRequest(
             workspace.Path,
@@ -181,7 +181,7 @@ public sealed class RepositoryInitializerTests
             [first.Path, second.Path],
             DryRun: true,
             Confirmed: false,
-            "owned", "none"));
+            "owned", "none", MinimalImport: false));
 
         Assert.Equal(0, result.ExitCode);
         Assert.Equal("dry-run", result.Status);
@@ -189,6 +189,277 @@ public sealed class RepositoryInitializerTests
         Assert.False(Directory.Exists(Path.Combine(first.Path, ".cis")));
         Assert.False(Directory.Exists(Path.Combine(second.Path, ".cis")));
         Assert.True(File.Exists(Path.Combine(workspace.Path, ".cis", "workspace.yml")));
+    }
+
+    [Fact]
+    public void Import_ProposesAndAppliesReviewedAgentsMergeWithoutLosingExistingGuidance()
+    {
+        using var repository = TemporaryRepository.Create();
+        const string original = "# Team guidance\r\n\r\nKeep our existing workflow.\r\n";
+        repository.Write("AGENTS.md", original);
+        var importer = CreateImporter();
+        var request = new RepositoryImportRequest(repository.Path, "docs/cis", [repository.Path],
+            true, false, "owned", "none", EcosystemId: "parr", ProductId: "parr", MinimalImport: false);
+        var plan = importer.Import(request);
+        Assert.Equal(0, plan.ExitCode);
+        var merge = Assert.Single(plan.FileMerges);
+        Assert.Equal(original, merge.CurrentContent);
+        Assert.StartsWith(original, merge.ProposedContent, StringComparison.Ordinal);
+        Assert.Contains("<!-- cis:repository-guidance:start -->\r\n", merge.ProposedContent, StringComparison.Ordinal);
+        Assert.Contains(".github/instructions/cis-repository.instructions.md", merge.ProposedContent, StringComparison.Ordinal);
+        Assert.Contains("AGENTS.md", Assert.Single(plan.Repositories).FilesToUpdate);
+        Assert.Equal(original, File.ReadAllText(Path.Combine(repository.Path, "AGENTS.md")));
+        Assert.False(Directory.Exists(Path.Combine(repository.Path, ".cis")));
+
+        var unreviewed = importer.Import(request with { DryRun = false, Confirmed = true });
+        Assert.Equal(3, unreviewed.ExitCode);
+        Assert.True(unreviewed.ConfirmationRequired);
+        Assert.False(Directory.Exists(Path.Combine(repository.Path, ".cis")));
+        var hashOnly = importer.Import(request with { DryRun = false, Confirmed = true, MergeReviewHash = plan.MergeReviewHash });
+        Assert.Equal(3, hashOnly.ExitCode);
+        using var review = TemporaryRepository.Create();
+        review.Write("edits.json", System.Text.Json.JsonSerializer.Serialize(new[]
+        {
+            new { repositoryPath = repository.Path, relativePath = "AGENTS.md", content = merge.ProposedContent },
+        }));
+        var applied = importer.Import(request with { DryRun = false, Confirmed = true, MergeReviewHash = plan.MergeReviewHash,
+            MergeEditsPath = Path.Combine(review.Path, "edits.json") });
+        Assert.Equal(0, applied.ExitCode);
+        Assert.True(applied.Applied);
+        Assert.Equal(merge.ProposedContent, File.ReadAllText(Path.Combine(repository.Path, "AGENTS.md")));
+
+        var repeated = importer.Import(request with { DryRun = false, Confirmed = true });
+        Assert.Equal(0, repeated.ExitCode);
+        Assert.Empty(repeated.FileMerges);
+        Assert.Equal("unchanged", repeated.Status);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public void Import_RejectsStaleMergeReviewBeforeChangingAnyRepository(bool deleteGuidance, bool edited)
+    {
+        using var workspace = TemporaryRepository.Create();
+        using var first = TemporaryRepository.Create();
+        using var second = TemporaryRepository.Create();
+        InitializeWorkspace(workspace);
+        second.Write("AGENTS.md", "# Original guidance\n");
+        var importer = CreateImporter();
+        var request = new RepositoryImportRequest(workspace.Path, "docs/cis", [first.Path, second.Path], true, false, "owned", "none", MinimalImport: false);
+        var plan = importer.Import(request);
+        Assert.Single(plan.FileMerges);
+        using var review = TemporaryRepository.Create();
+        review.Write("edits.json", System.Text.Json.JsonSerializer.Serialize(new[]
+        {
+            new { repositoryPath = second.Path, relativePath = "AGENTS.md", content = "# My reviewed version\n" },
+        }));
+        if (deleteGuidance) File.Delete(Path.Combine(second.Path, "AGENTS.md"));
+        else second.Write("AGENTS.md", "# Changed while reviewing\n");
+        var result = importer.Import(request with { DryRun = false, Confirmed = true, MergeReviewHash = plan.MergeReviewHash,
+            MergeEditsPath = edited ? Path.Combine(review.Path, "edits.json") : null });
+        Assert.Equal(2, result.ExitCode);
+        Assert.Contains(result.Errors, error => error.Contains("changed after review", StringComparison.Ordinal));
+        Assert.False(Directory.Exists(Path.Combine(first.Path, ".cis")));
+        Assert.False(Directory.Exists(Path.Combine(second.Path, ".cis")));
+    }
+
+    [Fact]
+    public void Import_ReviewsEntryPointsAndLinkedInstructionsAndAppliesOnlyTheirExactEditedContents()
+    {
+        using var repository = TemporaryRepository.Create();
+        using var review = TemporaryRepository.Create();
+        repository.Write("AGENTS.md", "# Team\nRead `.github/copilot-instructions.md` and `.github/instructions/routing.instructions.md`.\nRun `.github/scripts/route.py`.\n");
+        repository.Write(".github/copilot-instructions.md", "# Copilot\nUse old routing first.\n");
+        repository.Write(".github/instructions/routing.instructions.md", "---\napplyTo: '**'\n---\nUse the old graph first.\n");
+        const string script = "raise RuntimeError('This reference must never execute')\n";
+        repository.Write(".github/scripts/route.py", script);
+        var importer = CreateImporter();
+        var request = new RepositoryImportRequest(repository.Path, "docs/cis", [repository.Path],
+            true, false, "owned", "none", EcosystemId: "parr", ProductId: "parr", MinimalImport: false);
+        var plan = importer.Import(request);
+        Assert.Equal(0, plan.ExitCode);
+        Assert.Equal(new[] { "AGENTS.md", ".github/copilot-instructions.md", ".github/instructions/routing.instructions.md" }, plan.FileMerges.Select(merge => merge.RelativePath));
+        Assert.Equal(plan.FileMerges[2].CurrentContent, plan.FileMerges[2].ProposedContent);
+        Assert.All(plan.FileMerges, merge => Assert.Contains(merge.ContextSources, source => source.Path == ".github/scripts/route.py"));
+        Assert.Contains(".github/copilot-instructions.md", Assert.Single(plan.Repositories).FilesToUpdate);
+        Assert.False(Directory.Exists(Path.Combine(repository.Path, ".cis")));
+        review.Write("edits.json", System.Text.Json.JsonSerializer.Serialize(plan.FileMerges.Select(merge => new
+        {
+            repositoryPath = repository.Path, relativePath = merge.RelativePath, content = "# Reviewed " + merge.RelativePath + "\n",
+        })));
+        var applied = importer.Import(request with { DryRun = false, Confirmed = true, MergeReviewHash = plan.MergeReviewHash,
+            MergeEditsPath = Path.Combine(review.Path, "edits.json") });
+        Assert.Equal(0, applied.ExitCode);
+        Assert.True(applied.Applied);
+        foreach (var merge in plan.FileMerges)
+            Assert.Equal("# Reviewed " + merge.RelativePath + "\n", File.ReadAllText(Path.Combine(repository.Path, merge.RelativePath)));
+        Assert.Equal(script, File.ReadAllText(Path.Combine(repository.Path, ".github/scripts/route.py")));
+        var repeated = importer.Import(request with { DryRun = false, Confirmed = true });
+        Assert.Equal("unchanged", repeated.Status);
+        Assert.Empty(repeated.FileMerges);
+    }
+
+    [Theory]
+    [InlineData(".github/copilot-instructions.md")]
+    [InlineData(".github/scripts/route.py")]
+    [InlineData(".github/instructions/routing.instructions.md")]
+    public void Import_RejectsChangesToCompanionOrUnexcerptedReferenceContentBeforeWriting(string changedPath)
+    {
+        using var repository = TemporaryRepository.Create();
+        using var review = TemporaryRepository.Create();
+        repository.Write("AGENTS.md", "# Team\nRun `.github/scripts/route.py`. Read `.github/instructions/routing.instructions.md`.\n");
+        repository.Write(".github/copilot-instructions.md", "# Copilot\nUse old routing first.\n");
+        repository.Write(".github/instructions/routing.instructions.md", "Use the old graph first.\n");
+        repository.Write(".github/scripts/route.py", "# graph routing\n" + new string('x', 6_000));
+        var importer = CreateImporter();
+        var request = new RepositoryImportRequest(repository.Path, "docs/cis", [repository.Path],
+            true, false, "owned", "none", EcosystemId: "parr", ProductId: "parr", MinimalImport: false);
+        var plan = importer.Import(request);
+        Assert.All(plan.FileMerges, merge => Assert.True(merge.ContextSources.Single(source => source.Path == ".github/scripts/route.py").IsExcerpt));
+        review.Write("edits.json", System.Text.Json.JsonSerializer.Serialize(plan.FileMerges.Select(merge => new
+        {
+            repositoryPath = repository.Path, relativePath = merge.RelativePath, content = "# Edited\n",
+        })));
+        File.AppendAllText(Path.Combine(repository.Path, changedPath), "\nChanged beyond any excerpt.\n");
+        var applied = importer.Import(request with { DryRun = false, Confirmed = true, MergeReviewHash = plan.MergeReviewHash,
+            MergeEditsPath = Path.Combine(review.Path, "edits.json") });
+        Assert.Equal(2, applied.ExitCode);
+        Assert.Contains(applied.Errors, error => error.Contains("changed after review", StringComparison.Ordinal));
+        Assert.False(Directory.Exists(Path.Combine(repository.Path, ".cis")));
+    }
+
+    [Fact]
+    public void Import_RejectsDuplicateFileEditsEvenWhenTheirRepositoryMatches()
+    {
+        using var repository = TemporaryRepository.Create();
+        using var review = TemporaryRepository.Create();
+        repository.Write("AGENTS.md", "# Team\n");
+        repository.Write(".github/copilot-instructions.md", "# Copilot\n");
+        var importer = CreateImporter();
+        var request = new RepositoryImportRequest(repository.Path, "docs/cis", [repository.Path],
+            true, false, "owned", "none", EcosystemId: "parr", ProductId: "parr", MinimalImport: false);
+        var plan = importer.Import(request);
+        review.Write("edits.json", System.Text.Json.JsonSerializer.Serialize(Enumerable.Repeat(new
+        {
+            repositoryPath = repository.Path, relativePath = "AGENTS.md", content = "# Edited\n",
+        }, 2)));
+        var applied = importer.Import(request with { DryRun = false, Confirmed = true, MergeReviewHash = plan.MergeReviewHash,
+            MergeEditsPath = Path.Combine(review.Path, "edits.json") });
+        Assert.Equal(2, applied.ExitCode);
+        Assert.False(Directory.Exists(Path.Combine(repository.Path, ".cis")));
+    }
+
+    [Fact]
+    public void Import_ReferenceContextExcludesCredentialsAndTraversalPaths()
+    {
+        using var repository = TemporaryRepository.Create();
+        repository.Write("AGENTS.md", "# Team\nRead `.github/scripts/config.py` and `.github/../../outside.md`. Use `maintain-domain-catalogue`.\n");
+        const string secret = "abcdefghijklmnopqrstuvwxyz012345";
+        repository.Write(".github/scripts/config.py", "api_key = " + secret);
+        repository.Write(".github/skills/maintain-domain-catalogue/SKILL.md", "Maintain events, commands and module ownership.\n");
+        var plan = CreateImporter().Import(new RepositoryImportRequest(repository.Path, "docs/cis", [repository.Path],
+            true, false, "owned", "none", EcosystemId: "parr", ProductId: "parr", MinimalImport: false));
+        var merge = Assert.Single(plan.FileMerges, item => item.RelativePath == "AGENTS.md");
+        Assert.DoesNotContain(merge.ContextSources, source => source.Content.Contains(secret, StringComparison.Ordinal));
+        Assert.Contains(merge.ContextWarnings, warning => warning.Contains("credentials", StringComparison.Ordinal));
+        Assert.Contains(merge.ContextWarnings, warning => warning.Contains("outside the repository", StringComparison.Ordinal));
+        Assert.Contains(merge.ContextSources, source => source.Path == ".github/skills/maintain-domain-catalogue/SKILL.md"
+            && source.Content.Contains("module ownership", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Import_SavesEditedGuidanceAndDoesNotRestoreRemovedLines(bool keepOriginalOnly)
+    {
+        using var repository = TemporaryRepository.Create();
+        using var review = TemporaryRepository.Create();
+        const string original = "# Team guidance\r\nRedundant instructions.\r\n";
+        repository.Write("AGENTS.md", original);
+        var importer = CreateImporter();
+        var request = new RepositoryImportRequest(repository.Path, "docs/cis", [repository.Path],
+            true, false, "owned", "none", EcosystemId: "parr", ProductId: "parr", MinimalImport: false);
+        var plan = importer.Import(request);
+        var proposal = Assert.Single(plan.FileMerges);
+        var edited = keepOriginalOnly ? original : proposal.ProposedContent
+            .Replace("Redundant instructions.\r\n", string.Empty, StringComparison.Ordinal)
+            .Replace("## Human-readable content\r\n", string.Empty, StringComparison.Ordinal)
+            + "\r\n+ A literal Markdown bullet retained verbatim.\r\n";
+        review.Write("edits.json", System.Text.Json.JsonSerializer.Serialize(new[]
+        {
+            new { repositoryPath = repository.Path, relativePath = "AGENTS.md", content = edited },
+        }));
+        var reviewed = request with { MergeReviewHash = plan.MergeReviewHash, MergeEditsPath = Path.Combine(review.Path, "edits.json") };
+        var editedPlan = importer.Import(reviewed);
+        Assert.Equal(0, editedPlan.ExitCode);
+        Assert.Equal(edited, Assert.Single(editedPlan.FileMerges).ProposedContent);
+        Assert.Equal(original, File.ReadAllText(Path.Combine(repository.Path, "AGENTS.md")));
+        var applied = importer.Import(reviewed with { DryRun = false, Confirmed = true });
+        Assert.Equal(0, applied.ExitCode);
+        Assert.True(applied.Applied);
+        Assert.Equal(edited, File.ReadAllText(Path.Combine(repository.Path, "AGENTS.md")));
+        var repeated = importer.Import(request with { DryRun = false, Confirmed = true });
+        Assert.Equal(0, repeated.ExitCode);
+        Assert.Equal("unchanged", repeated.Status);
+        Assert.Empty(repeated.FileMerges);
+        Assert.Equal(edited, File.ReadAllText(Path.Combine(repository.Path, "AGENTS.md")));
+    }
+
+    [Theory]
+    [InlineData("null")]
+    [InlineData("invalid JSON")]
+    [InlineData("[]")]
+    [InlineData("[null]")]
+    [InlineData("[{\"repositoryPath\":\"elsewhere\",\"relativePath\":\"AGENTS.md\",\"content\":\"edited\"}]")]
+    [InlineData("[{\"repositoryPath\":\"elsewhere\",\"relativePath\":\"other.md\",\"content\":\"edited\"}]")]
+    public void Import_RejectsInvalidEditsBeforeChangingAnyRepository(string edits)
+    {
+        using var repository = TemporaryRepository.Create();
+        using var review = TemporaryRepository.Create();
+        repository.Write("AGENTS.md", "# Original\n");
+        review.Write("edits.json", edits);
+        var importer = CreateImporter();
+        var request = new RepositoryImportRequest(repository.Path, "docs/cis", [repository.Path],
+            true, false, "owned", "none", EcosystemId: "parr", ProductId: "parr", MinimalImport: false);
+        var plan = importer.Import(request);
+        var result = importer.Import(request with { DryRun = false, Confirmed = true, MergeReviewHash = plan.MergeReviewHash,
+            MergeEditsPath = Path.Combine(review.Path, "edits.json") });
+        Assert.Equal(2, result.ExitCode);
+        Assert.NotEmpty(result.Errors);
+        Assert.False(Directory.Exists(Path.Combine(repository.Path, ".cis")));
+        Assert.Equal("# Original\n", File.ReadAllText(Path.Combine(repository.Path, "AGENTS.md")));
+    }
+
+    [Fact]
+    public void Import_RefreshesCisGuidanceSectionAndPreservesSurroundingText()
+    {
+        using var repository = TemporaryRepository.Create();
+        const string prefix = "# Team instructions\n\nKeep this.\n\n";
+        const string suffix = "\n\n## Local additions\nKeep these too.\n";
+        repository.Write("AGENTS.md", prefix + "<!-- cis:repository-guidance:start -->\nOld CIS guidance\n<!-- cis:repository-guidance:end -->" + suffix);
+        var result = CreateImporter().Import(new RepositoryImportRequest(repository.Path, "docs/cis", [repository.Path],
+            true, false, "owned", "none", EcosystemId: "parr", ProductId: "parr", MinimalImport: false));
+        var merge = Assert.Single(result.FileMerges);
+        Assert.StartsWith(prefix, merge.ProposedContent, StringComparison.Ordinal);
+        Assert.EndsWith(suffix, merge.ProposedContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("Old CIS guidance", merge.ProposedContent, StringComparison.Ordinal);
+        Assert.Equal(1, merge.ProposedContent.Split("<!-- cis:repository-guidance:start -->").Length - 1);
+    }
+
+    [Fact]
+    public void Import_RefusesMalformedGuidanceSectionsWithoutOverwritingThem()
+    {
+        using var repository = TemporaryRepository.Create();
+        const string original = "# Keep this\n<!-- cis:repository-guidance:start -->\nUnclosed section\n";
+        repository.Write("AGENTS.md", original);
+        var result = CreateImporter().Import(new RepositoryImportRequest(repository.Path, "docs/cis", [repository.Path],
+            false, true, "owned", "none", EcosystemId: "parr", ProductId: "parr", MinimalImport: false));
+        Assert.Equal(4, result.ExitCode);
+        Assert.Contains(result.Collisions, collision => collision.Contains("markers", StringComparison.Ordinal));
+        Assert.Equal(original, File.ReadAllText(Path.Combine(repository.Path, "AGENTS.md")));
+        Assert.False(Directory.Exists(Path.Combine(repository.Path, ".cis")));
     }
 
     [Fact]
@@ -206,7 +477,7 @@ public sealed class RepositoryInitializerTests
             [first.Path, second.Path],
             DryRun: false,
             Confirmed: false,
-            "owned", "none"));
+            "owned", "none", MinimalImport: false));
 
         Assert.Equal(3, result.ExitCode);
         Assert.True(result.ConfirmationRequired);
@@ -230,7 +501,7 @@ public sealed class RepositoryInitializerTests
             [first.Path, second.Path],
             DryRun: false,
             Confirmed: true,
-            "owned", "none"));
+            "owned", "none", MinimalImport: false));
 
         Assert.Equal(0, imported.ExitCode);
         Assert.Equal("imported", imported.Status);
@@ -256,7 +527,7 @@ public sealed class RepositoryInitializerTests
             [first.Path, second.Path],
             DryRun: false,
             Confirmed: true,
-            "owned", "none"));
+            "owned", "none", MinimalImport: false));
         Assert.Equal(0, repeated.ExitCode);
         Assert.Equal("unchanged", repeated.Status);
         Assert.False(repeated.Applied);
@@ -278,7 +549,7 @@ public sealed class RepositoryInitializerTests
             Confirmed: true,
             "dependency",
             "producer",
-            ["accounts-api", "customer-events"]));
+            ["accounts-api", "customer-events"], MinimalImport: false));
 
         Assert.Equal(0, imported.ExitCode);
         var entry = Assert.Single(imported.Repositories);
@@ -301,14 +572,14 @@ public sealed class RepositoryInitializerTests
         InitializeWorkspace(workspace);
         var importer = CreateImporter();
         Assert.Equal(0, importer.Import(new RepositoryImportRequest(
-            workspace.Path, "docs/cis", [importedRepository.Path], false, true, "owned", "none")).ExitCode);
+            workspace.Path, "docs/cis", [importedRepository.Path], false, true, "owned", "none", MinimalImport: false)).ExitCode);
 
         var reclassified = importer.Import(new RepositoryImportRequest(
             workspace.Path, "docs/cis", [importedRepository.Path], false, true,
-            "dependency", "consumer", ["cards-events"]));
+            "dependency", "consumer", ["cards-events"], MinimalImport: false));
         var repeated = importer.Import(new RepositoryImportRequest(
             workspace.Path, "docs/cis", [importedRepository.Path], false, true,
-            "dependency", "consumer", ["cards-events"]));
+            "dependency", "consumer", ["cards-events"], MinimalImport: false));
 
         Assert.Equal("imported", reclassified.Status);
         Assert.Equal("unchanged", repeated.Status);
@@ -329,7 +600,7 @@ public sealed class RepositoryInitializerTests
         InitializeWorkspace(workspace);
 
         var result = CreateImporter().Import(new RepositoryImportRequest(
-            workspace.Path, "docs/cis", [source.Path], false, true, participation, relationship));
+            workspace.Path, "docs/cis", [source.Path], false, true, participation, relationship, MinimalImport: false));
 
         Assert.Equal(2, result.ExitCode);
         Assert.Equal("invalid", result.Status);
@@ -386,7 +657,7 @@ public sealed class RepositoryInitializerTests
             [repository.Path],
             DryRun: false,
             Confirmed: true,
-            "owned", "none", [], "retail-banking", "cards", "Retail Banking", "Cards"));
+            "owned", "none", [], "retail-banking", "cards", "Retail Banking", "Cards", MinimalImport: false));
 
         Assert.Equal(0, imported.ExitCode);
         Assert.Equal("imported", imported.Status);
@@ -411,7 +682,7 @@ public sealed class RepositoryInitializerTests
             [repository.Path],
             DryRun: false,
             Confirmed: true,
-            "owned", "none", [], "retail-banking", "cards", "Retail Banking", "Cards"));
+            "owned", "none", [], "retail-banking", "cards", "Retail Banking", "Cards", MinimalImport: false));
         Assert.Equal(0, repeated.ExitCode);
         Assert.Equal("unchanged", repeated.Status);
         Assert.False(repeated.Applied);
@@ -432,7 +703,7 @@ public sealed class RepositoryInitializerTests
             [valid.Path, missing],
             DryRun: false,
             Confirmed: true,
-            "owned", "none"));
+            "owned", "none", MinimalImport: false));
 
         Assert.Equal(2, result.ExitCode);
         Assert.False(Directory.Exists(Path.Combine(valid.Path, ".cis")));
@@ -1588,6 +1859,23 @@ public sealed class RepositoryInitializerTests
         Assert.Contains(".github/skills/cis-infrastructure-delivery/SKILL.md", result.FilesToCreate);
         Assert.Contains(".github/skills/cis-observability-implementation/SKILL.md", result.FilesToCreate);
         Assert.Contains(".github/skills/cis-release-rollout/SKILL.md", result.FilesToCreate);
+    }
+
+    [Fact]
+    public void Initialize_TerraformWorkflowUsesClassifiedSourceInsteadOfIgnoredBuildOutput()
+    {
+        using var repository = TemporaryRepository.Create();
+        repository.Write("node_modules/vendor/main.tf", "terraform {}");
+        repository.Write("infra/main.tf", "terraform {}");
+        repository.Write("infra/.terraform/provider/main.tf", "terraform {}");
+
+        var result = new RepositoryInitializer().Initialize(new RepositoryInitRequest(
+            repository.Path, "docs/cis", DryRun: false, Confirmed: true));
+
+        Assert.Equal(0, result.ExitCode);
+        var workflow = File.ReadAllText(Path.Combine(repository.Path, "docs", "cis", "workflows", "standard-delivery.md"));
+        Assert.Contains("| terraform-fmt | terraform fmt -check | infra |", workflow, StringComparison.Ordinal);
+        Assert.Contains("| terraform-validate | terraform validate | infra |", workflow, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -1828,6 +1828,9 @@ public sealed partial class AgentExecutionTests
         {
             ExecuteCalls++;
             LastRequest = request;
+            Assert.Contains("policy " + Cis.Abstractions.HumanReadableContentPolicy.Revision, request.Prompt, StringComparison.Ordinal);
+            Assert.Contains("uncertainty", request.Prompt, StringComparison.Ordinal);
+            Assert.Contains("protected HTML comments", request.Prompt, StringComparison.Ordinal);
             duringExecution?.Invoke(request);
             if (throwExecution) throw new InvalidOperationException("execution failed");
             cancellationToken.ThrowIfCancellationRequested();

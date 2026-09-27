@@ -117,11 +117,11 @@ internal static class ImplementationSkillPackRegistry
 
         AddWhen(selected, classification, "browser-assurance", "Browser assurance",
             "A web frontend framework was detected.",
-            IsWebFrontend,
+            component => IsWebFrontend(component) || component.Frameworks.Contains("playwright-dotnet", StringComparer.Ordinal),
             [
                 Skill("add-browser-regression-tests", "Add stable browser regression tests for approved user journeys and visual states. Use when web frontend behavior or rendering changes.",
                     "Prove high-value browser journeys while keeping selectors and visual evidence maintainable.",
-                    ["Start from approved wireframes, design manifests, routes, and acceptance criteria.", "Use semantic selectors and repository fixtures rather than timing assumptions.", "Cover navigation, loading, empty, error, authorization, and responsive states as applicable.", "Keep visual snapshots bounded to reviewed components or screens.", "Run the supported browser matrix and preserve traces or screenshots for failures."],
+                    ["Read .github/instructions/cis-engineering-assurance.instructions.md and the repository's approved browser harness; preserve .NET Playwright or Node Playwright as adopted.", "Start from approved wireframes, design manifests, routes, and acceptance criteria.", "Reuse deterministic app composition, isolated seeded data, page objects and production-isolated test authentication.", "Use semantic selectors and observable readiness rather than sleeps or unconditional network-idle waits.", "Exercise changed actions through their resulting mutations, saved values, navigation and error states; presence alone is not coverage.", "Cover navigation, loading, empty, error, authorization, disabled, keyboard and responsive states as applicable.", "Keep visual snapshots bounded to reviewed components or screens.", "Run the supported browser matrix in its correct CI tier, preserve failure artifacts and explicitly report unavailable prerequisites."],
                     "Do not update snapshots merely to make an unexplained difference pass."),
             ]);
 
@@ -132,7 +132,7 @@ internal static class ImplementationSkillPackRegistry
             [
                 Skill("secure-feature", "Threat-model and verify authorization, exposure, validation, and secret-handling changes. Use when a feature crosses a trust boundary or handles sensitive data.",
                     "Make security requirements explicit and testable before completion is claimed.",
-                    ["Identify actors, assets, trust boundaries, entry points, and abuse cases.", "Map permissions to server-side enforcement and negative tests.", "Check validation, output filtering, logging, secrets, caching, and rate limits.", "For public endpoints, verify cached projection access and no direct database dependency.", "Record security evidence, residual risk, and independent review requirements."],
+                    ["Read .github/instructions/cis-engineering-assurance.instructions.md and the applicable security standard and suite profile.", "Identify actors, principal and tenant scope, assets, trust boundaries, entry points, and abuse cases.", "Map permissions to server-side enforcement and negative tests; isolate test authentication from production.", "Check validation, output filtering, logging, secrets, caching, and rate limits.", "Maintain real configuration and environment contracts without inventing entries for pure fixtures.", "For public endpoints, verify cached projection access and no direct database dependency.", "Preserve required CodeQL or other SAST, dependency, secret and DAST checks and exact human-approved exception rules.", "Update tests and documentation together, then record security evidence, residual risk, and independent review requirements."],
                     "Do not rely on hidden UI controls or client-side checks as authorization."),
             ]);
 

@@ -58,6 +58,10 @@ public sealed class AiGovernanceService
             errors.Add("This route uses a remote provider; pass --allow-remote only after approving the submitted content.");
         if (errors.Count > 0) return new("invalid-request", context.RepositoryPath, routes, _generation.GetStatus().Providers, [], CountCache(context), null, errors);
 
+        // Generic evaluation may contain prose or structured output; policy applies only to prose fields.
+        // The caller's task/output contract remains authoritative and the prompt hash versions this cache.
+        prompt = HumanReadableContentPolicy.Instructions("the reader specified by the caller",
+            "the caller's requested output, applying content guidance only to human-facing prose") + prompt;
         var promptHash = Sha256(prompt);
         var key = Sha256($"{route!.Capability}\n{route.Provider}\n{route.Model}\n{promptHash}");
         var cacheFile = Path.Combine(context.RepositoryPath, CachePath.Replace('/', Path.DirectorySeparatorChar), key + ".json");

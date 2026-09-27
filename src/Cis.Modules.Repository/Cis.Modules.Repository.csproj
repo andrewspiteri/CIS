@@ -13,6 +13,16 @@
     <InternalsVisibleTo Include="Cis.Modules.Repository.Tests" />
   </ItemGroup>
   <ItemGroup>
+    <EmbeddedResource Include="..\..\docs\standards\human-readable-content-standard.md" LogicalName="Cis.Content.standard.md" />
+    <EmbeddedResource Include="..\..\docs\references\human-readable-content-terms.md" LogicalName="Cis.Content.terms.md" />
+    <EmbeddedResource Include="..\..\docs\references\human-readable-content-fixtures.json" LogicalName="Cis.Content.fixtures.json" />
+    <EmbeddedResource Include="..\..\.github\skills\cis-technical-writing\SKILL.md" LogicalName="Cis.Content.technical-writing.md" />
+    <EmbeddedResource Include="..\..\.github\skills\cis-ux-writing\SKILL.md" LogicalName="Cis.Content.ux-writing.md" />
+    <EmbeddedResource Include="..\..\.github\skills\cis-content-review\SKILL.md" LogicalName="Cis.Content.content-review.md" />
+    <EmbeddedResource Include="..\..\.github\instructions\cis-human-readable-content.instructions.md" LogicalName="Cis.Content.human-readable.instructions.md" />
+    <EmbeddedResource Include="..\..\.github\instructions\cis-ux-content.instructions.md" LogicalName="Cis.Content.ux.instructions.md" />
+  </ItemGroup>
+  <ItemGroup>
     <EmbeddedResource Include="..\..\docs\templates\default-design-guidelines.md" Link="Defaults\default-design-guidelines.md" />
     <EmbeddedResource Include="..\..\docs\templates\design-guidelines-template.md" Link="Defaults\design-guidelines-template.md" />
   </ItemGroup>

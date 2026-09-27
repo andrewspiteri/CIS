@@ -6,6 +6,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { AuthoritySelector } = require('./lib/authority');
 const { CisCli, CisCliError } = require('./lib/cis-cli');
+const { confirmRepositoryImport, runRepositoryImport } = require('./lib/repository-import');
 const { uiBaselineSource } = require('./lib/ui-baseline');
 const { controlSheetExport } = require('./lib/ui-control-sheet');
 const { architectureApproval } = require('./lib/architecture-approval');
@@ -64,7 +65,7 @@ function activate(context, overrides = {}) {
     try { return await handler(...args); }
     catch (error) {
       const message = conciseError(error);
-      output.appendLine(`ERROR [${error.kind || 'extension'}${error.exitCode === undefined ? '' : `/${error.exitCode}`}]: ${message}`);
+      output.appendLine(`ERROR [${error.kind || 'extension'}${error.exitCode === undefined ? '' : `/${error.exitCode}`}]: ${bound(error.message || String(error), 512)}`);
       void Promise.resolve(vscode.window.showErrorMessage(`CIS: ${message}`, 'Show output'))
         .then(action => { if (action === 'Show output') output.show(true); }).catch(() => {});
       return undefined;
@@ -241,13 +242,9 @@ function activate(context, overrides = {}) {
     args.push('--root', documentationRoot, '--participation', participation, '--relationship', relationship);
     for (const component of components) args.push('--component', component);
     args.push(...identityArgs);
-    const plan = await cli.query([...args, '--dry-run'], { repository: false });
-    const imported = Array.isArray(plan.repositories) ? plan.repositories.length : 1;
-    const confirmed = await vscode.window.showWarningMessage(
-      `Import ${imported} existing repository into CIS? Source files are classified and indexed in place; CIS does not copy or rewrite implementation files.`,
-      { modal: true }, 'Import existing repository');
-    if (confirmed !== 'Import existing repository') return;
-    await cli.runForeground('Import existing CIS repository', [...args, '--yes'], { repository: false });
+    const confirmed = await confirmRepositoryImport(vscode, cli, args);
+    if (!confirmed) return;
+    await runRepositoryImport(cli, confirmed);
     await cli.runForeground('Build imported repository context', ['graph', 'build', '--workspace', repository], { repository: false });
     await refresh(false);
     const next = await vscode.window.showInformationMessage(
@@ -662,7 +659,7 @@ function activate(context, overrides = {}) {
         const actor = await actorIdentity(); if (!actor) return;
         const confirmed = await vscode.window.showWarningMessage(
           `Approve and activate the exact current high-level product-definition baseline as ${actor}?`,
-          { modal: true }, 'Approve and activate');
+          { modal: true, detail: 'This records your approval of the exact current product-definition baseline. Feature scope, bounded implementation plans and delivery approvals keep their own gates.' }, 'Approve and activate');
         if (confirmed !== 'Approve and activate') return;
         await cli.runForeground('Activate high-level product definition',
           ['definition', 'activate', '--workspace', root, '--reviewer', actor], { repository: false });
@@ -2077,8 +2074,7 @@ async function refreshAfterReviewCompletion(refresh, wait = delay => new Promise
 }
 
 function conciseError(error) {
-  if (error instanceof CisCliError) return bound(error.message, 512);
-  return bound(error?.message || String(error), 512);
+  return require('./lib/content-messages').failureMessage(error);
 }
 
 function brdRecommendationDecisionArgs(runId, findingId, actor, workspace, approvedRecommendation) {

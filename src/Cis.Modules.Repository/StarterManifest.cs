@@ -15,7 +15,8 @@ internal sealed record ManagedStarterArtifact(
     string Definition,
     int TemplateVersion,
     string AppliedHash,
-    string Ownership = "managed");
+    string Ownership = "managed",
+    string? GuidanceTemplateHash = null);
 
 internal sealed record StarterManifestReadResult(
     StarterManifest? Manifest,
@@ -71,7 +72,8 @@ internal sealed class StarterManifestStore
                     artifact.Definition ?? string.Empty,
                     artifact.TemplateVersion,
                     artifact.AppliedHash ?? string.Empty,
-                    artifact.Ownership ?? "managed")).ToArray();
+                    artifact.Ownership ?? "managed",
+                    artifact.GuidanceTemplateHash)).ToArray();
             return new StarterManifestReadResult(
                 new StarterManifest(source.RepositoryShape ?? "unclassified", components, artifacts),
                 []);
@@ -107,6 +109,7 @@ internal sealed class StarterManifestStore
                 TemplateVersion = artifact.TemplateVersion,
                 AppliedHash = artifact.AppliedHash,
                 Ownership = artifact.Ownership,
+                GuidanceTemplateHash = artifact.GuidanceTemplateHash,
             }).ToList(),
         };
 
@@ -159,5 +162,8 @@ internal sealed class StarterManifestStore
         public string? AppliedHash { get; set; }
 
         public string? Ownership { get; set; }
+
+        [YamlMember(DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
+        public string? GuidanceTemplateHash { get; set; }
     }
 }

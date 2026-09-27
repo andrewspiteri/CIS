@@ -943,6 +943,10 @@ public sealed partial class AgentService
         IReadOnlyList<string>? expectedQuestionIds = null)
     {
         manifest = manifest with { Status = CisAgentRunStates.Starting, UpdatedAtUtc = UtcNow() }; WriteManifest(context, manifest); AppendEvent(context, manifest, new("state", "Agent run is starting."));
+        // Every supported host receives policy explicitly, including direct author/review and resumed runs.
+        // The task envelope retains authority; referenced source artifacts remain untrusted evidence.
+        prompt = HumanReadableContentPolicy.Instructions("the task's document reader and human reviewer",
+            "the bounded task below and its structured final report", requireBrdReview ? "review" : null) + prompt;
         var request = new CisAgentExecutionRequest(manifest.RunId, manifest.Attempt, manifest.Provider, manifest.Transport, manifest.Mode,
             manifest.Permission, manifest.WorkingDirectory, prompt, TimeSpan.FromSeconds(manifest.TimeoutSeconds), manifest.ProviderSessionId,
             approveWithinCeiling, manifest.Actor, AllowedEnvironment(),

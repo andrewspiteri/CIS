@@ -12,3 +12,5 @@ applyTo: "docs/{specs/ui-direction-questionnaire.md,design/ui-direction.md}"
 - High-level direction contains no detailed feature screens or PNG approvals. A feature wireframe defines structure, actions, paths, and states; its deterministic Sharp/SVG pack remains a later human review point.
 - Run `cis ui-direction validate` before requesting approval. Only explicit human authority may run `cis ui-direction approve`.
 - Source or approved-content drift makes UI direction stale and blocks backlog, change, and plan work until it is reconciled and reapproved.
+
+For human-facing prose, also apply `docs/standards/human-readable-content-standard.md` and route through `.github/instructions/cis-human-readable-content.instructions.md`. Preserve the stronger domain rules above, including protected evidence and approval boundaries.

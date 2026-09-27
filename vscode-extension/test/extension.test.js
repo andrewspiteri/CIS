@@ -137,7 +137,47 @@ test('TC-VSC-001-001 TC-VSC-016-001 TC-VSC-017-001 CisCli classifies structured 
     const doctor = await doctorFailure.query(['repo', 'doctor'], { acceptStructuredFailure: true });
     assert.equal(doctor.status, 'errors'); assert.equal(doctor._process.exitCode, 5);
     assert.equal(doctor._process.failed, true); assert.equal(doctor.findings[0].code, 'CIS-X');
+
+    const collisionMessage = 'AGENTS.md already exists and is not managed by CIS.';
+    const collision = new CisCli(vscode, output, authority, { execFile: (_exe, _args, _options, callback) => {
+      callback(Object.assign(new Error('failed'), { code: 4 }), JSON.stringify({
+        status: 'collision', errors: [], collisions: [collisionMessage], applied: false,
+      }), '');
+    } });
+    await assert.rejects(collision.query(['repo', 'import', '--dry-run'], { repository: false }), error =>
+      error.kind === 'command-failed' && error.exitCode === 4 && error.message === collisionMessage
+      && error.data.applied === false);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('CisCli preserves process failures when stdout is not JSON', async () => {
+  const authority = { root: () => os.tmpdir(), needsSelection: () => false };
+  const cases = [
+    { code: 1, stdout: 'Usage: cis repo import [options]',
+      stderr: "Unrecognized command or argument '--participation'.", kind: 'command-failed',
+      message: /Unrecognized command or argument '--participation'/u },
+    { code: 2, stdout: 'Import failed: token=private-value', stderr: '', kind: 'command-failed',
+      message: /Import failed: token=\[REDACTED\]/u },
+    { code: 1, killed: true, stdout: '{"status":', stderr: 'Import timed out', kind: 'timeout',
+      message: /Import timed out/u },
+  ];
+  for (const result of cases) {
+    const cli = new CisCli(vscode, { appendLine() {} }, authority, {
+      execFile: (_exe, _args, _options, callback) => callback(
+        Object.assign(new Error('process failed'), { code: result.code, killed: result.killed }),
+        result.stdout, result.stderr),
+    });
+    await assert.rejects(cli.query(['repo', 'import', '--participation', 'owned', '--dry-run'],
+      { repository: false, acceptStructuredFailure: true }), error => {
+      assert.equal(error.kind, result.kind);
+      assert.equal(error.exitCode, result.code);
+      assert.match(error.message, result.message);
+      assert.ok(error.details);
+      assert.ok(!error.message.includes('private-value'));
+      assert.ok(!error.details.includes('private-value'));
+      return true;
+    });
+  }
 });
 
 test('CisCli reports supported and incompatible CLI versions', async () => {
@@ -2769,7 +2809,7 @@ test('TC-VSC-002-001 TC-VSC-003-001 TC-VSC-007-001 TC-VSC-009-001 TC-VSC-010-001
     ]);
     assert.match(definitionPanel.webview.html, /Create or revisit the draft/u);
     await definitionPanel.webview.message({ command: 'navigate', value: 'technical' });
-    assert.match(definitionPanel.webview.html, /Infer from existing repositories/u);
+    assert.match(definitionPanel.webview.html, /Draft technical direction from code/u);
     const beforeTechnicalInference = foreground.length;
     await Promise.all([
       definitionPanel.webview.message({ command: 'infer-technical-intent' }),

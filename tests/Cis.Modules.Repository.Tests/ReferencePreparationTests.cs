@@ -157,8 +157,8 @@ public sealed class ReferencePreparationTests
         var registry = new WorkspaceRegistry(new CisRepositoryContextResolver());
         Assert.Equal(0, new WorkspaceInitializer(initializer, registry).Initialize(new(authority.Path, "docs/cis", false, true, "bank", "deposits")).ExitCode);
         var importer = new RepositoryImporter(initializer, registry);
-        Assert.Equal(0, importer.Import(new(authority.Path, "docs/cis", [first.Path, second.Path], false, true, "owned", "none")).ExitCode);
-        Assert.Equal(0, importer.Import(new(authority.Path, "docs/cis", [dependency.Path], false, true, "dependency", "producer")).ExitCode);
+        Assert.Equal(0, importer.Import(new(authority.Path, "docs/cis", [first.Path, second.Path], false, true, "owned", "none", MinimalImport: false)).ExitCode);
+        Assert.Equal(0, importer.Import(new(authority.Path, "docs/cis", [dependency.Path], false, true, "dependency", "producer", MinimalImport: false)).ExitCode);
         first.Write("src/products.ts", Source);
         second.Write("src/products.ts", Source);
         dependency.Write("src/private.ts", Source.Replace("products", "external-only"));

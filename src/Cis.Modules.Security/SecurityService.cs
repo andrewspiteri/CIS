@@ -267,6 +267,7 @@ public sealed partial class SecurityService
     {
         var lines = new List<string>
         {
+            HumanReadableContentPolicy.Instructions("developer", "advisory security triage beside the deterministic verdict", "review"),
             "Summarize these normalized security findings for a developer. Use only supplied facts.",
             "Do not change severity, acceptance, or the deterministic verdict. Do not invent code or remediation evidence.",
             "Return concise Markdown: likely themes, highest-priority files/rules, and one next investigation step.",
@@ -274,7 +275,7 @@ public sealed partial class SecurityService
         foreach (var finding in manifest.Suites.SelectMany(item => item.Findings).Take(200))
         {
             var message = finding.Category == "secret" ? "redacted secret-like finding" : SecurityEvidence.Redact(finding.Message);
-            lines.Add($"- {finding.Severity}|{finding.Scanner}|{finding.RuleId}|{finding.Path}:{finding.StartLine?.ToString() ?? "-"}|{finding.Status}|{message}");
+            lines.Add(HumanReadableContentPolicy.Evidence($"- {finding.Severity}|{finding.Scanner}|{finding.RuleId}|{finding.Path}:{finding.StartLine?.ToString() ?? "-"}|{finding.Status}|{message}"));
         }
         return string.Join('\n', lines);
     }

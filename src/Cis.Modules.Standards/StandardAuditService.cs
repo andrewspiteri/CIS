@@ -92,17 +92,17 @@ public sealed partial class StandardAuditService
         return pairs.OrderByDescending(item => item.Similarity).ThenBy(item => item.Left.Id, StringComparer.Ordinal).ThenBy(item => item.Right.Id, StringComparer.Ordinal).Take(maximum);
     }
 
-    private static string CreatePrompt(AuditPair pair) => $$"""
+    private static string CreatePrompt(AuditPair pair) => HumanReadableContentPolicy.Instructions("repository maintainer", "advisory standards audit findings", "review") + $$"""
         Review only the supplied repository standard pair. Return JSON only, with at most one finding:
         {"findings":[{"kind":"duplicate|overlap|conflict","confidence":0.0,"summary":"concise","evidence":["left requirement","right requirement"]}]}.
         If there is no material finding, return exactly {"findings":[]}. Do not include analysis, alternatives, markdown, or more than one finding. Keep each evidence item under 160 characters.
         A duplicate has substantially identical normative responsibility. An overlap governs a material shared normative responsibility without contradiction. A conflict exists only when both standards apply to the same situation and require mutually exclusive behavior. Complementary rules, shared target labels, and broad topic similarity are not overlaps or conflicts. For every finding, give two evidence items containing the exact rule ID and a concise rule paraphrase: one grounded in LEFT and one grounded in RIGHT. Model findings are advisory candidates only.
         LEFT ID: {{pair.Left.Id}}
         LEFT TARGETS: {{string.Join(',', pair.Left.Targets)}}
-        LEFT CONTENT: {{Truncate(pair.Left.Body, MaximumBodyCharacters)}}
+        LEFT CONTENT: {{HumanReadableContentPolicy.Evidence(Truncate(pair.Left.Body, MaximumBodyCharacters))}}
         RIGHT ID: {{pair.Right.Id}}
         RIGHT TARGETS: {{string.Join(',', pair.Right.Targets)}}
-        RIGHT CONTENT: {{Truncate(pair.Right.Body, MaximumBodyCharacters)}}
+        RIGHT CONTENT: {{HumanReadableContentPolicy.Evidence(Truncate(pair.Right.Body, MaximumBodyCharacters))}}
         """;
 
     private static IReadOnlyList<StandardAuditFinding> ParseModel(string text, AuditPair pair, ICollection<string> warnings, string method)

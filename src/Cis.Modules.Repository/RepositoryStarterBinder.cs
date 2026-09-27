@@ -1,6 +1,6 @@
 namespace Cis.Modules.Repository;
 
-internal sealed class RepositoryStarterBinder
+internal sealed partial class RepositoryStarterBinder
 {
     private static readonly ReferenceFamily[] ReferenceFamilies =
     [
@@ -167,6 +167,7 @@ internal sealed class RepositoryStarterBinder
         AddStandardsGovernance(repositoryId, documentationRoot, classification, selections, artifacts);
         AddImplementationSkillPacks(repositoryId, documentationRoot, classification, selections, artifacts);
         AddAgentGuidance(documentationRoot, classification, selections, artifacts);
+        AddHumanReadableContent(repositoryId, documentationRoot, classification, selections, artifacts);
         var referenceSeeds = observedSeeds ?? RepositoryReferenceSeeder.Seed(repositoryPath, classification);
 
         // The authority owns the cross-repository vocabulary and may precede every implementation
@@ -613,7 +614,8 @@ internal sealed class RepositoryStarterBinder
         string documentationRoot,
         RepositoryClassification classification,
         ICollection<RepositoryStarterSelection> selections,
-        ICollection<RepositoryStarterArtifact> artifacts)
+        ICollection<RepositoryStarterArtifact> artifacts,
+        bool runtimeOnly = false)
     {
         void Add(string definition, string relative, string type, string content)
         {
@@ -793,6 +795,7 @@ internal sealed class RepositoryStarterBinder
         | ai-cache | .cis/local/ai/cache | 7 | 50 | delete |
         | ai-qualification | .cis/local/ai/qualification | 90 | 20 | archive |
         """);
+        if (runtimeOnly) return;
         var testing = RepositoryTestingStarter.Create(repositoryPath, documentationRoot, classification);
         Add("workflow.standard-delivery", "workflows/standard-delivery.md", "workflow-definition", testing.Workflow);
         Add("workflow.security-verification", "workflows/security-verification.md", "workflow-definition", testing.SecurityWorkflow);
@@ -1234,6 +1237,11 @@ internal sealed class RepositoryStarterBinder
             null));
 
         const string referenceInstructionDefinition = "guidance.instruction.reference-governance";
+        const string assuranceDefinition = "guidance.instruction.engineering-assurance";
+        selections.Add(new RepositoryStarterSelection(assuranceDefinition,
+            "Preserve portable security, layered testing, browser, contract, evidence and tool-specific safeguards during onboarding.", ["cis curated starter"]));
+        artifacts.Add(new RepositoryStarterArtifact(assuranceDefinition, assuranceDefinition,
+            ".github/instructions/cis-engineering-assurance.instructions.md", CreateEngineeringAssuranceInstruction(documentationRoot), null));
         selections.Add(new RepositoryStarterSelection(
             referenceInstructionDefinition,
             "Every initialized repository receives deterministic non-API reference discovery, validation, and drift instructions.",
@@ -3903,6 +3911,7 @@ internal sealed class RepositoryStarterBinder
         "- After BRD approval and before change dossiers, use `.github/skills/cis-govern-technical-intent/SKILL.md`; technical decisions and approval remain human-authority actions.\n" +
         "- Run `cis repo import` for existing source or `cis repo init` for a new empty project with an explicit maintainer-selected `--root`; product authority also requires explicit `--ecosystem` and `--product`, while imports require `--participation` and `--relationship`. If onboarding returns an error or collision, run `cis repo doctor` with the same `--repo` and `--root`.\n" +
         "- Read `.cis/repository.yml` before repository-wide work.\n" +
+        "- Apply `.github/instructions/cis-engineering-assurance.instructions.md` for security, layered testing, browser regression, contracts, evidence, scaffolding and runtime diagnostics; preserve stronger project-specific requirements.\n" +
         $"- Start with `{documentationRoot}/README.md`, `{documentationRoot}/catalog.yml`, and the repository profile before broad searches.\n" +
         $"- Treat `{documentationRoot}/specs/product-intent-spec.md` and `{documentationRoot}/specs/technical-intent-spec.md` as foundational intent documents.\n" +
         $"- Read `{documentationRoot}/specs/repository-delivery-policy-spec.md` before any branch, commit, push, pull-request, merge, tag, release, or remote-issue action; Draft or unresolved policy means local-only unless the user explicitly authorizes the exact action.\n" +

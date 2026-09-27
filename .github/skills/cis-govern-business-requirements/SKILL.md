@@ -31,3 +31,7 @@ description: Discover possible BRDs, domain-equivalent product-design documents 
 ## Guardrails
 
 Never infer currency from file existence, choose source or review-finding dispositions, claim semantic absorption without updating BRD content and traceability, invent business requirements, approve on a user's behalf, or describe Review Required, Ready for Approval, or Stale content as Active. Agents cannot accept, reject, or approve review findings. Answer completion alone is not approval-ready: governed answers must be incorporated and independently reviewed. Do not edit managed candidate IDs, approval hashes, source hashes, baseline rows, review-disposition blocks, or block markers. CIS may mark an approved BRD, backlog, or feature Stale from content/evidence drift; only explicit human approval may restore Active status. Feature approval accepts scope but never authorizes implementation.
+
+## Human-readable content
+
+Apply the [shared content standard](../../../docs/standards/human-readable-content-standard.md) to in-scope prose. Use [cis-technical-writing](../cis-technical-writing/SKILL.md) for documents and reports, [cis-ux-writing](../cis-ux-writing/SKILL.md) for interface wording, and [cis-content-review](../cis-content-review/SKILL.md) for source-aware review followed by a separate reader check. Preserve this workflow's authority, evidence, privacy and lifecycle rules. Clarity does not remove legitimate uncertainty or mandatory specification sections.

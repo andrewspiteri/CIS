@@ -10,7 +10,8 @@ internal sealed record RepositoryStarterArtifact(
     string Definition,
     string RelativePath,
     string Content,
-    CatalogArtifactEntry? CatalogEntry);
+    CatalogArtifactEntry? CatalogEntry,
+    int TemplateVersion = 1);
 
 public sealed record CatalogArtifactEntry(
     string Id,

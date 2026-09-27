@@ -32,12 +32,18 @@ public sealed class ExecutionModulesTests
         var generation = new FakeGeneration();
         var service = new AiGovernanceService(generation, new CisRepositoryContextResolver(), Clock);
 
+        // A pre-policy entry must not satisfy the same caller prompt under the new policy.
+        static string Hash(string value) => Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(value)));
+        var legacyKey = Hash("summary\nfake\nsmall\n" + Hash("sensitive prompt"));
+        repository.Write(AiGovernanceService.CachePath + "/" + legacyKey + ".json",
+            JsonSerializer.Serialize(new CisTextGenerationResult("generated", "fake", "small", "old prose", null, true), new JsonSerializerOptions(JsonSerializerDefaults.Web)));
         var first = service.Evaluate(repository.Path, "summary", "sensitive prompt", false, true);
         var second = service.Evaluate(repository.Path, "summary", "sensitive prompt", false, true);
 
         Assert.Equal("generated", first.Status);
         Assert.Equal("cached", second.Status);
         Assert.Equal(1, generation.Calls);
+        Assert.Equal(2, Directory.GetFiles(System.IO.Path.Combine(repository.Path, AiGovernanceService.CachePath), "*.json").Length);
         var usage = File.ReadAllText(System.IO.Path.Combine(repository.Path, ".cis", "local", "ai", "usage.jsonl"));
         Assert.DoesNotContain("sensitive prompt", usage, StringComparison.Ordinal);
         Assert.Contains("promptHash", usage, StringComparison.Ordinal);
@@ -763,7 +769,7 @@ status: Draft
     {
         public int Calls { get; private set; }
         public CisAiStatus GetStatus() => new([new("fake", "available", "local", true, [new("small")], null)]);
-        public CisTextGenerationResult Generate(CisTextGenerationRequest request) { Calls++; return new("generated", "fake", "small", "short result", null, true); }
+        public CisTextGenerationResult Generate(CisTextGenerationRequest request) { Calls++; Assert.Contains("policy " + HumanReadableContentPolicy.Revision, request.Prompt, StringComparison.Ordinal); Assert.False(request.AllowRemote); return new("generated", "fake", "small", "short result", null, true); }
     }
 
     private sealed class FakeAiProvider : ICisAiProvider

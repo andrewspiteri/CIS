@@ -165,9 +165,24 @@ public sealed class RepositoryModule : ICisModule
         };
         var ecosystemName = new Option<string?>("--ecosystem-name");
         var productName = new Option<string?>("--product-name");
+        var guidanceMode = new Option<string>("--guidance-mode") {
+            Description = "minimal (default): preserve directives, add CIS essentials and report gaps. reconcile: full starters and editable semantic migration.",
+            DefaultValueFactory = _ => "minimal",
+        };
+        var mergeReview = new Option<string?>("--merge-review")
+        {
+            Description = "Input review hash from the dry-run guidance proposals and reference evidence. Apply with --merge-edits and --yes.",
+        };
+        var mergeEdits = new Option<string?>("--merge-edits")
+        {
+            Description = "JSON file containing every reviewed guidance file. Requires --merge-review.",
+        };
+        var mergeProvider = new Option<string?>("--merge-provider") { Description = "Explicit provider for a whole-document guidance review." };
+        var mergeModel = new Option<string?>("--merge-model") { Description = "Explicit model for both guidance review passes; no automatic fallback." };
+        var allowRemoteMerge = new Option<bool>("--allow-remote-merge") { Description = "Authorize sending the listed guidance files, read-only reference evidence and proposed CIS guidance to the selected remote model." };
         var dryRun = new Option<bool>("--dry-run")
         {
-            Description = "Plan initialization and workspace registration without writing files.",
+            Description = "Plan initialization and workspace registration without changing canonical files. Model reviews may save local checkpoints.",
         };
         var yes = new Option<bool>("--yes")
         {
@@ -188,6 +203,12 @@ public sealed class RepositoryModule : ICisModule
         command.Options.Add(product);
         command.Options.Add(ecosystemName);
         command.Options.Add(productName);
+        command.Options.Add(guidanceMode);
+        command.Options.Add(mergeReview);
+        command.Options.Add(mergeEdits);
+        command.Options.Add(mergeProvider);
+        command.Options.Add(mergeModel);
+        command.Options.Add(allowRemoteMerge);
         command.Options.Add(dryRun);
         command.Options.Add(yes);
         command.Options.Add(format);
@@ -201,6 +222,8 @@ public sealed class RepositoryModule : ICisModule
                 return 2;
             }
 
+            var mode = parseResult.GetValue(guidanceMode);
+            if (mode is not ("minimal" or "reconcile")) { Console.Error.WriteLine("Guidance mode must be minimal or reconcile."); return 2; }
             var result = importer.Import(new RepositoryImportRequest(
                 parseResult.GetValue(workspace) ?? Directory.GetCurrentDirectory(),
                 parseResult.GetValue(root) ?? string.Empty,
@@ -213,7 +236,13 @@ public sealed class RepositoryModule : ICisModule
                 parseResult.GetValue(ecosystem),
                 parseResult.GetValue(product),
                 parseResult.GetValue(ecosystemName),
-                parseResult.GetValue(productName)));
+                parseResult.GetValue(productName),
+                parseResult.GetValue(mergeReview),
+                parseResult.GetValue(mergeEdits),
+                parseResult.GetValue(mergeProvider) is not null || parseResult.GetValue(mergeModel) is not null || parseResult.GetValue(allowRemoteMerge)
+                    ? new RepositoryGuidanceModel(parseResult.GetValue(mergeProvider) ?? "", parseResult.GetValue(mergeModel) ?? "", parseResult.GetValue(allowRemoteMerge)) : null,
+                MinimalImport: mode == "minimal"),
+                message => Console.Error.WriteLine("[guidance-review] " + message));
             RenderImport(result, selectedFormat);
             return result.ExitCode;
         });
@@ -452,10 +481,22 @@ public sealed class RepositoryModule : ICisModule
             RenderAgentItems("warning", result.Warnings.Select(NormalizeAgentValue));
             RenderAgentItems("collision", result.Collisions.Select(NormalizeAgentValue));
             RenderAgentItems("error", result.Errors.Select(NormalizeAgentValue));
+            if (result.MergeReviewHash is not null)
+                Console.WriteLine($"mergeReviewHash={result.MergeReviewHash};fileMerges={result.FileMerges.Count}");
             return;
         }
 
         Console.WriteLine($"Repository import: {result.Status}");
+        if (result.MergeReviewHash is not null)
+            Console.WriteLine(result.GuidanceMode == "minimal"
+                ? $"Review the gap report and file previews with --format json, then apply with --yes --merge-review {result.MergeReviewHash}. Existing directives are preserved."
+                : $"Review the guidance proposals and reference inputs with --format json, then supply every reviewed file with --merge-edits <json-file> --yes --merge-review {result.MergeReviewHash}.");
+        foreach (var assessment in result.Assessments)
+        {
+            Console.WriteLine($"Gap inventory: {assessment.RepositoryPath} ({assessment.Inventory.Count} inputs; local topic matching, enforcement unverified)");
+            foreach (var item in assessment.Coverage) Console.WriteLine($"  {item.Title}: {item.Status}; {item.Action}");
+            Console.WriteLine($"  Follow-up candidates: {assessment.Findings.Count}. Report saved on import to .cis/local/import/report.json.");
+        }
         Console.WriteLine($"Workspace: {result.WorkspacePath ?? string.Empty}");
         Console.WriteLine($"Configuration: {result.ConfigurationPath ?? string.Empty}");
         foreach (var repository in result.Repositories)

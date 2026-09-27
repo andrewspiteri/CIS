@@ -237,6 +237,10 @@ public sealed class SecurityServiceTests
         {
             Calls++;
             Prompt = request.Prompt;
+            Assert.Contains("policy " + HumanReadableContentPolicy.Revision, Prompt, StringComparison.Ordinal);
+            Assert.Contains("BEGIN UNTRUSTED EVIDENCE", Prompt, StringComparison.Ordinal);
+            Assert.False(request.AllowRemote);
+            Assert.Equal(700, request.MaxOutputTokens);
             return new("generated", "ollama", "fixture", "Fix the finding.", null, true);
         }
     }

@@ -214,9 +214,9 @@ public sealed class StandardsGovernanceTests
 
             Assert.Equal(0, initialized.ExitCode);
             Assert.Equal(0, validated.ExitCode);
-            Assert.Equal(8, validated.Standards);
-            Assert.Equal(62, validated.Rules);
-            Assert.Equal(62, validated.ConformanceEntries);
+            Assert.Equal(9, validated.Standards);
+            Assert.Equal(78, validated.Rules);
+            Assert.Equal(78, validated.ConformanceEntries);
             Assert.True(File.Exists(System.IO.Path.Combine(root, "docs", "cis", "standards", "api-controller-standard.md")));
             Assert.False(File.Exists(System.IO.Path.Combine(root, "docs", "cis", "standards", "frontend-interaction-standard.md")));
             Assert.Contains(
@@ -481,6 +481,9 @@ public sealed class StandardsGovernanceTests
         public CisTextGenerationResult Generate(CisTextGenerationRequest request)
         {
             LastRequest = request;
+            Assert.Contains("policy " + Cis.Abstractions.HumanReadableContentPolicy.Revision, request.Prompt, StringComparison.Ordinal);
+            Assert.Contains("uncertainty", request.Prompt, StringComparison.Ordinal);
+            Assert.Contains("protected HTML comments", request.Prompt, StringComparison.Ordinal);
             return new("generated", request.Provider, "test-model", response, null, isLocal);
         }
     }

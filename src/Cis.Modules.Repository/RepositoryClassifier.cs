@@ -203,6 +203,11 @@ public sealed partial class RepositoryClassifier
         if (isTest)
         {
             frameworks.Add("dotnet-test");
+            if (packageReferences.Any(package => package.StartsWith("Microsoft.Playwright", StringComparison.OrdinalIgnoreCase)))
+            {
+                frameworks.Add("playwright-dotnet");
+                evidence.Add("Microsoft.Playwright package in .NET test project");
+            }
             roles.Add("test-automation");
             evidence.Add(".NET test SDK markers");
         }
@@ -993,7 +998,7 @@ public sealed partial class RepositoryClassifier
             _ => null,
         };
 
-    private static IEnumerable<string> EnumerateRepositoryFiles(
+    internal static IEnumerable<string> EnumerateRepositoryFiles(
         string repositoryPath,
         ICollection<string> warnings)
     {
@@ -1023,7 +1028,8 @@ public sealed partial class RepositoryClassifier
 
             foreach (var child in entries.OfType<DirectoryInfo>())
             {
-                if (!ExcludedDirectories.Contains(child.Name))
+                if (!ExcludedDirectories.Contains(child.Name)
+                    && !RepositoryScanExclusions.IsPath(ToRepositoryPath(repositoryPath, child.FullName)))
                 {
                     pending.Push(child.FullName);
                 }

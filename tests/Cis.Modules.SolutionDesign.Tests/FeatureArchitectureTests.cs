@@ -154,7 +154,7 @@ public sealed class FeatureArchitectureTests
         f.Model.Mode = "cross-component";
         var result = f.Run(true);
         Assert.Contains(result.Errors, e => e.Contains("affirmative feature evidence", StringComparison.Ordinal));
-        var catalogue = f.Model.Prompts.Single(p => p.Contains("FEATURE BRD PASSAGE:\n## Catalogue", StringComparison.Ordinal));
+        var catalogue = f.Model.Prompts.Single(p => ReadPassage(p).StartsWith("## Catalogue", StringComparison.Ordinal));
         Assert.DoesNotContain("customer |", catalogue.Split("KNOWN PEERS:")[1].Split("SAVED DIRECTION:")[0], StringComparison.Ordinal);
     }
 
@@ -166,7 +166,7 @@ public sealed class FeatureArchitectureTests
             Direction = "Catalogue synchronisation: Sumsub receives catalogue requests." };
         f.Model.Mode = "excluded-peer";
         Assert.NotEmpty(f.Run(true).Errors);
-        var catalogue = f.Model.Prompts.Single(p => p.Contains("FEATURE BRD PASSAGE:\n## Catalogue", StringComparison.Ordinal));
+        var catalogue = f.Model.Prompts.Single(p => ReadPassage(p).StartsWith("## Catalogue", StringComparison.Ordinal));
         Assert.DoesNotContain("kyc |", catalogue.Split("KNOWN PEERS:")[1].Split("SAVED DIRECTION:")[0], StringComparison.Ordinal);
     }
 
@@ -207,7 +207,7 @@ public sealed class FeatureArchitectureTests
             "```csharp\n// Sumsub receives catalogue requests.\n```\n\n## Capture referrals", StringComparison.Ordinal) };
         var result = f.Run(true);
         Assert.Empty(result.Errors);
-        var catalogue = f.Model.Prompts.Single(p => p.Contains("FEATURE BRD PASSAGE:\n## Catalogue", StringComparison.Ordinal));
+        var catalogue = f.Model.Prompts.Single(p => ReadPassage(p).StartsWith("## Catalogue", StringComparison.Ordinal));
         Assert.DoesNotContain("kyc |", catalogue.Split("KNOWN PEERS:")[1].Split("SAVED DIRECTION:")[0], StringComparison.Ordinal);
         Assert.DoesNotContain("Sumsub", catalogue.Split("AFFIRMATIVE CONTRACTS:\n")[1].Split("FEATURE BRD PASSAGE:")[0], StringComparison.Ordinal);
         Assert.All(result.Diagrams, d => Assert.DoesNotContain("Sumsub", d.Svg, StringComparison.Ordinal));
@@ -281,6 +281,14 @@ public sealed class FeatureArchitectureTests
             Directory.Delete(Root, true);
         }
     }
+    private static string ReadPassage(string prompt)
+    {
+        if (!prompt.Contains("FEATURE BRD PASSAGE:\n", StringComparison.Ordinal)) return "";
+        var evidence = prompt.Split("FEATURE BRD PASSAGE:\n")[1];
+        Assert.Contains("BEGIN UNTRUSTED EVIDENCE", evidence, StringComparison.Ordinal);
+        return JsonSerializer.Deserialize<string>(evidence.Split('\n').First(line => line.StartsWith('"'))) ?? "";
+    }
+
     private sealed class Model : ICisTextGenerationService
     {
         public int Calls { get; private set; }
@@ -292,9 +300,12 @@ public sealed class FeatureArchitectureTests
         public CisTextGenerationResult Generate(CisTextGenerationRequest request)
         {
             Calls++; Prompt = request.Prompt; Prompts.Add(Prompt); Assert.False(request.AllowRemote); Assert.NotNull(request.JsonSchema);
+            Assert.Contains("policy " + HumanReadableContentPolicy.Revision, request.Prompt, StringComparison.Ordinal);
+            Assert.Contains("feature architecture reviewer", request.Prompt, StringComparison.Ordinal);
+            Assert.True(request.JsonMode);
             using var schema = JsonDocument.Parse(request.JsonSchema!);
             var selection = schema.RootElement.GetProperty("properties").TryGetProperty("sections", out var sections);
-            var catalogue = request.Prompt.Contains("FEATURE BRD PASSAGE:\n## Catalogue", StringComparison.Ordinal);
+            var catalogue = ReadPassage(request.Prompt).StartsWith("## Catalogue", StringComparison.Ordinal);
             var match = selection ? null : Regex.Match(request.Prompt.Split("AFFIRMATIVE CONTRACTS:\n")[1], @"\[(\d+)\]");
             var id = match?.Success == true ? int.Parse(match.Groups[1].Value) : 0;
             var output = selection ? "{\"hostContainerId\":\"new\",\"sections\":" + sections.GetProperty("const").GetRawText() + "}" : JsonSerializer.Serialize(new {

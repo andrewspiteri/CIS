@@ -15,7 +15,7 @@ function experienceState(model, root) {
   const questions = model.uiQuestions?.questions || [];
   const pending = questions.filter(item => !['answered', 'derived'].includes(String(item.status).toLowerCase())).length;
   const ready = page.complete === true && page.current === true;
-  const badge = ready ? page.status || 'Ready for Approval' : available ? 'Preview available · Direction pending' : page.status || 'Not started';
+  const badge = ready ? page.status || 'Ready for Approval' : available ? 'Preview available · UI direction needs review' : page.status || 'Not started';
   const visual = sheets ? `Available — ${sheets} of ${repositories.length} interface control sheets`
     : canonicalFile ? canonicalStale ? 'Previous preview available — refresh required' : 'Available — recorded UI direction'
       : baseline?.errors?.length ? 'Discovery failed — refresh to retry'
@@ -23,7 +23,9 @@ function experienceState(model, root) {
           : repositories.length ? 'Source evidence available — no control sheets found' : 'No existing interface preview found';
   let direction, next, action;
   if (ready) {
-    direction = 'Complete and current'; next = 'Review the preview and recorded direction, then continue to the delivery map.';
+    direction = 'Complete and current'; next = page.status === 'Active'
+      ? 'Review the preview and recorded direction, then continue to the delivery map.'
+      : 'UI direction is ready for review, not approved. Review the preview and recorded direction, then continue to the delivery map. Final product approval remains a separate action.';
     action = { command: 'navigate', value: 'delivery', label: 'Continue to delivery map' };
   } else if (prerequisites.length) {
     const technical = prerequisites.find(item => item.id === 'technical');
@@ -37,10 +39,10 @@ function experienceState(model, root) {
     direction = 'UI questions have not been prepared'; next = 'Prepare the UI questions to review the discovered suggestions and record your direction.';
     action = { command: 'prepare', value: 'experience', label: 'Prepare UI questions' };
   } else if (pending) {
-    direction = `${pending} UI questions need answers out of ${questions.length}`; next = 'Review the suggested directions below and save the remaining answers.';
+    direction = `${pending} UI question${pending === 1 ? ' needs an answer' : 's need answers'} out of ${questions.length}`; next = 'Review the suggested directions below and save the remaining answers.';
     action = { command: 'focus-ui-questions', value: '', label: 'Review UI questions' };
   } else if (!model.uiQuestions?.current || !model.uiQuestions?.complete) {
-    direction = 'Answers recorded — questionnaire needs refresh'; next = 'Refresh UI direction to reconcile the recorded answers with current evidence. Existing human answers are preserved.';
+    direction = 'Answers recorded — UI evidence needs refresh'; next = 'Refresh UI direction to recheck the questionnaire against current evidence. Your human answers are kept. CIS updates the direction draft and preview when their prerequisites are met; review the resulting direction and any remaining findings before approval.';
     action = { command: 'prepare', value: 'experience', label: 'Refresh UI direction' };
   } else {
     direction = 'Questionnaire complete — UI direction needs preparation'; next = 'Prepare UI direction from the recorded answers and review any remaining validation findings.';

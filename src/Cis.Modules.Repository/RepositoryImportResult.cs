@@ -23,6 +23,17 @@ public sealed record RepositoryImportResult(
     bool ConfirmationRequired,
     bool Applied)
 {
+    public IReadOnlyList<RepositoryFileMerge> FileMerges { get; init; } = [];
+    public string? MergeReviewHash { get; init; }
+    public IReadOnlyList<Cis.Abstractions.CisAiProviderStatus> GuidanceProviders { get; init; } = [];
+    public int RemoteReviewBatchCount { get; init; }
+    public int RemoteReviewConcurrency { get; init; } = RepositoryGuidanceReviewRunner.RemoteConcurrency;
+    public int ReviewBudgetSeconds { get; init; } = RepositoryGuidanceReviewSession.BudgetSeconds;
+    public bool ReviewPaused { get; init; }
+    public string GuidanceMode { get; init; } = "reconcile";
+    public IReadOnlyList<RepositoryImportAssessment> Assessments { get; init; } = [];
+    public IReadOnlyList<RepositoryImportPreview> Previews { get; init; } = [];
+
     public int ExitCode => Errors.Count > 0
         ? 2
         : Collisions.Count > 0

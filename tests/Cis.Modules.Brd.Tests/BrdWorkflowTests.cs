@@ -86,6 +86,26 @@ public sealed class BrdWorkflowTests
         Assert.False(local.Request.AllowRemote);
     }
 
+    [Fact]
+    public void SourceSummaryPolicyUpgradeInvalidatesOnlyDerivedCache()
+    {
+        const string source = "Customers can open fixed term deposits and select maturity instructions.";
+        using var environment = WorkspaceEnvironment.Create(1, (repo, _) => repo.Write("BRD.md", "# Overview\n\n" + source));
+        environment.Service.Initialize(environment.Authority.Path, "Product BRD");
+        var canonical = File.ReadAllBytes(environment.CanonicalPath);
+        var model = new SourceSummaryGeneration(source);
+        var service = new BrdSourceSummaryService(environment.Service, environment.Registry, model);
+        Assert.Equal(1, service.Generate(environment.Authority.Path).Generated);
+        var cache = Assert.Single(Directory.GetFiles(Path.Combine(environment.Authority.Path, ".cis/local/brd/source-summaries"), "*.json"));
+        var current = File.ReadAllText(cache);
+        Assert.Contains(HumanReadableContentPolicy.Revision, current, StringComparison.Ordinal);
+        File.WriteAllText(cache, current.Replace(HumanReadableContentPolicy.Revision, "hc-previous", StringComparison.Ordinal));
+        Assert.Equal("excerpt", Assert.Single(environment.Service.Status(environment.Authority.Path).Validation!.SourceReviews).Summary!.Kind);
+        Assert.Equal(1, service.Generate(environment.Authority.Path).Generated);
+        Assert.Equal(canonical, File.ReadAllBytes(environment.CanonicalPath));
+        Assert.Equal(2, model.Calls);
+    }
+
     private sealed class SourceSummaryGeneration(string quote) : ICisTextGenerationService
     {
         public int Calls { get; private set; }
@@ -100,6 +120,12 @@ public sealed class BrdWorkflowTests
         public CisTextGenerationResult Generate(CisTextGenerationRequest request)
         {
             Calls++; Request = request; BeforeReply?.Invoke();
+            Assert.Contains("policy " + HumanReadableContentPolicy.Revision, request.Prompt, StringComparison.Ordinal);
+            Assert.Contains("BEGIN UNTRUSTED EVIDENCE", request.Prompt, StringComparison.Ordinal);
+            Assert.Contains("selective", request.Prompt, StringComparison.OrdinalIgnoreCase);
+            Assert.False(request.AllowRemote);
+            Assert.True(request.JsonMode);
+            Assert.True(request.MaxOutputTokens <= 450);
             if (SelectSentences && request.Prompt.Contains("sentenceIds", StringComparison.Ordinal))
                 return new("generated", "ollama", "fixture-model", "{\"sentenceIds\":[1,2]}", null, true);
             return new("generated", "ollama", "fixture-model", System.Text.Json.JsonSerializer.Serialize(new {
@@ -487,15 +513,17 @@ public sealed class BrdWorkflowTests
     [Fact]
     public void Discover_ExcludesAgentInstructionsAndSkillsFromBusinessSources()
     {
-        using var environment = WorkspaceEnvironment.Create(participants: 1,
-            configureParticipant: (repository, _) =>
-            {
+        using var environment = WorkspaceEnvironment.Create(participants: 1);
+        // Add the discovery fixture after init: existing host guidance now correctly causes an init collision.
+        var repository = environment.Participants[0];
+        {
                 foreach (var path in new[] { ".claude/skills/tdd/SKILL.md", ".agents/skills/brd/reference.md",
                     ".codex/BRD.md", "skills/tdd/references/BRD.md", "AGENTS.md", "CLAUDE.md", "SKILL.md",
                     "node_modules/library/BRD.md", "web/.next/output/BRD.md", "src/bin/output/BRD.md" })
                     repository.Write(path, "# Business Requirements Document\n\nInstructions for producing a BRD, not business source evidence.\n");
                 repository.Write("legacy/BRD.md", "# Business Requirements Document\n\nHistorical product requirements.\n");
-            });
+        }
+        environment.Builder.Build(repository.Path);
 
         var result = environment.Service.Discover(environment.Authority.Path);
 
@@ -1340,6 +1368,10 @@ public sealed class BrdWorkflowTests
         public CisTextGenerationResult Generate(CisTextGenerationRequest request)
         {
             LastRequest = request;
+            Assert.Contains("policy " + HumanReadableContentPolicy.Revision, request.Prompt, StringComparison.Ordinal);
+            Assert.Contains("business stakeholder", request.Prompt, StringComparison.Ordinal);
+            Assert.Contains("BEGIN UNTRUSTED EVIDENCE", request.Prompt, StringComparison.Ordinal);
+            Assert.True(request.JsonMode);
             return new("generated", "fake", "small", """
                 {"suggestions":[
                   {"questionId":"BRD-Q-001","answer":"The business sponsor owns the product outcome.","confidence":"high","reason":"The stakeholder section assigns accountability.","contextIds":["BRD-Q-001-CTX-1"]},
@@ -1356,6 +1388,8 @@ public sealed class BrdWorkflowTests
         public CisTextGenerationResult Generate(CisTextGenerationRequest request)
         {
             Requests.Add(request);
+            Assert.Contains("policy " + HumanReadableContentPolicy.Revision, request.Prompt, StringComparison.Ordinal);
+            Assert.Contains("BEGIN UNTRUSTED EVIDENCE", request.Prompt, StringComparison.Ordinal);
             var ids = Regex.Matches(request.Prompt, "QUESTION (BRD-Q-[0-9]+):",
                     RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
                 .Select(match => match.Groups[1].Value).ToArray();

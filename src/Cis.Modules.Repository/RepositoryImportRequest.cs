@@ -12,4 +12,8 @@ public sealed record RepositoryImportRequest(
     string? EcosystemId = null,
     string? ProductId = null,
     string? EcosystemName = null,
-    string? ProductName = null);
+    string? ProductName = null,
+    string? MergeReviewHash = null,
+    string? MergeEditsPath = null,
+    RepositoryGuidanceModel? MergeModel = null,
+    bool MinimalImport = true);

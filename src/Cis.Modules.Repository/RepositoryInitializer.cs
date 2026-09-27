@@ -102,6 +102,17 @@ public sealed partial class RepositoryInitializer : Cis.Abstractions.ICisObserve
                 new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         }
 
+        if (request.MergeAgents && !request.MinimalImport && plan.Result.FileMerges.Count > 0)
+        {
+            // A receipt avoids repeating an unchanged semantic review. Recompute
+            // after saving so references bind to the exact accepted contents.
+            var accepted = CreatePlan(request with { DryRun = true, ExpectedAgentsMergeHash = null,
+                ReviewedAgentsContent = null, ExpectedGuidanceMergeHash = null, ReviewedGuidanceContents = null,
+                RetiredGuidancePaths = null }, useGuidanceReceipt: false);
+            if (accepted.Result.ExitCode == 0)
+                File.WriteAllText(Path.Combine(plan.Result.RepositoryPath!, ".cis", "guidance-review.sha256"),
+                    RepositoryAgentsMerge.ReviewHash(accepted.Result.FileMerges) ?? "", new UTF8Encoding(false));
+        }
         return plan.Result with { Status = "initialized", Applied = true };
     }
 
@@ -168,7 +179,7 @@ public sealed partial class RepositoryInitializer : Cis.Abstractions.ICisObserve
         }
     }
 
-    private InitializationPlan CreatePlan(RepositoryInitRequest request)
+    private InitializationPlan CreatePlan(RepositoryInitRequest request, bool useGuidanceReceipt = true)
     {
         var errors = new List<string>();
         var collisions = new List<string>();
@@ -177,6 +188,7 @@ public sealed partial class RepositoryInitializer : Cis.Abstractions.ICisObserve
         var directories = new List<PlannedDirectory>();
         var files = new List<PlannedFile>();
         var moves = new List<PlannedMove>();
+        var fileMerges = new List<RepositoryFileMerge>();
 
         if (!TryResolvePaths(
                 request,
@@ -192,7 +204,11 @@ public sealed partial class RepositoryInitializer : Cis.Abstractions.ICisObserve
         var repositoryId = existingContext.Context?.RepositoryId ?? CreateRepositoryId(repositoryPath!);
         var classification = _classifier.Classify(repositoryPath!);
         warnings.AddRange(classification.Warnings);
-        var binding = _starterBinder.Bind(
+        var coreBinding = request.MinimalImport ? _starterBinder.BindMinimalImport(repositoryPath!, repositoryId, documentationRoot!, classification) : null;
+        var assessment = request.MinimalImport ? RepositoryImportAssessmentBuilder.Analyze(repositoryPath!, documentationRoot!, coreBinding!.Artifacts) : null;
+        var binding = request.MinimalImport ? coreBinding! with { Artifacts = [.. coreBinding!.Artifacts, new RepositoryStarterArtifact(
+            "guidance.instruction.import", "guidance.instruction.import", RepositoryImportAssessmentBuilder.GuidancePath,
+            RepositoryImportAssessmentBuilder.Guidance(documentationRoot!, assessment!), null)] } : _starterBinder.Bind(
             repositoryPath!,
             repositoryId,
             documentationRoot!,
@@ -224,7 +240,7 @@ public sealed partial class RepositoryInitializer : Cis.Abstractions.ICisObserve
         AddPreservedFile(
             repositoryPath!,
             Path.Combine(documentationPath!, "README.md"),
-            CreateDocumentationReadme(repositoryId),
+            request.MinimalImport ? CreateMinimalDocumentationReadme(repositoryId) : CreateDocumentationReadme(repositoryId),
             files,
             retained,
             collisions);
@@ -243,8 +259,30 @@ public sealed partial class RepositoryInitializer : Cis.Abstractions.ICisObserve
             retained,
             collisions);
 
+        if (request.MinimalImport)
+        {
+            AddStrictFile(repositoryPath!, Path.Combine(repositoryPath!, RepositoryImportAssessmentBuilder.ModePath),
+                "minimal\n", files, retained, collisions);
+            PlanMinimalEntryPoints(request, repositoryPath!, previousArtifacts, nextManagedArtifacts, files, retained, collisions, fileMerges);
+            var reportPath = Path.Combine(repositoryPath!, ".cis", "local", "import", "report.json");
+            PlanDirectories(repositoryPath!, [Path.GetDirectoryName(reportPath)!], directories, retained, collisions);
+            AddOwnedStateFile(repositoryPath!, reportPath, JsonSerializer.Serialize(assessment,
+                new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }) + "\n",
+                true, files, retained, collisions);
+        }
+
         foreach (var artifact in binding.Artifacts)
         {
+            if (request.MinimalImport && artifact.CatalogEntry is not null
+                && File.Exists(Path.Combine(repositoryPath!, artifact.RelativePath)))
+            {
+                if (Cis.Abstractions.CisPathSafety.ContainsReparsePoint(repositoryPath!, Path.Combine(repositoryPath!, artifact.RelativePath)))
+                    collisions.Add($"Existing configuration cannot be used through a symbolic path: {artifact.RelativePath}");
+                // Existing capability configuration stays human-owned and unchanged. Its
+                // fingerprint is part of the review, and validation remains a separate check.
+                retained.Add(artifact.RelativePath);
+                continue;
+            }
             PlanManagedArtifact(
                 repositoryPath!,
                 artifact,
@@ -253,10 +291,99 @@ public sealed partial class RepositoryInitializer : Cis.Abstractions.ICisObserve
                 files,
                 retained,
                 collisions,
-                request.AcceptCurrent);
+                request.AcceptCurrent,
+                request.MergeAgents,
+                request.ReviewedGuidanceContents?.GetValueOrDefault("AGENTS.md") ?? request.ReviewedAgentsContent,
+                binding.Artifacts.Where(IsMergeGuidance)
+                    .Select(item => new RepositoryGuidanceSource(item.RelativePath, item.Content)).ToArray(),
+                fileMerges);
         }
 
-        foreach (var previous in previousManifest.ManagedArtifacts.Where(previous =>
+        if (request.MergeAgents && !request.MinimalImport)
+        {
+            var copilotPath = Path.Combine(repositoryPath!, RepositoryAgentsMerge.CopilotPath.Replace('/', Path.DirectorySeparatorChar));
+            if (File.Exists(copilotPath))
+            {
+                var entryPoint = binding.Artifacts.Single(item => item.RelativePath == "AGENTS.md");
+                var guidanceSources = binding.Artifacts.Where(IsMergeGuidance)
+                    .Select(item => new RepositoryGuidanceSource(item.RelativePath, item.Content)).ToArray();
+                if (Cis.Abstractions.CisPathSafety.ContainsReparsePoint(repositoryPath!, copilotPath))
+                    collisions.Add("Copilot instructions cannot be merged through a symbolic link.");
+                else
+                {
+                    var current = File.ReadAllText(copilotPath);
+                    if (!RepositoryAgentsMerge.TryCreate(repositoryPath!, current, entryPoint.Content, out var copilot,
+                            guidanceSources, RepositoryAgentsMerge.CopilotPath))
+                        collisions.Add("Copilot instructions have incomplete or duplicated CIS guidance markers.");
+                    else
+                    {
+                        var reviewed = request.ReviewedGuidanceContents?.GetValueOrDefault(RepositoryAgentsMerge.CopilotPath);
+                        fileMerges.Add(copilot! with { ProposedContent = reviewed ?? copilot!.ProposedContent });
+                        files.Add(new PlannedFile(RepositoryAgentsMerge.CopilotPath, copilotPath,
+                            reviewed ?? copilot!.ProposedContent, current, PlannedFileAction.Update));
+                    }
+                }
+            }
+            var linkedInstructions = RepositoryGuidanceDiscovery.Discover(repositoryPath!,
+                binding.Artifacts.Select(artifact => artifact.RelativePath).ToHashSet(StringComparer.OrdinalIgnoreCase), warnings);
+            foreach (var relativePath in linkedInstructions)
+            {
+                if (!Cis.Abstractions.CisPathSafety.TryResolveUnderRoot(repositoryPath!, relativePath, out var absolutePath)
+                    || !File.Exists(absolutePath)) continue;
+                if (Cis.Abstractions.CisPathSafety.ContainsReparsePoint(repositoryPath!, absolutePath))
+                {
+                    collisions.Add($"Linked instruction file cannot be merged through a symbolic link: {relativePath}");
+                    continue;
+                }
+                var current = File.ReadAllText(absolutePath);
+                var entryPoint = binding.Artifacts.Single(item => item.RelativePath == "AGENTS.md");
+                var guidanceSources = binding.Artifacts.Where(IsMergeGuidance)
+                    .Select(item => new RepositoryGuidanceSource(item.RelativePath, item.Content)).ToArray();
+                if (!RepositoryAgentsMerge.TryCreate(repositoryPath!, current, entryPoint.Content, out var linked,
+                        guidanceSources, relativePath))
+                {
+                    collisions.Add($"Linked instruction file has incomplete or duplicated CIS markers: {relativePath}");
+                    continue;
+                }
+                var reviewed = request.ReviewedGuidanceContents?.GetValueOrDefault(relativePath);
+                fileMerges.Add(linked! with { ProposedContent = reviewed ?? linked!.ProposedContent });
+                files.Add(new PlannedFile(relativePath, absolutePath, reviewed ?? linked!.ProposedContent, current, PlannedFileAction.Update));
+            }
+        }
+        var contextualMerges = request.MinimalImport ? fileMerges.ToArray()
+            : RepositoryGuidanceValidation.AttachAutomation(RepositoryGuidanceContext.Attach(fileMerges));
+        fileMerges.Clear();
+        fileMerges.AddRange(contextualMerges);
+
+        var receipt = Path.Combine(repositoryPath!, ".cis", "guidance-review.sha256");
+        if (Cis.Abstractions.CisPathSafety.ContainsReparsePoint(repositoryPath!, receipt))
+            collisions.Add("Guidance review receipt cannot be read or written through a symbolic link.");
+        else if (!request.MinimalImport && useGuidanceReceipt && File.Exists(receipt) && new FileInfo(receipt).Length <= 80
+            && File.ReadAllText(receipt) == RepositoryAgentsMerge.ReviewHash(fileMerges))
+        {
+            var acceptedPaths = fileMerges.Select(merge => merge.RelativePath).ToHashSet(StringComparer.Ordinal);
+            files.RemoveAll(file => acceptedPaths.Contains(file.RelativePath));
+            retained.AddRange(acceptedPaths);
+            fileMerges.Clear();
+        }
+
+        foreach (var path in request.RetiredGuidancePaths ?? Enumerable.Empty<string>())
+        {
+            var merge = fileMerges.SingleOrDefault(item => item.RelativePath == path);
+            if (merge is null || RepositoryAgentsMerge.IsEntryPoint(path) || request.ExpectedGuidanceMergeHash is null)
+            { collisions.Add($"Only a reviewed non-entry-point guidance file can be retired: {path}"); continue; }
+            var target = $".cis/retired-guidance/{RepositoryAgentsMerge.Hash(merge.CurrentContent)[7..19]}/{path}";
+            if (!Cis.Abstractions.CisPathSafety.TryResolveUnderRoot(repositoryPath!, target, out var destination)
+                || Cis.Abstractions.CisPathSafety.ContainsReparsePoint(repositoryPath!, destination)
+                || File.Exists(destination) || Directory.Exists(destination))
+            { collisions.Add($"Retired guidance destination is not available: {target}"); continue; }
+            files.RemoveAll(file => file.RelativePath == path);
+            moves.Add(new(path, Path.Combine(repositoryPath!, path.Replace('/', Path.DirectorySeparatorChar)),
+                target, destination, ComputeHash(merge.CurrentContent)));
+            warnings.Add($"Reviewed guidance will be retired outside automatic discovery, with its original content preserved: {path} -> {target}");
+        }
+
+        foreach (var previous in previousManifest.ManagedArtifacts.Where(previous => !request.MinimalImport &&
                      !binding.Artifacts.Any(current =>
                          string.Equals(current.RelativePath, previous.Path, StringComparison.OrdinalIgnoreCase))))
         {
@@ -337,7 +464,7 @@ public sealed partial class RepositoryInitializer : Cis.Abstractions.ICisObserve
 
         var nextManifest = new StarterManifest(
             classification.Shape,
-            classification.Components,
+            request.MinimalImport ? previousManifest.Components : classification.Components,
             nextManagedArtifacts.Values
                 .OrderBy(artifact => artifact.Path, StringComparer.OrdinalIgnoreCase)
                 .ToArray());
@@ -370,7 +497,12 @@ public sealed partial class RepositoryInitializer : Cis.Abstractions.ICisObserve
 
         var existingNonEmptyRoot = Directory.Exists(documentationPath)
             && Directory.EnumerateFileSystemEntries(documentationPath).Any();
+        if (request.MinimalImport && files.All(file => file.RelativePath.StartsWith(".cis/local/", StringComparison.Ordinal)))
+            files.Clear(); // A refreshed disposable report alone is not another canonical import.
         var hasChanges = directories.Count > 0 || files.Count > 0 || moves.Count > 0;
+        foreach (var file in files)
+            if (Cis.Abstractions.CisPathSafety.ContainsReparsePoint(repositoryPath!, file.AbsolutePath))
+                collisions.Add($"Planned file cannot be written through a symbolic path: {file.RelativePath}");
         var filesToCreate = files
             .Where(file => file.Action == PlannedFileAction.Create)
             .Select(file => file.RelativePath)
@@ -382,11 +514,26 @@ public sealed partial class RepositoryInitializer : Cis.Abstractions.ICisObserve
         var requiresReview = existingNonEmptyRoot
             || classification.Components.Count > 0
             || filesToUpdate.Length > 0;
+        var agentsMergeHash = fileMerges.SingleOrDefault(merge => merge.RelativePath == "AGENTS.md")?.ReviewHash;
+        if (request.ExpectedAgentsMergeHash is not null
+            && !string.Equals(request.ExpectedAgentsMergeHash, agentsMergeHash, StringComparison.Ordinal))
+            collisions.Add("AGENTS.md or its proposed guidance changed after review. Review the import again.");
+        if (request.ReviewedAgentsContent is not null && (request.ExpectedAgentsMergeHash is null || agentsMergeHash is null))
+            collisions.Add("Edited AGENTS.md content requires a matching reviewed merge proposal.");
+        if (request.ExpectedGuidanceMergeHash is not null
+            && request.ExpectedGuidanceMergeHash != RepositoryAgentsMerge.ReviewHash(fileMerges))
+            collisions.Add("Guidance or linked reference evidence changed after review. Review the import again.");
+        if (request.ReviewedGuidanceContents is not null && (request.ExpectedGuidanceMergeHash is null
+            || request.ReviewedGuidanceContents.Count != fileMerges.Count
+            || request.ReviewedGuidanceContents.Keys.Any(path => !fileMerges.Any(merge => merge.RelativePath == path))))
+            collisions.Add("Edited guidance must match every reviewed file exactly once.");
         var confirmationRequired = collisions.Count == 0
             && hasChanges
-            && requiresReview
+            && (requiresReview || fileMerges.Count > 0)
             && !request.DryRun
-            && !request.Confirmed;
+            && (!request.Confirmed || fileMerges.Count > 0
+                && request.ExpectedGuidanceMergeHash is null
+                && (fileMerges.Count > 1 || request.ExpectedAgentsMergeHash is null));
         var status = collisions.Count > 0
             ? "collision"
             : confirmationRequired
@@ -412,7 +559,13 @@ public sealed partial class RepositoryInitializer : Cis.Abstractions.ICisObserve
             collisions.Distinct(StringComparer.Ordinal).Order().ToArray(),
             errors,
             confirmationRequired,
-            Applied: false);
+            Applied: false) { FileMerges = fileMerges, ImportAssessment = assessment,
+                ImportPreviews = request.MinimalImport ? files.Where(file => !file.RelativePath.StartsWith(".cis/local/", StringComparison.Ordinal))
+                    .Select(file => new RepositoryImportPreview(repositoryPath!, file.RelativePath, file.PreviousContent ?? "", file.Content)).ToArray() : [],
+                ImportPlanHash = request.MinimalImport ? RepositoryAgentsMerge.Hash(JsonSerializer.Serialize(new {
+                    assessment!.InputHash, documentationRoot, request.WorkspaceAuthority,
+                    files = files.Select(file => new { file.RelativePath, file.Action, before = file.PreviousContent,
+                        after = fileMerges.SingleOrDefault(merge => merge.RelativePath == file.RelativePath)?.ReviewHash ?? file.Content }) })) : null };
 
         return new InitializationPlan(
             result,
@@ -420,6 +573,9 @@ public sealed partial class RepositoryInitializer : Cis.Abstractions.ICisObserve
             files,
             moves);
     }
+
+    private static bool IsMergeGuidance(RepositoryStarterArtifact artifact) => artifact.Definition is
+        "guidance.instruction.repository" or "guidance.instruction.engineering-assurance" or "guidance.instruction.security-testing";
 
     private static void PlanObsoleteQuarantine(
         string repositoryPath,
@@ -627,7 +783,11 @@ public sealed partial class RepositoryInitializer : Cis.Abstractions.ICisObserve
         ICollection<PlannedFile> files,
         ICollection<string> retained,
         ICollection<string> collisions,
-        bool acceptCurrent)
+        bool acceptCurrent,
+        bool mergeAgents,
+        string? reviewedAgentsContent,
+        IReadOnlyList<RepositoryGuidanceSource> guidanceSources,
+        ICollection<RepositoryFileMerge> fileMerges)
     {
         var absolutePath = Path.GetFullPath(Path.Combine(
             repositoryPath,
@@ -637,7 +797,7 @@ public sealed partial class RepositoryInitializer : Cis.Abstractions.ICisObserve
             artifact.Id,
             artifact.RelativePath,
             artifact.Definition,
-            TemplateVersion: 1,
+            TemplateVersion: artifact.TemplateVersion,
             expectedHash,
             Ownership: "managed");
 
@@ -665,6 +825,42 @@ public sealed partial class RepositoryInitializer : Cis.Abstractions.ICisObserve
         {
             retained.Add(artifact.RelativePath);
             nextArtifacts[artifact.RelativePath] = next;
+            return;
+        }
+
+        if (mergeAgents && artifact.RelativePath.Equals("AGENTS.md", StringComparison.OrdinalIgnoreCase))
+        {
+            var guidanceTemplateHash = RepositoryAgentsMerge.TemplateHash(artifact.Content, guidanceSources);
+            // Preserve the human's reviewed edits until the generated guidance itself changes.
+            if (previousArtifacts.TryGetValue(artifact.RelativePath, out var reviewed)
+                && string.Equals(reviewed.GuidanceTemplateHash, guidanceTemplateHash, StringComparison.Ordinal))
+            {
+                retained.Add(artifact.RelativePath);
+                nextArtifacts[artifact.RelativePath] = reviewed with { AppliedHash = currentHash };
+                return;
+            }
+            if (Cis.Abstractions.CisPathSafety.ContainsReparsePoint(repositoryPath, absolutePath)
+                || !RepositoryAgentsMerge.TryCreate(repositoryPath, currentContent, artifact.Content, out var merge, guidanceSources))
+            {
+                collisions.Add("AGENTS.md cannot be merged because its CIS guidance markers are incomplete or duplicated, or the path is a symbolic link.");
+                return;
+            }
+            if (!string.Equals(currentContent, merge!.ProposedContent, StringComparison.Ordinal)
+                || reviewed?.GuidanceTemplateHash is not null && reviewed.GuidanceTemplateHash != guidanceTemplateHash)
+            {
+                fileMerges.Add(merge with { ProposedContent = reviewedAgentsContent ?? merge.ProposedContent });
+                if (!string.Equals(currentContent, reviewedAgentsContent ?? merge.ProposedContent, StringComparison.Ordinal))
+                    files.Add(new PlannedFile(artifact.RelativePath, absolutePath, reviewedAgentsContent ?? merge.ProposedContent,
+                        currentContent, PlannedFileAction.Update));
+                else retained.Add(artifact.RelativePath);
+            }
+            else retained.Add(artifact.RelativePath);
+            nextArtifacts[artifact.RelativePath] = next with
+            {
+                AppliedHash = ComputeHash(reviewedAgentsContent ?? merge.ProposedContent),
+                Ownership = "human",
+                GuidanceTemplateHash = guidanceTemplateHash,
+            };
             return;
         }
 
@@ -731,7 +927,7 @@ public sealed partial class RepositoryInitializer : Cis.Abstractions.ICisObserve
             {
                 Id = artifact.Id,
                 Definition = artifact.Definition,
-                TemplateVersion = 1,
+                TemplateVersion = artifact.TemplateVersion,
                 AppliedHash = currentHash,
             };
             return;
@@ -1020,7 +1216,9 @@ public sealed partial class RepositoryInitializer : Cis.Abstractions.ICisObserve
         "- `standards/` - normative, testable expectations for how governed work is performed\n" +
         "- `references/` - inventories, contracts, and lookup material\n" +
         "- `templates/` - reusable feature specification and architecture decision starters\n" +
-        "- `changes/` - change dossiers and delivery evidence\n";
+        "- `changes/` - change dossiers and delivery evidence\n" +
+        "- [Human-readable content standard](standards/human-readable-content-standard.md) - Draft authoring and review policy\n" +
+        "- [Contextual terminology](references/human-readable-content-terms.md) and [review fixtures](references/human-readable-content-fixtures.json)\n";
 
     private static string CreateRepositoryConfiguration(string repositoryId, string documentationRoot) =>
         "schema_version: 1\n\n" +

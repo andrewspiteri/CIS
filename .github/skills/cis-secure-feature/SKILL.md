@@ -11,11 +11,14 @@ Make security requirements explicit and testable before completion is claimed.
 
 ## Workflow
 
-1. Identify actors, assets, trust boundaries, entry points, and abuse cases.
-2. Map permissions to server-side enforcement and negative tests.
-3. Check validation, output filtering, logging, secrets, caching, and rate limits.
-4. For public endpoints, verify cached projection access and no direct database dependency.
-5. Record security evidence, residual risk, and independent review requirements.
+1. Read `.github/instructions/cis-engineering-assurance.instructions.md`, the applicable security standard and suite profile.
+2. Identify actors, principal and tenant scope, assets, trust boundaries, entry points and abuse cases.
+3. Map permissions to server-side enforcement and negative tests. Isolate test authentication from production.
+4. Check validation, output filtering, logging, secrets, caching and rate limits.
+5. Maintain real configuration and environment contracts without inventing entries for pure fixtures.
+6. For public endpoints, verify cached projection access and no direct database dependency.
+7. Preserve required CodeQL or other SAST, dependency, secret and DAST checks and exact human-approved exception rules.
+8. Update tests and documentation together, then record security evidence, residual risk and independent review requirements.
 
 ## Completion evidence
 

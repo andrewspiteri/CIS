@@ -7,7 +7,14 @@ public sealed record RepositoryInitRequest(
     bool Confirmed,
     bool AcceptCurrent = false,
     bool QuarantineObsolete = false,
-    bool WorkspaceAuthority = false);
+    bool WorkspaceAuthority = false,
+    bool MergeAgents = false,
+    string? ExpectedAgentsMergeHash = null,
+    string? ReviewedAgentsContent = null,
+    string? ExpectedGuidanceMergeHash = null,
+    IReadOnlyDictionary<string, string>? ReviewedGuidanceContents = null,
+    IReadOnlySet<string>? RetiredGuidancePaths = null,
+    bool MinimalImport = false);
 
 public sealed record RepositoryReferenceSeedResult(
     string Status,

@@ -38,3 +38,7 @@ direction. Review-only discovery precedes, and does not replace, the approval wo
 ## Guardrails
 
 Preserve managed baseline and derived-evidence markers and identities. Do not turn ambiguous evidence or absence of code into a derived fact, record advisory questionnaire text without human action, treat Draft, Ready for Approval, or Stale as Active, approve on a user's behalf, edit approval hashes, or bypass the readiness gate.
+
+## Human-readable content
+
+Apply the [shared content standard](../../../docs/standards/human-readable-content-standard.md) to in-scope prose. Use [cis-technical-writing](../cis-technical-writing/SKILL.md) for documents and reports, [cis-ux-writing](../cis-ux-writing/SKILL.md) for interface wording, and [cis-content-review](../cis-content-review/SKILL.md) for source-aware review followed by a separate reader check. Preserve this workflow's authority, evidence, privacy and lifecycle rules. Clarity does not remove legitimate uncertainty or mandatory specification sections.

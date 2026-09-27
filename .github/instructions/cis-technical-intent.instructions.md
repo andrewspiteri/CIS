@@ -19,3 +19,5 @@ applyTo: "docs/specs/technical-intent-*.md"
 - After approval, project the intent through `cis solution-design init` and approve the overall design plus component sheet as one bundle. Then capture and approve `cis ui-direction`; downstream backlog, change, and plan work requires all three authorities to remain Active and current.
 - `cis change create`, `cis plan build`, `cis plan import-spec`, and `cis plan derive` are blocked in a workspace authority unless technical intent, overall solution design, and high-level UI direction are Active and current.
 - Rebuild the workspace graph after canonical edits or approval. Questionnaire, BRD, participant-baseline, or approved-content drift makes the intent non-current.
+
+For human-facing prose, also apply `docs/standards/human-readable-content-standard.md` and route through `.github/instructions/cis-human-readable-content.instructions.md`. Preserve the stronger domain rules above, including protected evidence and approval boundaries.

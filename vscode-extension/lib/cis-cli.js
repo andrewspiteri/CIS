@@ -7,6 +7,9 @@ const { openCommandProgressPanel } = require('./webview');
 
 const OUTPUT_LIMIT = 4 * 1024 * 1024;
 const SNAPSHOT_OUTPUT_LIMIT = 16 * OUTPUT_LIMIT;
+// Import includes complete editable guidance plus its reference evidence. The
+// expanded discovery plan can exceed the normal query limit before model choice.
+const IMPORT_OUTPUT_LIMIT = 16 * OUTPUT_LIMIT;
 // Read projections remain valid for the current repository generation. The extension
 // clears this cache when a watched repository input changes or a CIS mutation runs.
 const QUERY_CACHE_TTL_MS = Number.POSITIVE_INFINITY;
@@ -120,7 +123,8 @@ class CisCli {
     const executable = this.executable();
     const commandArgs = this.arguments(args, options);
     const timeout = options.timeout || 30_000;
-    const outputLimit = args[0] === 'workspace' && args[1] === 'snapshot' ? SNAPSHOT_OUTPUT_LIMIT : OUTPUT_LIMIT;
+    const outputLimit = args[0] === 'workspace' && args[1] === 'snapshot' ? SNAPSHOT_OUTPUT_LIMIT
+      : args[0] === 'repo' && args[1] === 'import' ? IMPORT_OUTPUT_LIMIT : OUTPUT_LIMIT;
     const readOnly = isCacheableQuery(args);
     const cacheable = options.cache !== false && readOnly;
     const cacheKey = cacheable ? JSON.stringify([executable, root, commandArgs, timeout, options.acceptStructuredFailure === true]) : undefined;
@@ -130,14 +134,31 @@ class CisCli {
     const queuedAt = performance.now();
     const execute = () => this.scheduleCommand(commandArgs, root, () => new Promise((resolve, reject) => {
       const startedAt = performance.now();
+      options.onStarted?.();
+      let pendingStderr = '';
+      let streamedStderr = false;
+      const emitStderr = line => {
+        if (!options.onStderrLine) return;
+        const safeLine = bound(line, 16_384);
+        streamedStderr = true;
+        this.output.appendLine(safeLine);
+        options.onStderrLine(safeLine);
+      };
       this.output.appendLine(`$ ${safeCommandDisplay(executable, commandArgs)}`);
-      this.processes.execFile(executable, commandArgs,
+      const child = this.processes.execFile(executable, commandArgs,
         { cwd: root, windowsHide: true, timeout, maxBuffer: outputLimit, shell: false },
         (error, stdout, stderr) => {
+          if (pendingStderr) { emitStderr(pendingStderr); pendingStderr = ''; }
           const safeError = bound(stderr, 16_384).trim();
-          if (safeError) this.output.appendLine(safeError);
+          if (safeError && !streamedStderr) this.output.appendLine(safeError);
           const exitCode = typeof error?.code === 'number' ? error.code : error ? 1 : 0;
           this.output.appendLine(`[timing] run=${Math.round(performance.now() - startedAt)}ms; queue=${Math.round(startedAt - queuedAt)}ms; exit=${exitCode}`);
+          // execFile can terminate a healthy CLI when its output buffer fills.
+          // Report that transport failure before parsing truncated JSON or letting
+          // progress messages hide the actual cause. Never accept partial data.
+          if (error?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER')
+            return reject(new CisCliError(`CIS returned more data than the extension can read (${outputLimit / (1024 * 1024)} MiB). The result is incomplete.`,
+              'output-limit', exitCode, bound(error.message, 1024)));
           // System.CommandLine may print help (non-JSON stdout) for an unknown
           // optional command, using exit 1 or 2 depending on the CLI version.
           if (error && args[0] === 'workspace' && args[1] === 'snapshot' && [1, 2].includes(exitCode)
@@ -148,7 +169,10 @@ class CisCli {
           if (text) {
             try { data = JSON.parse(text); }
             catch {
-              return reject(new CisCliError('CIS returned malformed JSON.', 'invalid-evidence', exitCode,
+              // A failed process may emit usage text or an incomplete response.
+              // Preserve its diagnostics and failure kind instead of hiding them
+              // behind a JSON error (including timeouts and older CLI options).
+              if (!error) return reject(new CisCliError('CIS returned malformed JSON.', 'invalid-evidence', exitCode,
                 bound(text, 1024)));
             }
           }
@@ -157,12 +181,21 @@ class CisCli {
             if (options.acceptStructuredFailure === true && kind === 'command-failed'
                 && data && typeof data === 'object' && !Array.isArray(data))
               return resolve({ ...data, _process: { exitCode, failed: true } });
-            return reject(new CisCliError(messageFrom(data, safeError, error.message), kind, exitCode, safeError, data));
+            return reject(new CisCliError(messageFrom(data, safeError, data ? error.message : text || error.message), kind, exitCode,
+              safeError || bound(text, 1024), data));
           }
           if (!data || typeof data !== 'object' || Array.isArray(data))
             return reject(new CisCliError('CIS returned no structured result.', 'invalid-evidence', exitCode));
           resolve({ ...data, _process: { exitCode } });
         });
+      if (options.onStderrLine && child?.stderr) {
+        child.stderr.setEncoding('utf8');
+        child.stderr.on('data', chunk => {
+          const lines = (pendingStderr + chunk).split(/\r?\n/u);
+          pendingStderr = lines.pop().slice(0, 16_384);
+          for (const line of lines) emitStderr(line);
+        });
+      }
     }), options.interactive === true || !readOnly);
     const snapshotKey = this.startupSnapshots && cacheable && options.interactive !== true
       && timeout === 30_000 ? snapshotQueryKey(commandArgs, root) : undefined;
@@ -420,7 +453,9 @@ function foregroundFailureMessage(stdout, stderr, exitCode) {
 
 function messageFrom(data, stderr, fallback) {
   const diagnostic = Array.isArray(data?.diagnostics) ? data.diagnostics.find(item => typeof item === 'string') : undefined;
-  return bound(diagnostic || stderr || fallback || 'CIS command failed.', 1024);
+  const error = Array.isArray(data?.errors) ? data.errors.find(item => typeof item === 'string') : undefined;
+  const collision = Array.isArray(data?.collisions) ? data.collisions.find(item => typeof item === 'string') : undefined;
+  return bound(error || collision || diagnostic || stderr || fallback || 'CIS command failed. Check the current state and output before retrying.', 1024);
 }
 
 function safeCommandDisplay(executable, args) {

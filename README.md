@@ -43,14 +43,23 @@ replace them or silently perform commits, pushes, merges, releases, or approvals
 
 ### 2.1. Installing CIS
 
-CIS release builds produce standalone executables for Windows x64 and Linux x64:
+CIS builds produce standalone executables for Windows x64 and Linux x64:
+
+> Standalone downloads are available from successful [CI runs](https://github.com/andrewspiteri/CIS/actions/workflows/ci.yml)
+> as `cis-standalone-win-x64` and `cis-standalone-linux-x64` artifacts. GitHub requires
+> sign-in to download workflow artifacts. The published v0.3.0 release predates this
+> packaging change and contains only the .NET tool, extension and source archive.
+> Use the .NET tool instructions below for v0.3.0, or [build from source](#4-cloning-and-building).
+> Future tagged releases include the standalone archives described here.
 
 | Platform | Archive | Executable |
 | --- | --- | --- |
 | Windows x64 | `change-impact-studio-<version>-win-x64.zip` | `cis.exe` |
 | Linux x64 | `change-impact-studio-<version>-linux-x64.tar.gz` | `cis` |
 
-Download the archive for your operating system from a release and verify its hash
+Download the archive for your operating system from a CI artifact or a release that
+includes standalone builds. Unpack the outer GitHub artifact ZIP first when using CI.
+Verify the archive's hash
 against `SHA256SUMS`. Extract it into a tools directory and add that directory to
 your `PATH`, or run the executable by its full path. The .NET runtime is included;
 you do not need to install .NET to run these executables. Linux uses the standard

@@ -1,18 +1,18 @@
 ---
-title: "Packaging CIS as a .NET Tool and VS Code Extension"
+title: "Packaging CIS for Windows, Linux and VS Code"
 type: article
 status: Active
 series: "Building Change Impact Studio"
 series_order: 10
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-10"
+last_reviewed: "2026-09-27"
 review_cadence: on release change
-summary: "One semantic version, verified source and client builds, packaged-tool smoke tests, archives, and checksums."
+summary: "One semantic version for standalone Windows and Linux executables, the .NET tool and VS Code extension, with package smoke tests and checksums."
 cis:
   stable_id: change-impact-studio:article:packaging-cis
 ---
 
-# Packaging CIS as a .NET tool and VS Code extension
+# Packaging CIS for Windows, Linux and VS Code
 
 Source tests do not prove that users receive a complete product. Packaging is its own
 delivery boundary.
@@ -25,7 +25,28 @@ extension package. Release tags use `v<VersionPrefix>`.
 ## Build the complete product
 
 The release script restores, builds, and tests the solution; checks extension syntax and
-tests; packs the .NET tool and VSIX; and creates a tracked-source archive.
+tests; packs the .NET tool and VSIX; builds standalone Windows x64 and Linux x64
+executables; and creates a tracked-source archive.
+
+## Run without installing .NET
+
+The standalone archives contain one executable each: `cis.exe` for Windows and `cis`
+for Linux. They bundle the .NET runtime. The Linux archive targets glibc-based x64
+systems and preserves the executable permission; it does not target Alpine/musl.
+Git and external tools required by a chosen workflow remain separate prerequisites.
+
+`tools/build-standalone.ps1` can build either platform or both. CI builds and tests
+each archive on its native operating system before allowing release packaging.
+The smoke test runs the extracted executable alone in an isolated directory with
+the .NET runtime lookup redirected away from the installed SDK. It checks module
+registration, embedded repository starters, strict validators, SQLite graph storage
+and C# binding to runtime metadata.
+
+The application extracts bundled libraries into a per-user cache at runtime so
+SQLite and compiler analysis can load the files they need. These builds use neither
+trimming nor Native AOT. The [installation guide](../../README.md#21-installing-cis)
+explains cache configuration and current download availability. The older v0.3.0
+release does not contain standalone archives.
 
 ## Smoke-test the installed tool
 
@@ -40,12 +61,13 @@ and safely coordinate the packaged CLI.
 
 ## Publish verifiable artifacts
 
-The bundle includes the tool package, VSIX, source archive, and `SHA256SUMS`. The release
+The bundle includes the Windows ZIP, Linux tar.gz, tool package, VSIX, source archive,
+and `SHA256SUMS`. The release
 workflow validates tag/version alignment and uploads the complete set.
 
 ## A release is a coordinated contract
 
-The .NET tool, VSIX, manuals, source archive, checksums, and release notes describe one
+The standalone executables, .NET tool, VSIX, manuals, source archive, checksums, and release notes describe one
 product version. Mismatched versions make compatibility and support ambiguous even when
 each artifact builds independently.
 
@@ -95,7 +117,7 @@ they should not be fixed by replacing an artifact under the same immutable versi
 ## Audit release completion
 
 Before publication, confirm source revision, version alignment, clean builds, solution and
-extension tests, tool and VSIX package contents, isolated installations, representative
+extension tests, both standalone archives, tool and VSIX package contents, isolated installations, representative
 commands, clean-profile editor behavior, source archive, checksums, release notes, and
 known limitations. Record unavailable evidence explicitly.
 
@@ -105,8 +127,9 @@ the build workspace cannot see.
 
 ## Takeaway
 
-Treat packaging as product behavior. Align versions, verify both clients, install the
-actual package, inspect registered capabilities, and publish checksums with the release.
+Treat packaging as product behavior. Align versions, verify both operating systems
+and the editor client, test the actual packages, inspect registered capabilities,
+and publish checksums with the release.
 
 ## Canonical CIS sources
 

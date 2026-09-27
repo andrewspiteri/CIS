@@ -3,7 +3,7 @@ title: "CIS release assurance workflow"
 type: workflow-definition
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-28"
+last_reviewed: "2026-09-27"
 review_cadence: "on release test, coverage, mutation, or evidence change"
 cis:
   stable_id: change-impact-studio:workflow:release-assurance

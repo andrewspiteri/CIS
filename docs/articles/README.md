@@ -155,7 +155,7 @@ product authority.
 | 7 | [Safe Path Handling and Atomic Repository Mutation](57-safe-paths-and-atomic-repository-mutation.md) | Containment, preview, collision, ownership, and atomicity | Active |
 | 8 | [Provider Contracts and Explicit Assembly Loading](58-provider-contracts-and-explicit-assembly-loading.md) | Replaceable integrations without repository code execution | Active |
 | 9 | [Testing an Engineering Governance Tool](59-testing-an-engineering-governance-tool.md) | Rules, lifecycle, safety, integration, and packages | Active |
-| 10 | [Packaging CIS as a .NET Tool and VS Code Extension](60-packaging-cis-as-tool-and-extension.md) | Versioned, smoke-tested, checksummed releases | Active |
+| 10 | [Packaging CIS for Windows, Linux and VS Code](60-packaging-cis-as-tool-and-extension.md) | Versioned, smoke-tested, checksummed releases | Active |
 
 ## CIS in Practice series
 

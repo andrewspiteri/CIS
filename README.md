@@ -43,9 +43,50 @@ replace them or silently perform commits, pushes, merges, releases, or approvals
 
 ### 2.1. Installing CIS
 
-CIS is distributed as the `AndrewSpiteri.ChangeImpactStudio` .NET tool in each GitHub
-release bundle. It currently installs from the downloaded release folder rather than
-from a public NuGet feed.
+CIS builds produce standalone executables for Windows x64 and Linux x64:
+
+> Standalone downloads are available from successful [CI runs](https://github.com/andrewspiteri/CIS/actions/workflows/ci.yml)
+> as `cis-standalone-win-x64` and `cis-standalone-linux-x64` artifacts. GitHub requires
+> sign-in to download workflow artifacts. The published v0.3.0 release predates this
+> packaging change and contains only the .NET tool, extension and source archive.
+> Use the .NET tool instructions below for v0.3.0, or [build from source](#4-cloning-and-building).
+> Future tagged releases include the standalone archives described here.
+
+| Platform | Archive | Executable |
+| --- | --- | --- |
+| Windows x64 | `change-impact-studio-<version>-win-x64.zip` | `cis.exe` |
+| Linux x64 | `change-impact-studio-<version>-linux-x64.tar.gz` | `cis` |
+
+Download the archive for your operating system from a CI artifact or a release that
+includes standalone builds. Unpack the outer GitHub artifact ZIP first when using CI.
+Verify the archive's hash
+against `SHA256SUMS`. Extract it into a tools directory and add that directory to
+your `PATH`, or run the executable by its full path. The .NET runtime is included;
+you do not need to install .NET to run these executables. Linux uses the standard
+glibc-based `linux-x64` runtime, not Alpine/musl. Git and any external tools used by
+your chosen workflows still need to be installed.
+
+```powershell
+# Windows: after extracting the ZIP into C:\tools\cis
+C:\tools\cis\cis.exe --help
+```
+
+```sh
+# Linux: replace <version> with the release version
+tar -xzf change-impact-studio-<version>-linux-x64.tar.gz
+./cis --help
+```
+
+Each archive contains one executable. On first run, .NET
+extracts the bundled libraries into its per-user cache so SQLite and C# compiler
+analysis can use them. The cache location can be configured with
+`DOTNET_BUNDLE_EXTRACT_BASE_DIR`. Keep that directory writable only by the intended
+user. These builds are self-contained single-file applications, without trimming or
+Native AOT. See [.NET single-file deployment](https://learn.microsoft.com/en-us/dotnet/core/deploying/single-file/overview).
+
+The `AndrewSpiteri.ChangeImpactStudio` .NET tool is also included in each release.
+It installs from the downloaded release folder rather than a public NuGet feed.
+The following instructions apply to that alternative installation method.
 
 Prerequisites:
 
@@ -328,8 +369,26 @@ dotnet tool install AndrewSpiteri.ChangeImpactStudio `
 ```
 
 The release script builds and tests the solution, validates the editor client, creates
-the .NET tool and VS Code packages, smoke-tests the packaged CLI, archives tracked
-source, and writes SHA-256 checksums beneath `artifacts/release`.
+the .NET tool and VS Code packages and both standalone archives, smoke-tests the
+packaged CLI, archives tracked source, and writes SHA-256 checksums beneath
+`artifacts/release`.
+
+To build just the standalone archives with the pinned .NET SDK and PowerShell 7.4 or
+later:
+
+```powershell
+./tools/build-standalone.ps1
+# Or build one target:
+./tools/build-standalone.ps1 -Runtime linux-x64
+```
+
+The archives and their `SHA256SUMS` are written to `artifacts/standalone`. Publishing
+can cross-compile both targets; execution is smoke-tested only when the target
+matches the build host. CI and release workflows build and smoke-test each target
+on its own operating system and retain a separate artifact for each. The smoke test
+runs a copied executable outside the checkout with .NET installation lookup disabled,
+then checks built-in modules, embedded repository starters, SQLite graph creation,
+and compiler binding of a .NET runtime method.
 
 ### 4.2. Source repository structure
 

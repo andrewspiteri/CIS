@@ -12,6 +12,15 @@
     <RepositoryUrl>https://github.com/andrewspiteri/CIS</RepositoryUrl>
     <PackageTags>change-impact;architecture;ai-delivery;cli</PackageTags>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(CisStandalone)' == 'true'">
+    <PackAsTool>false</PackAsTool>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+    <!-- Roslyn needs physical runtime references; SQLite needs its native library. -->
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+  </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Cis.Providers.Agent.Claude\Cis.Providers.Agent.Claude.csproj" />
     <ProjectReference Include="..\Cis.Providers.Agent.Codex\Cis.Providers.Agent.Codex.csproj" />

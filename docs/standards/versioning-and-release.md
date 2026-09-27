@@ -6,7 +6,7 @@ targets:
   - repository-governance
   - release
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-23"
+last_reviewed: "2026-09-27"
 review_cadence: "on release workflow change"
 source_of_truth: This file
 cis:
@@ -21,7 +21,7 @@ Keep every CIS distribution on one auditable version and prevent publication of 
 
 ## Scope
 
-Applies to the CIS .NET tool, VS Code extension, source archive, CI workflows, release tags, SDK selection, and centrally managed dependencies.
+Applies to the CIS standalone Windows and Linux executables, .NET tool, VS Code extension, source archive, CI workflows, release tags, SDK selection, and centrally managed dependencies.
 
 ## Normative language
 
@@ -37,7 +37,7 @@ CIS uses Semantic Versioning. The single product version is declared in `Version
 
 The SDK remains pinned by `global.json`; dependency updates remain centrally pinned in `Directory.Packages.props`. A release tag must be exactly `v<VersionPrefix>`.
 
-Every release must pass the Windows and Linux CI matrix. The release build produces a .NET tool package, a VSIX, a tracked-source archive, and SHA-256 checksums; it also installs the generated tool package and runs its help command before publication.
+Every release must pass the Windows and Linux CI matrix. The release build produces standalone Windows x64 and Linux x64 archives, a .NET tool package, a VSIX, a tracked-source archive, and SHA-256 checksums. Each standalone archive is extracted and smoke-tested on its native operating system; the generated .NET tool package is also installed and tested before publication.
 
 ## Rules
 
@@ -45,7 +45,7 @@ Every release must pass the Windows and Linux CI matrix. The release build produ
 - **REL-002** Version changes MUST follow Semantic Versioning according to the compatibility impact described above.
 - **REL-003** The SDK MUST remain pinned in `global.json`, and centrally managed dependencies MUST remain pinned in `Directory.Packages.props`.
 - **REL-004** A release tag MUST equal `v<VersionPrefix>` and MUST pass the supported Windows and Linux verification matrix.
-- **REL-005** A release MUST contain the .NET tool, VSIX, tracked-source archive, and SHA-256 checksums, and MUST smoke-test the packaged CLI including its registered built-in modules before publication.
+- **REL-005** A release MUST contain standalone Windows x64 and Linux x64 archives, the .NET tool, VSIX, tracked-source archive, and SHA-256 checksums, and MUST smoke-test the packaged CLI including its registered built-in modules before publication. Both standalone archives MUST pass native operating-system smoke tests.
 
 ## Verification
 
@@ -53,7 +53,7 @@ Every release must pass the Windows and Linux CI matrix. The release build produ
 - `REL-002`: Review the proposed version against the documented patch, minor, and major compatibility rules.
 - `REL-003`: Validate `global.json` and `Directory.Packages.props` in CI and during dependency review.
 - `REL-004`: Run the CI matrix and release tag/version validation workflow.
-- `REL-005`: Run `tools/build-release.ps1`, verify `SHA256SUMS`, install the generated tool into a clean path, and inspect `cis host modules` plus representative module commands.
+- `REL-005`: Run `tools/build-standalone.ps1 -Runtime win-x64` on Windows and `tools/build-standalone.ps1 -Runtime linux-x64` on Linux. Each build tests the extracted archive with `tools/test-standalone.ps1`. Run `tools/build-release.ps1`, verify `SHA256SUMS`, install the generated tool into a clean path, and inspect `cis host modules` plus representative module commands.
 
 ## Exceptions
 

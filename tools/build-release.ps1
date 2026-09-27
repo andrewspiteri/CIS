@@ -38,6 +38,11 @@ try {
     node --test vscode-extension/test/*.test.js
     dotnet pack src/Cis.Host/Cis.Host.csproj -c $Configuration --no-build --no-restore -o $resolvedOutput
     & (Join-Path $PSScriptRoot "package-vsix.ps1") -Output $Output
+    & (Join-Path $PSScriptRoot "build-standalone.ps1") -Configuration $Configuration -Output "$Output/standalone"
+    Get-ChildItem -LiteralPath (Join-Path $resolvedOutput 'standalone') -File |
+        Where-Object Name -ne 'SHA256SUMS' | Move-Item -Destination $resolvedOutput
+    Remove-Item -LiteralPath (Join-Path $resolvedOutput 'standalone/SHA256SUMS') -Force
+    Remove-Item -LiteralPath (Join-Path $resolvedOutput 'standalone')
 
     $sourceArchive = Join-Path $resolvedOutput "change-impact-studio-$version-source.zip"
     git archive --format=zip --output=$sourceArchive HEAD

@@ -12,6 +12,17 @@ internal sealed record RepositoryTestingStarterContent(
 
 internal static class RepositoryTestingStarter
 {
+    internal static string? CreateImportProfile(string repositoryPath, RepositoryClassification classification)
+    {
+        var suites = new List<Suite>();
+        var steps = new List<Step>();
+        AddDotNet(repositoryPath, classification, suites, steps, import: true);
+        AddNode(repositoryPath, classification, suites, steps);
+        // An empty repository must not acquire a fictitious documentation test runner.
+        return suites.Count == 0 ? null : CreateProfile(suites.Select(suite => suite with { CoveragePath = "-", MutationPath = "-" }))
+            + "\n\nImport inferred these bindings from test projects and declared package scripts. Commands, prerequisites and output paths have not been executed or verified. Preserve the adopted harness and existing CI gates; review these bindings before running them.\n";
+    }
+
     public static RepositoryTestingStarterContent Create(
         string repositoryPath,
         string documentationRoot,
@@ -22,6 +33,15 @@ internal static class RepositoryTestingStarter
         AddDotNet(repositoryPath, classification, suites, steps);
         AddNode(repositoryPath, classification, suites, steps);
         AddInfrastructure(repositoryPath, classification, steps);
+        // Browser journeys follow the actual lower-level test/build steps. Keep
+        // the table in execution order as well as declaring its dependencies.
+        var browserIds = suites.Where(suite => suite.Layer == "browser").Select(suite => suite.Id).ToHashSet(StringComparer.Ordinal);
+        var preceding = steps.Where(step => suites.Any(suite => suite.Id == step.Suites && suite.Layer != "browser")
+            || step.Id == "build" || step.Id.EndsWith("-build", StringComparison.Ordinal)).Select(step => step.Id).ToArray();
+        steps = steps.Select(step => browserIds.Contains(step.Suites) ? step with { DependsOn = string.Join(",",
+                preceding.Concat(step.DependsOn.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+                    .Where(id => id != "-").Distinct(StringComparer.Ordinal)) } : step)
+            .OrderBy(step => browserIds.Contains(step.Suites) ? 1 : 0).ToList();
         var security = RepositorySecurityStarter.Create(repositoryPath, classification);
         foreach (var step in security.Steps)
             steps.Add(new(step.Id, step.Command, step.WorkingDirectory, step.SuiteId, step.DependsOn, "no", step.TimeoutSeconds));
@@ -43,11 +63,12 @@ internal static class RepositoryTestingStarter
     }
 
     private static void AddDotNet(string repositoryPath, RepositoryClassification classification,
-        ICollection<Suite> suites, ICollection<Step> steps)
+        ICollection<Suite> suites, ICollection<Step> steps, bool import = false)
     {
         var solution = Directory.EnumerateFiles(repositoryPath, "*.slnx", SearchOption.TopDirectoryOnly)
             .Concat(Directory.EnumerateFiles(repositoryPath, "*.sln", SearchOption.TopDirectoryOnly)).FirstOrDefault();
-        if (solution is not null && classification.Components.Any(item => item.Frameworks.Contains("dotnet-test", StringComparer.Ordinal)))
+        var hasBrowser = classification.Components.Any(item => item.Frameworks.Contains("playwright-dotnet", StringComparer.Ordinal));
+        if (!import && solution is not null && !hasBrowser && classification.Components.Any(item => item.Frameworks.Contains("dotnet-test", StringComparer.Ordinal)))
         {
             const string id = "dotnet-tests";
             const string result = ".cis/local/testing/results/dotnet-tests.trx";
@@ -62,12 +83,26 @@ internal static class RepositoryTestingStarter
         {
             var project = component.Evidence.FirstOrDefault(item => item.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase));
             if (project is null) continue;
-            var id = SafeId(component.Id + "-unit");
+            var browser = component.Frameworks.Contains("playwright-dotnet", StringComparer.Ordinal);
+            var layer = browser ? "browser" : import ? ImportTestLayer(project) : "unit";
+            var id = SafeId(component.Id + "-" + layer);
             var result = $".cis/local/testing/results/{id}.trx";
-            var command = $"dotnet test {Quote(project)} --logger trx;LogFileName={id}.trx --results-directory .cis/local/testing/results --collect XPlat Code Coverage";
-            suites.Add(new(id, component.Id, "unit", "dotnet-test", command, ".", "trx", result,
-                $".cis/local/testing/coverage/{id}/coverage.cobertura.xml", "-", ".NET SDK", "C# production changes", "pr", "retain-on-failure"));
-            steps.Add(new(id, command, ".", id, "-", "no", 1800));
+            var command = $"dotnet test {Quote(project)} --logger trx;LogFileName={id}.trx --results-directory .cis/local/testing/results"
+                + (browser || import ? "" : " --collect XPlat Code Coverage");
+            suites.Add(new(id, component.Id, layer, "dotnet-test", command, ".", "trx", result,
+                browser ? "-" : $".cis/local/testing/coverage/{id}/coverage.cobertura.xml", "-",
+                browser ? ".NET SDK, matching Playwright browsers, approved app/container composition and isolated seeded data; review repository setup command" : ".NET SDK",
+                browser ? "critical frontend journeys" : "C# production changes", browser ? "release" : "pr", "retain-on-failure"));
+            steps.Add(new(id, command, ".", id, "-", "no", browser ? 2400 : 1800));
+        }
+
+        if (hasBrowser)
+        {
+            var lowerLayers = suites.Where(suite => suite.Framework == "dotnet-test" && suite.Layer != "browser").Select(suite => suite.Id).ToArray();
+            var ordered = steps.Select(step => suites.Any(suite => suite.Id == step.Suites && suite.Layer == "browser") && lowerLayers.Length > 0
+                ? step with { DependsOn = string.Join(",", lowerLayers) } : step).ToArray();
+            steps.Clear();
+            foreach (var step in ordered) steps.Add(step);
         }
 
         if (classification.Components.Any(item => item.Languages.Contains("csharp", StringComparer.Ordinal)) && suites.All(item => item.Framework != "dotnet-test"))
@@ -75,6 +110,14 @@ internal static class RepositoryTestingStarter
             var target = solution is null ? string.Empty : " " + Quote(Path.GetFileName(solution));
             steps.Add(new("build", $"dotnet build{target} --no-restore", ".", "-", "-", "no", 1200));
         }
+    }
+
+    private static string ImportTestLayer(string project)
+    {
+        var segments = project.Replace('\\', '/').Split('/');
+        foreach (var layer in new[] { "business", "integration", "architecture", "component", "security", "unit" })
+            if (segments.Contains(layer, StringComparer.OrdinalIgnoreCase)) return layer;
+        return "operational"; // Unknown test purpose must not be advertised as unit-test coverage.
     }
 
     private static void AddNode(string repositoryPath, RepositoryClassification classification,
@@ -140,7 +183,10 @@ internal static class RepositoryTestingStarter
             steps.Add(new("compose-validate", "docker compose config --quiet", ".", "-", "-", "no", 300));
         if (classification.Components.Any(item => item.Frameworks.Contains("terraform", StringComparer.Ordinal)))
         {
-            var root = CisPathSafety.EnumerateFiles(repositoryPath, "*.tf")
+            // Classification already reports unreadable directories as warnings.
+            // Use the same traversal rules when selecting the workflow directory.
+            var root = RepositoryClassifier.EnumerateRepositoryFiles(repositoryPath, new List<string>())
+                .Where(path => path.EndsWith(".tf", StringComparison.OrdinalIgnoreCase))
                 .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}.terraform{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase))
                 .Select(Path.GetDirectoryName).FirstOrDefault() ?? repositoryPath;
             steps.Add(new("terraform-fmt", "terraform fmt -check", Relative(repositoryPath, root), "-", "-", "no", 300));

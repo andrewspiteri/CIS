@@ -12,4 +12,9 @@ public sealed record RepositoryImportRequest(
     string? EcosystemId = null,
     string? ProductId = null,
     string? EcosystemName = null,
-    string? ProductName = null);
+    string? ProductName = null,
+    string? MergeReviewHash = null,
+    string? MergeEditsPath = null,
+    RepositoryGuidanceModel? MergeModel = null,
+    // Preserve existing in-process callers; CLI imports explicitly select minimal mode.
+    bool MinimalImport = false);

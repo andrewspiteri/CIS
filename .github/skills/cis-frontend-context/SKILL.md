@@ -13,3 +13,7 @@ description: Discover and validate framework-neutral frontend screens, routes, c
 6. Inspect source before semantic claims; adapters are deterministic routing evidence, not compiler proof.
 
 Built-in adapters cover React/Next.js, Angular, Vue, SwiftUI, Jetpack Compose, and Godot. Duplicate provider names fail closed.
+
+## Human-readable content
+
+Apply the [shared content standard](../../../docs/standards/human-readable-content-standard.md) to in-scope prose. Use [cis-technical-writing](../cis-technical-writing/SKILL.md) for documents and reports, [cis-ux-writing](../cis-ux-writing/SKILL.md) for interface wording, and [cis-content-review](../cis-content-review/SKILL.md) for source-aware review followed by a separate reader check. Preserve this workflow's authority, evidence, privacy and lifecycle rules. Clarity does not remove legitimate uncertainty or mandatory specification sections.

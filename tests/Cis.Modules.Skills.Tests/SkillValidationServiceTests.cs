@@ -524,6 +524,9 @@ public sealed class SkillValidationServiceTests
             Cis.Abstractions.CisTextGenerationRequest request)
         {
             LastRequest = request;
+            Assert.Contains("policy " + Cis.Abstractions.HumanReadableContentPolicy.Revision, request.Prompt, StringComparison.Ordinal);
+            Assert.Contains("uncertainty", request.Prompt, StringComparison.Ordinal);
+            Assert.Contains("protected HTML comments", request.Prompt, StringComparison.Ordinal);
             return new("generated", ProviderName, ModelName, response, null, isLocal);
         }
     }

@@ -32,6 +32,8 @@ Reader entry points:
 
 Canonical starting points:
 
+- [Engineering assurance coverage](references/engineering-assurance-coverage.md) — portable security, testing, browser, contract and tooling safeguards, with verification limits
+
 - `standards/documentation-governance-standard.md` — required structure, stable rules, lifecycle, exceptions, and evidence boundaries for standards
 - `specs/standards-governance-spec.md` — applicability, validation, conformance, initialization, and authority contract
 - `specs/standard-pattern-catalogue-and-inference-spec.md` — compiler-graph pattern contract, known patterns, inference evidence, and authority boundaries
@@ -78,3 +80,9 @@ Canonical starting points:
 - `specs/documentation-inventory-and-validation-spec.md` — documentation discovery and catalog health contract
 - `specs/classification-driven-initialisation-spec.md` — component classification, starter binding, and repeatable reconciliation
 - `specs/ui-framework-resolution-spec.md` — evidence-first UI framework preservation and classification-bound defaults
+
+Content authoring and review:
+
+- [Implementation and verification record](references/human-readable-content-implementation.md) — runtime coverage, review results and HC acceptance evidence.
+- [Shared content standard](standards/human-readable-content-standard.md) — Draft policy for guidance, generated prose and interface wording.
+- [Contextual terminology](references/human-readable-content-terms.md) and [review fixtures](references/human-readable-content-fixtures.json) — examples preserve conditional judgments.

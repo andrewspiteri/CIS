@@ -24,3 +24,7 @@ citations in comments, and distinguish observed, proposed and unresolved facts. 
 9. Rebuild the graph after approval. Continue with `cis ui-direction questions init` and `cis ui-direction init` for shared product character, shell, navigation, reusable interaction patterns, visual direction, responsive behavior, and accessibility. Detailed screens remain feature-level work.
 
 Never approve per component, invent business scope, overwrite human sections on rerun, bypass stale source evidence, or treat generated content as Active.
+
+## Human-readable content
+
+Apply the [shared content standard](../../../docs/standards/human-readable-content-standard.md) to in-scope prose. Use [cis-technical-writing](../cis-technical-writing/SKILL.md) for documents and reports, [cis-ux-writing](../cis-ux-writing/SKILL.md) for interface wording, and [cis-content-review](../cis-content-review/SKILL.md) for source-aware review followed by a separate reader check. Preserve this workflow's authority, evidence, privacy and lifecycle rules. Clarity does not remove legitimate uncertainty or mandatory specification sections.

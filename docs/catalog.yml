@@ -1,6 +1,11 @@
 schema_version: 1
 repository: change-impact-studio
 documents:
+  - id: change-impact-studio:reference:engineering-assurance-coverage
+    path: docs/references/engineering-assurance-coverage.md
+    type: reference
+    status: draft
+    authority: canonical
   - id: change-impact-studio:spec:product-and-ecosystem-boundary
     path: docs/specs/product-and-ecosystem-boundary-spec.md
     type: specification
@@ -2435,4 +2440,19 @@ documents:
     path: docs/manual/cis_brd_feature_wizard_reimport.md
     type: command-reference
     status: active
+    authority: canonical
+  - id: change-impact-studio:standard:human-readable-content
+    path: docs/standards/human-readable-content-standard.md
+    type: standard
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:reference:human-readable-content-terms
+    path: docs/references/human-readable-content-terms.md
+    type: reference
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:reference:human-readable-content-implementation
+    path: docs/references/human-readable-content-implementation.md
+    type: reference
+    status: draft
     authority: canonical

@@ -6,6 +6,15 @@ namespace Cis.Abstractions.Tests;
 
 public sealed class PathAndArchiveSafetyTests
 {
+    [Fact]
+    public void ReparseCheckAcceptsAnAbsoluteFilesystemRoot()
+    {
+        var root = Path.GetPathRoot(Path.GetFullPath(Path.GetTempPath()))!;
+        var missing = Path.Combine(root, "cis-missing-" + Guid.NewGuid().ToString("N"), "file.md");
+        Assert.False(CisPathSafety.ContainsReparsePoint(root, missing));
+        Assert.False(CisPathSafety.ContainsReparsePoint(root, root));
+    }
+
     [Theory]
     [InlineData(null, "file.txt")]
     [InlineData("", "file.txt")]

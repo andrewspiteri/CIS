@@ -24,7 +24,7 @@ function upstreamReady(data) { data.pages.filter(page => page.id !== 'experience
 test('imported baseline is the visual preview while missing direction points to actual upstream decisions', () => {
   const data = model(); const state = experienceState(data, '/authority'); const html = render(data);
   assert.equal(state.visual, 'Available — 2 of 2 interface control sheets');
-  assert.equal(state.badge, 'Preview available · Direction pending');
+  assert.equal(state.badge, 'Preview available · UI direction needs review');
   assert.equal(state.ready, false); assert.equal(data.pages[2].complete, false);
   assert.match(state.next, /2 technical document decisions/u);
   assert.equal(state.action.command, 'navigate'); assert.equal(state.action.value, 'technical');
@@ -39,7 +39,7 @@ test('questionnaire guidance distinguishes missing, unanswered, stale and comple
   const data = model(); upstreamReady(data);
   assert.equal(experienceState(data, '/authority').action.label, 'Prepare UI questions');
   data.uiQuestions = { current: true, complete: false, questions: [{ id: 'UI-Q-001', status: 'Answered' }, { id: 'UI-Q-002', status: 'Unanswered' }] };
-  assert.equal(experienceState(data, '/authority').direction, '1 UI questions need answers out of 2');
+  assert.equal(experienceState(data, '/authority').direction, '1 UI question needs an answer out of 2');
   assert.equal(experienceState(data, '/authority').action.command, 'focus-ui-questions');
   assert.match(render(data), /id="ui-direction-questions"/u);
   data.uiQuestions.questions[1].status = 'Derived'; data.uiQuestions.complete = true; data.uiQuestions.current = false;

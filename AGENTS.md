@@ -68,3 +68,7 @@
 - Enforce `PUBLIC-ENDPOINT-CACHE`: every unauthenticated endpoint is cached and its public route/controller/handler never directly accesses a database or repository, including on cache miss. Cache population belongs behind an application/query abstraction.
 - Never resolve mutually exclusive provider capabilities by load order. Record explicit human selection with `cis plan capability select`.
 - Provider selection does not migrate existing tasks. Use `cis plan task migrate-type` only when both the canonical selection and replacement provider authorize it, preserving evidence and history.
+
+## Human-readable content
+
+For human-facing prose, apply `docs/standards/human-readable-content-standard.md`. Use `.github/skills/cis-technical-writing/SKILL.md` for documents and reports, `cis-ux-writing` for interface text, and `cis-content-review` for source-aware review and a separate unfamiliar-reader check. Preserve conditions, uncertainty, evidence, stable identifiers and approval boundaries. A readability review does not authorize canonical approval.

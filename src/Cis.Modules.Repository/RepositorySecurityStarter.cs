@@ -136,7 +136,8 @@ internal static class RepositorySecurityStarter
 
             foreach (var child in directories)
             {
-                if (ExcludedDirectories.Contains(Path.GetFileName(child)) || CisPathSafety.IsReparsePoint(child))
+                if (ExcludedDirectories.Contains(Path.GetFileName(child)) || CisPathSafety.IsReparsePoint(child)
+                    || RepositoryScanExclusions.IsPath(Path.GetRelativePath(repositoryPath, child)))
                     continue;
                 pending.Push(child);
             }

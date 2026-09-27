@@ -13,3 +13,7 @@ description: Discover and review deterministic CIS impact findings for a change 
 6. Run `cis impact completeness <change-id>` and report every remaining gap.
 
 Never disposition findings autonomously, hide deferred scope, accept truncated analysis, or analyse against a changed baseline.
+
+## Human-readable content
+
+Apply the [shared content standard](../../../docs/standards/human-readable-content-standard.md) to in-scope prose. Use [cis-technical-writing](../cis-technical-writing/SKILL.md) for documents and reports, [cis-ux-writing](../cis-ux-writing/SKILL.md) for interface wording, and [cis-content-review](../cis-content-review/SKILL.md) for source-aware review followed by a separate reader check. Preserve this workflow's authority, evidence, privacy and lifecycle rules. Clarity does not remove legitimate uncertainty or mandatory specification sections.

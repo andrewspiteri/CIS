@@ -17,6 +17,11 @@ public sealed record RepositoryInitResult(
     bool ConfirmationRequired,
     bool Applied)
 {
+    public IReadOnlyList<RepositoryFileMerge> FileMerges { get; init; } = [];
+    public RepositoryImportAssessment? ImportAssessment { get; init; }
+    public IReadOnlyList<RepositoryImportPreview> ImportPreviews { get; init; } = [];
+    public string? ImportPlanHash { get; init; }
+
     public int ExitCode => Errors.Count > 0
         ? 2
         : Collisions.Count > 0

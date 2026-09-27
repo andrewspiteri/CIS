@@ -13,8 +13,9 @@ function renderTechnicalDecisionForm(decision, escape) {
     <p data-technical-stale hidden class="notice warning">The decision or questionnaire changed while these edits were unsaved. Compare them with the current evidence, then keep or discard your edits.</p>
     <div data-technical-rebase hidden><button type="button" class="secondary" data-keep-technical-edits>Keep reviewed edits</button><button type="button" class="secondary" data-discard-technical-edits>Discard edits</button></div>
     <p data-technical-error hidden role="alert"></p><div class="actions"><button type="button" data-save-technical-decision ${decision.reviewToken ? '' : 'disabled'}>${decision.needsReview ? 'Save answer' : 'Update answer'}</button></div>
+    ${!decision.reviewToken ? '<p class="notice warning">Saving is unavailable because the current review evidence is missing. Refresh technical evidence and review the decision before saving.</p>' : ''}
     ${decision.recordedBy ? `<p class="muted">Last recorded by ${escape(decision.recordedBy)}.</p>` : ''}
-    <p class="muted">Saving updates this decision and refreshes readiness. Approval of technical intent remains a separate action.</p>
+    <p class="muted">Saving updates this decision, then checks readiness. Approval of technical intent remains a separate action.</p>
   </section>`;
 }
 

@@ -7,7 +7,7 @@ description: Define textual screen behavior, reuse application-shell and compone
 
 1. Classify every screen as exactly `public`, `customer`, or `backoffice`, then complete `wireframes.md` with stable routes, states, actions, side effects, destination paths, and negative behavior.
 2. Run `cis design wireframe-validate <change-id>` and resolve structural errors. A separate `wireframe-approve` is optional and is used only when the team explicitly wants an early behavior-only checkpoint.
-3. Run `cis design templates --format agent` before writing renderer helpers. Reuse `shell.standard-app` and every applicable governed component template—including buttons, fields, selects/dropdowns, choice controls, tabs/navigation, dialogs/alerts, cards, forms, tables, and states—to reduce repeated code and token usage.
+3. Run `cis design templates --format agent` before writing renderer helpers. Reuse `shell.standard-app` and every applicable governed component templateâ€”including buttons, fields, selects/dropdowns, choice controls, tabs/navigation, dialogs/alerts, cards, forms, tables, and statesâ€”to reduce repeated code and token usage.
 4. Before scaffolding, run `cis design reuse` for each exact earlier approved source screen that remains compatible with a target wireframe screen. Record why it is unchanged; do not infer reuse from similarity alone. CIS must verify source authority and hashes.
 5. Run `cis design scaffold <change-id> --feature <slug> --component <template-id> --format agent`; customize only uncovered feature content while preserving the shared shell and component behavior. Reused target screens must be absent from the renderer.
 6. Run `cis design validate <change-id>` and resolve guideline, shell, component, provenance, reuse-drift, coverage, or renderer errors.
@@ -17,3 +17,7 @@ description: Define textual screen behavior, reuse application-shell and compone
 10. On approval, preserve exact source-approval, renderer, and combined PNG-manifest hashes before downstream work resumes.
 
 Never hand-edit generated PNGs, bypass the application shell, redraw a common control where a governed template applies, use network assets, continue implementation during review, infer compatibility, or infer approval.
+
+## Human-readable content
+
+Apply the [shared content standard](../../../docs/standards/human-readable-content-standard.md) to in-scope prose. Use [cis-technical-writing](../cis-technical-writing/SKILL.md) for documents and reports, [cis-ux-writing](../cis-ux-writing/SKILL.md) for interface wording, and [cis-content-review](../cis-content-review/SKILL.md) for source-aware review followed by a separate reader check. Preserve this workflow's authority, evidence, privacy and lifecycle rules. Clarity does not remove legitimate uncertainty or mandatory specification sections.

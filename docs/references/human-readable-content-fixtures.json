@@ -1,0 +1,97 @@
+{
+  "status": "draft",
+  "note": "Illustrative review cases, not executed CIS tests or proof of semantic equivalence.",
+  "cases": [
+    {
+      "id": "HC-FIX-01",
+      "source": "The agent must not send repository content to a remote provider without explicit human authorization.",
+      "candidate": "The agent should avoid sending repository content remotely.",
+      "expected": "reject",
+      "reason": "Weakens an obligation and removes the explicit authorization condition."
+    },
+    {
+      "id": "HC-FIX-02",
+      "source": "A preview is available. UI direction is not complete and current.",
+      "candidate": "The UI is approved.",
+      "expected": "reject",
+      "reason": "Converts preview availability into approval."
+    },
+    {
+      "id": "HC-FIX-03",
+      "source": "The answer was saved, but readiness could not be refreshed.",
+      "candidate": "Everything is up to date.",
+      "expected": "reject",
+      "reason": "Hides partial success and claims a refresh that did not complete."
+    },
+    {
+      "id": "HC-FIX-04",
+      "source": "No local model is available. The current source excerpt remains available. This operation has no remote fallback.",
+      "candidate": "Start a local model and try again. You can still read the source excerpt.",
+      "expected": "context-dependent",
+      "reason": "Acceptable as an operational message only when the local-only restriction is otherwise clear and no remote fallback is implied. Not a complete standalone restatement of all three facts."
+    },
+    {
+      "id": "HC-FIX-05",
+      "source": "All required answers are saved. Approval by an authorized human is still required.",
+      "candidate": "Your answers are saved. An authorized reviewer must still approve them.",
+      "expected": "accept-subject-to-domain-check",
+      "reason": "Preserves persistence and outstanding human authority. Confirm what the reviewer actually approves in this workflow."
+    },
+    {
+      "id": "HC-FIX-06",
+      "source": "The source was sampled because it exceeded the model-input limit.",
+      "candidate": "This summary includes every requirement in the source.",
+      "expected": "reject",
+      "reason": "Sampling does not establish completeness."
+    },
+    {
+      "id": "HC-FIX-07",
+      "source": "Run cis graph build after the document is approved.",
+      "candidate": "Approve the document after running cis graph build.",
+      "expected": "reject",
+      "reason": "Reverses a required sequence despite preserving the command."
+    },
+    {
+      "id": "HC-FIX-08",
+      "source": "The check may miss references in files excluded from analysis.",
+      "candidate": "The check finds all references.",
+      "expected": "reject",
+      "reason": "Erases uncertainty and an analysis-scope limitation."
+    },
+    {
+      "id": "HC-FIX-09",
+      "source": "Refresh UI direction to reconcile the recorded answers with current evidence. Existing human answers are preserved.",
+      "candidate": "Refresh UI direction to check your saved answers against the latest evidence. Your saved answers are kept.",
+      "expected": "accept-subject-to-domain-check",
+      "reason": "Intended wording-only simplification; confirm that check describes the actual reconciliation effects sufficiently."
+    },
+    {
+      "id": "HC-FIX-10",
+      "source": "It is blocked because that changed.",
+      "candidate": "Approval is blocked because the database schema changed.",
+      "expected": "reject",
+      "reason": "Invents the blocked action and cause rather than reporting ambiguous source content."
+    },
+    {
+      "id": "HC-FIX-11",
+      "source": "Checks have not run.",
+      "candidate": "No findings.",
+      "expected": "reject",
+      "reason": "Absence of checks is not a clean review."
+    },
+    {
+      "id": "HC-FIX-12",
+      "source": "The operation returned an unknown reason code.",
+      "candidate": "The network is down.",
+      "expected": "reject",
+      "reason": "Invents a failure cause."
+    },
+    {
+      "id": "HC-FIX-13",
+      "source": "The preview is stale; its evidence changed. Human review is still required.",
+      "candidate": "Refresh to approve the preview.",
+      "expected": "reject",
+      "reason": "Conflates refresh with human approval."
+    }
+  ]
+}

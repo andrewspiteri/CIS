@@ -14,3 +14,5 @@ applyTo: "docs/specs/features/**/feature-specification.md"
 - Never run `cis brd feature approve` without explicit human reviewer identity and rationale. Approval accepts scope and may be carried by `cis plan derive` only through eligible deterministic impacts and the exact validated plan; it does not directly authorize implementation or release.
 - After approval, rebuild the graph, reconcile the feature as BRD evidence, and refresh technical intent before change planning. Managed adoption of the unchanged approved authority feature must not trigger another BRD secondary review or revoke the consolidated product-definition baseline.
 - For the reconciled current feature, prefer `cis plan derive` and do not request separate impact or plan approvals when it succeeds. Surface only exceptional low-confidence, deferred, truncated, conflicting, stale, or invalid results for human review.
+
+For human-facing prose, also apply `docs/standards/human-readable-content-standard.md` and route through `.github/instructions/cis-human-readable-content.instructions.md`. Preserve the stronger domain rules above, including protected evidence and approval boundaries.

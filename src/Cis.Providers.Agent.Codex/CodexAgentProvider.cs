@@ -513,7 +513,7 @@ public sealed class CodexAgentProvider : ICisAgentProvider, ICisAgentProviderAut
     private static long? Number(JsonElement element, string name) => element.TryGetProperty(name, out var value) && value.TryGetInt64(out var number) ? number : null;
     private static string FirstLine(string value) => value.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim() ?? value.Trim();
     private static string Limit(string value) => value.Length <= MaximumRawJsonCharacters ? value : value[..MaximumRawJsonCharacters];
-    private static string Redact(string value)
+    internal static string Redact(string value)
     {
         var result = System.Text.RegularExpressions.Regex.Replace(value,
             "(?i)([\\\"']?(?:api[-_ ]?key|token|authorization|password)[\\\"']?\\s*[:=]\\s*)[^\\r\\n,;}]+",

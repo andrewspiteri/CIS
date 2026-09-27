@@ -25,3 +25,5 @@ applyTo: "docs/specs/business-requirements.md"
 - Run `cis brd feature approve --item <HLT-ID> --reviewer <human> --reason <rationale>` only with explicit authority. Rebuild the graph and reconcile an approved feature into the BRD before change planning.
 - High-level backlog approval authorizes feature-specification preparation only; detailed implementation work still requires a change dossier, impact review, and bounded plan.
 - Feature approval accepts the detailed scope only; it does not directly authorize implementation, deployment, or release. Its exact current authority may be reused by `cis plan derive` for eligible deterministic impacts and the exact validated bounded plan; uncertainty or expanded scope requires another human decision.
+
+For human-facing prose, also apply `docs/standards/human-readable-content-standard.md` and route through `.github/instructions/cis-human-readable-content.instructions.md`. Preserve the stronger domain rules above, including protected evidence and approval boundaries.

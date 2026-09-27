@@ -2,29 +2,30 @@
 
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { sourceOverviewNote } = require('./content-messages');
 
 function renderSourceReviewForm(sources, escape) {
   const pending = sources.filter(source => source.needsReview).length;
   const toolbar = '<div class="source-review-toolbar"><span data-source-count role="status" aria-live="polite">No unsaved decisions</span><button type="button" data-save-sources disabled>Save decisions</button></div>';
   const choices = [['Adopted', 'Use its requirements'], ['Reference', 'Keep as background'], ['Rejected', 'Exclude from this BRD']];
   const pendingSummaries = sources.filter(source => source.summary?.canGenerate).length;
-  return `<details id="business-source-decisions"><summary tabindex="-1">Source decisions — ${pending} need review out of ${sources.length}</summary>
+  return `<details id="business-source-decisions" ${pending || sources.some(source => source.issues?.length) ? 'open' : ''}><summary>Source decisions — ${pending} need review out of ${sources.length}</summary>
     <p>Review a document, choose how it should inform the BRD, and explain why. You can complete several entries and save them together. Leave undecided entries untouched and return later.</p>
-    ${pendingSummaries ? `<p><button type="button" class="secondary" data-command="summarize-business-sources">Summarize ${pendingSummaries} ${pendingSummaries === 1 ? 'document' : 'documents'} locally</button> <span class="muted">Excerpts are available now. Summaries are cached until the document changes.</span></p>` : ''}
+    ${pendingSummaries ? `<p><button type="button" class="secondary" data-command="summarize-business-sources">Summarize ${pendingSummaries} ${pendingSummaries === 1 ? 'document' : 'documents'} locally</button> <span class="muted">Excerpts are available now. Summaries are cached until the document or writing policy changes. No remote fallback is used.</span></p>` : ''}
     ${toolbar}<div class="cards">${sources.map(source => {
       const virtual = source.path.startsWith('workspace:');
       const reason = source.rationale && source.rationale !== 'TODO' ? source.rationale : '';
       return `<article class="card source-review" data-source-id="${escape(source.id)}" data-review-token="${escape(source.reviewToken || '')}" data-requires-refresh="${source.requiresReconciliation || !source.reviewToken ? 'true' : 'false'}">
         <div class="section-heading"><h3>${virtual ? 'Repository implementation evidence' : `<a class="source-document-link" href="${escape(pathToFileURL(path.resolve(source.repositoryPath, source.path)).href)}" target="_blank" rel="noopener" data-command="open-business-source" data-value="${escape(source.id)}" title="Open this document in a separate editor tab beside the wizard">${escape(source.path.split(/[\\/]/u).pop())} ↗</a>`}</h3><span class="badge ${source.needsReview ? 'warn' : 'good'}">${source.needsReview ? 'Decision needed' : 'Reviewed'}</span></div>
         <p>${escape(virtual ? source.path.slice('workspace:'.length) : source.repositoryId + ' · ' + source.path)}</p>
-        <div class="source-summary"><span class="eyebrow">${source.summary?.kind === 'local-model' ? 'Local model summary' : source.summary?.kind === 'excerpt' ? 'Document excerpt' : 'About this source'}</span><p>${escape(source.summary?.text || 'Open the document title to review this source.')}</p>${source.summary?.inputTruncated ? '<small class="muted">Based on selected excerpts from a longer document.</small>' : ''}</div>
+        <div class="source-summary"><span class="eyebrow">${source.summary?.kind === 'local-model' ? 'Local model overview' : source.summary?.kind === 'excerpt' ? 'Document excerpt' : 'About this source'}</span><p>${escape(source.summary?.text || 'Open the document title to review this source.')}</p>${sourceOverviewNote(source.summary) ? `<p class="muted">${escape(sourceOverviewNote(source.summary))}</p>` : ''}${source.summary?.inputTruncated ? '<small class="muted">Based on selected excerpts from a longer document.</small>' : ''}</div>
         <fieldset><legend>How should this document inform the BRD?</legend><div class="source-choices">${choices.map(([value, label]) => `<label class="source-choice"><input type="radio" name="decision-${escape(source.id)}" value="${value}" ${source.assessment === value ? 'checked' : ''}><span><strong>${label}</strong><small>${value}</small></span></label>`).join('')}</div></fieldset>
         <label for="reason-${escape(source.id)}">Why?</label><textarea id="reason-${escape(source.id)}" data-source-reason rows="3" maxlength="4096" placeholder="Explain how this document helps, or why it should be excluded.">${escape(reason)}</textarea>
         ${source.requiresReconciliation || !source.reviewToken ? '<p class="notice warning">Refresh BRD evidence before saving this source.</p>' : ''}
         <p data-source-error class="notice warning" role="alert" hidden></p>
         <button type="button" class="secondary" data-confirm-source hidden>Confirm against updated source</button>
         <button type="button" class="link" data-reset-source hidden>Discard unsaved edits</button>
-        ${source.issues?.length ? `<details><summary>Review details</summary><ul>${source.issues.map(issue => `<li>${escape(issue)}</li>`).join('')}</ul></details>` : ''}
+        ${source.issues?.length ? `<section class="notice warning"><strong>Source review findings</strong><ul>${source.issues.map(issue => `<li>${escape(issue)}</li>`).join('')}</ul></section>` : ''}
       </article>`;
     }).join('')}</div>${toolbar}</details>`;
 }

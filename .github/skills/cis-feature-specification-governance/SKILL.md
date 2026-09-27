@@ -16,3 +16,7 @@ description: Author, validate, review, approve, and refresh classification-aware
 9. A material change anywhere in the consolidated product-definition baseline makes the feature binding stale and requires reconciliation. Mechanical validation with no semantic change adds no approval gate.
 
 Preserve stable identities, approval evidence, exclusions, and history. Never approve for the user, silently broaden MVP scope, treat a generated draft as current, or report an unexecuted test obligation as passed.
+
+## Human-readable content
+
+Apply the [shared content standard](../../../docs/standards/human-readable-content-standard.md) to in-scope prose. Use [cis-technical-writing](../cis-technical-writing/SKILL.md) for documents and reports, [cis-ux-writing](../cis-ux-writing/SKILL.md) for interface wording, and [cis-content-review](../cis-content-review/SKILL.md) for source-aware review followed by a separate reader check. Preserve this workflow's authority, evidence, privacy and lifecycle rules. Clarity does not remove legitimate uncertainty or mandatory specification sections.

@@ -12,3 +12,6 @@ public interface ICisAiProvider
 
     CisTextGenerationResult Generate(CisTextGenerationRequest request, string model);
 }
+
+/// <summary>Opt-in provider exposed only for reviewed repository guidance merges.</summary>
+public interface ICisRepositoryGuidanceProvider : ICisAiProvider;

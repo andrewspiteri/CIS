@@ -55,9 +55,9 @@ class CisViewProvider {
     } catch (error) {
       if (this.last) {
         this.stale = true;
-        return entry([this.node('Results are stale', { description: concise(error.message), icon: 'warning' }), ...this.last]);
+        return entry([this.node('Results are stale', { description: 'Refresh, then review the current findings.', tooltip: concise(error.message), command: 'cis.refresh', icon: 'warning' }), ...this.last]);
       }
-      return entry([this.node('Unavailable', { description: concise(error.message), icon: 'error' })]);
+      return entry([this.node('Unable to load current state', { description: concise(error.message), icon: 'error' })]);
     }
   }
 

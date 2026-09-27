@@ -37,6 +37,16 @@ Purpose-built high-level definition wizard, Repository Doctor, technical-questio
 screens open in editor-area webviews. Canonical Markdown opens in VS Code's normal editor
 or built-in preview and remains the editable authority.
 
+Interface messages distinguish saved answers, reviewed direction and approval. A preview
+does not grant implementation authority. If an answer saves but readiness cannot refresh,
+use Refresh before repeating the save or relying on earlier findings. Unavailable actions
+explain their prerequisites, and validation blockers remain visible.
+
+Source overviews are selective and retain full-source navigation. Supporting quotations
+establish provenance for those quotations, not verification of every generated claim.
+Routine status and recovery text works offline. See the [content implementation and review
+record](../docs/references/human-readable-content-implementation.md) for coverage and limits.
+
 Repository Doctor groups errors, warnings, and information, retains each finding's evidence
 and suggested fix, and offers **Run command** beside **Copy command**. Run uses the configured
 CIS executable for the report's authority and refreshes findings afterward. Commands containing
@@ -173,6 +183,34 @@ source is routed through **Import existing repository**; an empty project is rou
 **Create CIS project**. Import performs a reviewed in-place self-import and context build without
 copying or rewriting implementation files. In a multi-root workspace, select
 the authority repository explicitly; the extension never silently switches it.
+Import opens **Review minimal CIS import** with a local gap inventory and a small file plan.
+Existing directives remain authoritative. CIS adds configuration, a documentation catalogue,
+a compact CIS instruction file, and a short section in existing agent entry points.
+It does not generate the full starter library or call a model.
+
+The report checks individual requirements for navigation, security, testing/Playwright,
+architecture and delivery. Requirement-specific text is preserved and labelled as
+unverified; a topic name alone does not count. Unmatched requirements receive proposed
+baselines only where existing policy is silent. Incomplete inventory defers additions.
+Routing precedence and overlaps remain review items. Text matching does not prove
+semantic equivalence or working gates.
+
+CIS setup appears separately: missing runtime profiles are proposed independently of
+prose, detected test harnesses get reviewable bindings, and absent security scanner
+bindings remain follow-up work. Temporary and generated directories, including
+`.github/tmp`, are excluded before traversal and when following references.
+
+The proposed-change list shows additions and removals. Expand an entry-point editor to
+inspect surrounding text or edit the addition. **Save guidance and import** applies the
+reviewed plan and saves the report locally to `.cis/local/import/report.json`.
+Cancelling or closing the tab leaves import unapplied. A changed inventory or registration
+plan requires a fresh review. Other automatically discovered instructions, skills, agents
+and prompts remain unchanged.
+
+The CLI retains an explicit `--guidance-mode reconcile` for a full starter installation
+and model-assisted guidance migration. That mode can produce a large proposal and is not
+used by the default VS Code import flow.
+
 **Select Authority Repository** always opens a picker, including with one folder, and confirms
 the selected path. For an initialized product, select its documentation authority folder.
 

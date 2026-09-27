@@ -4,6 +4,9 @@
     <Description>Public module and command-registration contracts for Change Impact Studio.</Description>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="..\..\docs\standards\human-readable-content-standard.md" LogicalName="Cis.Content.HumanReadableStandard" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
     <PackageReference Include="System.CommandLine" />
   </ItemGroup>

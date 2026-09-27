@@ -15,3 +15,7 @@ description: Capture, generate, validate, and approve the workspace-level UI loo
 8. Rebuild the graph after approval. A solution-design, questionnaire, design-guideline, UI-framework-profile, or approved-content change makes the direction stale and blocks backlog and feature delivery until reconciled.
 
 Never derive subjective brand choices from weak code markers, approve for the user, redraw shared controls per feature, or treat a generated document as Active.
+
+## Human-readable content
+
+Apply the [shared content standard](../../../docs/standards/human-readable-content-standard.md) to in-scope prose. Use [cis-technical-writing](../cis-technical-writing/SKILL.md) for documents and reports, [cis-ux-writing](../cis-ux-writing/SKILL.md) for interface wording, and [cis-content-review](../cis-content-review/SKILL.md) for source-aware review followed by a separate reader check. Preserve this workflow's authority, evidence, privacy and lifecycle rules. Clarity does not remove legitimate uncertainty or mandatory specification sections.

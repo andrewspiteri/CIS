@@ -42,6 +42,23 @@ public sealed class FeatureScreenTests
     }
 
     [Fact]
+    public void PreviousContentPolicyCannotBeReusedAsCurrent()
+    {
+        using var f = new Fixture();
+        var input = f.Input;
+        Assert.Empty(f.Run(true).Errors);
+        var manifest = Path.Combine(f.Root, ".cis/local/feature-screens/referrals/preview.json");
+        var current = File.ReadAllText(manifest);
+        Assert.Contains(HumanReadableContentPolicy.Revision, current, StringComparison.Ordinal);
+        File.WriteAllText(manifest, current.Replace(HumanReadableContentPolicy.Revision, "hc-previous", StringComparison.Ordinal));
+        Assert.Equal("missing", f.Run(false).Status);
+        Assert.Empty(f.Run(true).Errors);
+        Assert.Equal(input, f.Input);
+        Assert.Equal(4, f.Model.Calls);
+        Assert.False(File.Exists(Path.Combine(f.Root, "docs/cis/design/design-approval.md")));
+    }
+
+    [Fact]
     public void ConcurrentGenerationAndFailedRefreshPreserveLastGoodGallery()
     {
         using var f = new Fixture();
@@ -217,10 +234,15 @@ public sealed class FeatureScreenTests
         {
             Calls++;
             Prompts.Add(request.Prompt);
+            Assert.Contains("policy " + HumanReadableContentPolicy.Revision, request.Prompt, StringComparison.Ordinal);
+            Assert.Contains("person reviewing feature screens", request.Prompt, StringComparison.Ordinal);
+            Assert.False(request.AllowRemote);
+            Assert.True(request.JsonMode);
+            Assert.NotNull(request.JsonSchema);
             Assert.False(request.AllowRemote);
             var json = request.Prompt.Contains("numbered BRD", StringComparison.Ordinal)
                 ? TwoScreens ? """{"sections":[{"index":0,"frontendType":"public","layout":"form"},{"index":1,"frontendType":"backoffice","layout":"form"}]}""" : """{"sections":[{"index":0,"frontendType":"public","layout":"form"}]}"""
-                : JsonSerializer.Serialize(new { title = request.Prompt.StartsWith("Revise ONE", StringComparison.Ordinal) ? "Updated contact capture" : "Contact capture", purpose = "Capture contact details before handoff",
+                : JsonSerializer.Serialize(new { title = request.Prompt.Contains("Revise ONE", StringComparison.Ordinal) ? "Updated contact capture" : "Contact capture", purpose = "Capture contact details before handoff",
                     fields = new[] { new { label = "Full name", kind = "text", value = "<script>" } },
                     actions = new[] { new { label = "Continue", destination = "Redirect immediately to the bank" } }, states = new[] { "Reject invalid email" } });
             return new("generated", "local", "test", Bad ? "{}" : json, null, !Remote);

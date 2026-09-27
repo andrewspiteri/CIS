@@ -63,7 +63,7 @@ public static class CisPathSafety
     public static bool ContainsReparsePoint(string root, string candidate)
     {
         if (!IsUnderRoot(root, candidate, allowRoot: true)) return true;
-        var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var fullRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
         var fullCandidate = Path.GetFullPath(candidate);
         var relative = Path.GetRelativePath(fullRoot, fullCandidate);
         if (relative == ".") return false;

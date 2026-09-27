@@ -24,7 +24,7 @@ Materials should feel:
 - **Credible**: senior, experienced, and technically grounded.
 - **Clear**: structured, readable, and low-noise.
 - **Modern**: current and digital-first without being corporate-heavy.
-- **Confident**: decisive language and strong positioning.
+- **Confident**: clear, evidence-backed language that preserves uncertainty and limits.
 - **Practical**: focused on outcomes, risk reduction, and execution quality.
 
 The system keeps slide decks, proposals, PDFs, one-pagers, landing pages, diagrams,
@@ -139,9 +139,11 @@ Headings state conclusions rather than topics. Body copy is direct, calm,
 evidence-oriented, technically literate, and commercially aware.
 
 Avoid filler such as "in today's fast-paced world", "leveraging synergies",
-"cutting-edge solutions", "may help", or "might improve". Prefer decisive verbs
-such as reduces, enables, standardises, hardens, simplifies, accelerates, and lowers
-risk.
+"cutting-edge solutions". Use concrete verbs when evidence supports the claim.
+Keep qualifications such as "may" or "might" when the outcome is uncertain;
+never turn an expectation into a guarantee to sound decisive. Apply the
+[shared content standard](../standards/human-readable-content-standard.md),
+preserving required sections, conditions, evidence and approval boundaries.
 
 ## 9. Visual components
 

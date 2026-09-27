@@ -53,8 +53,9 @@ public sealed partial class DefinitionWizardService
                 stale ? "Refresh the questionnaire and document baselines while preserving recorded human choices. Then review the remaining findings."
                     : !initialized || !exists ? "Prepare the questionnaire and technical-intent draft from the current baseline."
                     : "The current evidence is already prepared. Repeating preparation does not resolve open technical decisions."),
-            new("infer-technical", "Infer from existing repositories", !hasImplementation ? "Not needed" : exists ? "Optional" : "Needed",
-                exists ? "The technical-intent document already exists. Generate another draft only if you intend to revisit its narrative."
+            new("infer-technical", "Draft technical direction from code", !hasImplementation ? "Not needed" : exists ? "Optional" : "Needed",
+                !hasImplementation ? "Import a product-owned implementation repository before drafting from code."
+                    : exists ? "The technical-intent document already exists. Drafting again updates its narrative; review the changes and resolve decisions separately."
                     : "Draft the technical narrative from the owned implementation repositories."),
             new("continue", "Continue to solution architecture", complete ? "Ready" : "Later",
                 complete ? "The questionnaire and technical-intent document are complete and current. Continue to solution architecture; activation happens on the final page."

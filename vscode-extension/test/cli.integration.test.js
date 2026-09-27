@@ -86,7 +86,8 @@ test('existing repository import accepts product ownership and identity without 
 });
 
 test('CLI import saves reviewed edits from the UI handoff and retains them on repeat', { skip: executable ? false : 'Build Cis.Host first.' }, async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cis-import-merge-cli-'));
+  // Exercise a noncanonical Windows spelling; the handoff must use the preview identity.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cis-import-merge-cli-')).replaceAll('\\', '/');
   const original = '# Existing instructions\n\nKeep the project workflow.\n';
   fs.writeFileSync(path.join(root, 'AGENTS.md'), original);
   try {
@@ -104,7 +105,7 @@ test('CLI import saves reviewed edits from the UI handoff and retains them on re
       .replace('## Human-readable content\n', '') + '\n+ A real Markdown bullet\n';
     const result = await runRepositoryImport({ runForeground: (_title, command, options) => cli.query(command, options) }, {
       args: [...args, '--merge-review', plan.mergeReviewHash, '--yes'],
-      fileMerges: [{ repositoryPath: root, relativePath: 'AGENTS.md', content: edited }],
+      fileMerges: [{ repositoryPath: plan.fileMerges[0].repositoryPath, relativePath: 'AGENTS.md', content: edited }],
     });
     assert.equal(result.applied, true);
     assert.equal(fs.readFileSync(path.join(root, 'AGENTS.md'), 'utf8'), edited);

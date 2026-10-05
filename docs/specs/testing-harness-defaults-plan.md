@@ -23,6 +23,8 @@ The scope covers SC-05 through SC-12 and the testing aspects of SC-13 through SC
 
 All qualification examples must be synthetic and reproducible from public CIS fixtures. This proposal does not rely on application-specific source or artifact evidence.
 
+The related [code quality and architecture plan](code-quality-architecture-plan.md) uses this harness for structural enforcement, composition tests and later behavior-preserving refactoring. Shared discovery and classification work should be delivered once. Production refactoring requires the relevant test and instrumentation baseline; optional shared-library work does not block harness delivery.
+
 ## What the investigation established
 
 | Finding | Evidence | Planning consequence |

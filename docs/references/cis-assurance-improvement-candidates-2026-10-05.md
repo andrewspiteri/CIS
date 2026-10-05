@@ -42,5 +42,8 @@ Relevant CIS sources are the [testing standard](../standards/testing-standard.md
 [planning specification](../specs/change-impact-and-planning-spec.md).
 The [testing harness defaults plan](../specs/testing-harness-defaults-plan.md) proposes
 work on SC-05 through SC-12 and the testing aspects of SC-13 through SC-16.
+The [code quality and architecture plan](../specs/code-quality-architecture-plan.md)
+proposes work on SC-01 through SC-04 and related prevention for SC-12, SC-14 and SC-15.
+Both plans remain Draft proposals; their publication does not close these candidates.
 The [remediation record](../../planning/cis-trial-remediation-2026-10-05.md) documents
 implemented CIS changes; those changes do not close every candidate in this inventory.

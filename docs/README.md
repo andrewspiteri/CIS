@@ -32,6 +32,7 @@ Reader entry points:
 
 Canonical starting points:
 
+- [Code quality and architecture plan](specs/code-quality-architecture-plan.md) — proposed readability rules, adaptable architecture recipes, optional shared libraries and bounded refactoring; planning only
 - [Testing harness defaults plan](specs/testing-harness-defaults-plan.md) — proposed language defaults, complete test layers, examples and staged harness migration; planning only
 - [Engineering assurance coverage](references/engineering-assurance-coverage.md) — portable security, testing, browser, contract and tooling safeguards, with verification limits
 

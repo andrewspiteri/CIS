@@ -1,6 +1,11 @@
 schema_version: 1
 repository: change-impact-studio
 documents:
+  - id: change-impact-studio:plan:code-quality-architecture
+    path: docs/specs/code-quality-architecture-plan.md
+    type: implementation-plan
+    status: draft
+    authority: canonical
   - id: change-impact-studio:plan:testing-harness-defaults
     path: docs/specs/testing-harness-defaults-plan.md
     type: implementation-plan

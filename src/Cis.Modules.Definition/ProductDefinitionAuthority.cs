@@ -92,15 +92,20 @@ public sealed class ProductDefinitionAuthority(ICisRepositoryContextResolver rep
     {
         var absent = new List<string>();
         var builder = new StringBuilder("cis-product-definition-baseline-v1\n");
+        var directionPath = CisProductDocumentPaths.Resolve(documentationPath, "design", "ui-direction.md");
+        var noVisualUi = File.Exists(directionPath) && Regex.IsMatch(File.ReadAllText(directionPath), @"(?m)^  visual_ui: false\r?$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
         foreach (var relative in DefinitionArtifacts.Order(StringComparer.Ordinal))
         {
-            var path = Path.Combine(documentationPath, relative.Replace('/', Path.DirectorySeparatorChar));
+            if (noVisualUi && relative is "design/ui-system-preview.md" or "design/ui-system-preview.svg") continue;
+            var path = CisProductDocumentPaths.Resolve(documentationPath, relative.Replace('/', Path.DirectorySeparatorChar));
             if (!File.Exists(path))
             {
                 absent.Add(relative);
                 continue;
             }
             builder.Append(relative).Append(':');
+            if (!path.Equals(Path.Combine(documentationPath, relative.Replace('/', Path.DirectorySeparatorChar)), CisPathSafety.PlatformComparison))
+                builder.Append("selected:").Append(Path.GetRelativePath(documentationPath, path).Replace('\\', '/')).Append(':');
             if (InventoryOnlyArtifacts.Contains(relative)) builder.Append("present");
             else builder.Append(Hash(Encoding.UTF8.GetBytes(NormalizedArtifact(relative, File.ReadAllText(path)))));
             builder.Append('\n');

@@ -128,15 +128,14 @@ public sealed class FeedbackService
             var percentile95 = Percentile95(output);
             var maximum = output.Length == 0 ? 0 : output[^1];
             var total = output.Sum(item => (long)item);
-            if ((average >= PerInvocationOutputThreshold || percentile95 >= PerInvocationOutputThreshold)
-                && group.All(item => string.Equals(item.SavingsConfidence, "none", StringComparison.Ordinal)))
+            if (average >= PerInvocationOutputThreshold || percentile95 >= PerInvocationOutputThreshold)
             {
                 opportunities.Add(new FeedbackOpportunity(
                     "CIS-FEEDBACK-COMPACTION",
                     "information",
                     group.Key,
-                    $"The command emits about {Math.Round(average)} tokens per run on average (p95 {percentile95}, max {maximum}) without a registered counterfactual estimate.",
-                    "Add or use a compact structured projection. If full evidence is intentional, register a command-owned raw-versus-focused estimate.",
+                    $"The command emits about {Math.Round(average)} tokens per run on average (p95 {percentile95}, max {maximum}) ; estimates do not establish that this output is bounded.",
+                    "Use a bounded structured projection; retain full evidence only when needed. Validate any counterfactual against this command output.",
                     [$"averageOutputEstimatedTokens={Math.Round(average)}", $"p95OutputEstimatedTokens={percentile95}",
                         $"maxOutputEstimatedTokens={maximum}", $"totalOutputEstimatedTokens={total}", $"runs={group.Count()}"]));
             }

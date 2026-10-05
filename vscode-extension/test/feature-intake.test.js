@@ -65,6 +65,42 @@ function fixture() {
   return { page, vscode, cli, calls, inputs, executed, plan, draft, wizard, options, value: JSON.stringify(draft), changeAuthority: () => { selectedRoot = path.resolve('different'); }, refreshes: () => refreshes };
 }
 
+test('approved technical direction is displayed as inherited with optional changes', async () => {
+  const f = fixture(); await f.page.ready;
+  const technical = f.wizard.pages.find(page => page.id === 'technical');
+  technical.status = 'Inherited'; technical.complete = true; technical.attention = [];
+  technical.fields = [
+    { id: 'technical-platform', label: 'Technologies inherited from the product', suggestedAnswer: 'Use C# and .NET 10.', answer: null, required: false, inherited: true },
+    { id: 'technical-decisions', label: 'Feature-specific changes (optional)', suggestedAnswer: '', answer: null, required: false }
+  ];
+  const page = openFeatureIntake(f.vscode, { ...f.options, initialSlug: 'referrals', initialPage: 'technical' }); await page.ready;
+  const html = page.panel.webview.html;
+  assert.match(html, /Inherited approved direction/);
+  assert.match(html, /Use C# and .NET 10/);
+  assert.match(html, /Propose a feature-specific change/);
+  assert.match(html, /No new technical decision is recorded/);
+  assert.doesNotMatch(html, /This page is reviewed against/);
+  assert.equal(f.inputs.length, 0, 'viewing inherited direction must not save human decisions');
+});
+
+test('feature context displays its linked BRD versions and rejects unrelated source links', async () => {
+  const f = fixture(); await f.page.ready;
+  f.wizard.description = 'Record market events and retain their original identifiers.';
+  f.wizard.planningContext = 'Keep event timestamps in UTC.';
+  f.wizard.sourceBrds = [{ title: 'Market <BRD>', originalPath: 'C:/incoming/market.md', path: '.cis/inputs/brds/version/source.md', hash: 'sha256:version', requirementIds: ['MD-01'] }];
+  const page = openFeatureIntake(f.vscode, { ...f.options, initialSlug: 'referrals', initialPage: 'foundation' }); await page.ready;
+  const html = page.panel.webview.html;
+  assert.match(html, /Feature description/);
+  assert.match(html, /Record market events and retain their original identifiers/);
+  assert.match(html, /Market &lt;BRD&gt;/);
+  assert.match(html, /Requirements: MD-01/);
+  assert.match(html, /Keep event timestamps in UTC/);
+  assert.match(html, /data-wizard-action="open-linked-brd"/);
+  await page.action('open-linked-brd', JSON.stringify({ target: '../unrelated.md' }));
+  assert.match(page.model.error, /not linked to the feature/);
+  assert.equal(f.executed.length, 0);
+});
+
 test('story decisions save separately, preserve other drafts and survive reopening without a workspace reload', async () => {
   const f=fixture(); await f.page.ready; await f.page.action('preview',f.value); await f.page.action('apply');
   const query=f.cli.query;
@@ -324,18 +360,81 @@ test('existing feature previews and applies an updated BRD without recreating re
   assert.deepEqual(f.executed.at(-1), ['cis.refreshFeatures']);
 });
 
-test('reimport preserves unsaved answers and repository work until explicitly saved or discarded', async () => {
+test('replacement applies with unsaved edits and preserves every draft separately across reopening', async () => {
   const f = fixture(); await f.page.ready; await f.page.action('preview', f.value); await f.page.action('apply');
+  let picks = 0;
+  f.vscode.window.showOpenDialog = async () => { picks++; return [{ fsPath: path.resolve('updated.md') }]; };
   const count = f.calls.length;
   await f.page.action('reimport-source', JSON.stringify({ page: 'business', answers: { summary: 'My unsaved answer.' } }));
-  assert.equal(f.calls.length, count); assert.match(f.page.model.error, /Save or discard/u);
+  assert.equal(picks, 1); assert.equal(f.page.model.error, undefined);
+  assert.equal(f.calls.length, count + 1); assert.ok(f.calls.at(-1).includes('--dry-run'));
+  assert.ok(f.page.model.sourceUpdate);
+  assert.match(f.page.panel.webview.html, /You can apply this update now/u);
+  assert.doesNotMatch(f.page.panel.webview.html, /data-wizard-action="apply-source-update" disabled/u);
   assert.equal(f.page.model.pageDrafts.business.summary, 'My unsaved answer.');
-  await f.page.action('discard-edits', JSON.stringify({ page: 'business' }));
   await f.page.action('navigate', JSON.stringify({ page: 'business', target: 'delivery' }));
   const afterDeliveryStatus = f.calls.length;
   await f.page.action('reimport-source', JSON.stringify({ page: 'delivery', repositoryWork: [{ id: 'RW-001', repositoryId: 'backend', title: 'Pending', scope: 'Unsaved work', dependsOn: [], changeIds: [] }] }));
-  assert.equal(f.calls.length, afterDeliveryStatus); assert.match(f.page.model.error, /Delivery and acceptance/u);
-  assert.equal(f.page.model.repositoryWorkDraft[0].scope, 'Unsaved work');
+  assert.equal(picks, 2); assert.equal(f.page.model.error, undefined);
+  assert.equal(f.calls.length, afterDeliveryStatus + 1); assert.ok(f.calls.at(-1).includes('--dry-run'));
+  const story = { treatment: 'extend', owners: ['backend'], plan: 'My unsaved story.', evidencePaths: '' };
+  await f.page.action('remember', JSON.stringify({ page: 'delivery', deliveryDrafts: { story }, screenDrafts: { home: 'My screen feedback.' } }));
+  f.page.model.recoveredSourceDraft = { sourceHash: 'sha256:older', answers: { business: { summary: 'Earlier recovery.' } } };
+  await f.page.action('apply-source-update', JSON.stringify({ page: 'delivery' }));
+  assert.equal(f.page.model.error, undefined);
+  assert.equal(f.calls.filter(args => args[3] === 'reimport' && args.includes('--yes')).length, 1);
+  assert.equal(f.page.model.sourceUpdate, undefined);
+  const recovered = f.page.model.recoveredSourceDraft;
+  assert.equal(recovered.sourceHash, 'sha256:old');
+  assert.deepEqual(recovered.questions, ['Who owns support?']);
+  assert.equal(recovered.answers.business.summary, 'My unsaved answer.');
+  assert.deepEqual(recovered.deliveryDrafts.story, story);
+  assert.equal(recovered.screenDrafts.home, 'My screen feedback.');
+  assert.equal(recovered.repositoryWork[0].scope, 'Unsaved work');
+  assert.equal(recovered.earlierRecovery.answers.business.summary, 'Earlier recovery.');
+  assert.deepEqual(f.page.model.pageDrafts, {});
+  assert.deepEqual(f.page.model.deliveryDrafts, {});
+  assert.deepEqual(f.page.model.screenDrafts, {});
+  assert.equal(f.page.model.repositoryWorkDraft, undefined);
+  const reopened = openFeatureIntake(f.vscode, { ...f.options, initialSlug: 'referrals' }); await reopened.ready;
+  assert.deepEqual(reopened.model.recoveredSourceDraft, recovered);
+  assert.deepEqual(reopened.model.pageDrafts, {});
+});
+
+test('replacement retains editable drafts when import fails and does not import if recovery cannot be persisted', async () => {
+  const f = fixture(); await f.page.ready; await f.page.action('preview', f.value); await f.page.action('apply');
+  f.vscode.window.showOpenDialog = async () => [{ fsPath: path.resolve('updated.md') }];
+  await f.page.action('reimport-source', JSON.stringify({ page: 'business', answers: { summary: 'Keep my answer.' } }));
+  const query = f.cli.query;
+  f.cli.query = async args => args[3] === 'reimport' && args.includes('--yes')
+    ? { errors: ['Import failed.'], applied: false } : query(args);
+  await f.page.action('apply-source-update', JSON.stringify({ page: 'business' }));
+  assert.match(f.page.model.error, /Import failed/u);
+  assert.equal(f.page.model.pageDrafts.business.summary, 'Keep my answer.');
+  assert.equal(f.page.model.recoveredSourceDraft, undefined);
+  await f.page.action('reimport-source', JSON.stringify({ page: 'business' }));
+  const before = f.calls.length;
+  f.options.storage.update = async () => { throw new Error('Storage unavailable'); };
+  await f.page.action('apply-source-update', JSON.stringify({ page: 'business' }));
+  assert.equal(f.calls.length, before);
+  assert.match(f.page.model.error, /BRD was not replaced/u);
+  assert.equal(f.page.model.pageDrafts.business.summary, 'Keep my answer.');
+  assert.ok(f.page.model.sourceUpdate);
+});
+
+test('replacement survives a failed status refresh without losing unsaved drafts', async () => {
+  const f = fixture(); await f.page.ready; await f.page.action('preview', f.value); await f.page.action('apply');
+  f.vscode.window.showOpenDialog = async () => [{ fsPath: path.resolve('updated.md') }];
+  await f.page.action('reimport-source', JSON.stringify({ page: 'business', answers: { summary: 'Keep this through refresh failure.' } }));
+  const query = f.cli.query;
+  f.cli.query = async args => args[3] === 'status' ? { errors: ['Status unavailable.'] } : query(args);
+  await f.page.action('apply-source-update', JSON.stringify({ page: 'business' }));
+  assert.match(f.page.model.error, /BRD was reimported/u);
+  assert.equal(f.page.model.pageDrafts.business.summary, 'Keep this through refresh failure.');
+  f.cli.query = query;
+  const reopened = openFeatureIntake(f.vscode, { ...f.options, initialSlug: 'referrals' }); await reopened.ready;
+  assert.equal(reopened.model.recoveredSourceDraft.answers.business.summary, 'Keep this through refresh failure.');
+  assert.deepEqual(reopened.model.pageDrafts, {});
 });
 
 test('cancelled and identical BRD updates leave the feature review unchanged', async () => {
@@ -642,6 +741,19 @@ test('direct feature links restore the requested feature and retain a separate r
   const fresh = openFeatureIntake(f.vscode, { ...f.options, createNew: true }); await fresh.ready;
   assert.equal(fresh.model.selectedSlug, undefined); assert.equal(fresh.model.page, 'foundation');
   assert.equal(reopened.model.selectedSlug, 'referrals', 'adding another feature must not replace the open feature');
+});
+
+test('delivery shows story breakdown without requiring a repository work form and preserves earlier notes', async () => {
+  const f = fixture(); await f.page.ready; await f.page.action('preview', f.value); await f.page.action('apply');
+  f.page.model.page = 'delivery';
+  f.page.model.wizard.repositoryWork = [{ id: 'old', title: 'Earlier API plan', repositoryId: 'backend', scope: 'Preserve earlier scope.' }];
+  const html = renderFeatureIntake({ cspSource: 'vscode-webview:' }, f.page.model, 'test-nonce');
+  assert.match(html, /Generate story breakdown/u);
+  assert.match(html, /zero, one or several/u);
+  assert.match(html, /Earlier API plan/u);
+  assert.match(html, /Preserve earlier scope/u);
+  assert.doesNotMatch(html, /id="repository-work"/u);
+  assert.doesNotMatch(html, /Repository work breakdown/u);
 });
 
 test('saved feature navigation remains available while reviewing a feature', async () => {

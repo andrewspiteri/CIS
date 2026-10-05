@@ -7,7 +7,16 @@ public sealed record CisFeatureIntakeRequest(
 public sealed record CisFeatureIntakePlan(
     string Title, string Slug, string RepositoryPath, string RepositoryMode, string DocumentationRoot,
     string RequestPath, string SourcePath, string SourceHash, IReadOnlyList<string> IntegrationRepositories,
-    IReadOnlyList<string> OpenDecisions, string? ProductDefinitionHash, string PlanHash);
+    IReadOnlyList<string> OpenDecisions, string? ProductDefinitionHash, string PlanHash)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? BacklogItemId { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<CisFeatureBrdSource>? SourceBrds { get; init; }
+}
+
+public sealed record CisFeatureBrdSource(string Title, string OriginalPath, string Path, string Hash,
+    IReadOnlyList<string> RequirementIds);
 
 public sealed record CisFeatureIntakeResult(
     string Status, CisFeatureIntakePlan? Plan, IReadOnlyList<string> Errors,
@@ -16,7 +25,10 @@ public sealed record CisFeatureIntakeResult(
     public int ExitCode => Errors.Count > 0 ? 5 : ConfirmationRequired ? 3 : 0;
 }
 
-public sealed record CisFeatureWizardField(string Id, string Label, string SuggestedAnswer, string? Answer, bool Required);
+public sealed record CisFeatureWizardField(string Id, string Label, string SuggestedAnswer, string? Answer, bool Required)
+{
+    public bool Inherited { get; init; }
+}
 public sealed record CisFeatureWizardDocument(string Title, string Path, bool Exists);
 public sealed record CisFeatureWizardPage(string Id, string Title, string Status, bool Complete,
     IReadOnlyList<string> Attention, IReadOnlyList<CisFeatureWizardField> Fields, IReadOnlyList<CisFeatureWizardDocument> Documents);
@@ -26,6 +38,9 @@ public sealed record CisFeatureWizardResult(string Status, CisFeatureIntakePlan?
     public IReadOnlyList<CisFeatureRepositoryWork> RepositoryWork { get; init; } = [];
     public IReadOnlyList<CisWorkspaceRepository> Repositories { get; init; } = [];
     public IReadOnlyList<CisFeatureWizardDocument> SourceHistory { get; init; } = [];
+    public IReadOnlyList<CisFeatureBrdSource> SourceBrds { get; init; } = [];
+    public string Description { get; init; } = "";
+    public string PlanningContext { get; init; } = "";
     public int ExitCode => Errors.Count == 0 ? 0 : 5;
 }
 public sealed record CisFeatureWizardAnswer(string Slug, string Page, Dictionary<string, string> Answers, string Actor, string ExpectedRevision)
@@ -38,12 +53,23 @@ public sealed record CisFeatureWizardAnswer(string Slug, string Page, Dictionary
 public sealed record CisFeatureRepositoryWork(string Id, string RepositoryId, string Title, string Scope,
     IReadOnlyList<string> DependsOn, IReadOnlyList<string> ChangeIds);
 public sealed record CisFeatureNavigationEntry(CisFeatureIntakePlan Plan, string Status, int ReviewedPages,
-    int TotalPages, string NextPage, IReadOnlyList<CisFeatureRepositoryWork> RepositoryWork, IReadOnlyList<string> Errors);
+    int TotalPages, string NextPage, IReadOnlyList<CisFeatureRepositoryWork> RepositoryWork, IReadOnlyList<string> Errors)
+{
+    public IReadOnlyList<CisFeatureStoryLink> Stories { get; init; } = [];
+}
+public sealed record CisFeatureStoryLink(string Id, string Title, string Phase, IReadOnlyList<string> RepositoryIds, string Status)
+{
+    public IReadOnlyList<CisFeatureStoryTaskLink> Tasks { get; init; } = [];
+}
 public sealed record CisFeatureNavigationResult(CisWorkspace? Workspace, IReadOnlyList<CisFeatureNavigationEntry> Features,
     IReadOnlyList<string> Errors)
 {
+    public IReadOnlyList<CisBacklogFeature> BacklogFeatures { get; init; } = [];
     public int ExitCode => Errors.Count == 0 ? 0 : 5;
 }
+
+public sealed record CisBacklogFeature(string Id, string RequirementId, string Title, string Status,
+    IReadOnlyList<string> DependsOn, IReadOnlyList<string> Issues, bool CanStart, string InputHash);
 
 public sealed record CisFeatureSourceUpdatePlan(string Slug, string Title, string IncomingPath,
     string PreviousSourcePath, string SourcePath, string PreviousRequestPath, string PreviousSourceHash,

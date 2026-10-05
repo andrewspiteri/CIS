@@ -74,7 +74,9 @@ public sealed record ArchitectureDiagramModel(IReadOnlyList<ArchitectureView> Vi
         var height = graphHeight + 95 + noteLines.Length * 19 + legendLines.Sum(lines => lines.Length * 19 + 10);
         var svg = new StringBuilder($"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1240\" height=\"{height}\" viewBox=\"0 0 1240 {height}\" role=\"img\" aria-labelledby=\"title\">\n<title id=\"title\">{Escape(view.Title)}</title>\n<rect width=\"100%\" height=\"100%\" rx=\"12\" fill=\"#f8fafc\"/>\n<g font-family=\"Segoe UI, Arial, sans-serif\" fill=\"#0f172a\">\n");
         Text(svg, 28, 34, view.Title, Math.Min(24, (int)(1120 / Math.Max(1, view.Title.Length * 0.65))));
-        Text(svg, 28, 60, "Observed implementation · proposed changes and unresolved details are labelled for review", 14);
+        Text(svg, 28, 60, view.Id == "documented-boundaries"
+            ? "Proposed solution · documented boundaries for architecture review"
+            : "Observed implementation · proposed changes and unresolved details are labelled for review", 14);
         var positions = new Dictionary<string, (int X, int Y)>(StringComparer.Ordinal);
         foreach (var layer in layers)
         {

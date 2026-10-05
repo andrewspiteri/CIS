@@ -136,6 +136,20 @@ public sealed class DocumentationServicesTests
     }
 
     [Fact]
+    public void ExplicitlyLoadedDocumentOutsideDocumentationRootIsValidatedAndInventoried()
+    {
+        using var repository = TemporaryRepository.CreateInitialized();
+        repository.WriteRepositoryFile("legacy/brd.md", "---\ntitle: Imported BRD\nstatus: Draft\n---\n# Requirements\n");
+        repository.WriteRepositoryFile(".cis/product-documents.json", "{\"business\":\"legacy/brd.md\"}");
+        repository.WriteCatalog(CatalogEntry("example:spec:business-requirements", "legacy/brd.md", "business-requirements"));
+        Assert.Empty(CreateValidationService().Validate(repository.Path, strict: false).Errors);
+        var document = Assert.Single(CreateInventoryService().Inventory(repository.Path).Documents, item => item.Path == "legacy/brd.md");
+        Assert.True(document.Cataloged);
+        repository.WriteRepositoryFile(".cis/product-documents.json", "{\"business\":\"../outside.md\"}");
+        Assert.NotEmpty(CreateValidationService().Validate(repository.Path, strict: false).Errors);
+    }
+
+    [Fact]
     public void Validate_RejectsMalformedFrontMatterInCatalogedDocument()
     {
         using var repository = TemporaryRepository.CreateInitialized();

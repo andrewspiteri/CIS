@@ -177,6 +177,7 @@ public sealed class WorkspaceModule : ICisModule
             $"ecosystem={Clean(result.Ecosystem?.Id)};name={Clean(result.Ecosystem?.Name)}",
             $"product={Clean(result.Product?.Id)};name={Clean(result.Product?.Name)}",
             $"documentationRoot={Clean(result.DocumentationRoot)}",
+            $"gitInitializationPlanned={result.GitInitializationPlanned.ToString().ToLowerInvariant()};gitInitialized={result.GitInitialized.ToString().ToLowerInvariant()}",
         };
 
         if (result.RepositoryInitialization is { } repository)

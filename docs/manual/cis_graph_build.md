@@ -241,3 +241,19 @@ Remove-Item Env:CIS_PERF_TRACE
 - [`cis repo import`](cis_repo_import.md)
 - [`cis repo doctor`](cis_repo_doctor.md)
 - [`cis docs validate`](cis_docs_validate.md)
+
+## Reusing compiler analysis
+
+Builds serialize publication through a repository-local lock. Waiting builds recheck
+input identity and reuse completed graphs. Unchanged C# compilation inputs reuse
+`.cis/local/graph/compiler-analysis.json`, avoiding compiler analysis on documentation
+changes. The key includes every C# source content, component ownership, compiler,
+runtime and module build identity. Any source/ownership change invalidates the complete
+compiler analysis to preserve cross-file binding correctness. Invalid cache data is
+recomputed.
+
+`CIS_PERF_TRACE=1` reports local phase timings on stderr, including compiler cache hits.
+`--refresh` rebuilds graph extraction/publication; unchanged compiler inputs can still
+reuse analysis. This does not strengthen the graph's existing semantic coverage.
+
+Concurrent builds wait up to five minutes for the local lock, then report an I/O failure if it remains held.

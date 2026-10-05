@@ -1197,7 +1197,7 @@ status: Draft
         services.Usage.Record(new CisToolUsageCapture(
             ["context", "pack", "--repo", repository.Path], repository.Path,
             DateTimeOffset.Parse("2026-08-09T09:00:00Z"), DateTimeOffset.Parse("2026-08-09T09:00:01Z"),
-            1000, 0, 80, 0, [new CisTokenSavingsCandidate(100, 20, "focused context pack", "high")]));
+            1000, 0, 80, 0, [new CisTokenSavingsCandidate(100, 20, "focused context pack", "high", "context pack")]));
         Assert.Equal(0, services.Plans.TransitionTask(new PlanTaskTransitionRequest(
             repository.Path, change.Id, task.Id, "InProgress", "delivery-agent", "Begin bounded work.")).ExitCode);
         var taskPath = Path.Combine(Path.GetDirectoryName(services.Changes.DossierFile(change, "plan.md"))!,
@@ -1234,6 +1234,14 @@ status: Draft
             Assert.Equal(0, services.Plans.TransitionTask(new PlanTaskTransitionRequest(
                 repository.Path, change.Id, remaining.Id, "Complete", "delivery-agent", "Acceptance evidence passes.")).ExitCode);
         }
+
+        var workloadProfile = services.Changes.DossierFile(change, "workload-evidence.json");
+        File.WriteAllText(workloadProfile, "{\"schemaVersion\":1,\"applicable\":true,\"endToEndResult\":\"timeout\"}");
+        var workloadBlocked = services.Plans.TransitionTask(new PlanTaskTransitionRequest(
+            repository.Path, change.Id, finalSweep.Id, "Complete", "delivery-agent", "Audit workload evidence."));
+        Assert.NotEqual(0, workloadBlocked.ExitCode);
+        Assert.Contains(workloadBlocked.Errors, error => error.Contains("has not passed", StringComparison.Ordinal));
+        File.WriteAllText(workloadProfile, "{\"schemaVersion\":1,\"applicable\":false,\"rationale\":\"Documentation-only policy fixture with no volume-sensitive implementation.\"}");
 
         var swept = services.Plans.TransitionTask(new PlanTaskTransitionRequest(
             repository.Path, change.Id, finalSweep.Id, "Complete", "delivery-agent", "Final delivery is reproducible."));

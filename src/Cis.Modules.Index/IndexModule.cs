@@ -134,6 +134,7 @@ public sealed class IndexModule : ICisModule
             Description = "Required routing search text.",
             Required = true,
         };
+        text.Aliases.Add("--query");
         var limit = new Option<int>("--limit")
         {
             Description = "Maximum matching cards, from 1 to 1000.",
@@ -166,7 +167,7 @@ public sealed class IndexModule : ICisModule
                     baselineTokens,
                     null,
                     "estimated source-file content for matched cards versus the compact routing result",
-                    "medium"));
+                    "medium", "index find"));
             }
             return result.ExitCode;
         });

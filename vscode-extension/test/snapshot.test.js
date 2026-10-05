@@ -70,6 +70,19 @@ test('an input change discards obsolete data and shares one fresh retry with new
   assert.equal(started.length, 2);
 });
 
+test('a snapshot retry identifies the input notification that invalidated it', async () => {
+  const { cli, started, messages } = fixture();
+  const result = cli.query(brd, { repository: false });
+  await tick();
+  cli.clearQueryCache('file changed: docs/requirements.md');
+  started[0].callback(null, JSON.stringify(snapshot(1)), '');
+  await tick();
+  assert.equal(started.length, 2);
+  assert.ok(messages.some(line => line.includes('file changed: docs/requirements.md') && line.includes('retrying once')));
+  started[1].callback(null, JSON.stringify(snapshot(2)), '');
+  assert.equal((await result).value, 2);
+});
+
 test('different authorities, custom options, and interactive reads retain individual dispatch', async () => {
   const { cli, started } = fixture((args, callback) => setImmediate(() => callback(null,
     JSON.stringify(args[0] === 'workspace' ? snapshot(1) : { individual: true }), '')));

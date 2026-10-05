@@ -47,7 +47,7 @@ public sealed partial class BrdBacklogService
     public BrdBacklogResult Build(string workspacePath)
         => Build(workspacePath, null, null);
 
-    public BrdBacklogResult Build(string workspacePath, string? mode, string? actor)
+    public BrdBacklogResult Build(string workspacePath, string? mode, string? actor, bool applyReviewedChanges = false)
     {
         var state = Resolve(workspacePath);
         if (state.Errors.Count > 0) return Error("invalid", state, state.Errors);
@@ -86,8 +86,10 @@ public sealed partial class BrdBacklogService
 
         var brdContent = File.ReadAllText(state.BrdPath!);
         var requirements = ParseRequirements(brdContent, "Functional requirements");
+        var requirementErrors = BrdRequirementReader.Read(brdContent, "Functional requirements").Errors;
+        if (requirementErrors.Count > 0 && mode != "no-planned-work") return Error("blocked", state, requirementErrors);
         if (requirements.Count == 0 && mode != "no-planned-work")
-            return Error("blocked", state, ["The Active BRD contains no structured functional requirements."]);
+            return Error("blocked", state, ["No readable functional requirements were found in the BRD. Use identified table rows or bold requirement paragraphs under Functional requirements; imported identifiers and numbered headings are supported."]);
         var obligations = ParseRequirements(brdContent, "Quality, regulatory, and operational requirements")
             .Concat(ParseRequirements(brdContent, "Success measures"))
             .ToArray();
@@ -105,6 +107,11 @@ public sealed partial class BrdBacklogService
             && !string.Equals(ReadFrontMatter(existingContent, "status"), "Active", StringComparison.OrdinalIgnoreCase);
         var items = mode == "no-planned-work" ? [] : requirements.Select(requirement => CreateItem(requirement, requirements, routableRepositories,
             repositoryRoles, existing, migrateDependencies)).ToArray();
+        var uiPath = CisProductDocumentPaths.Resolve(Path.Combine(state.Authority.RepositoryPath, state.Authority.DocumentationRoot), "design", "ui-direction.md");
+        if (File.Exists(uiPath) && ReadNestedFrontMatter(File.ReadAllText(uiPath), "visual_ui") == "false")
+            items = items.Select(item => item with { FrontendTypes = [] }).ToArray();
+        if (items.Select(item => item.Id).Distinct(StringComparer.Ordinal).Count() != items.Length)
+            return Error("blocked", state, ["BRD requirement identities produce conflicting backlog item IDs. Resolve the identity collision before building the backlog."]);
         var title = ReadFrontMatter(brdContent, "title") ?? "Business Requirements";
         var next = Render(title, state, items, obligations, mode == "no-planned-work" ? actor!.Trim() : null,
             mode == "no-planned-work" ? _clock().ToUniversalTime().ToString("O") : null);
@@ -117,6 +124,12 @@ public sealed partial class BrdBacklogService
                 TechnicalIntentBaseline(File.ReadAllText(state.TechnicalIntentPath!)));
         if (approvalCanCarryForward)
             next = CarryApproval(existingContent!, next);
+
+        if (!applyReviewedChanges && !existingNoWork && existingContent is not null
+            && ReadFrontMatter(existingContent, "status") == "Active"
+            && ContentDigest(existingContent) != ContentDigest(next))
+            return new BrdBacklogResult("blocked", workspacePath, state.Authority!.Id, state.RelativePath,
+                items, null, ["Reviewed backlog content would change. Compare these candidate items with the saved backlog, then use --apply-reviewed-changes to save the candidate for renewed approval. No backlog or catalog was changed."], false);
 
         var catalog = File.ReadAllText(state.Context!.CatalogPath);
         var stableId = $"{state.Authority!.Id}:plan:high-level-backlog";
@@ -327,6 +340,7 @@ public sealed partial class BrdBacklogService
         var brdContent = File.ReadAllText(state.BrdPath!);
         var requirements = ParseRequirements(brdContent, "Functional requirements");
         var requiredIds = requirements.Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
+        if (!noWork) errors.AddRange(BrdRequirementReader.Read(brdContent, "Functional requirements").Errors);
         foreach (var duplicate in items.GroupBy(item => item.RequirementId, StringComparer.Ordinal).Where(group => group.Count() > 1))
             errors.Add($"BRD requirement is covered by more than one high-level item: {duplicate.Key}");
         foreach (var missing in noWork ? [] : requiredIds.Except(items.Select(item => item.RequirementId), StringComparer.Ordinal))
@@ -398,9 +412,9 @@ public sealed partial class BrdBacklogService
         if (!contextResolution.IsSuccess || contextResolution.Context is null)
             return new State(resolution.Workspace, authority, null, null, null, null, contextResolution.Errors);
         var docs = authority.DocumentationRoot.Replace('/', Path.DirectorySeparatorChar);
-        var brdPath = Path.Combine(authority.RepositoryPath, docs, "specs", "business-requirements.md");
-        var technicalPath = Path.Combine(authority.RepositoryPath, docs, "specs", "technical-intent-spec.md");
-        var backlogPath = Path.Combine(authority.RepositoryPath, docs, "plans", "high-level-backlog.md");
+        var brdPath = CisProductDocumentPaths.Resolve(Path.Combine(authority.RepositoryPath, docs), "specs", "business-requirements.md");
+        var technicalPath = CisProductDocumentPaths.Resolve(Path.Combine(authority.RepositoryPath, docs), "specs", "technical-intent-spec.md");
+        var backlogPath = CisProductDocumentPaths.Resolve(Path.Combine(authority.RepositoryPath, docs), "plans", "high-level-backlog.md");
         return new State(resolution.Workspace, authority, contextResolution.Context, brdPath, technicalPath,
             backlogPath, [], Normalize(Path.GetRelativePath(authority.RepositoryPath, backlogPath)));
     }
@@ -588,8 +602,9 @@ public sealed partial class BrdBacklogService
         var dependencies = previous is null || migrateDependencies
             ? inferredDependencies
             : previous.DependsOn;
-        return new BrdBacklogItem(id, requirement.Id, requirement.Outcome, requirement.Priority, repositories,
-            frontend.Distinct(StringComparer.Ordinal).ToArray(), dependencies,
+        return new BrdBacklogItem(id, requirement.Id, requirement.Outcome, requirement.ExplicitPriority ? requirement.Priority : previous?.Priority ?? requirement.Priority,
+            previous?.Repositories ?? repositories,
+            previous?.FrontendTypes ?? frontend.Distinct(StringComparer.Ordinal).ToArray(), dependencies,
             previous?.FeatureSpecification ?? "not-created", previous?.Notes ?? string.Empty);
     }
 
@@ -704,101 +719,8 @@ public sealed partial class BrdBacklogService
     }
 
     private static IReadOnlyList<Requirement> ParseRequirements(string content, string heading)
-    {
-        var section = Section(content, heading);
-        var result = new List<Requirement>();
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        string? currentId = null;
-        string? currentOutcome = null;
-        string? currentBody = null;
-
-        void FlushNarrative()
-        {
-            if (currentId is null)
-                return;
-
-            var body = Regex.Replace(currentBody?.Trim() ?? string.Empty, @"\s+", " ",
-                RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-            var outcome = string.IsNullOrWhiteSpace(currentOutcome) ? body : currentOutcome.Trim();
-            if (seen.Add(currentId) && !string.IsNullOrWhiteSpace(outcome))
-                result.Add(new Requirement(currentId, outcome, body, "Must", body));
-            currentId = null;
-            currentOutcome = null;
-            currentBody = null;
-        }
-
-        foreach (var line in section.Split('\n'))
-        {
-            var cells = Cells(line);
-            if (cells.Length >= 2 && IsBusinessRequirementId(cells[0]))
-            {
-                FlushNarrative();
-                if (seen.Add(cells[0]))
-                    result.Add(new Requirement(cells[0], cells[1], cells[1],
-                        cells.Length > 2 ? cells[2] : "Must",
-                        cells.Length > 3 ? cells[3] : string.Empty));
-                continue;
-            }
-
-            if (TryParseNarrativeRequirement(line, out var id, out var outcome, out var body))
-            {
-                FlushNarrative();
-                currentId = id;
-                currentOutcome = outcome;
-                currentBody = body;
-                continue;
-            }
-
-            if (currentId is null)
-                continue;
-
-            var continuation = line.Trim();
-            if (continuation.Length == 0)
-                continue;
-            if (continuation.StartsWith('|') || Regex.IsMatch(continuation, @"^[-*+]\s+",
-                    RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
-            {
-                FlushNarrative();
-                continue;
-            }
-
-            currentBody = string.IsNullOrWhiteSpace(currentBody)
-                ? continuation
-                : currentBody + " " + continuation;
-        }
-
-        FlushNarrative();
-        return result;
-    }
-
-    private static bool TryParseNarrativeRequirement(string line, out string id, out string outcome, out string body)
-    {
-        id = string.Empty;
-        outcome = string.Empty;
-        body = string.Empty;
-        var bullet = Regex.Match(line,
-            @"^\s*[-*+]\s+\*\*(?<label>.+?)\*\*\s*:?[ \t]*(?<body>.*)$",
-            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-        if (!bullet.Success)
-            return false;
-
-        var label = bullet.Groups["label"].Value.Trim().TrimEnd(':').Trim();
-        var identity = Regex.Match(label,
-            @"^(?<id>BR(?:D)?-[A-Z0-9]+(?:-[A-Z0-9]+)+)(?:\s+(?:—|–|-)\s+(?<outcome>.+))?$",
-            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-        if (!identity.Success || !IsBusinessRequirementId(identity.Groups["id"].Value))
-            return false;
-
-        id = identity.Groups["id"].Value;
-        outcome = identity.Groups["outcome"].Value.Trim();
-        body = bullet.Groups["body"].Value.Trim();
-        return true;
-    }
-
-    private static bool IsBusinessRequirementId(string value)
-        => Regex.IsMatch(value, @"^BR(?:D)?-[A-Z0-9]+(?:-[A-Z0-9]+)+$",
-            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-
+        => BrdRequirementReader.Read(content, heading).Requirements.Select(item =>
+            new Requirement(item.Id, item.Outcome, item.Text, item.Priority, item.Acceptance, item.ExplicitPriority)).ToArray();
     private static string BacklogItemId(string requirementId)
     {
         var suffix = requirementId.StartsWith("BRD-", StringComparison.Ordinal)
@@ -999,18 +921,13 @@ cis:
     private static string[] Cells(string line) => !line.TrimStart().StartsWith('|') ? [] : line.Trim().Trim('|').Split('|').Select(cell => cell.Trim().Replace("\\|", "|", StringComparison.Ordinal)).ToArray();
     private static string[] List(string value) => value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     private static bool Placeholder(string value) => Regex.IsMatch(value, @"\b(?:TODO|TBD)\b|(?i:\bTO BE COMPLETED\b)", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-    private static string? ReadFrontMatter(string content, string key) { var end = content.IndexOf("\n---", 4, StringComparison.Ordinal); if (!content.StartsWith("---", StringComparison.Ordinal) || end < 0) return null; var match = Regex.Match(content[..end], $"(?m)^{Regex.Escape(key)}:\\s*(?<value>.+)$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)); return match.Success ? match.Groups["value"].Value.Trim().Trim('"') : null; }
-    private static string? ReadNestedFrontMatter(string content, string key) { var end = content.IndexOf("\n---", 4, StringComparison.Ordinal); if (!content.StartsWith("---", StringComparison.Ordinal) || end < 0) return null; var match = Regex.Match(content[..end], $"(?m)^  {Regex.Escape(key)}:\\s*(?<value>.+)$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)); return match.Success ? match.Groups["value"].Value.Trim().Trim('"') : null; }
-    private static string ReplaceFrontMatter(string content, string key, string value) => Regex.Replace(content, $"(?m)^{Regex.Escape(key)}:.*$", $"{key}: {value}", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-    private static string ReplaceNestedFrontMatter(string content, string key, string value) => Regex.Replace(content, $"(?m)^  {Regex.Escape(key)}:.*$", $"  {key}: {value}", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-    private static string RemoveNestedFrontMatter(string content, string key) => Regex.Replace(content,
-        $"(?m)^  {Regex.Escape(key)}:.*(?:\\n|$)", string.Empty, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+    private static string? ReadFrontMatter(string content, string key) => CisFrontMatter.Read(content, key)?.Trim('"');
+    private static string? ReadNestedFrontMatter(string content, string key) => CisFrontMatter.Read(content, key, nested: true)?.Trim('"');
+    private static string ReplaceFrontMatter(string content, string key, string value) => CisFrontMatter.Set(content, key, value);
+    private static string ReplaceNestedFrontMatter(string content, string key, string value) => CisFrontMatter.Set(content, key, value, nested: true);
+    private static string RemoveNestedFrontMatter(string content, string key) => CisFrontMatter.Remove(content, key, nested: true);
     private static string EnsureNestedFrontMatter(string content, string key, string value)
-    {
-        if (ReadNestedFrontMatter(content, key) is not null) return content;
-        var end = content.IndexOf("\n---", 4, StringComparison.Ordinal);
-        return end < 0 ? content : content.Insert(end, $"\n  {key}: {value}");
-    }
+        => ReadNestedFrontMatter(content, key) is not null ? content : CisFrontMatter.Set(content, key, value, nested: true);
     private static string ItemDigest(BrdBacklogItem item) => Hash(string.Join('\n',
         item.Id, item.RequirementId, item.Outcome, item.Priority, string.Join(',', item.Repositories),
         string.Join(',', item.FrontendTypes), string.Join(',', item.DependsOn)));
@@ -1019,20 +936,13 @@ cis:
     {
         var normalized = NormalizeApprovalMetadata(content);
         foreach (var key in new[] { "brd_hash", "technical_intent_hash" })
-            normalized = Regex.Replace(normalized, $"(?m)^  {key}:.*$", $"  {key}: <upstream-baseline>",
-                RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+            normalized = CisFrontMatter.Set(normalized, key, "<upstream-baseline>", nested: true, insert: false);
         return Hash(normalized.TrimEnd());
     }
     private static string LegacyContentDigest(string content) => Hash(NormalizeApprovalMetadata(content).TrimEnd());
     private static string NormalizeApprovalMetadata(string content)
-    {
-        var normalized = content.Replace("\r\n", "\n", StringComparison.Ordinal);
-        foreach (var key in new[] { "status", "last_reviewed" })
-            normalized = Regex.Replace(normalized, $"(?m)^{key}:.*$", $"{key}: <approval-metadata>", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-        foreach (var key in new[] { "approved_by", "approved_at", "approval_reason", "approved_content_hash" })
-            normalized = Regex.Replace(normalized, $"(?m)^  {key}:.*$", $"  {key}: <approval-metadata>", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-        return normalized;
-    }
+        => CisFrontMatter.NormalizeApproval(content.Replace("\r\n", "\n", StringComparison.Ordinal));
+
     private static bool ApprovalDigestMatches(string content, string digest)
         => digest == ContentDigest(content) || digest == LegacyContentDigest(content);
     private static bool HasCurrentApproval(string content)
@@ -1076,7 +986,7 @@ cis:
     private static BrdFeatureSpecificationResult FeatureError(string status, State state, string? itemId, IReadOnlyList<string> errors)
         => new(status, state.Workspace?.WorkspacePath, state.Authority?.Id, itemId, null, null, errors, false);
 
-    private sealed record Requirement(string Id, string Outcome, string Text, string Priority, string Acceptance);
+    private sealed record Requirement(string Id, string Outcome, string Text, string Priority, string Acceptance, bool ExplicitPriority);
     private sealed record FeatureRequirement(string Id, string Surface, string FrontendType, string Requirement, string Acceptance);
     private sealed record FeatureState(State? State, BrdBacklogItem? Item, string? Path, string? RelativePath,
         IReadOnlyList<string> Errors);

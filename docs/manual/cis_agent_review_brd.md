@@ -46,7 +46,14 @@ repository-wide search or source non-existence.
 
 The provider must return a structured recommendation of `ready`, `revise`, or `blocked`,
 strengths, and at most 100 findings. Each finding records a stable `BRD-REV-*` identity,
-severity, category, location, observation, and recommended action. A `ready`
+severity, category, location, observation, and proposed text changes. The review prompt
+requires each recommendation to name the existing heading and exact edit location and
+include complete proposed Markdown in a fenced `diff` block. Removed and context lines
+must match the current BRD; added lines contain the wording for the human to approve.
+Instructions such as “Add a narrative” without that wording are insufficient. Independent
+journeys belong in separate findings, with additions placed in the document's reading order.
+Unsupported policy must remain an explicit unanswered question, never an invented answer.
+A `ready`
 recommendation cannot contain blocking or major findings.
 
 The initial review assesses the rendered BRD as a business reader with no technical
@@ -66,10 +73,31 @@ CIS retains the JSON result and a human-readable Markdown rendering beneath:
 ```
 
 After a successful review, the VS Code extension loads that run directly, initializes
-its pending recommendation record when it has findings, and opens the report before
+its pending recommendation record when it has findings, and opens the recommendation screen before
 refreshing workspace views. A failure in this follow-up reports that the review itself
 succeeded. Reopen the retained run or its recommendations to continue; a view refresh
 failure does not require another provider execution.
+The screen shows proposed additions and removals and supports multiline edits before
+approval. The revision prompt preserves the exact approved text and asks the agent to
+report conflicting edits or mismatched anchors rather than reinterpret the wording.
+Previously saved reviews retain their original recommendations; rerun independent review
+to generate proposals under the updated prompt.
+
+If a retained revision stopped because older CIS decoded punctuation incorrectly,
+`cis agent recover-brd-revision <revision-run-id> --repo <workspace> --actor <name>
+--reason <reason>` can apply the approved diffs locally. It requires unchanged review
+evidence, approvals and BRD context, and exactly one matching location for every edit.
+Recovery only reverses the known punctuation encoding error; it cannot resolve ambiguous
+anchors or recommendations without exact diffs. Protected human answers and source
+evidence still pass the normal application checks. The failed run stays unchanged and
+a separate recovery run records the result. No model is invoked. Independent closure
+review is still required before the BRD can proceed toward approval.
+
+If Claude reports an expired OAuth session, CIS marks the run as an authentication
+failure and displays the provider's error. A locally detected login does not guarantee
+that its session can still be refreshed. Run **CIS: Authenticate Agent Provider** in
+VS Code, choose Claude, and complete sign-in before retrying the review. A failed
+authentication attempt produces no review findings and does not edit the BRD.
 
 The review is advisory derived evidence. It cannot edit or approve the BRD, answer open
 questions, assess sources on behalf of a stakeholder, validate business currency, or

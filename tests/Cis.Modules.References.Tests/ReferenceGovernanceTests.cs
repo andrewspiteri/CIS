@@ -127,6 +127,12 @@ public sealed class ReferenceGovernanceTests
     public void Discover_PrunesGeneratedArtifactTreesBeforeSourceEnumeration()
     {
         using var repository = ReferenceRepository.Create(aligned: true);
+        string[] generatedRoots = [".github/copilot-runtime", "tmp", "temp", ".tmp", ".temp", ".cache",
+            "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".stryker-tmp",
+            "TestResults", "test-results", "playwright-report", "blob-report", "src/nested/.cache"];
+        foreach (var root in generatedRoots)
+            repository.Replace($"{root}/Generated.cs", "[Authorize(Policy = \"PERM-CACHE-ONLY\")] public sealed record CachedCommand;");
+        repository.Replace(".github/scripts/Check.cs", "[Authorize(Policy = \"PERM-SCRIPT-REAL\")] public sealed record RealCommand;");
         repository.Replace(
             "artifacts/clean-profile/agent-host/local-endpoint/Generated.cs",
             "[Authorize(Policy = \"PERM-ARTIFACT-ONLY\")] public sealed record GeneratedCommand;");
@@ -143,6 +149,60 @@ public sealed class ReferenceGovernanceTests
         Assert.DoesNotContain("PERM-ARTIFACT-ONLY", state, StringComparison.Ordinal);
         Assert.DoesNotContain("PERM-TEST-ONLY", state, StringComparison.Ordinal);
         Assert.DoesNotContain("GeneratedCommand", state, StringComparison.Ordinal);
+        Assert.DoesNotContain("PERM-CACHE-ONLY", state, StringComparison.Ordinal);
+        Assert.DoesNotContain("CachedCommand", state, StringComparison.Ordinal);
+        Assert.Contains("PERM-SCRIPT-REAL", state, StringComparison.Ordinal);
+        Assert.Contains("PERM-LISTS-READ", state, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Discover_SharesOneSourceReadAcrossProvidersAndRefreshesChangedAddedAndRemovedFiles()
+    {
+        using var repository = ReferenceRepository.Create(aligned: true);
+        repository.Replace("src/Shared.ts", "before");
+        var first = new RecordingReferenceProvider("first");
+        var second = new RecordingReferenceProvider("second");
+        var service = new ReferenceGovernanceService(new CisRepositoryContextResolver(), [first, second]);
+
+        var original = service.Discover(repository.Path);
+
+        Assert.Equal(0, original.ExitCode);
+        Assert.Same(Assert.Single(first.Sources), Assert.Single(second.Sources));
+        Assert.All(original.Families, family => Assert.Equal("before", Assert.Single(family.Observations).Identity));
+        var path = Path.Combine(repository.Path, "src/Shared.ts");
+        var timestamp = File.GetLastWriteTimeUtc(path);
+        repository.Replace("src/Shared.ts", "after!");
+        File.SetLastWriteTimeUtc(path, timestamp);
+        repository.Replace("src/Added.ts", "added");
+        first.Sources.Clear(); second.Sources.Clear();
+
+        var refreshed = service.Discover(repository.Path);
+
+        Assert.Equal(0, refreshed.ExitCode);
+        Assert.NotEqual(original.Digest, refreshed.Digest);
+        Assert.All(refreshed.Families, family => Assert.Equal(new[] { "added", "after!" },
+            family.Observations.Select(observation => observation.Identity).ToArray()));
+        Assert.Equal(2, first.Sources.Count);
+        foreach (var source in first.Sources)
+            Assert.Same(source, Assert.Single(second.Sources, item => item.RelativePath == source.RelativePath));
+
+        File.Delete(Path.Combine(repository.Path, "src/Added.ts"));
+        var removed = service.Discover(repository.Path);
+        Assert.All(removed.Families, family => Assert.Equal("after!", Assert.Single(family.Observations).Identity));
+    }
+
+    private sealed class RecordingReferenceProvider(string kind) : ICisReferenceProvider
+    {
+        public string Kind => kind;
+        public string CanonicalFileName => kind + ".md";
+        public string Description => "Record source snapshots for reference discovery tests.";
+        public List<CisReferenceSourceFile> Sources { get; } = [];
+        public bool Supports(string path) => path.EndsWith(".ts", StringComparison.Ordinal);
+        public IReadOnlyList<CisReferenceObservation> Discover(CisReferenceDiscoveryContext context, CisReferenceSourceFile source)
+        {
+            Sources.Add(source);
+            return [new(Kind, source.Content, source.Content, source.RelativePath, 1, [])];
+        }
     }
 
     [Theory]

@@ -7,7 +7,7 @@ namespace Cis.Modules.Brd;
 
 public sealed partial class FeatureIntakeService
 {
-    private const string DeliveryVersion = "feature-delivery-10";
+    private const string DeliveryVersion = "feature-delivery-12";
     private const string DeliveryMaintenanceDeclaration = @"\b(?:create|update|save|delete|publish)\w*\s*(?:<[^>]+>)?\s*\([^;{}\n]*\)\s*(?::[^;{}\n]+)?\s*(?:\{|=>)";
     private sealed record DeliveryDraft(string Id, string Phase, StoryDraft Story);
     private sealed record DeliveryFile(string RepositoryId, string Path, string Absolute, long Length, long Modified);
@@ -22,13 +22,16 @@ public sealed partial class FeatureIntakeService
     { ".cs", ".ts", ".tsx", ".js", ".jsx", ".py", ".java", ".kt", ".swift", ".go", ".rs", ".sql", ".vue", ".svelte", ".html" };
 
     public CisFeatureDeliveryResult Delivery(string workspacePath, string slug, bool prepare, string? expectedRevision = null)
+        => ReadDelivery(workspacePath, slug, prepare, expectedRevision, true);
+
+    private CisFeatureDeliveryResult ReadDelivery(string workspacePath, string slug, bool prepare, string? expectedRevision, bool persistSearch)
     {
         try
         {
             var state = ReadWizard(workspacePath, slug);
             if (prepare && expectedRevision != ProjectWizard(state).Revision)
                 throw new InvalidDataException("The feature changed. Refresh before reconciling delivery stories.");
-            var input = ReadDeliveryInput(state);
+            var input = ReadDeliveryInput(state, persistSearch);
             var folder = Path.Combine(state.Authority.RepositoryPath, ".cis/local/feature-delivery", slug);
             var cachePath = Path.Combine(folder, "reconciliation.json");
             if (!SafeAbsolutePath(cachePath)) throw new InvalidDataException("The delivery cache uses an unsafe path.");
@@ -69,7 +72,7 @@ public sealed partial class FeatureIntakeService
             var result = ValidateDelivery(input, new(assessments)) with { Provider = provider.Name, Model = model };
             var missedOwners = result.Stories.SelectMany(s => s.Owners).Distinct().Where(id => !state.Record.Plan.IntegrationRepositories.Contains(id)
                 && !input.Repositories.Any(r => r.Id == id && SamePath(r.RepositoryPath, state.Record.Plan.RepositoryPath))).ToArray();
-            if (missedOwners.Length > 0) result = result with { Warnings = [.. result.Warnings, "Proposed work also involves owned repositories outside the original integration selection: " + string.Join(", ", missedOwners) + ". Include them in the repository work breakdown."] };
+            if (missedOwners.Length > 0) result = result with { Warnings = [.. result.Warnings, "The story breakdown identified additional repository links: " + string.Join(", ", missedOwners) + ". These links are included on the affected stories for review."] };
             if (ReadDeliveryInput(ReadWizard(workspacePath, slug)).Hash != input.Hash)
                 throw new InvalidDataException("The source, saved direction or implementation changed during reconciliation. Refresh and retry; previous results are preserved.");
             var temporary = cachePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
@@ -81,7 +84,7 @@ public sealed partial class FeatureIntakeService
         { return new("failed", null, [], [], new Dictionary<string, string>(), [], [e is IOException ? "Delivery reconciliation is busy or its files are unavailable. Retry after the current action finishes." : e.Message]); }
     }
 
-    private static DeliveryInput ReadDeliveryInput(WizardState state)
+    private static DeliveryInput ReadDeliveryInput(WizardState state, bool persistSearch = true)
     {
         var warnings = new List<string>();
         var drafts = StoryGroups(state.Source).SelectMany(group => group.Value.Select(story =>
@@ -112,12 +115,22 @@ public sealed partial class FeatureIntakeService
                 }
             }
         }
-        var evidence = ReadDeliveryCode(state, files, drafts, warnings);
+        var evidence = ReadDeliveryCode(state, files, drafts, warnings, persistSearch);
         var direction = string.Join("\n\n", state.Review.Pages.Where(p => p.Key != "review").OrderBy(p => p.Key, StringComparer.Ordinal)
             .SelectMany(p => p.Value.Answers.Where(a => !a.Key.StartsWith(StoryFieldPrefix, StringComparison.Ordinal))
                 .OrderBy(a => a.Key, StringComparer.Ordinal).Select(a => p.Key + "/" + a.Key + ":\n" + a.Value)));
+        if (state.Record.Plan.SourceBrds is { Count: > 0 })
+        {
+            var inherited = StructuredFields(state, "technical", state.Review.Pages.GetValueOrDefault("technical"))
+                .Where(field => field.Inherited).Select(field => field.Label + ":\n" + field.SuggestedAnswer).ToArray();
+            if (inherited.Length > 0) direction += "\n\nInherited technical direction:\n" + string.Join("\n\n", inherited);
+        }
         var constraints = string.Join("\n", StorySections(state.Source).Where(s => s.Excluded || StoryMatch(s.Title,
             "ownership|principles|boundar|responsibilit|separate|authoritative|decisions")).Select(s => s.Title + "\n" + string.Join('\n', s.Lines)));
+        // Newly captured provenance is part of the request's scope binding. Keep
+        // older approved task plans stable until their source is explicitly updated.
+        if (state.Record.Plan.SourceBrds is { Count: > 0 } && state.PlanningContext.Length > 0)
+            constraints += "\n\nShared BRD context (constraints on this feature, not additional story scope):\n" + state.PlanningContext;
         var hash = Hash(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { version = DeliveryVersion, state.Source, state.Binding, direction,
             repositories, files = files.OrderBy(f => f.RepositoryId).ThenBy(f => f.Path).Select(f => new { f.RepositoryId, f.Path, f.Length, f.Modified }), evidence }, Json)));
         if (drafts.Length == 80) warnings.Add("Story coverage is bounded to 80 candidates. Split the feature before planning further requirements.");
@@ -176,6 +189,7 @@ public sealed partial class FeatureIntakeService
             + "Do not include excluded systems just because their code exists. Keep code evidence separate from requirements and proposed direction. "
             + "An ownership clarification is human direction: if the older BRD assigns maintenance elsewhere, report conflict and propose only the delta consistent with the clarification. "
             + "Do not silently remove that contradictory requirement or approve any choice. Existing repositories omitted from the integration selection can still own work. "
+            + "Derive repository links separately for each story from all supplied owned repositories. A story may link to zero, one or several repositories. Never assign the feature's initial repository by default. Use an empty owners array when no repository work is identified, or when links are unresolved; explain which in remainingWork. "
             + "Statements must be concise plain English. Return no more than 300 characters per explanation. A reuse or extend claim must cite code evidence from its owner. "
             + "existingCapability must describe observed code behaviour, never copy a 'shall' or 'must' requirement as proof. When nothing is established, say unknown. "
             + "Use an empty conflict string unless two ownership/scope statements disagree. Do not describe 'already implemented' as a conflict. "
@@ -199,7 +213,7 @@ public sealed partial class FeatureIntakeService
                     {
                         id = Choice(input.Drafts.Select(d => d.Id)), treatment = Choice(["reuse", "extend", "new", "unresolved", "conflict"]),
                         existingCapability = Text(), remainingWork = Text(),
-                        owners = new { type = "array", maxItems = 4, uniqueItems = true, items = Choice(input.Repositories.Select(r => r.Id)) },
+                        owners = new { type = "array", maxItems = 8, uniqueItems = true, items = Choice(input.Repositories.Select(r => r.Id)) },
                         evidenceIds = new { type = "array", maxItems = Math.Min(4, input.Evidence.Count), uniqueItems = true, items = Choice(input.Evidence.Count == 0 ? new[] { "" } : input.Evidence.Select(e => e.Id)) },
                         conflict = Text(), confidence = Choice(["high", "medium", "low"])
                     }
@@ -240,7 +254,8 @@ public sealed partial class FeatureIntakeService
             var assessment = proposal.Stories.SingleOrDefault(s => s.Id == draft.Id);
             var unsupportedHookClaim = DeliveryUnsupportedHookClaim(assessment, candidates, draft.Story.Title);
             var valid = assessment is not null && Text(assessment.ExistingCapability) && Text(assessment.RemainingWork)
-                && (assessment.Conflict is null || Text(assessment.Conflict)) && assessment.Owners is { Count: > 0 and <= 10 }
+                && (assessment.Conflict is null || Text(assessment.Conflict)) && assessment.Owners is { Count: <= 8 }
+                && assessment.Owners.Count == assessment.Owners.Distinct(StringComparer.Ordinal).Count()
                 && assessment.EvidenceIds is { Count: <= 12 } && assessment.Owners.All(id => input.Repositories.Any(r => r.Id == id))
                 && assessment.EvidenceIds.All(id => candidates.Any(e => e.Id == id))
                 && assessment.Confidence is "high" or "medium" && assessment.Treatment is "reuse" or "extend" or "new" or "unresolved" or "conflict";
@@ -281,7 +296,7 @@ public sealed partial class FeatureIntakeService
             ? "The bounded search found no matching code. This does not prove absence. Reconcile to assess, or record the planned work after reviewing the requirements."
             : "Code matches are available, but no current model assessment has been prepared. Reconcile or review the code and record a decision.";
         if (assessment.Confidence == "low") return "The model reported low confidence. CIS has not established whether this is existing or new work.";
-        if (assessment.Owners is not { Count: > 0 }) return "The model did not identify an owning repository. Choose the delivery owner after reviewing the requirements.";
+        if (assessment.Owners is null) return "The model did not return repository links. Reconcile the story again; an empty list is valid when no repository is linked.";
         if (assessment.Treatment is "reuse" or "extend" && assessment.EvidenceIds is not { Count: > 0 }) return "The model proposed existing capability without supporting code references. CIS rejected that unsupported claim.";
         if (assessment.Treatment == "reuse") return "The model proposed complete reuse without relevant capability evidence for every requirement. Related integration points do not establish full implementation.";
         if (StoryMatch(assessment.ExistingCapability ?? "", @"\b(?:shall|must)\b")) return "The model repeated a requirement as if it were existing behaviour. CIS rejected that claim; a requirement is not implementation evidence.";

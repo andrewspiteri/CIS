@@ -65,7 +65,7 @@ public sealed partial class AgentExecutionTests
             .AddModule(new AgentModule())
             .AddModule(new FakeProviderModule())
             .Build();
-        foreach (var command in new[] { "providers", "prepare", "run", "author", "incorporate", "revise", "review", "runs", "show", "cancel", "recover", "revalidate", "resume", "import-result", "status" })
+        foreach (var command in new[] { "providers", "prepare", "run", "author", "incorporate", "revise", "review", "runs", "show", "cancel", "recover", "recover-brd-revision", "revalidate", "resume", "import-result", "status" })
             Assert.Equal(0, application.Invoke(["agent", command, "--help"]));
         Assert.Equal(0, application.Invoke(["agent", "author", "brd", "--help"]));
         Assert.Equal(0, application.Invoke(["agent", "author", "feature", "--help"]));
@@ -1067,6 +1067,11 @@ public sealed partial class AgentExecutionTests
         Assert.Contains("BRD-DRAFT.json", reviewer.LastRequest!.Prompt, StringComparison.Ordinal);
         Assert.Contains("major finding requiring revision in this pass", reviewer.LastRequest.Prompt, StringComparison.Ordinal);
         Assert.Contains("All links, URLs, source IDs", reviewer.LastRequest.Prompt, StringComparison.Ordinal);
+        Assert.Contains("actual BRD text change for human approval", reviewer.LastRequest.Prompt, StringComparison.Ordinal);
+        Assert.Contains("fenced `diff` block", reviewer.LastRequest.Prompt, StringComparison.Ordinal);
+        Assert.Contains("Copy removed and context lines verbatim", reviewer.LastRequest.Prompt, StringComparison.Ordinal);
+        Assert.Contains("exact unanswered question", reviewer.LastRequest.Prompt, StringComparison.Ordinal);
+        Assert.Contains("do not append them at the end by default", reviewer.LastRequest.Prompt, StringComparison.Ordinal);
         var sourceEnvelope = System.IO.Path.Combine(result.Run.Manifest.WorkingDirectory, ".cis", "local", "agents",
             "envelopes", "PRODUCT", "BRD-DRAFT.json");
         Assert.Contains("Users need a shared planning board", File.ReadAllText(sourceEnvelope), StringComparison.Ordinal);
@@ -1148,7 +1153,7 @@ public sealed partial class AgentExecutionTests
             TestContext.Current.CancellationToken);
         var reviewRunId = review.Run!.Manifest.RunId;
         var finding = review.Run.Result!.Review!.Findings.Single();
-        const string approvedRecommendation = "Add a measurable outcome requiring 80% of invited users to complete the workflow.";
+        const string approvedRecommendation = "At the end of Success measures:\n```diff\n+Measurable outcome: 80% of invited users complete the workflow.\n```";
         var disposition = new CisBrdReviewDispositionDocument(2, reviewRunId,
             review.Run.Manifest.ResultDigest!, review.Envelope!.CanonicalTaskDigest, "reviewer", Clock().ToString("O"),
             [new(finding.Id, finding.Severity, finding.Category, finding.Location, finding.Observation,
@@ -1168,7 +1173,8 @@ public sealed partial class AgentExecutionTests
         Assert.Equal(0, revised.ExitCode);
         Assert.True(revised.Applied);
         Assert.Equal(["BRD-REV-001"], revised.Run!.Result!.Revision!.AppliedFindingIds);
-        Assert.Contains(approvedRecommendation, reviser.LastRequest!.Prompt, StringComparison.Ordinal);
+        Assert.Contains(JsonSerializer.Serialize(approvedRecommendation), reviser.LastRequest!.Prompt, StringComparison.Ordinal);
+        Assert.Contains("apply its exact added/removed text at the specified anchor", reviser.LastRequest.Prompt, StringComparison.Ordinal);
         Assert.DoesNotContain("human rationale", reviser.LastRequest.Prompt, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Measurable outcome: 80%", repository.Read("docs/cis/specs/business-requirements.md"), StringComparison.Ordinal);
         Assert.Equal(4, selfReview.ExitCode);
@@ -1803,7 +1809,7 @@ public sealed partial class AgentExecutionTests
         string id = "fake", string? brdEvidence = null, bool omitImplementationCoverage = false,
         bool inventImplementationEvidence = false, bool mutateImplementation = false,
         bool omitCoverageOnFirstExecution = false, bool draftTechnicalIntent = false, bool draftSolutionDesign = false,
-        Action<CisAgentExecutionRequest>? duringExecution = null, int burstEvents = 0) : ICisAgentProvider, ICisAgentProviderAuthenticator
+        Action<CisAgentExecutionRequest>? duringExecution = null, int burstEvents = 0, bool omitRevisionIds = false) : ICisAgentProvider, ICisAgentProviderAuthenticator
     {
         public int ExecuteCalls { get; private set; }
         public CisAgentExecutionRequest? LastRequest { get; private set; }
@@ -2025,7 +2031,7 @@ The owner evaluates one customer using authorized BI evidence and relevant relat
                         recommendation = sourceRationaleReview ? "Add a rationale cross-reference without changing source identity or provenance." : "Add a measurable product outcome."
                     } }
                 } : null,
-                revision = reviseBrd ? new { reviewRunId = revisionRun, appliedFindingIds = new[] { "BRD-REV-001" } } : null,
+                revision = reviseBrd ? new { reviewRunId = revisionRun, appliedFindingIds = omitRevisionIds ? Array.Empty<string>() : new[] { "BRD-REV-001" } } : null,
                 questionRevision = incorporateQuestions ? new { answerDigest = questionDigest, incorporatedQuestionIds = questionIds } : null,
             });
             if (invalidReviewEvidence)
@@ -2099,7 +2105,7 @@ The owner evaluates one customer using authorized BI evidence and relevant relat
     {
         public string Path { get; }
         private AgentRepository(string path) => Path = path;
-        public static AgentRepository Create(bool git = false)
+        public static AgentRepository Create(bool git = false, bool unborn = false)
         {
             var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "cis-agent-tests", Guid.NewGuid().ToString("N"));
             var repository = new AgentRepository(path);
@@ -2107,12 +2113,12 @@ The owner evaluates one customer using authorized BI evidence and relevant relat
             repository.Write("docs/cis/catalog.yml", "schema_version: 1\nrepository: agent-fixture\ndocuments: []\n");
             repository.Write("docs/cis/references/agent-provider-profile.md", "| direct-dirty-working-tree | denied | test |\n");
             repository.Write(".gitignore", ".cis/local/\n");
-            if (git)
+            if (git || unborn)
             {
                 repository.Git("init");
                 repository.Git("config", "user.email", "test@example.test");
                 repository.Git("config", "user.name", "CIS Tests");
-                repository.CommitAll("baseline");
+                if (!unborn) repository.CommitAll("baseline");
             }
             return repository;
         }
@@ -2273,7 +2279,7 @@ The owner evaluates one customer using authorized BI evidence and relevant relat
         }
         public string Read(string relative) => File.ReadAllText(System.IO.Path.Combine(Path, relative.Replace('/', System.IO.Path.DirectorySeparatorChar)));
         public void CommitAll(string message) { Git("add", "."); Git("commit", "-m", message); }
-        private string Git(params string[] arguments)
+        public string Git(params string[] arguments)
         {
             using var process = new Process { StartInfo = new("git") { WorkingDirectory = Path, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true } };
             foreach (var argument in arguments) process.StartInfo.ArgumentList.Add(argument);

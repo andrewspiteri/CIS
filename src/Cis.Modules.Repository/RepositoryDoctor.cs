@@ -27,7 +27,9 @@ public sealed class RepositoryDoctor
         string? documentationRoot = null,
         bool refresh = false)
     {
+        using var timing = CisPerformanceTrace.Start("RepositoryDoctor.Inspect");
         var ollama = _ollamaProbe.Probe();
+        timing.Mark("ollama");
         var findings = new List<CisRepositoryDoctorFinding>();
         AddOllamaFinding(ollama, findings);
 
@@ -60,6 +62,7 @@ public sealed class RepositoryDoctor
         IReadOnlyList<CisRepositoryDoctorFinding> reconciliationFindings = [];
         var cached = !refresh && _statusCache.TryRead(
             context.RepositoryPath, context.DocumentationRoot, out reconciliationFindings);
+        timing.Mark("initialization-cache");
         if (cached)
         {
             foreach (var finding in reconciliationFindings) findings.Add(finding);
@@ -71,6 +74,7 @@ public sealed class RepositoryDoctor
             foreach (var finding in generated) findings.Add(finding);
             _statusCache.Write(context.RepositoryPath, context.DocumentationRoot, generated);
         }
+        timing.Mark(cached ? "cached-initialization" : "reconcile-initialization");
         RunContributedChecks(context, findings);
         return CreateResult(
             context.RepositoryPath,
@@ -163,6 +167,7 @@ public sealed class RepositoryDoctor
     {
         foreach (var check in _checks)
         {
+            using var timing = CisPerformanceTrace.Start("RepositoryDoctor.check." + check.Name);
             try
             {
                 foreach (var finding in check.Inspect(context))

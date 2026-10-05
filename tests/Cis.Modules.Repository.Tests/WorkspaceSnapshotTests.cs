@@ -5,6 +5,19 @@ namespace Cis.Modules.Repository.Tests;
 public sealed class WorkspaceSnapshotTests
 {
     [Fact]
+    public void SummaryRetainsBlockersAndFreshnessWhileOmittingLargePayloads()
+    {
+        using var document = System.Text.Json.JsonDocument.Parse("""
+            {"status":"blocked","current":false,"freshness":"stale","errors":["review required"],"warnings":["partial"],"source":"large document body"}
+            """);
+        var summary = WorkspaceSnapshot.SummaryData(document.RootElement)!.Value;
+        Assert.Equal("blocked", summary.GetProperty("status").GetString());
+        Assert.Equal("stale", summary.GetProperty("freshness").GetString());
+        Assert.Single(summary.GetProperty("errors").EnumerateArray());
+        Assert.False(summary.TryGetProperty("source", out _));
+    }
+
+    [Fact]
     public void SnapshotSharesChecksAcrossProjectionsAndRechecksOnNextRequest()
     {
         var dispatcher = new CheckedDispatcher();

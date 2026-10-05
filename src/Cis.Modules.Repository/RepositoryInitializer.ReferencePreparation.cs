@@ -121,8 +121,15 @@ public sealed partial class RepositoryInitializer
             }
         }
         var catalogBefore = File.ReadAllText(context.CatalogPath);
+        // Binding includes unrelated starters that this bounded preparation does not
+        // create. Only register references that exist or will be written by this plan.
+        var availableEntries = selected.Where(item => item.CatalogEntry is not null
+            && CisPathSafety.TryResolveUnderRoot(root, item.RelativePath, out var path)
+            && !CisPathSafety.ContainsReparsePoint(root, path)
+            && (File.Exists(path) || changes.Any(change => string.Equals(change.Path, path, PathComparison))))
+            .Select(item => item.CatalogEntry!).ToArray();
         var catalog = _catalogMerger.Merge(context.RepositoryId, catalogBefore,
-            selected.Where(item => item.CatalogEntry is not null).Select(item => item.CatalogEntry!).ToArray());
+            availableEntries);
         if (catalog.Collisions.Count > 0) return new(root, inventories, warnings, catalog.Collisions, false);
         if (catalog.Changed) changes.Add((context.CatalogPath, catalogBefore, catalog.Content));
         if (changes.Count > 0 && apply)

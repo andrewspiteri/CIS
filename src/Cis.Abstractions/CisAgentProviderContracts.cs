@@ -86,7 +86,14 @@ public sealed record CisAgentExecutionRequest(
     string Actor,
     IReadOnlyDictionary<string, string> Environment,
     TimeSpan? StartupTimeout = null,
-    TimeSpan? IdleTimeout = null);
+    TimeSpan? IdleTimeout = null)
+{
+    public string? Model { get; init; }
+    public bool TaskReview { get; init; }
+    // Controller-created evidence only; never participant repository roots. Providers that
+    // restrict reads to working directories must include these in the execution context.
+    public IReadOnlyList<string> EvidenceDirectories { get; init; } = [];
+}
 
 public sealed record CisAgentProviderEvent(
     string Kind,

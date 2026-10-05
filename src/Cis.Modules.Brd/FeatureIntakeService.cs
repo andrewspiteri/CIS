@@ -16,7 +16,9 @@ public sealed partial class FeatureIntakeService(
     IEnumerable<ICisProductDefinitionAuthority> definitions,
     IEnumerable<ICisFeatureScreenGenerator>? screenGenerators = null,
     IEnumerable<ICisFeatureArchitectureGenerator>? architectureGenerators = null,
-    ICisTextGenerationService? textGeneration = null)
+    ICisTextGenerationService? textGeneration = null,
+    ICisStoryTaskExecutor? storyExecutor = null,
+    BrdBacklogService? backlog = null)
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private const string RecordMarker = "<!-- cis:feature-intake\n";
@@ -84,7 +86,8 @@ public sealed partial class FeatureIntakeService(
         var planHash = Hash(Encoding.UTF8.GetBytes(fingerprint + "|" + Hash(registry) + "|" + request.RepositoryMode
             + "|" + binding?.BaselineHash + "|" + Directory.Exists(repo)));
         var plan = new CisFeatureIntakePlan(request.Title.Trim(), request.Slug, repo, request.RepositoryMode,
-            request.DocumentationRoot, requestRelative, sourceRelative, sourceHash, integrations, decisions, binding?.BaselineHash, planHash);
+            request.DocumentationRoot, requestRelative, sourceRelative, sourceHash, integrations, decisions, binding?.BaselineHash, planHash)
+        { SourceBrds = [BrdSource(source, sourceRelative, sourceHash)] };
         var catalogPath = Path.Combine(authority.RepositoryPath, authority.DocumentationRoot, "catalog.yml");
         if (!SafeAbsolutePath(catalogPath)) return Invalid(["The authority catalog uses an unsafe path."]);
         var originalCatalog = File.ReadAllText(catalogPath);
@@ -209,17 +212,17 @@ cis:
 
 # {p.Title}
 
-This proposed feature was introduced by {record.Actor} on {record.CreatedAt}. It requires scope review before backlog approval, feature planning or implementation.
+{(p.BacklogItemId is null ? $"This proposed feature was introduced by {record.Actor} on {record.CreatedAt}. It requires scope review before backlog approval, feature planning or implementation." : $"Feature definition for approved backlog item `{p.BacklogItemId}`, opened by {record.Actor} on {record.CreatedAt}. Detailed scope and stories still require review before task execution.")}
 
 ## Prepared business requirements
 
-[Open the original BRD]({link})
+[{(p.BacklogItemId is null ? "Open the original BRD" : "Open the requirement snapshot")}]({link})
 
-The source is retained byte-for-byte. Its instructions, assumptions and examples are draft requirements, not recorded human decisions. Existing product approvals are retained; no requirements have been adopted automatically.
+{(p.BacklogItemId is null ? "The source is retained byte-for-byte. Its instructions, assumptions and examples are draft requirements, not recorded human decisions. Existing product approvals are retained; no requirements have been adopted automatically." : "The retained source captures the identified approved BRD requirement and acceptance intent. Shared product constraints remain in the canonical BRD and technical direction. Opening this definition does not approve additional scope.")}
 
 ## Implementation repository
 
-`{p.RepositoryPath}` — product-owned participant; CIS documentation: `{p.DocumentationRoot}`.
+{(p.BacklogItemId is null ? $"`{p.RepositoryPath}` — product-owned participant; CIS documentation: `{p.DocumentationRoot}`." : "This is product-level feature scope. Implementation repository links are decided in the story breakdown; no repository has been assigned by this handoff.")}
 
 ## Integration scope
 
@@ -233,7 +236,7 @@ Selection records intended integration scope. API, event and ownership contracts
 
 ## Next review
 
-Review the source and resolve its open decisions. Identify the product-requirement and architecture changes needed for this feature. Those reviewed changes must enter the governed backlog before Start Feature Specification and implementation planning are available. This intake is not an approved backlog item.
+{(p.BacklogItemId is null ? "Review the source and resolve its open decisions. Identify the product-requirement and architecture changes needed for this feature. Those reviewed changes must enter the governed backlog before Start Feature Specification and implementation planning are available. This intake is not an approved backlog item." : "Review the feature scope, acceptance criteria and architecture, then generate and review its story breakdown. The approved backlog item is already its source authority. Feature review and task-plan approval remain separate steps.")}
 
 {RecordMarker}{JsonSerializer.Serialize(record, Json)}
 -->
@@ -259,5 +262,9 @@ Review the source and resolve its open decisions. Identify the product-requireme
         [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
         public IReadOnlyList<SourceRevision>? SourceRevisions { get; init; }
     }
-    private sealed record SourceRevision(string SourcePath, string SourceHash, string RequestPath, string Actor, string UpdatedAt);
+    private sealed record SourceRevision(string SourcePath, string SourceHash, string RequestPath, string Actor, string UpdatedAt)
+    {
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public IReadOnlyList<CisFeatureBrdSource>? SourceBrds { get; init; }
+    }
 }

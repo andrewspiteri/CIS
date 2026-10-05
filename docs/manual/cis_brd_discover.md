@@ -24,8 +24,11 @@ cis brd discover [--workspace <path>] [--format <human|json|agent>]
 Discovery checks up to 10,000 Markdown files per registered repository and reports up
 to 100 candidates using filename, heading, and document-type signals. Product-design
 front matter and Game Design Document/GDD signals are treated as BRD evidence. Feature
-templates are excluded; copied feature specifications should declare
-`type: feature-specification`. Every candidate has a kind, stable source ID, and content
+templates, routing cards, and issue packs are excluded. Feature specifications enter
+automatically only with a current human approval. Previously assessed features and
+explicitly registered sources remain eligible, so changes still require review.
+Unselected legacy feature drafts do not become BRD review obligations merely because
+they exist in the project. Every candidate has a kind, stable source ID, and content
 hash. The command also reports graph build identity,
 head, dirty state, freshness, role, and diagnostics for every repository.
 

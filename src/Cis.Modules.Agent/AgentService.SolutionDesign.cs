@@ -43,7 +43,7 @@ public sealed partial class AgentService
             var artifacts = SolutionDesignArtifacts(context).Concat(implementation.SelectMany(item => item.Artifacts)).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
             var scratch = CreateScratchWorkspace(context, runId, artifacts, "CIS architecture discovery baseline", diagnostics);
             if (scratch is null) return New(context, "invalid-workspace", diagnostics: diagnostics);
-            var target = Relative(context.RepositoryPath, Path.Combine(context.DocumentationPath, DesignRelative));
+            var target = Relative(context.RepositoryPath, CisProductDocumentPaths.Resolve(context.DocumentationPath, DesignRelative));
             var snapshot = RepositorySnapshot(context.RepositoryPath);
             var scope = SolutionDesignContextDigest(context.RepositoryPath, artifacts, originals);
             var envelope = new AgentTaskEnvelope(2, $"{context.RepositoryId}:{ProductAuthoringChange}:{SolutionDesignAuthoringTask}:{scope[..12]}",
@@ -71,12 +71,12 @@ public sealed partial class AgentService
 
     private static bool HasErrors(IEnumerable<string> diagnostics) => diagnostics.Any(item => item.StartsWith("ERROR:", StringComparison.Ordinal));
     private static Dictionary<string, string> SolutionDesignOriginals(CisRepositoryContext context)
-        => new[] { DesignRelative, ComponentsRelative }.ToDictionary(path => Relative(context.RepositoryPath, Path.Combine(context.DocumentationPath, path)),
-            path => File.ReadAllText(Path.Combine(context.DocumentationPath, path)), StringComparer.Ordinal);
+        => new[] { DesignRelative, ComponentsRelative }.ToDictionary(path => Relative(context.RepositoryPath, CisProductDocumentPaths.Resolve(context.DocumentationPath, path)),
+            path => File.ReadAllText(CisProductDocumentPaths.Resolve(context.DocumentationPath, path)), StringComparer.Ordinal);
     private static IReadOnlyList<string> SolutionDesignArtifacts(CisRepositoryContext context)
         => new[] { DesignRelative, ComponentsRelative, "specs/business-requirements.md", "specs/technical-intent-spec.md",
             "specs/technical-intent-questionnaire.md", "references/dictionary-index.md" }
-            .Select(path => Relative(context.RepositoryPath, Path.Combine(context.DocumentationPath, path)))
+            .Select(path => Relative(context.RepositoryPath, CisProductDocumentPaths.Resolve(context.DocumentationPath, path)))
             .Where(path => CisPathSafety.TryResolveUnderRoot(context.RepositoryPath, path, out var full)
                 && !CisPathSafety.ContainsReparsePoint(context.RepositoryPath, full) && File.Exists(full)).ToArray();
     private static string SolutionDesignContextDigest(string root, IReadOnlyList<string> artifacts, IReadOnlyDictionary<string, string> originals)
@@ -104,8 +104,8 @@ public sealed partial class AgentService
         if (SolutionDesignContextDigest(context.RepositoryPath, envelope.ContextArtifacts, originals) != envelope.AcceptedScopeDigest
             || SolutionDesignContextDigest(scratch, envelope.ContextArtifacts, originals) != envelope.AcceptedScopeDigest)
             diagnostics.Add("ERROR: Architecture evidence changed during inference; the isolated bundle was not applied.");
-        var design = Relative(context.RepositoryPath, Path.Combine(context.DocumentationPath, DesignRelative));
-        var sheet = Relative(context.RepositoryPath, Path.Combine(context.DocumentationPath, ComponentsRelative));
+        var design = Relative(context.RepositoryPath, CisProductDocumentPaths.Resolve(context.DocumentationPath, DesignRelative));
+        var sheet = Relative(context.RepositoryPath, CisProductDocumentPaths.Resolve(context.DocumentationPath, ComponentsRelative));
         ValidateImplementationCoverage(candidates[design], implementation, diagnostics);
         ImplementationArtifacts(implementation.Select(item => item.Evidence), scratch, diagnostics);
         if (HasErrors(diagnostics)) return executed with { Status = "rejected", Diagnostics = diagnostics, Applied = false };

@@ -247,9 +247,9 @@ public sealed partial class SolutionDesignService : IChangeReadinessCheck, ICisS
         if (!contextResolution.IsSuccess || contextResolution.Context is null)
             return new State(resolution.Workspace, authority, null, null, null, null, [], [], contextResolution.Errors);
         var docs = authority.DocumentationRoot.Replace('/', Path.DirectorySeparatorChar);
-        var technicalPath = Path.Combine(authority.RepositoryPath, docs, "specs", "technical-intent-spec.md");
-        var designPath = Path.Combine(authority.RepositoryPath, docs, "architecture", "overall-solution-design.md");
-        var componentPath = Path.Combine(authority.RepositoryPath, docs, "references", "component-sheet.md");
+        var technicalPath = CisProductDocumentPaths.Resolve(Path.Combine(authority.RepositoryPath, docs), "specs", "technical-intent-spec.md");
+        var designPath = CisProductDocumentPaths.Resolve(Path.Combine(authority.RepositoryPath, docs), "architecture", "overall-solution-design.md");
+        var componentPath = CisProductDocumentPaths.Resolve(Path.Combine(authority.RepositoryPath, docs), "references", "component-sheet.md");
         var technicalStatus = _technicalIntent.Status(resolution.Workspace.WorkspacePath);
         var readiness = new List<string>();
         if (technicalStatus.Validation is not { } technicalValidation
@@ -260,8 +260,10 @@ public sealed partial class SolutionDesignService : IChangeReadinessCheck, ICisS
         var technical = File.Exists(technicalPath) ? File.ReadAllText(technicalPath) : string.Empty;
         var version = technical.Length == 0 ? null : TechnicalIntentDigest(technical);
         var components = technical.Length == 0 ? [] : ParseComponents(ExtractSection(technical, "Product module architecture"));
+        if (components.Count == 0 && CisProductDocumentPaths.Read(authority.RepositoryPath).ContainsKey("technical"))
+            components = ReadDocumentedBoundaries(technical);
         if (technical.Length > 0 && components.Count == 0)
-            readiness.Add("Technical intent contains no structured product-module ownership rows.");
+            readiness.Add("Technical intent needs an ownership table before diagrams can be prepared. Provide named components or processes with their responsibilities, ownership and exclusions. Dictionaries are optional.");
         return new State(resolution.Workspace, authority, contextResolution.Context, technicalPath,
             designPath, componentPath, components, readiness.Distinct(StringComparer.Ordinal).ToArray(), [], technical, version);
     }
@@ -281,7 +283,9 @@ public sealed partial class SolutionDesignService : IChangeReadinessCheck, ICisS
 
 ## Logical component topology
 
-The following components are the concrete architectural projection of the approved `TI-MOD-*` ownership boundaries. A component is not automatically an independently deployed service.
+{(state.Components.Any(component => component.Classification.EndsWith("(technical intent)", StringComparison.Ordinal))
+    ? "The following entries project the ownership boundaries documented in the technical intent. Their classification distinguishes logical components from runtime processes. CIS assigns stable identifiers to imported entries for this review; those identifiers do not introduce new ownership decisions."
+    : "The following components are the concrete architectural projection of the approved `TI-MOD-*` ownership boundaries. A component is not automatically an independently deployed service.")}
 
 {SectionPreamble(ExtractSection(state.TechnicalIntentContent, "Product module architecture"))}
 
@@ -466,6 +470,8 @@ This document is one half of the governed overall solution-design bundle. The ov
     private static string SectionOrFallback(string content, string heading, string fallback)
     {
         var value = ExtractSection(content, heading).Trim();
+        if (value.Length == 0 && SourceSectionAliases.TryGetValue(heading, out var aliases))
+            value = string.Join("\n\n", aliases.Select(alias => ExtractSection(content, alias)).Where(section => section.Length > 0));
         return value.Length == 0 ? fallback : value;
     }
 
@@ -491,9 +497,12 @@ This document is one half of the governed overall solution-design bundle. The ov
 
     private static string ExtractSection(string content, string heading)
     {
-        var match = Regex.Match(content, $@"(?ms)^## {Regex.Escape(heading)}\s*$\n(?<body>.*?)(?=^## |\z)",
+        var match = Regex.Match(content, $@"(?m)^(?<level>#{{2,3}})[ \t]+(?:\d+(?:\.\d+)*\.?[ \t]+)?{Regex.Escape(heading)}[ \t]*\r?$\n",
             RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-        return match.Success ? match.Groups["body"].Value.Trim() : string.Empty;
+        if (!match.Success) return string.Empty;
+        var rest = content[(match.Index + match.Length)..];
+        var next = Regex.Match(rest, $@"(?m)^#{{1,{match.Groups["level"].Length}}}[ \t]+", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        return (next.Success ? rest[..next.Index] : rest).Trim();
     }
 
     private static string ReadBlock(string content, string start, string end)

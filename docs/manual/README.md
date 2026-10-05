@@ -3,7 +3,7 @@ title: "CIS Command Manual"
 type: navigation
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-21"
+last_reviewed: "2026-10-05"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:root
@@ -295,3 +295,11 @@ Multi-repository commands accept `--workspace`. The canonical `.cis/workspace.ym
 registry records initialized repositories by stable ID and path. Workspace graph
 operations retain one independent graph generation per repository; context packs may
 resolve registered IDs and federate those graphs at query time.
+
+- [Review BRD section suggestions](cis_brd_sections.md).
+
+Related command groups documented within existing references:
+
+- [`cis definition documents`](cis_definition_status.md) — discover, select, or copy supplied product documents.
+- [`cis brd feature wizard story` and `start-backlog`](cis_brd_feature_wizard_status.md#story-task-commands) — proposed tasks, approval, execution, review feedback and backlog handoff.
+- [`cis agent recover-brd-revision`](cis_agent_review_brd.md) — recover exact approved BRD changes and require independent closure review.

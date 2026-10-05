@@ -6,6 +6,39 @@ namespace Cis.Modules.Definition.Tests;
 public sealed class BusinessGuidanceTests
 {
     [Xunit.Fact]
+    public void MissingOpenQuestionsRoutesToHumanReviewInsteadOfAnotherModelRun()
+    {
+        var brd = Result(false, true) with { Validation = new(false, true, "Review Required", "Review Required", [], [])
+            { ContentIssues = ["No matching BRD section with content was found for: Open questions"] } };
+        var guidance = DefinitionWizardService.BusinessGuidance(brd, Inference());
+        Xunit.Assert.Equal("open-brd", guidance.NextActionId);
+        Xunit.Assert.Equal("Optional", Action(guidance, "suggest-sections").Status);
+        Xunit.Assert.Equal("Later", Action(guidance, "questions").Status);
+        Xunit.Assert.Contains("explicitly confirm", guidance.NextStep, StringComparison.Ordinal);
+    }
+
+    [Xunit.Fact]
+    public void MissingSectionsOfferReviewedModelProposalBeforeGraphRefresh()
+    {
+        var brd = Result(false, false) with { Validation = new(false, false, "Review Required", "Review Required", [], [])
+            { ContentIssues = ["No matching BRD section with content was found for: Scope"] } };
+        var guidance = DefinitionWizardService.BusinessGuidance(brd, Inference());
+        Xunit.Assert.Equal("suggest-sections", guidance.NextActionId);
+        Xunit.Assert.Equal("Needed", Action(guidance, "suggest-sections").Status);
+        Xunit.Assert.Contains("diff", guidance.NextStep, StringComparison.Ordinal);
+    }
+
+    [Xunit.Fact]
+    public void ExistingProjectDocumentsAreLoadedBeforeImplementationInference()
+    {
+        var missing = Result(false, false) with { Validation = new(false, false, "Missing", "Missing", [], []) };
+        var guidance = DefinitionWizardService.BusinessGuidance(missing, Inference(), existingDocuments: true);
+        Xunit.Assert.Equal("load-documents", guidance.NextActionId);
+        Xunit.Assert.Equal("Optional", Action(guidance, "infer-brd").Status);
+        Xunit.Assert.Contains(guidance.Reasons, reason => reason.Contains("Existing requirements documents", StringComparison.Ordinal));
+    }
+
+    [Xunit.Fact]
     public void ExistingDraftExplainsSourceDecisionsAndKeepsCompletedWorkOptional()
     {
         using var scope = CisDefinitionDraftScope.Enter();

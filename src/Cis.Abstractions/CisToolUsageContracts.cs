@@ -23,10 +23,13 @@ public sealed record CisToolUsageCapture(
     int ExitCode,
     int StandardOutputCharacters,
     int StandardErrorCharacters,
-    IReadOnlyList<CisTokenSavingsCandidate> SavingsCandidates);
+    IReadOnlyList<CisTokenSavingsCandidate> SavingsCandidates,
+    string? Outcome = null,
+    string? BuildIdentity = null);
 
 public sealed record CisTokenSavingsCandidate(
     int BaselineEstimatedTokens,
     int? ActualEstimatedTokens,
     string Basis,
-    string Confidence);
+    string Confidence,
+    string? Command = null);

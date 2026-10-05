@@ -6,8 +6,265 @@ using Cis.Abstractions;
 
 namespace Cis.Modules.Brd.Tests;
 
-public sealed class BrdWorkflowTests
+public sealed partial class BrdWorkflowTests
 {
+    [Fact]
+    public void SectionProposal_RequiresExplicitApplyAndPreservesNarrativeAndEvidence()
+    {
+        using var environment = WorkspaceEnvironment.Create(0);
+        environment.Service.Initialize(environment.Authority.Path, "Product BRD");
+        const string evidence = "Customers can manage service engagements across their organizations.";
+        var original = File.ReadAllText(environment.CanonicalPath)
+            .Replace("## Scope", "## Existing boundaries", StringComparison.Ordinal) + "\n" + evidence + "\n";
+        File.WriteAllText(environment.CanonicalPath, original);
+        var model = new SectionGeneration(evidence);
+        var proposal = environment.Service.SuggestSections(environment.Authority.Path, model);
+        Assert.Equal(0, proposal.ExitCode);
+        Assert.Equal("proposed", proposal.Status);
+        Assert.Equal(original, File.ReadAllText(environment.CanonicalPath));
+        Assert.Contains("## Scope", proposal.ProposedContent);
+        Assert.Contains(evidence, proposal.ProposedContent);
+        Assert.False(model.Request!.AllowRemote);
+        Assert.Contains("untrusted evidence", model.Request.Prompt, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(2, environment.Service.ApplySections(environment.Authority.Path, proposal.Id!, "").ExitCode);
+        Assert.Equal(original, File.ReadAllText(environment.CanonicalPath));
+        var applied = environment.Service.ApplySections(environment.Authority.Path, proposal.Id!, "Product owner");
+        Assert.True(applied.Applied);
+        Assert.Equal(proposal.ProposedContent, File.ReadAllText(environment.CanonicalPath));
+        Assert.Contains("status: Review Required", File.ReadAllText(environment.CanonicalPath));
+        Assert.Equal("unchanged", environment.Service.ApplySections(environment.Authority.Path, proposal.Id!, "Product owner").Status);
+    }
+
+    [Fact]
+    public void SectionProposal_RejectsStaleInputsAndUnsupportedModelClaims()
+    {
+        using var environment = WorkspaceEnvironment.Create(0);
+        environment.Service.Initialize(environment.Authority.Path, "Product BRD");
+        const string evidence = "Customers can manage service engagements across their organizations.";
+        var original = File.ReadAllText(environment.CanonicalPath).Replace("## Scope", "## Existing boundaries", StringComparison.Ordinal)
+            + "\n" + evidence + "\n";
+        File.WriteAllText(environment.CanonicalPath, original);
+        var unsupported = environment.Service.SuggestSections(environment.Authority.Path, new SectionGeneration("An invented quotation that is not in the BRD."));
+        Assert.Equal("unsupported", unsupported.Status);
+        Assert.Null(unsupported.Id);
+        var generation = new SectionGeneration(evidence) { BeforeReply = () => File.AppendAllText(environment.CanonicalPath, "Changed during generation.") };
+        Assert.NotEmpty(environment.Service.SuggestSections(environment.Authority.Path, generation).Errors);
+        File.WriteAllText(environment.CanonicalPath, original);
+        var proposal = environment.Service.SuggestSections(environment.Authority.Path, new SectionGeneration(evidence));
+        File.AppendAllText(environment.CanonicalPath, "New human edit.");
+        var changed = File.ReadAllText(environment.CanonicalPath);
+        var result = environment.Service.ApplySections(environment.Authority.Path, proposal.Id!, "Product owner");
+        Assert.False(result.Applied);
+        Assert.Contains(result.Errors, error => error.Contains("changed after", StringComparison.Ordinal));
+        Assert.Equal(changed, File.ReadAllText(environment.CanonicalPath));
+    }
+
+    [Fact]
+    public void SectionProposal_RequiresRemoteConsentAndRejectsTamperedProposal()
+    {
+        using var environment = WorkspaceEnvironment.Create(0);
+        environment.Service.Initialize(environment.Authority.Path, "Product BRD");
+        const string evidence = "Customers can manage service engagements across their organizations.";
+        var original = File.ReadAllText(environment.CanonicalPath).Replace("## Scope", "## Existing boundaries", StringComparison.Ordinal)
+            + "\n" + evidence + "\n";
+        File.WriteAllText(environment.CanonicalPath, original);
+        var model = new SectionGeneration(evidence) { Remote = true };
+        Assert.NotEmpty(environment.Service.SuggestSections(environment.Authority.Path, model, "remote").Errors);
+        Assert.Null(model.Request);
+        var proposal = environment.Service.SuggestSections(environment.Authority.Path, model, "remote", allowRemote: true);
+        Assert.True(model.Request!.AllowRemote);
+        var cache = Path.Combine(environment.Authority.Path, ".cis/local/brd/section-proposals", proposal.Id + ".json");
+        File.WriteAllText(cache, File.ReadAllText(cache).Replace("service engagements", "unapproved products", StringComparison.Ordinal));
+        Assert.False(environment.Service.ApplySections(environment.Authority.Path, proposal.Id!, "Product owner").Applied);
+        Assert.Equal(original, File.ReadAllText(environment.CanonicalPath));
+    }
+
+    [Fact]
+    public void SectionProposal_RetriesOmittedSectionsWithoutDiscardingSupportedContent()
+    {
+        using var environment = WorkspaceEnvironment.Create(0);
+        environment.Service.Initialize(environment.Authority.Path, "Product BRD");
+        const string evidence = "Customers can manage service engagements across their organizations.";
+        var original = File.ReadAllText(environment.CanonicalPath)
+            .Replace("## Scope", "## Existing boundaries", StringComparison.Ordinal)
+            .Replace("## Functional requirements", "## Existing functions", StringComparison.Ordinal) + "\n" + evidence;
+        File.WriteAllText(environment.CanonicalPath, original);
+        var model = new SectionGeneration(evidence) { IncludeFunctionalRetry = true };
+        var proposal = environment.Service.SuggestSections(environment.Authority.Path, model);
+        Assert.Equal(2, model.Calls);
+        Assert.Equal(new[] { "Scope", "Functional requirements" }, proposal.Sections.Select(section => section.Heading));
+        Assert.Equal(original, File.ReadAllText(environment.CanonicalPath));
+    }
+
+    [Fact]
+    public void SectionProposal_RemoteGenerationHasFullBudgetWithoutAutomaticPaidRetries()
+    {
+        using var environment = WorkspaceEnvironment.Create(0);
+        environment.Service.Initialize(environment.Authority.Path, "Product BRD");
+        const string evidence = "Customers can manage service engagements across their organizations.";
+        var original = File.ReadAllText(environment.CanonicalPath)
+            .Replace("## Scope", "## Existing boundaries", StringComparison.Ordinal)
+            .Replace("## Functional requirements", "## Existing functions", StringComparison.Ordinal) + "\n" + evidence;
+        File.WriteAllText(environment.CanonicalPath, original);
+        var model = new SectionGeneration(evidence) { Remote = true, IncludeFunctionalRetry = true };
+        var proposal = environment.Service.SuggestSections(environment.Authority.Path, model, "remote", allowRemote: true);
+        Assert.Equal(600, model.Request!.TimeoutSeconds);
+        Assert.Equal(1, model.Calls);
+        Assert.Equal("Scope", Assert.Single(proposal.Sections).Heading);
+        Assert.Contains(proposal.Warnings, warning => warning.Contains("Functional requirements", StringComparison.Ordinal));
+        Assert.Equal(original, File.ReadAllText(environment.CanonicalPath));
+    }
+
+    [Fact]
+    public void SectionProposal_FailedRemoteGenerationPreservesErrorAndCreatesNoProposal()
+    {
+        using var environment = WorkspaceEnvironment.Create(0);
+        environment.Service.Initialize(environment.Authority.Path, "Product BRD");
+        var original = File.ReadAllText(environment.CanonicalPath).Replace("## Scope", "## Existing boundaries", StringComparison.Ordinal);
+        File.WriteAllText(environment.CanonicalPath, original);
+        const string detail = "Codex did not finish generating text within 600 seconds.";
+        var model = new SectionGeneration("unused") { Remote = true, Failure = detail };
+        var proposal = environment.Service.SuggestSections(environment.Authority.Path, model, "remote", allowRemote: true);
+        Assert.Equal(2, proposal.ExitCode);
+        Assert.Equal(detail, Assert.Single(proposal.Errors));
+        Assert.Null(proposal.Id);
+        Assert.Equal(1, model.Calls);
+        Assert.Equal(original, File.ReadAllText(environment.CanonicalPath));
+        Assert.False(Directory.Exists(Path.Combine(environment.Authority.Path, ".cis/local/brd/section-proposals")));
+    }
+
+    [Fact]
+    public void SectionProposal_FocusesLargeLocalInputOnRelevantEvidenceIncludingLateSections()
+    {
+        using var environment = WorkspaceEnvironment.Create(0);
+        environment.Service.Initialize(environment.Authority.Path, "Product BRD");
+        const string evidence = "Customers can manage service engagements across their organizations.";
+        var original = File.ReadAllText(environment.CanonicalPath).Replace("## Scope", "## Existing boundaries", StringComparison.Ordinal)
+            + string.Concat(Enumerable.Repeat("\n\nUnrelated background paragraph about historical documentation. ", 600))
+            + "\n\n## Boundary evidence\n\n" + evidence;
+        File.WriteAllText(environment.CanonicalPath, original);
+        var model = new SectionGeneration(evidence);
+        var proposal = environment.Service.SuggestSections(environment.Authority.Path, model);
+        Assert.Equal("proposed", proposal.Status);
+        Assert.True(model.Request!.Prompt.Length < 30_000);
+        Assert.Contains(evidence, model.Request.Prompt);
+        Assert.Contains(proposal.Warnings, warning => warning.Contains("selected BRD excerpts", StringComparison.Ordinal));
+        Assert.Equal(original, File.ReadAllText(environment.CanonicalPath));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SectionProposal_AcceptsLargeDocumentsWithBoundedEvidenceFromLateParagraphs(bool remote)
+    {
+        using var environment = WorkspaceEnvironment.Create(0);
+        environment.Service.Initialize(environment.Authority.Path, "Product BRD");
+        const string quote = "The operating workflow records each experiment before evaluation and preserves its results.";
+        var original = File.ReadAllText(environment.CanonicalPath)
+            .Replace("## Business capabilities and processes", "## Existing operations", StringComparison.Ordinal)
+            + "\n\n## Historical notes\n\n" + string.Concat(Enumerable.Repeat("Unrelated historical background. ", 5000))
+            + "\n\n## Workflow evidence\n\n" + new string('x', 8000) + "\n" + quote;
+        File.WriteAllText(environment.CanonicalPath, original);
+        var model = new SectionGeneration(quote) { Remote = remote, Heading = "Business capabilities and processes", AnchorHeading = "## Existing operations" };
+        var proposal = environment.Service.SuggestSections(environment.Authority.Path, model, remote ? "remote" : null, allowRemote: remote);
+        Assert.Empty(proposal.Errors); Assert.Equal("proposed", proposal.Status); Assert.Equal(1, model.Calls);
+        Assert.Contains(quote, model.Request!.Prompt); Assert.True(model.Request.Prompt.Length < (remote ? 128_000 : 30_000));
+        Assert.Contains("not the complete document", model.Request.Prompt);
+        Assert.Contains(proposal.Warnings, warning => warning.Contains("did not review the full BRD", StringComparison.Ordinal));
+        Assert.Equal(original, File.ReadAllText(environment.CanonicalPath));
+    }
+
+    [Fact]
+    public void SectionProposal_LargeRemoteInputRetainsConsentAndRejectsQuotesOutsideSelectedEvidence()
+    {
+        using var environment = WorkspaceEnvironment.Create(0);
+        environment.Service.Initialize(environment.Authority.Path, "Product BRD");
+        const string quote = "An unrelated historical sentence that must not be used as unseen evidence.";
+        var original = File.ReadAllText(environment.CanonicalPath).Replace("## Scope", "## Existing boundaries", StringComparison.Ordinal)
+            + "\n\n## Historical notes\n\n" + quote + "\n\n" + string.Concat(Enumerable.Repeat("Historical background without relevant terms. ", 3500));
+        File.WriteAllText(environment.CanonicalPath, original);
+        var model = new SectionGeneration(quote) { Remote = true };
+        Assert.NotEmpty(environment.Service.SuggestSections(environment.Authority.Path, model, "remote").Errors);
+        Assert.Equal(0, model.Calls);
+        var proposal = environment.Service.SuggestSections(environment.Authority.Path, model, "remote", allowRemote: true);
+        Assert.Equal(1, model.Calls); Assert.DoesNotContain(quote, model.Request!.Prompt);
+        Assert.Equal("unsupported", proposal.Status); Assert.Null(proposal.Id);
+        Assert.Equal(original, File.ReadAllText(environment.CanonicalPath));
+    }
+
+    [Theory]
+    [InlineData("before")]
+    [InlineData("after")]
+    public void SectionProposal_UsesModelSelectedPlacementAndExistingHeadingLevel(string position)
+    {
+        using var environment = WorkspaceEnvironment.Create(0);
+        environment.Service.Initialize(environment.Authority.Path, "Product BRD");
+        const string evidence = "Customers can manage service engagements across their organizations.";
+        var original = File.ReadAllText(environment.CanonicalPath).Replace("## Scope", "## Existing boundaries", StringComparison.Ordinal);
+        var narrative = "# Product BRD\n\n# 1. Context\n\n" + evidence + "\n\n# 2. Detail\n\nExisting detail.\n\n# End of Document\n\n";
+        original = narrative + original;
+        File.WriteAllText(environment.CanonicalPath, original);
+        var model = new SectionGeneration(evidence) { Remote = true, AnchorHeading = "# 1. Context", Position = position };
+        var proposal = environment.Service.SuggestSections(environment.Authority.Path, model, "remote", allowRemote: true);
+        Assert.Equal("proposed", proposal.Status);
+        Assert.Contains("logical and chronological reading order", model.Request!.Prompt);
+        Assert.Contains("# 1. Context", model.Request.Prompt);
+        var content = proposal.ProposedContent!;
+        Assert.Contains("\n# Scope\n", content);
+        Assert.DoesNotContain("\n## Scope\n", content);
+        Assert.Equal(position == "before", content.IndexOf("# Scope", StringComparison.Ordinal) < content.IndexOf("# 1. Context", StringComparison.Ordinal));
+        Assert.True(content.IndexOf("# Scope", StringComparison.Ordinal) < content.IndexOf("# 2. Detail", StringComparison.Ordinal));
+        Assert.True(environment.Service.ApplySections(environment.Authority.Path, proposal.Id!, "Human reviewer").Applied);
+        Assert.Equal(content, File.ReadAllText(environment.CanonicalPath));
+    }
+
+    [Theory]
+    [InlineData(null, "before")]
+    [InlineData("## Missing anchor", "before")]
+    [InlineData("# End of Document", "after")]
+    [InlineData("## Hidden heading", "before")]
+    [InlineData("## Code heading", "before")]
+    [InlineData("## Existing boundaries", "invalid")]
+    public void SectionProposal_DoesNotInventPlacementWhenTheModelLocationIsInvalid(string? anchor, string position)
+    {
+        using var environment = WorkspaceEnvironment.Create(0);
+        environment.Service.Initialize(environment.Authority.Path, "Product BRD");
+        const string evidence = "Customers can manage service engagements across their organizations.";
+        var original = File.ReadAllText(environment.CanonicalPath).Replace("## Scope", "## Existing boundaries", StringComparison.Ordinal)
+            + "\n" + evidence + "\n<!--\n## Hidden heading\n-->\n```markdown\n## Code heading\n```\n# End of Document\n";
+        File.WriteAllText(environment.CanonicalPath, original);
+        var model = new SectionGeneration(evidence) { Remote = true, AnchorHeading = anchor!, Position = position, OmitPlacement = anchor is null };
+        var proposal = environment.Service.SuggestSections(environment.Authority.Path, model, "remote", allowRemote: true);
+        Assert.Equal("unsupported", proposal.Status);
+        Assert.Null(proposal.Id);
+        Assert.Contains(proposal.Warnings, warning => warning.Contains("valid document location", StringComparison.Ordinal));
+        Assert.Equal(original, File.ReadAllText(environment.CanonicalPath));
+    }
+
+    private sealed class SectionGeneration(string quote) : ICisTextGenerationService
+    {
+        public bool Remote { get; init; }
+        public string Heading { get; init; } = "Scope";
+        public bool IncludeFunctionalRetry { get; init; }
+        public string? Failure { get; init; }
+        public string AnchorHeading { get; init; } = "## Existing boundaries";
+        public string Position { get; init; } = "before";
+        public bool OmitPlacement { get; init; }
+        public int Calls { get; private set; }
+        public Action? BeforeReply { get; init; }
+        public CisTextGenerationRequest? Request { get; private set; }
+        public CisAiStatus GetStatus() => new([new(Remote ? "remote" : "ollama", "available", "fixture", !Remote, [new("fixture")], null)]);
+        public CisTextGenerationResult Generate(CisTextGenerationRequest request)
+        {
+            Request = request; Calls++; BeforeReply?.Invoke();
+            if (Failure is not null) return new("failed", request.Provider, "fixture", null, Failure, !Remote);
+            return new("generated", request.Provider, "fixture", System.Text.Json.JsonSerializer.Serialize(new {
+                sections = new[] { new { heading = IncludeFunctionalRetry && Calls > 1 ? "Functional requirements" : Heading, content = quote, evidenceQuotes = new[] { quote },
+                    placement = OmitPlacement ? null : new { anchorHeading = AnchorHeading, position = Position } } },
+            }), null, !Remote);
+        }
+    }
+
     [Fact]
     public void SourceSummaries_AreLocalCachedAndInvalidatedByDocumentChanges()
     {
@@ -285,6 +542,8 @@ public sealed class BrdWorkflowTests
         Assert.Equal(0, application.Invoke(["brd", "status", "--help"]));
         Assert.Equal(0, application.Invoke(["brd", "sources", "assess", "--help"]));
         Assert.Equal(0, application.Invoke(["brd", "sources", "summarize", "--help"]));
+        Assert.Equal(0, application.Invoke(["brd", "sections", "suggest", "--help"]));
+        Assert.Equal(0, application.Invoke(["brd", "sections", "apply", "--help"]));
         Assert.Equal(0, application.Invoke(["brd", "validate", "--help"]));
         Assert.Equal(0, application.Invoke(["brd", "questions", "list", "--help"]));
         Assert.Equal(0, application.Invoke(["brd", "questions", "guidance", "--help"]));
@@ -307,8 +566,10 @@ public sealed class BrdWorkflowTests
         Assert.Equal(0, application.Invoke(["brd", "feature", "approve", "--help"]));
     }
 
-    [Fact]
-    public void OpenQuestions_AreStructuredAnsweredAndRequiredBeforeApproval()
+    [Theory]
+    [InlineData("## Open questions")]
+    [InlineData("# 11. Outstanding questions")]
+    public void OpenQuestions_AreStructuredAnsweredAndRequiredBeforeApproval(string heading)
     {
         using var environment = WorkspaceEnvironment.Create(participants: 1);
         Assert.Equal(0, environment.Service.Initialize(environment.Authority.Path, "Product BRD").ExitCode);
@@ -316,7 +577,7 @@ public sealed class BrdWorkflowTests
         var content = File.ReadAllText(environment.CanonicalPath);
         content = Regex.Replace(content,
             "(?ms)^## Open questions\\s*$.*?(?=^## |\\z)",
-            "## Open questions\n\n1. Who owns the product outcome?\n2. What launch boundary is accepted?\n",
+            heading + "\n\n1. Who owns the product outcome?\n2. What launch boundary is accepted?\n",
             RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
         File.WriteAllText(environment.CanonicalPath, content);
 
@@ -392,12 +653,15 @@ public sealed class BrdWorkflowTests
         Assert.True(File.Exists(Path.Combine(environment.Authority.Path,
             BrdQuestionGuidanceService.SuggestionPath.Replace('/', Path.DirectorySeparatorChar))));
         Assert.Equal("current", afterAnswer.SuggestionStatus);
+        Assert.Equal(0, afterAnswer.SuggestedCount);
         Assert.Equal("stale", stale.SuggestionStatus);
         Assert.All(stale.Questions, question => Assert.Null(question.SuggestedAnswer));
     }
 
-    [Fact]
-    public void QuestionGuidance_RetriesMalformedMultiQuestionOutputWithoutDiscardingValidSuggestions()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void QuestionGuidance_RetriesMalformedOrOmittedQuestionsWithoutDiscardingValidSuggestions(bool omitted)
     {
         using var environment = WorkspaceEnvironment.Create(participants: 1);
         Assert.Equal(0, environment.Service.Initialize(environment.Authority.Path, "Product BRD").ExitCode);
@@ -412,10 +676,10 @@ public sealed class BrdWorkflowTests
             "## Open questions\n\n1. Who owns the product outcome?\n2. What launch date is accepted?\n",
             RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
         File.WriteAllText(environment.CanonicalPath, content);
-        var generation = new BatchRejectingQuestionGenerationService();
+        var generation = new BatchRejectingQuestionGenerationService(omitted);
         var service = new BrdQuestionGuidanceService(environment.Service, environment.Registry, generation);
 
-        var generated = service.Suggest(environment.Authority.Path, null, null, allowRemote: false);
+        var generated = service.Suggest(environment.Authority.Path, "fake", "stronger", allowRemote: false);
 
         Assert.True(generated.Applied);
         Assert.Equal("current", generated.SuggestionStatus);
@@ -423,8 +687,51 @@ public sealed class BrdWorkflowTests
         Assert.Equal("The business sponsor owns the product outcome.", generated.Questions[0].SuggestedAnswer);
         Assert.Null(generated.Questions[1].SuggestedAnswer);
         Assert.Contains("confidence was too low", generated.Questions[1].SuggestionReason, StringComparison.Ordinal);
-        Assert.Equal(3, generation.Requests.Count);
-        Assert.All(generation.Requests, request => Assert.True(request.JsonMode));
+        Assert.Equal(omitted ? 2 : 3, generation.Requests.Count);
+        Assert.All(generation.Requests, request => { Assert.True(request.JsonMode); Assert.Equal("fake", request.Provider); Assert.Equal("stronger", request.Model); });
+        Assert.Equal(content, File.ReadAllText(environment.CanonicalPath));
+        if (omitted) Assert.DoesNotContain("QUESTION BRD-Q-001:", generation.Requests[1].Prompt);
+    }
+
+    [Theory]
+    [InlineData("proposal", true)]
+    [InlineData("evidence", false)]
+    [InlineData("missing-assumptions", false)]
+    [InlineData("low-confidence", false)]
+    [InlineData("uncited", false)]
+    public void QuestionGuidance_PreservesLabelledDecisionProposalsWithoutRecordingHumanAnswers(string mode, bool retained)
+    {
+        using var environment = WorkspaceEnvironment.Create(0);
+        environment.Service.Initialize(environment.Authority.Path, "Product BRD");
+        CompleteHumanReview(environment.CanonicalPath, hasCandidate: false);
+        var original = Regex.Replace(File.ReadAllText(environment.CanonicalPath), "(?ms)^## Open questions\\s*$.*?(?=^## |\\z)",
+            "## Open questions\n\n1. Who should own the outcome?\n", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        File.WriteAllText(environment.CanonicalPath, original);
+        var service = new BrdQuestionGuidanceService(environment.Service, environment.Registry, new DecisionProposalGeneration(mode));
+        var generated = service.Suggest(environment.Authority.Path, "fake", "stronger", false);
+        Assert.Empty(generated.Errors);
+        var question = Assert.Single(service.Guidance(environment.Authority.Path).Questions);
+        Assert.Equal(retained, question.SuggestedAnswer is not null);
+        Assert.Equal("Unanswered", question.Status); Assert.Null(question.Answer);
+        if (retained) { Assert.Equal("proposal", question.SuggestionKind); Assert.NotEmpty(question.SuggestionAssumptions); }
+        Assert.Equal(original, File.ReadAllText(environment.CanonicalPath));
+    }
+
+    private sealed class DecisionProposalGeneration(string mode) : ICisTextGenerationService
+    {
+        public CisAiStatus GetStatus() => new([new("fake", "available", "local", true, [new("stronger")], null)]);
+        public CisTextGenerationResult Generate(CisTextGenerationRequest request)
+        {
+            Assert.Contains("kind=proposal", request.Prompt);
+            var json = System.Text.Json.JsonSerializer.Serialize(new { suggestions = new[] { new {
+                questionId = "BRD-Q-001", kind = mode == "evidence" ? "evidence" : "proposal",
+                answer = "Assign a business sponsor to review the outcome before each release.",
+                confidence = mode == "low-confidence" ? "low" : "medium", reason = "The evidence does not establish an owner; this is a proposed responsibility.",
+                assumptions = mode == "missing-assumptions" ? Array.Empty<string>() : ["Confirm a business sponsor will take this responsibility."],
+                contextIds = mode == "uncited" ? Array.Empty<string>() : ["BRD-Q-001-CTX-1"],
+            } } });
+            return new("generated", "fake", "stronger", json, null, true);
+        }
     }
 
     [Fact]
@@ -529,6 +836,32 @@ public sealed class BrdWorkflowTests
 
         Assert.Equal(0, result.ExitCode);
         Assert.Equal("legacy/BRD.md", Assert.Single(result.Candidates).Path);
+    }
+
+    [Fact]
+    public void Discover_PrunesGeneratedTreesAndFindsExistingAuthorityDocuments()
+    {
+        using var environment = WorkspaceEnvironment.Create(participants: 0);
+        var repository = environment.Authority;
+        foreach (var directory in new[] { ".artifacts/validation-deps", "artifacts", "tmp", "temp", ".tmp", ".temp",
+            ".cache", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".stryker-tmp",
+            "TestResults", "test-results", "playwright-report", "blob-report" })
+            repository.Write($"{directory}/BRD.md", "# Business Requirements Document\n\nGenerated fixture.\n");
+        const string existingPath = "docs/applications/product/specs/brd-spec.md";
+        const string existingContent = "---\nstatus: Draft\n---\n# Business Requirements Document\n\nExisting product requirements.\n";
+        repository.Write(existingPath, existingContent);
+        using var locked = new FileStream(Path.Combine(repository.Path, ".artifacts/validation-deps/BRD.md"),
+            FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+
+        var result = environment.Service.Status(repository.Path);
+
+        var candidate = Assert.Single(result.Discovery!.Candidates);
+        Assert.Equal(existingPath, candidate.Path);
+        Assert.False(candidate.Canonical);
+        Assert.DoesNotContain(result.Discovery.Warnings, warning => warning.Contains("Could not inspect", StringComparison.Ordinal));
+        Assert.Equal("Missing", result.Validation!.DocumentStatus);
+        Assert.False(File.Exists(environment.CanonicalPath));
+        Assert.Equal(existingContent, File.ReadAllText(Path.Combine(repository.Path, existingPath)));
     }
 
     [Fact]
@@ -1127,65 +1460,81 @@ public sealed class BrdWorkflowTests
     }
 
     [Fact]
-    public void Reconcile_AbsorbsNewFeatureSpecificationAsReviewedTraceableEvidence()
+    public void Reconcile_ExcludesUnselectedFeaturesCardsAndIssuePlans()
     {
         using var environment = WorkspaceEnvironment.Create(participants: 1);
         Assert.Equal(0, environment.Service.Initialize(environment.Authority.Path, "Product BRD").ExitCode);
-        CompleteHumanReview(environment.CanonicalPath, hasCandidate: false);
-        Assert.Equal(0, environment.Service.Approve(
-            environment.Authority.Path,
-            "Business owner",
-            "Initial requirements reviewed").ExitCode);
         var participant = environment.Participants[0];
-        participant.Write(
-            "docs/specs/customer-checkout-feature-spec.md",
-            "---\ntitle: Customer checkout\ntype: feature-specification\nstatus: Draft\n---\n\n" +
-            "# Customer checkout\n\n## Functional requirements\n\nCustomers can complete checkout.\n");
+        foreach (var path in new[] { "docs/checkout-feature-spec.md", "docs/brd.card.md",
+            "docs/release_issue_pack/update-brd.md", "docs/issues/update-brd.md" })
+            participant.Write(path, "# Business Requirements\n\nA feature or supporting document, not a source selection.\n");
+        participant.Write("docs/brd-template.md", "---\ntype: template\n---\n# Business Requirements\n\nTemplate.\n");
+        participant.Write("docs/brd-amendment.md", "# Business Requirements\n\nActual business amendment.\n");
         Assert.Equal(0, environment.Builder.Build(participant.Path).ExitCode);
 
-        var stale = environment.Service.Status(environment.Authority.Path);
-        Assert.Equal("Stale", stale.Validation!.EffectiveStatus);
-        Assert.Contains(stale.Validation.Errors, error =>
-            error.Contains("not assessed", StringComparison.OrdinalIgnoreCase));
-
         var reconciled = environment.Service.Reconcile(environment.Authority.Path);
+
         Assert.Equal(0, reconciled.ExitCode);
-        Assert.True(reconciled.Applied);
-        Assert.Equal("Review Required", reconciled.Validation!.EffectiveStatus);
-        var candidate = Assert.Single(
-            reconciled.Discovery!.Candidates,
-            item => item.Kind == "feature-specification");
-        var content = File.ReadAllText(environment.CanonicalPath);
-        Assert.Contains($"| {candidate.Id} | feature-specification |", content, StringComparison.Ordinal);
-        Assert.Contains("| Unreviewed | TODO |", content, StringComparison.Ordinal);
-        Assert.Contains("approved_by: null", content, StringComparison.Ordinal);
-
-        content = content.Replace(
-            "| Unreviewed | TODO |",
-            "| Adopted | Reviewed with the product owner and incorporated into functional requirements |",
-            StringComparison.Ordinal);
-        content = content.Replace(
-            "## Traceability\n\nStakeholders reviewed this section and recorded explicit, testable business requirements.",
-            $"## Traceability\n\n- {candidate.Id}: incorporated into the checkout business requirements.",
-            StringComparison.Ordinal);
-        File.WriteAllText(environment.CanonicalPath, content);
-
-        var ready = environment.Service.Validate(environment.Authority.Path);
-        Assert.True(ready.Validation!.Valid);
-        Assert.Equal("Ready for Approval", ready.Validation.EffectiveStatus);
-        Assert.Equal(0, environment.Service.Approve(
-            environment.Authority.Path,
-            "Business owner",
-            "Checkout feature absorbed into the BRD").ExitCode);
-        Assert.Equal("Active", environment.Service.Status(environment.Authority.Path).Validation!.EffectiveStatus);
+        Assert.Equal("docs/brd-amendment.md", Assert.Single(reconciled.Discovery!.Candidates,
+            item => !item.Canonical).Path);
     }
 
     [Fact]
-    public void Reconcile_AutoAdoptsCurrentHumanApprovedFeatureSpecification()
+    public void Reconcile_PreservesPreviouslyReviewedFeatureAndDetectsLaterDrift()
+    {
+        using var environment = WorkspaceEnvironment.Create(participants: 0);
+        const string path = "docs/customer-checkout-feature-spec.md";
+        const string feature = "# Feature specification\n\nCustomers can complete checkout.\n";
+        environment.Authority.Write(path, feature);
+        Assert.Equal(0, environment.Service.Initialize(environment.Authority.Path, "Product BRD").ExitCode);
+        var id = "BRD-SRC-" + Convert.ToHexString(SHA256.HashData(
+            Encoding.UTF8.GetBytes(environment.AuthorityId + "\u001f" + path))).ToLowerInvariant()[..12];
+        var digest = "sha256:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(feature))).ToLowerInvariant();
+        var content = File.ReadAllText(environment.CanonicalPath).Replace("<!-- cis:sources:end -->",
+            $"| {id} | feature-specification | {environment.AuthorityId} | {path} | {digest} | Reference | Human selected historical context |\n<!-- cis:sources:end -->",
+            StringComparison.Ordinal);
+        File.WriteAllText(environment.CanonicalPath, content);
+
+        var reconciled = environment.Service.Reconcile(environment.Authority.Path);
+
+        Assert.Single(reconciled.Discovery!.Candidates, item => item.Kind == "feature-specification");
+        Assert.Contains("| Reference | Human selected historical context |", File.ReadAllText(environment.CanonicalPath));
+        environment.Authority.Write(path, feature + "Updated scope.\n");
+        Assert.Contains(environment.Service.Validate(environment.Authority.Path).Validation!.Errors,
+            error => error.Contains("changed after assessment", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Validate_RecognizesNumberedImportedSectionsWithoutAcceptingRelatedTopics()
+    {
+        using var environment = WorkspaceEnvironment.Create(participants: 0);
+        Assert.Equal(0, environment.Service.Initialize(environment.Authority.Path, "Product BRD").ExitCode);
+        CompleteHumanReview(environment.CanonicalPath, hasCandidate: false);
+        var content = File.ReadAllText(environment.CanonicalPath)
+            .Replace("## Executive summary", "# 1. Document Intent", StringComparison.Ordinal)
+            .Replace("## Business outcomes", "# 2. Platform Objectives", StringComparison.Ordinal)
+            .Replace("## Scope", "# 3. Scope", StringComparison.Ordinal)
+            .Replace("## Stakeholders and actors", "# 4. Stakeholders and actors", StringComparison.Ordinal);
+        File.WriteAllText(environment.CanonicalPath, content);
+        Assert.True(environment.Service.Validate(environment.Authority.Path).Validation!.Valid);
+
+        content = content.Replace("# 3. Scope", "# 3. Out of scope", StringComparison.Ordinal)
+            + "\n```markdown\n## Scope\nAn example is not a real section.\n```\n";
+        File.WriteAllText(environment.CanonicalPath, content);
+        Assert.Contains("No matching BRD section with content was found for: Scope",
+            environment.Service.Validate(environment.Authority.Path).Validation!.Errors);
+    }
+
+    [Theory]
+    [InlineData("## Traceability")]
+    [InlineData("## 10. Requirements traceability")]
+    public void Reconcile_AutoAdoptsCurrentHumanApprovedFeatureSpecification(string heading)
     {
         using var environment = WorkspaceEnvironment.Create(participants: 1);
         Assert.Equal(0, environment.Service.Initialize(environment.Authority.Path, "Product BRD").ExitCode);
         CompleteHumanReview(environment.CanonicalPath, hasCandidate: false);
+        File.WriteAllText(environment.CanonicalPath, File.ReadAllText(environment.CanonicalPath)
+            .Replace("## Traceability", heading, StringComparison.Ordinal));
         Assert.Equal(0, environment.Service.Approve(
             environment.Authority.Path,
             "Business owner",
@@ -1236,7 +1585,7 @@ public sealed class BrdWorkflowTests
             content,
             StringComparison.Ordinal);
         Assert.Contains("<!-- cis:feature-traceability:start -->", content, StringComparison.Ordinal);
-        Assert.Contains(candidate.Id, ExtractTraceability(content), StringComparison.Ordinal);
+        Assert.Contains(candidate.Id, ExtractTraceability(content.Replace(heading, "## Traceability", StringComparison.Ordinal)), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1381,7 +1730,7 @@ public sealed class BrdWorkflowTests
         }
     }
 
-    private sealed class BatchRejectingQuestionGenerationService : ICisTextGenerationService
+    private sealed class BatchRejectingQuestionGenerationService(bool omit = false) : ICisTextGenerationService
     {
         public List<CisTextGenerationRequest> Requests { get; } = [];
         public CisAiStatus GetStatus() => new([new("fake", "available", "local", true, [new("small")], null)]);
@@ -1394,7 +1743,12 @@ public sealed class BrdWorkflowTests
                     RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
                 .Select(match => match.Groups[1].Value).ToArray();
             if (ids.Length != 1)
+            {
+                if (omit) return new("generated", request.Provider, request.Model, """
+                    {"suggestions":[{"questionId":"BRD-Q-001","answer":"The business sponsor owns the product outcome.","confidence":"high","reason":"Accountability is explicit.","contextIds":["BRD-Q-001-CTX-1"]}]}
+                    """, null, true);
                 return new("generated", "fake", "small", "The response shape was lost.", null, true);
+            }
             var body = ids[0] == "BRD-Q-001"
                 ? "\"answer\":\"The business sponsor owns the product outcome.\",\"confidence\":\"high\",\"reason\":\"Accountability is explicit.\",\"contextIds\":[\"BRD-Q-001-CTX-1\"]"
                 : "\"answer\":\"Launch next Friday.\",\"confidence\":\"low\",\"reason\":\"A speculative date.\",\"contextIds\":[]";

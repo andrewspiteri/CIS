@@ -4,7 +4,7 @@ using Cis.Host;
 
 namespace Cis.Modules.Api.Tests;
 
-public sealed class ApiGovernanceTests
+public sealed partial class ApiGovernanceTests
 {
     [Fact]
     public void ApiCommands_AreRegisteredByTheExplicitModule()

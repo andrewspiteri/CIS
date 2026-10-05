@@ -7,7 +7,7 @@ using Cis.Modules.Repository;
 
 namespace Cis.Modules.TechnicalIntent;
 
-public sealed class TechnicalIntentQuestionnaireService
+public sealed partial class TechnicalIntentQuestionnaireService
 {
     private static readonly IReadOnlyList<QuestionDefinition> Definitions =
     [
@@ -214,6 +214,7 @@ public sealed class TechnicalIntentQuestionnaireService
         var warnings = new List<string>();
         if (!current) warnings.Add("The technical questionnaire does not match the current Active BRD. Reinitialize and review its answers.");
         if (!complete) warnings.Add($"{questions.Count(item => !IsResolved(item))} high-level technical decision(s) remain unanswered.");
+        questions = SuggestFromSelectedDocument(state.Authority!, questions, warnings);
         return new TechnicalIntentQuestionnaireResult(operation, state.Workspace!.WorkspacePath, state.Authority!.Id,
             Normalize(Path.GetRelativePath(state.Authority.RepositoryPath, state.Path)), state.BrdVersion, current, complete,
             questions.Count(IsResolved), questions.Count(item => !IsResolved(item)), questions,
@@ -231,7 +232,7 @@ public sealed class TechnicalIntentQuestionnaireService
         if (!context.IsSuccess || context.Context is null)
             return new(resolution.Workspace, authority, null, null, null, false, context.Errors);
         var brdStatus = _brd.Status(workspacePath);
-        var brdPath = Path.Combine(authority.RepositoryPath, authority.DocumentationRoot.Replace('/', Path.DirectorySeparatorChar), "specs", "business-requirements.md");
+        var brdPath = CisProductDocumentPaths.Resolve(Path.Combine(authority.RepositoryPath, authority.DocumentationRoot.Replace('/', Path.DirectorySeparatorChar)), "specs", "business-requirements.md");
         var version = File.Exists(brdPath) ? "semantic-v1:" + BrdDocumentDigest.Compute(File.ReadAllText(brdPath)) : null;
         var path = Path.Combine(authority.RepositoryPath, authority.DocumentationRoot.Replace('/', Path.DirectorySeparatorChar), "specs", "technical-intent-questionnaire.md");
         var ready = brdStatus.Validation is { } brdValidation

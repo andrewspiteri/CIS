@@ -58,12 +58,7 @@ public sealed class ClaudeAgentProvider : ICisAgentProvider, ICisAgentProviderAu
         if (!Authentication.Methods.Contains(request.Method, StringComparer.OrdinalIgnoreCase))
             return new("unsupported-method", null,
                 [$"Claude authentication method '{request.Method}' is unsupported. Use browser, console, or sso."]);
-        var start = new ProcessStartInfo(_executable)
-        {
-            WorkingDirectory = request.RepositoryPath,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
+        var start = CreateStartInfo(_executable, request.RepositoryPath);
         ConfigureAuthenticationArguments(start, request.Method);
         try
         {
@@ -119,7 +114,7 @@ public sealed class ClaudeAgentProvider : ICisAgentProvider, ICisAgentProviderAu
     public CisAgentProviderExecutionResult Execute(CisAgentExecutionRequest request, Action<CisAgentProviderEvent> onEvent, CancellationToken cancellationToken)
     {
         if (request.Transport != "stream-json") return Failure("unsupported-transport", $"Claude transport '{request.Transport}' is unsupported.");
-        var start = new ProcessStartInfo(_executable) { WorkingDirectory = request.WorkingDirectory, UseShellExecute = false, CreateNoWindow = true };
+        var start = CreateStartInfo(_executable, request.WorkingDirectory);
         ConfigureExecutionArguments(start, request);
         if (request.ResumeSessionId is not null) { start.ArgumentList.Add("--resume"); start.ArgumentList.Add(request.ResumeSessionId); }
         start.Environment.Clear();
@@ -131,6 +126,7 @@ public sealed class ClaudeAgentProvider : ICisAgentProvider, ICisAgentProviderAu
         decimal? cost = null;
         var diagnostics = new List<string>();
         var invalid = false;
+        string? providerFailure = null;
         CisAgentProcessResult process;
         try
         {
@@ -138,6 +134,7 @@ public sealed class ClaudeAgentProvider : ICisAgentProvider, ICisAgentProviderAu
             {
                 var parsed = ParseEvent(line, ref session, summary, ref input, ref output, ref cost);
                 if (parsed.Kind == "invalid-provider-event") invalid = true;
+                if (parsed.Kind == "provider-error") { providerFailure = parsed.Message; diagnostics.Add(parsed.Message); }
                 onEvent(parsed);
             }, line => onEvent(new("provider-stderr", Redact(line))), cancellationToken,
                 onStarted: (id, started) => onEvent(new("process-started", $"Claude process {id} started.", ProcessId: id, ProcessStartedAtUtc: started.ToString("O"))),
@@ -147,15 +144,24 @@ public sealed class ClaudeAgentProvider : ICisAgentProvider, ICisAgentProviderAu
 
         if (process.OutputTruncated) diagnostics.Add("Provider output exceeded the configured bound.");
         if (!string.IsNullOrWhiteSpace(process.StandardError)) diagnostics.Add(Redact(process.StandardError));
+        var completion = ClassifyCompletion(process, invalid, providerFailure);
+        return new(completion.Status, process.ExitCode, session, summary.ToString().Trim(), [], [], [], input, output, cost,
+            completion.FailureKind, diagnostics);
+    }
+
+    internal static (string Status, string? FailureKind) ClassifyCompletion(CisAgentProcessResult process, bool invalid, string? providerFailure)
+    {
         var status = process.Cancelled ? CisAgentRunStates.Cancelled
             : process.TimedOut ? CisAgentRunStates.TimedOut
             : process.OutputTruncated || invalid ? CisAgentRunStates.InvalidEvidence
+            : providerFailure is not null ? CisAgentRunStates.Failed
             : process.ExitCode == 0 ? CisAgentRunStates.Succeeded : CisAgentRunStates.Failed;
-        return new(status, process.ExitCode, session, summary.ToString().Trim(), [], [], [], input, output, cost,
-            process.Cancelled ? "cancellation" : process.TimedOut ? process.TimeoutKind ?? "timeout" : process.OutputTruncated || invalid ? "invalid-evidence" : process.ExitCode == 0 ? null
+        return (status,
+            process.Cancelled ? "cancellation" : process.TimedOut ? process.TimeoutKind ?? "timeout" : process.OutputTruncated || invalid ? "invalid-evidence"
+                : IsAuthenticationFailure(providerFailure) ? "authentication-required"
+                : providerFailure is not null ? "provider-failure" : process.ExitCode == 0 ? null
                 : process.StandardError.Contains("permission", StringComparison.OrdinalIgnoreCase) || process.StandardError.Contains("approval", StringComparison.OrdinalIgnoreCase)
-                    ? "permission-required" : "provider-failure",
-            diagnostics);
+                    ? "permission-required" : "provider-failure");
     }
 
     internal static CisAgentProviderEvent ParseEvent(string line, ref string? session, StringBuilder summary, ref long? input, ref long? output, ref decimal? cost)
@@ -176,13 +182,21 @@ public sealed class ClaudeAgentProvider : ICisAgentProvider, ICisAgentProviderAu
                 output = Number(usage, "output_tokens") ?? output;
             }
             if (root.TryGetProperty("total_cost_usd", out var total) && total.TryGetDecimal(out var amount)) cost = amount;
+            var failure = type == "result" && (Boolean(root, "is_error") || subtype?.StartsWith("error", StringComparison.OrdinalIgnoreCase) == true);
             if (type == "result")
             {
                 var result = root.TryGetProperty("structured_output", out var structured)
                     && structured.ValueKind is JsonValueKind.Object or JsonValueKind.Array
                     ? structured.GetRawText()
                     : Text(root, "result");
-                if (!string.IsNullOrWhiteSpace(result)) { summary.Clear(); summary.Append(result); }
+                if (failure)
+                {
+                    var error = Text(root, "result");
+                    if (string.IsNullOrWhiteSpace(error) && root.TryGetProperty("errors", out var errors) && errors.ValueKind == JsonValueKind.Array)
+                        error = string.Join("; ", errors.EnumerateArray().Where(item => item.ValueKind == JsonValueKind.String).Select(item => item.GetString()));
+                    summary.Clear(); summary.Append(Redact(string.IsNullOrWhiteSpace(error) ? $"Claude reported {subtype ?? "an error"}." : error));
+                }
+                else if (!string.IsNullOrWhiteSpace(result)) { summary.Clear(); summary.Append(result); }
             }
             else if (type == "assistant" && root.TryGetProperty("message", out var message) && message.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array)
             {
@@ -190,13 +204,15 @@ public sealed class ClaudeAgentProvider : ICisAgentProvider, ICisAgentProviderAu
                     if (Text(item, "type") == "text" && Text(item, "text") is { Length: > 0 } text)
                     { if (summary.Length > 0) summary.AppendLine(); summary.Append(text); }
             }
-            var eventKind = type == "system" && subtype == "thinking_tokens" ? "provider-heartbeat" : "provider-event";
+            var eventKind = failure ? "provider-error" : type == "system" && subtype == "thinking_tokens" ? "provider-heartbeat" : "provider-event";
             var eventMessage = type switch
             {
                 "rate_limit_event" => DescribeRateLimit(root),
                 "system" when subtype == "thinking_tokens" => DescribeThinking(root),
                 "assistant" => "Claude produced assistant output.",
                 "user" => "Claude tool result received.",
+                "result" when failure => "Claude request failed: " + summary + (IsAuthenticationFailure(summary.ToString())
+                    ? " Sign in again using CIS: Authenticate Agent Provider, then retry." : ""),
                 "result" => "Claude completed the request.",
                 _ => subtype is null ? type : $"{type}/{subtype}",
             };
@@ -206,9 +222,29 @@ public sealed class ClaudeAgentProvider : ICisAgentProvider, ICisAgentProviderAu
         catch (JsonException) { return new("invalid-provider-event", "Claude emitted malformed streaming JSON."); }
     }
 
+    private static bool IsAuthenticationFailure(string? message) => message is not null
+        && (message.Contains("authenticate", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("authentication", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("OAuth", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("not logged in", StringComparison.OrdinalIgnoreCase));
+
+    internal static ProcessStartInfo CreateStartInfo(string executable, string workingDirectory) => new(executable)
+    {
+        WorkingDirectory = workingDirectory, UseShellExecute = false, CreateNoWindow = true,
+        RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
+        StandardInputEncoding = new UTF8Encoding(false), StandardOutputEncoding = new UTF8Encoding(false),
+        StandardErrorEncoding = new UTF8Encoding(false),
+    };
+
     internal static void ConfigureExecutionArguments(ProcessStartInfo start, CisAgentExecutionRequest request)
     {
         start.ArgumentList.Add("-p");
+        foreach (var directory in request.EvidenceDirectories.Distinct(StringComparer.Ordinal))
+        {
+            if (!Path.IsPathFullyQualified(directory)) throw new ArgumentException("Evidence directories must be absolute controller-created paths.");
+            start.ArgumentList.Add("--add-dir"); start.ArgumentList.Add(directory);
+        }
+        if (request.Model is not null) { start.ArgumentList.Add("--model"); start.ArgumentList.Add(request.Model); }
         start.ArgumentList.Add("--input-format"); start.ArgumentList.Add("text");
         start.ArgumentList.Add("--output-format"); start.ArgumentList.Add("stream-json");
         start.ArgumentList.Add("--verbose");
@@ -223,7 +259,7 @@ public sealed class ClaudeAgentProvider : ICisAgentProvider, ICisAgentProviderAu
         }
         if (request.Mode == CisAgentRunModes.Review)
         {
-            start.ArgumentList.Add("--json-schema"); start.ArgumentList.Add(BrdReviewJsonSchema);
+            start.ArgumentList.Add("--json-schema"); start.ArgumentList.Add(request.TaskReview ? BrdReviewJsonSchema.Replace("BRD-REV-", "TASK-REV-", StringComparison.Ordinal) : BrdReviewJsonSchema);
             start.ArgumentList.Add("--no-session-persistence");
         }
     }
@@ -232,7 +268,7 @@ public sealed class ClaudeAgentProvider : ICisAgentProvider, ICisAgentProviderAu
     {
         try
         {
-            var start = new ProcessStartInfo(_executable) { WorkingDirectory = repositoryPath, UseShellExecute = false, CreateNoWindow = true };
+            var start = CreateStartInfo(_executable, repositoryPath);
             foreach (var argument in arguments) start.ArgumentList.Add(argument);
             var result = CisProcessSafety.Run(start, TimeSpan.FromSeconds(8), 16_384);
             if (result.TimedOut || result.OutputTruncated || result.ExitCode != 0) return null;

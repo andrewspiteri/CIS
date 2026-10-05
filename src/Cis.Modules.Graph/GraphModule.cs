@@ -472,6 +472,7 @@ public sealed class GraphModule : ICisModule
                     $"nodes={repository.Result.NodeCount};edges={repository.Result.EdgeCount};" +
                     $"warnings={repository.Result.WarningCount};errors={repository.Result.ErrorCount};" +
                     $"buildId={Normalize(repository.Result.BuildId)}");
+                RenderAgentDiagnostics(repository.Result.Diagnostics);
             }
 
             foreach (var error in result.Errors)
@@ -490,6 +491,10 @@ public sealed class GraphModule : ICisModule
             Console.WriteLine(
                 $"Repository: {repository.Id} [{repository.Participation}/{repository.Relationship}; {repository.Result.Status}] " +
                 $"{repository.Result.NodeCount} nodes, {repository.Result.EdgeCount} edges");
+            foreach (var diagnostic in repository.Result.Diagnostics)
+            {
+                Console.WriteLine($"  [{diagnostic.Severity.ToUpperInvariant()}] {diagnostic.Code}: {diagnostic.Message}");
+            }
         }
 
         foreach (var error in result.Errors)

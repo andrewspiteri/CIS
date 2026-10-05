@@ -45,7 +45,7 @@ test('new work is explicitly a proposal and prefills its proposed owner without 
 
 test('delivery distinguishes requirements from implementation and exposes reconciliation', () => {
   const html = deliveryAssessment(undefined);
-  assert.match(html, /Reconcile with existing implementation/u);
+  assert.match(html, /Generate story breakdown/u);
   assert.match(html, /not established which capabilities need building/u);
   assert.doesNotMatch(html, /Use reconciled stories as draft/u);
   assert.match(deliveryAssessment({status:'stale'}), /changed/u);

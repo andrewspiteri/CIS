@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using System.Text.Json;
 using Cis.Abstractions;
 
 namespace Cis.Modules.Docs;
@@ -61,9 +62,16 @@ public sealed partial class DocumentationInventoryService
             RecurseSubdirectories = true,
             AttributesToSkip = FileAttributes.ReparsePoint,
         };
-        foreach (var absolutePath in Directory
-                     .EnumerateFiles(context.DocumentationPath, "*.md", enumerationOptions)
-                     .Order(StringComparer.OrdinalIgnoreCase))
+        var paths = Directory.EnumerateFiles(context.DocumentationPath, "*.md", enumerationOptions).ToList();
+        try
+        {
+            paths.AddRange(CisProductDocumentPaths.Read(context.RepositoryPath).Values
+                .Select(relative => CisProductDocumentPaths.ValidatePath(context.RepositoryPath, relative)).Where(File.Exists));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or InvalidDataException)
+        { errors.Add($"Invalid loaded document selection: {exception.Message}"); }
+        foreach (var absolutePath in paths.Distinct(CisPathSafety.PlatformComparison == StringComparison.OrdinalIgnoreCase
+                     ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal).Order(StringComparer.OrdinalIgnoreCase))
         {
             var repositoryRelativePath = ToRepositoryPath(context.RepositoryPath, absolutePath);
             var documentationRelativePath = Path.GetRelativePath(context.DocumentationPath, absolutePath)

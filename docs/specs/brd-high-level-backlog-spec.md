@@ -3,7 +3,7 @@ title: "BRD High-Level Backlog"
 type: specification
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-15"
+last_reviewed: "2026-10-05"
 review_cadence: "on BRD decomposition workflow change"
 cis:
   stable_id: change-impact-studio:spec:brd-high-level-backlog
@@ -77,7 +77,11 @@ existing nonempty backlog. Ordinary refresh preserves the decision; changed sour
 require explicit renewed review. Switching to requirements mode creates review-only candidate
 outcomes and preserves notes outside the managed blocks.
 
-Build or source change produces `Review Required`. Explicit `cis brd backlog approve`
+An applied semantic build change produces `Review Required`. An ordinary rebuild of
+an Active requirements backlog returns a blocked candidate before writing changed
+content. After reviewing that candidate, `--apply-reviewed-changes` saves it for
+renewed approval. A source change can make the saved approval stale without rewriting
+the backlog. Explicit `cis brd backlog approve`
 records reviewer, rationale, timestamp, and approved-content digest. Source drift or a
 later canonical backlog edit makes an Active backlog effectively `Stale`.
 
@@ -125,8 +129,11 @@ absorption and downstream renewal cycle.
 ## Reconciliation
 
 Rerunning build is idempotent. Stable IDs derive from BRD requirement IDs. CIS refreshes
-derived outcome, priority, repository, and frontend routing while preserving reviewed
-dependencies, feature-specification links, and notes for unchanged requirement IDs.
+derived outcomes and explicit source priorities while preserving reviewed repository
+and frontend routing, dependencies, feature-specification links, and notes for unchanged
+requirement IDs. Requirements without an explicit priority retain the existing priority.
+New items use inferred routing and default priority; an explicit no-visual-UI baseline
+clears frontend types.
 Schema migration re-derives dependencies in older, unapproved generated rows once; it
 never replaces dependencies in an Active backlog. Schema 3 then preserves dependency
 lists, including an explicitly empty list, as human-managed decisions.

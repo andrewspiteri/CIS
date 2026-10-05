@@ -102,3 +102,16 @@ source content. The local JSONL remains the detailed derived record.
 - Repository initialization seeds an agent skill and instruction for the feedback loop.
 - Task completion preserves a canonical aggregate/digest without promoting the local
   telemetry ledger to source-of-truth status.
+
+## Invocation boundaries and semantic outcomes
+
+Savings candidates declare their owning command. Composite invocations cannot use a
+nested command's estimate as their own counterfactual. High-output opportunities are
+evaluated even when an estimate exists. Usage entries expose positive output expansion
+as `outputExpansionEstimatedTokens`, separately from possible savings.
+
+The host records parser errors as invalid requests and accepts bounded semantic
+outcomes reported by commands. Plan blockers explicitly supply `blocked`. Legacy
+records retain their recorded outcomes or exit-code fallback. `buildIdentity` records
+the host informational version when available. No raw argument values, prompts, output
+or source content are added to the ledger.

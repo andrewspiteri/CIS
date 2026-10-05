@@ -8,11 +8,30 @@ using Cis.Modules.Repository;
 using Cis.Modules.Api;
 using Cis.Modules.Tracker;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Cis.Modules.Graph.Tests;
 
 public sealed class GraphBuilderTests
 {
+    [Fact]
+    public async Task ConcurrentBuildsReusePublishedStateAndDocumentationEditsReuseCompilerAnalysis()
+    {
+        using var repository = TemporaryRepository.CreateInitializedApi();
+        var results = await Task.WhenAll(Task.Run(() => CreateBuilder().Build(repository.Path)),
+            Task.Run(() => CreateBuilder().Build(repository.Path)));
+        Assert.All(results, result => Assert.Equal(0, result.ExitCode));
+        Assert.Single(results, result => result.Applied);
+        Assert.Equal(results[0].BuildId, results[1].BuildId);
+        var cache = Path.Combine(repository.Path, ".cis/local/graph/compiler-analysis.json");
+        var before = File.ReadAllBytes(cache);
+        File.AppendAllText(Path.Combine(repository.Path, "docs/cis/README.md"), "\nDocumentation-only clarification.\n");
+        var updated = CreateBuilder().Build(repository.Path);
+        Assert.Equal(0, updated.ExitCode);
+        Assert.NotEqual(results[0].BuildId, updated.BuildId);
+        Assert.Equal(before, File.ReadAllBytes(cache));
+    }
+
     [Fact]
     public void Build_PreservesRepeatedJavaScriptTestsAndQuotedNames()
     {
@@ -538,6 +557,67 @@ public sealed class GraphBuilderTests
             NodeValue(node, "localId").Contains("_old", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(nodes, node =>
             NodeValue(node, "localId").Contains("build_out", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Build_ExcludesTemporaryAndPythonCacheInputsWithoutReadingThem()
+    {
+        using var repository = TemporaryRepository.CreateInitializedApi();
+        repository.Write("src/client.py", "class Client: pass");
+        repository.Write(".github/scripts/check.py", "class Check: pass");
+        repository.Write(".github/copilot-runtime/pydeps-pyyaml/_yaml/__init__.py", "class Dependency: pass");
+        string[] excluded = ["tmp", "temp", ".tmp", ".temp", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"];
+        foreach (var directory in excluded)
+            repository.Write($"tools/{directory}/cached.py", "class Cached: pass");
+        repository.Write("tmp/test-deps/__pycache__/locked.py", "class Locked: pass");
+        using var locked = new FileStream(Path.Combine(repository.Path, "tmp/test-deps/__pycache__/locked.py"),
+            FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+
+        var result = CreateBuilder().Build(repository.Path);
+
+        Assert.True(result.ExitCode == 0, string.Join("\n", result.Diagnostics.Select(item => item.Message)));
+        using var graph = ReadGraphJson(repository.Path);
+        var sources = graph.RootElement.GetProperty("nodes").EnumerateArray()
+            .Where(node => NodeValue(node, "kind") == "source-file").Select(node => NodeValue(node, "localId")).ToArray();
+        Assert.Contains("src/client.py", sources);
+        Assert.Contains(".github/scripts/check.py", sources);
+        Assert.DoesNotContain(sources, path => path.StartsWith(".github/copilot-runtime/", StringComparison.Ordinal));
+        Assert.DoesNotContain(sources, path => path.Split('/').Any(excluded.Contains));
+        foreach (var directory in excluded)
+            repository.Write($"tools/{directory}/cached.py", "class ChangedCache: pass");
+        Assert.Equal(result.BuildId, CreateBuilder().Build(repository.Path).BuildId);
+    }
+
+    [Theory]
+    [InlineData("agent")]
+    [InlineData("human")]
+    public void WorkspaceBuildCommand_ReportsRepositoryFailureDetails(string format)
+    {
+        using var repository = TemporaryRepository.Create();
+        var registry = new WorkspaceRegistry(new CisRepositoryContextResolver());
+        Assert.Equal(0, new WorkspaceInitializer(new RepositoryInitializer(), registry).Initialize(
+            new WorkspaceInitRequest(repository.Path, "docs/cis", false, true,
+                "fixture", "fixture", "Fixture", "Fixture")).ExitCode);
+        repository.Write("docs/cis/catalog.yml", "documents: [invalid");
+        var capture = new GraphCaptureModule();
+        using var application = new CisHostBuilder().AddModule(new RepositoryModule())
+            .AddModule(new DocsModule()).AddModule(new GraphModule()).AddModule(capture).Build();
+
+        var result = capture.Dispatcher!.Capture(["graph", "build", "--workspace", repository.Path, "--format", format]);
+
+        Assert.NotEqual(0, result.ExitCode);
+        Assert.Contains("CIS-GRAPH-DOC-001", result.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("catalog", result.StandardOutput, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private sealed class GraphCaptureModule : ICisModule
+    {
+        public string Name => "graph-capture";
+        public string Description => "Capture graph diagnostics for verification.";
+        public ICisCommandDispatcher? Dispatcher { get; private set; }
+        public void RegisterServices(IServiceCollection services) { }
+        public void RegisterCommands(ICisCommandRegistry commands, IServiceProvider services)
+            => Dispatcher = services.GetRequiredService<ICisCommandDispatcher>();
     }
 
     [Fact]

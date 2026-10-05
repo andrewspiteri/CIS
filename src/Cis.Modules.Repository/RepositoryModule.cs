@@ -103,7 +103,7 @@ public sealed class RepositoryModule : ICisModule
                     EstimateDetailedAgentTokens(result),
                     null,
                     "deterministic compact repo-init output versus the same result with --details",
-                    "high"));
+                    "high", "repo init"));
             Render(result, selectedFormat, parseResult.GetValue(details));
             return result.ExitCode;
         });

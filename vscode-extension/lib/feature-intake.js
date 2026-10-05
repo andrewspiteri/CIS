@@ -6,7 +6,7 @@ const path = require('node:path');
 const { escapeHtml: h, nonce, resolveWithin } = require('./security');
 const { createActionPanel, studioDocument } = require('./webview');
 const { STEPS, navigation, renderReviewPage, wizardScript, hasUnsavedChanges } = require('./feature-wizard');
-const { REVIEW_STYLES } = require('./feature-review-text');
+const { REVIEW_STYLES, renderReviewText } = require('./feature-review-text');
 const { STORY_STYLES, moveStory } = require('./feature-stories');
 const { reconciledDrafts, deliveryScript, DELIVERY_STYLES } = require('./feature-delivery');
 const { gallery, screenScript, exportScreen, SCREEN_STYLES } = require('./feature-screens');
@@ -15,7 +15,7 @@ const { architectureGallery, ARCHITECTURE_STYLES } = require('./feature-architec
 const ACTIONS = new Set(['choose-source', 'choose-repository', 'preview', 'apply', 'edit', 'open-request', 'open-source',
   'navigate', 'remember', 'save-page', 'refresh', 'resume', 'new-feature', 'open-document', 'product-wizard', 'start-approved-feature', 'discard-edits',
   'features-home', 'open-feature', 'add-repository-work', 'remove-repository-work',
-  'reimport-source', 'apply-source-update', 'cancel-source-update', 'compare-source', 'open-source-history', 'save-continue', 'use-suggestion',
+  'reimport-source', 'apply-source-update', 'cancel-source-update', 'compare-source', 'open-linked-brd', 'open-source-history', 'save-continue', 'use-suggestion',
   'generate-screens', 'open-feature-screen', 'save-feature-screen', 'review-feature-screen',
   'generate-architecture', 'open-feature-diagram', 'save-feature-diagram', 'move-story', 'reconcile-delivery', 'use-delivery-assessment', 'save-delivery-decision', 'open-delivery-evidence', 'discard-delivery-decision']);
 
@@ -42,13 +42,17 @@ function openFeatureIntake(vscode, { cli, authority, root, actorIdentity, refres
   const panel = createActionPanel(vscode, 'cis.featureIntake', 'Feature definition wizard', ACTIONS, action, undefined, { retainContextWhenHidden: true });
   panel.onDidDispose(() => { disposed = true; });
   function render() { if (!disposed) panel.webview.html = renderFeatureIntake(panel.webview, model, scriptNonce); }
-  async function persist() {
+  async function persist(required = false) {
     try {
+      if (required && !storage?.update) throw new Error('Editor storage is unavailable.');
       const featureState = { page: model.page, pageDrafts: model.pageDrafts, screenDrafts: model.screenDrafts, deliveryDrafts: model.deliveryDrafts, repositoryWorkDraft: model.repositoryWorkDraft,
         sourceHash: model.draftSourceHash, sourceQuestions: model.draftQuestions, recoveredSourceDraft: model.recoveredSourceDraft };
       await storage?.update(storageKey, { version: 1, draft: model.draft, selectedSlug: model.selectedSlug, ...featureState });
       if (model.selectedSlug) await storage?.update(`${storageKey}:${model.selectedSlug}`, featureState);
-    } catch { model.error = 'CIS could not save the editor position. Any answers already saved to the feature request are preserved.'; }
+    } catch {
+      if (required) throw new Error('CIS could not preserve your unsaved edits, so the BRD was not replaced. Your edits remain in this tab; retry after editor storage is available.');
+      model.error ||= 'CIS could not save the editor position. Any answers already saved to the feature request are preserved.';
+    }
   }
   function assertAuthority() {
     if (vscode.workspace.isTrusted === false) throw new Error('Trust this workspace before adding a feature.');
@@ -89,11 +93,11 @@ function openFeatureIntake(vscode, { cli, authority, root, actorIdentity, refres
     }
     const sourceChanged = model.draftSourceHash ? model.draftSourceHash !== result.plan.sourceHash : result.sourceHistory?.length > 0;
     if (sourceChanged) model.sourceUpdate = undefined;
-    if (sourceChanged && (Object.keys(model.pageDrafts).length || Object.keys(model.deliveryDrafts).length || model.repositoryWorkDraft !== undefined)) {
+    if (sourceChanged && hasSourceDrafts(model)) {
       model.recoveredSourceDraft = { sourceHash: model.draftSourceHash, questions: model.draftQuestions,
-        answers: model.pageDrafts, deliveryDrafts: model.deliveryDrafts, repositoryWork: model.repositoryWorkDraft, earlierRecovery: model.recoveredSourceDraft };
-      model.pageDrafts = {}; model.deliveryDrafts = {}; model.repositoryWorkDraft = undefined;
-      model.notice = 'The BRD was updated outside this tab. Your unsaved edits are preserved below for reference. Review them against the new questions before saving answers.';
+        answers: model.pageDrafts, screenDrafts: model.screenDrafts, deliveryDrafts: model.deliveryDrafts, repositoryWork: model.repositoryWorkDraft, earlierRecovery: model.recoveredSourceDraft };
+      model.pageDrafts = {}; model.screenDrafts = {}; model.deliveryDrafts = {}; model.repositoryWorkDraft = undefined;
+      model.notice = 'The BRD was updated. Your unsaved edits are preserved below for reference. Review them against the new questions before saving answers.';
     }
     model.draftSourceHash = result.plan.sourceHash; model.draftQuestions = result.plan.openDecisions;
     model.wizard = result; model.selectedSlug = selectedSlug;
@@ -217,10 +221,6 @@ function openFeatureIntake(vscode, { cli, authority, root, actorIdentity, refres
     if (!absolute || !fs.existsSync(absolute)) throw new Error('The feature document is no longer available.');
     await vscode.commands.executeCommand('markdown.showPreviewToSide', vscode.Uri.file(absolute));
   }
-  function requireSavedAnswers() {
-    const unsaved = model.wizard?.pages.filter(page => hasUnsavedChanges(model, page)) || [];
-    if (unsaved.length) throw new Error(`Save or discard your unsaved edits in ${unsaved.map(page => page.title).join(', ')} before reimporting the BRD. Your edits are still in the form.`);
-  }
   async function querySourceUpdate(source, actor, args) {
     return cli.query(['brd', 'feature', 'wizard', 'reimport', '--slug', model.selectedSlug,
       '--source', source, '--actor', actor, ...args, '--workspace', root],
@@ -235,7 +235,7 @@ function openFeatureIntake(vscode, { cli, authority, root, actorIdentity, refres
     let message;
     if (['navigate', 'remember', 'save-page', 'refresh', 'resume', 'new-feature', 'open-document', 'product-wizard', 'start-approved-feature', 'discard-edits',
       'features-home', 'open-feature', 'add-repository-work', 'remove-repository-work',
-      'reimport-source', 'apply-source-update', 'cancel-source-update', 'compare-source', 'open-source-history', 'save-continue', 'use-suggestion', 'generate-screens', 'open-feature-screen', 'review-feature-screen',
+      'reimport-source', 'apply-source-update', 'cancel-source-update', 'compare-source', 'open-linked-brd', 'open-source-history', 'save-continue', 'use-suggestion', 'generate-screens', 'open-feature-screen', 'review-feature-screen',
       'generate-architecture', 'open-feature-diagram', 'save-feature-diagram', 'move-story', 'reconcile-delivery', 'use-delivery-assessment', 'save-delivery-decision', 'open-delivery-evidence', 'discard-delivery-decision'].includes(command)
       || ['open-source', 'open-request'].includes(command) && value?.startsWith('{')) {
       try {
@@ -284,9 +284,8 @@ function openFeatureIntake(vscode, { cli, authority, root, actorIdentity, refres
       render();
       if (command === 'reimport-source') {
         if (!model.wizard) throw new Error('Open an existing feature first.');
-        requireSavedAnswers();
         const picked = await vscode.window.showOpenDialog({ canSelectFiles: true, canSelectFolders: false, canSelectMany: false,
-          filters: { 'Markdown requirements': ['md'] }, title: 'Reimport updated feature BRD' });
+          filters: { 'Markdown requirements': ['md'] }, title: 'Choose replacement feature BRD' });
         if (!picked?.[0]) return;
         const actor = await actorIdentity(); if (!actor) return;
         assertAuthority();
@@ -303,12 +302,18 @@ function openFeatureIntake(vscode, { cli, authority, root, actorIdentity, refres
         if (!previous || !fs.existsSync(previous) || !fs.existsSync(plan.incomingPath)) throw new Error('A comparison document is no longer available. Choose the updated BRD again.');
         await vscode.commands.executeCommand('vscode.diff', vscode.Uri.file(previous), vscode.Uri.file(plan.incomingPath),
           `${plan.title}: current BRD ↔ updated BRD`, { preview: false });
+      } else if (command === 'open-linked-brd') {
+        if (!model.wizard?.sourceBrds?.some(document => document.path === message.target)) throw new Error('This BRD is not linked to the feature.');
+        await open(message.target);
       } else if (command === 'open-source-history') {
         if (!model.wizard?.sourceHistory?.some(document => document.path === message.target && document.exists)) throw new Error('This source revision is unavailable.');
         await open(message.target);
       } else if (command === 'apply-source-update') {
         const update = model.sourceUpdate; if (!update) return;
-        requireSavedAnswers();
+        // Persist the old source and its drafts before replacing the BRD. A refresh
+        // can recover them even if the import succeeds but loading its new state fails.
+        if (hasSourceDrafts(model)) await persist(true);
+        assertAuthority();
         const result = await querySourceUpdate(update.plan.incomingPath, update.actor, ['--yes', '--expected-plan', update.plan.planHash]);
         if (result.errors?.length || result._process?.failed) {
           model.sourceUpdate = undefined;
@@ -316,10 +321,10 @@ function openFeatureIntake(vscode, { cli, authority, root, actorIdentity, refres
         }
         model.sourceUpdate = undefined;
         if (result.applied) {
-          model.pageDrafts = {}; model.repositoryWorkDraft = undefined;
           model.notice = 'Updated BRD imported. Saved answers and repository work are retained. Review the feature pages against the new source; earlier BRDs and answers are available in revision history.';
           try {
             await loadWizard(model.selectedSlug);
+            model.notice = 'Updated BRD imported. Saved answers and repository work are retained. Any unsaved edits are available below under Recovered unsaved edits from an earlier BRD. Review the feature pages against the new source.';
             model.page = 'business';
             model.requests = model.requests.map(request => request.slug === model.selectedSlug ? model.wizard.plan : request);
             await vscode.commands.executeCommand('cis.refreshFeatures');
@@ -616,10 +621,11 @@ function renderFeatureIntake(webview, model, scriptNonce) {
     ${(model.warnings || []).map(w => `<p class="notice warning">${h(w)}</p>`).join('')}
     ${model.loading ? '<p role="status">Loading product repositories…</p>' : p ? `
       <section class="card"><span class="eyebrow">${model.result ? 'Draft feature request created' : 'Review setup'}</span><h2>${h(p.title)}</h2>
-      <p><strong>${p.repositoryMode === 'new' ? 'New local Git repository' : 'Existing repository'}:</strong> ${h(p.repositoryPath)}</p>
+      <p>${p.repositoryMode === 'product' ? '<strong>Product-level feature.</strong> Repository links will be decided in the story breakdown.' : `<strong>${p.repositoryMode === 'new' ? 'New local Git repository' : 'Existing repository'}:</strong> ${h(p.repositoryPath)}`}</p>
       <p><strong>Documentation:</strong> ${h(p.documentationRoot)}</p><p><strong>Integration targets:</strong> ${h(p.integrationRepositories.join(', ') || 'None selected')}</p>
-      <p>The prepared BRD will be retained unchanged under the product authority. This creates a draft request and connects its repository; scope and implementation approval remain separate review steps.</p>
-      <div class="actions">${model.result ? '<button data-command="open-request">Review feature request</button><button class="secondary" data-command="open-source">Open original BRD</button>' : button('apply', 'Create feature request') + button('edit', 'Back to details', true)}</div></section>
+      <p>${p.repositoryMode === 'product' ? 'The feature inherits its identified BRD requirement and acceptance intent. Its full source BRD is retained for planning context. Review the detailed scope before planning tasks.' : 'The prepared BRD is retained unchanged under the product authority. Scope and implementation approval remain separate review steps.'}</p>
+      <div class="actions">${model.result ? '<button data-command="open-request">Review feature request</button><button class="secondary" data-command="open-source">Open feature requirements</button>' : button('apply', 'Create feature request') + button('edit', 'Back to details', true)}</div></section>
+      ${model.wizard?.description ? `<section class="card"><h2>Feature description</h2><p class="muted">Derived from this feature’s source BRD. Review and refine it in Business definition.</p><div class="feature-review-text">${renderReviewText(model.wizard.description)}</div></section>` : ''}
       <section class="card"><h2>${p.openDecisions.length} open decisions found in the BRD</h2><p>These remain unresolved. Review them before approving the feature scope.</p>
       ${p.openDecisions.length ? `<ol>${p.openDecisions.map(q => `<li>${h(q)}</li>`).join('')}</ol>` : '<p>No numbered decision section was detected. The source may still contain assumptions to review.</p>'}</section>
       ${model.result ? '<section class="card"><h2>Continue defining the feature</h2><p>Review business decisions, technical direction, architecture, integrations, experience and delivery in the steps on the left.</p><button type="button" data-wizard-action="navigate" data-value="business">Continue to business definition →</button></section>' : ''}
@@ -636,8 +642,10 @@ function renderFeatureIntake(webview, model, scriptNonce) {
   const body = `<style nonce="${scriptNonce}">#feature-form fieldset{display:grid;gap:.65rem}#feature-form label:not(.source-choice){font-weight:600;margin-top:.65rem}#feature-form input:not([type=checkbox]),#feature-form select{width:100%;font:inherit;padding:.6rem;color:var(--vscode-input-foreground);background:var(--vscode-input-background);border:1px solid var(--vscode-input-border)}#feature-form button{justify-self:start}#feature-form h3{margin-bottom:0}.feature-questions{grid-template-columns:1fr}.feature-questions label{font-weight:600}#feature-review-form fieldset{min-width:0}#feature-review-form legend{font-weight:600}.feature-page{min-width:0;display:grid;gap:1rem}.wizard-steps{position:sticky;top:1rem;align-self:start}.feature-saved{display:flex;gap:.6rem;flex-wrap:wrap}.repository-work-item{display:grid;grid-template-columns:1fr 1fr;gap:1rem;border:1px solid var(--vscode-panel-border);border-radius:.4rem;padding:1rem;margin:1rem 0}.repository-work-item legend{font-weight:600}.repository-work-item label{display:grid;gap:.4rem;font-weight:600}.repository-work-item label:has(textarea){grid-column:1/-1}.repository-work-item input,.repository-work-item select,.repository-work-item textarea{width:100%;min-width:0;font:inherit;padding:.6rem;color:var(--vscode-input-foreground);background:var(--vscode-input-background);border:1px solid var(--vscode-input-border);border-radius:.25rem}.repository-work-item select[multiple]{min-height:5rem}.repository-work-item button{justify-self:start}@media(max-width:48rem){.wizard-steps{position:static}}@media(max-width:780px){.repository-work-item{grid-template-columns:1fr}}</style>
     <style nonce="${scriptNonce}">${REVIEW_STYLES}${STORY_STYLES}${DELIVERY_STYLES}${SCREEN_STYLES}${ARCHITECTURE_STYLES}</style>
     <header class="hero feature-hero"><div><span class="eyebrow">Feature delivery</span><h1>Feature definition wizard</h1><p>${h(model.wizard?.plan?.title || model.draft.title || 'Define a new feature from its prepared BRD, using the existing product baseline.')}</p><p class="muted">Authority: ${h(model.root)}</p></div>${model.selectedSlug ? '<button type="button" class="secondary" data-wizard-action="new-feature">Add another feature</button>' : ''}</header>
-    <div class="actions"><button type="button" class="secondary" data-wizard-action="features-home">All high-level features</button><button type="button" class="secondary" data-wizard-action="product-wizard">Product definition</button>${model.wizard ? `<button type="button" data-wizard-action="reimport-source" ${model.busy ? 'disabled' : ''}>Reimport BRD</button>` : ''}</div>
+    <div class="actions"><button type="button" class="secondary" data-wizard-action="features-home">All high-level features</button><button type="button" class="secondary" data-wizard-action="product-wizard">Product definition</button>${model.wizard ? `<button type="button" data-wizard-action="reimport-source" ${model.busy ? 'disabled' : ''}>Replace BRD</button>` : ''}</div>
+    ${model.wizard ? '<p class="muted">Replace BRD lets you choose a new Markdown file and preview the changes before importing it. Previous BRDs and saved answers remain in revision history; the updated feature needs review.</p>' : ''}
     ${renderSourceUpdate(model)}
+    ${model.wizard?.sourceBrds?.length ? `<section class="card"><h2>Source BRDs</h2><p>These retained versions supply this feature’s requirements and planning context. Later BRD imports do not replace them.</p>${model.wizard.sourceBrds.map(source => `<article><button type="button" class="link" data-wizard-action="open-linked-brd" data-value="${h(source.path)}">${h(source.title)} ↗</button>${source.requirementIds?.length ? `<p>Requirements: ${h(source.requirementIds.join(', '))}</p>` : ''}<details><summary>Source and version</summary><p>${h(source.originalPath || source.path)}</p><p>${h(source.hash)}</p></details></article>`).join('')}${model.wizard.planningContext ? `<details><summary>BRD context used for planning</summary><p class="muted">Selected context excerpts. Open the linked BRD for the complete document.</p><div class="feature-review-text">${renderReviewText(model.wizard.planningContext)}</div></details>` : ''}</section>` : ''}
     ${model.recoveredSourceDraft ? `<details class="card source-review"><summary>Recovered unsaved edits from an earlier BRD</summary><p>These edits refer to the questions listed below. Copy any relevant text into the current feature pages after reviewing the new source.</p><textarea readonly rows="12" aria-label="Recovered unsaved edits">${h(JSON.stringify(model.recoveredSourceDraft, null, 2))}</textarea></details>` : ''}
     ${model.wizard?.sourceHistory?.length ? `<details class="card"><summary>Previous BRDs and saved answers</summary><div class="actions">${model.wizard.sourceHistory.map(document => `<button type="button" class="link" data-wizard-action="open-source-history" data-value="${h(document.path)}">${h(document.title)} ↗</button>`).join('')}</div></details>` : ''}
     ${(model.requests || []).length ? `<details class="card"><summary>High-level features (${model.requests.length})</summary><div class="feature-saved">${model.requests.map(request => `<button type="button" class="secondary" data-wizard-action="open-feature" data-value="${h(request.slug)}" ${request.slug === model.selectedSlug ? 'aria-current="true"' : ''}>${h(request.title)}</button>`).join('')}</div></details>` : ''}
@@ -673,11 +681,17 @@ function renderSourceUpdate(model) {
   const plan = model.sourceUpdate?.plan;
   if (!plan) return '';
   const decisions = (title, items) => items.length ? `<details><summary>${h(title)} (${items.length})</summary><ul>${items.map(item => `<li>${h(item)}</li>`).join('')}</ul></details>` : '';
-  return `<section class="card"><span class="eyebrow">Review BRD update</span><h2>Reimport ${h(plan.title)}</h2>
+  return `<section class="card"><span class="eyebrow">Review BRD update</span><h2>Replace BRD for ${h(plan.title)}</h2>
     <p>Updated document: ${h(plan.incomingPath)}</p><p>${h(plan.previousBytes)} → ${h(plan.incomingBytes)} bytes · ${h(plan.retainedDecisionAnswers)} saved decision answers matched to unchanged questions.</p>
     <p>Feature identity, repositories, saved summaries and repository work are retained. New or changed questions need answers. Removed or ambiguous answers remain in revision history.</p>
     ${decisions('New or changed questions', plan.addedDecisions)}${decisions('Removed or replaced questions', plan.removedDecisions)}
     <p><strong>Review required after import:</strong> ${h(plan.pagesRequiringReview.join(', '))}. Existing answers remain available for you to check and save again.</p>
     <p>The current BRD and saved review will be retained in revision history.</p>
+    ${hasSourceDrafts(model) ? '<p class="notice" role="status">You can apply this update now. Unsaved edits will be kept in this editor under “Recovered unsaved edits from an earlier BRD”, separate from the new questions. Review and copy any answers you still need after importing.</p>' : ''}
     <div class="actions"><button type="button" class="secondary" data-wizard-action="compare-source" ${model.busy ? 'disabled' : ''}>Compare BRD changes</button><button type="button" data-wizard-action="apply-source-update" ${model.busy ? 'disabled' : ''}>Apply updated BRD</button><button type="button" class="secondary" data-wizard-action="cancel-source-update" ${model.busy ? 'disabled' : ''}>Cancel update</button></div></section>`;
+}
+
+function hasSourceDrafts(model) {
+  return Object.keys(model.pageDrafts || {}).length > 0 || Object.keys(model.screenDrafts || {}).length > 0
+    || Object.keys(model.deliveryDrafts || {}).length > 0 || model.repositoryWorkDraft !== undefined;
 }

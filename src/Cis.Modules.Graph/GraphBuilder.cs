@@ -78,6 +78,7 @@ public sealed class GraphBuilder
         }
 
         var context = resolution.Context!;
+        using var buildLock = CisBuildLock.Acquire(context.RepositoryPath, "graph");
         var diagnostics = new List<CisGraphDiagnostic>();
         var validation = _validationService.Validate(context.RepositoryPath, strict: false);
         diagnostics.AddRange(validation.Errors.Select(error => Diagnostic(
@@ -1256,7 +1257,7 @@ public sealed class GraphBuilder
         CSharpCompilerAnalysis analysis;
         try
         {
-            analysis = CSharpCompilerAnalyzer.Analyze(inputs);
+            analysis = CSharpAnalysisCache.Analyze(context.RepositoryPath, inputs);
         }
         catch (Exception exception) when (exception is InvalidOperationException
             or ArgumentException

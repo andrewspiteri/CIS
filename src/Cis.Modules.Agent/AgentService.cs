@@ -37,7 +37,7 @@ public sealed record AgentRunManifest(int SchemaVersion, string RunId, int Attem
     string? CompletedAtUtc, string Status, string? FailureKind, string? ProviderSessionId, int? ProcessId,
     string? ProcessStartedAtUtc, string Actor, int TimeoutSeconds, int StartupTimeoutSeconds = 30,
     int IdleTimeoutSeconds = 300, string? ExecutablePath = null, string? ExecutableDigest = null,
-    string? ProviderProtocol = null, string? ContextManifestDigest = null, string? ResultDigest = null);
+    string? ProviderProtocol = null, string? ContextManifestDigest = null, string? ResultDigest = null, string? Model = null);
 public sealed record AgentRunEvent(int SchemaVersion, string RunId, int Attempt, long Sequence, string TimestampUtc,
     string Kind, string Message, string? ProviderEventType, string? ProviderSessionId, string? RawJson,
     string? RequestedCapability, string? RequestedTarget, long? InputTokens, long? OutputTokens, decimal? Cost,
@@ -63,7 +63,7 @@ internal sealed record AgentReferenceInput(string Label, string SourcePath, stri
 internal sealed record AgentBrdQuestionEvidence(string AnswerDigest, IReadOnlyList<string> QuestionIds,
     string OpenQuestionsSection);
 
-public sealed partial class AgentService
+public sealed partial class AgentService : ICisStoryTaskExecutor
 {
     public const string RootPath = ".cis/local/agents";
     private const string PortableProvider = "portable";
@@ -111,6 +111,7 @@ public sealed partial class AgentService
     private readonly ICisTechnicalIntentDraftPreparer? _technicalIntentDraftPreparer;
     private readonly ICisSolutionDesignDrafts? _solutionDesignDrafts;
     private readonly ICisObservedReferencePreparer? _observedReferencePreparer;
+    private readonly ICisTextGenerationService? _textGeneration;
     private readonly ConcurrentDictionary<string, (long Length, long Count)> _eventSequences = new(
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
 
@@ -123,7 +124,7 @@ public sealed partial class AgentService
         IEnumerable<ICisProductDefinitionAuthority>? productDefinitionAuthorities = null,
         ICisTechnicalIntentDraftPreparer? technicalIntentDraftPreparer = null,
         ICisObservedReferencePreparer? observedReferencePreparer = null,
-        ICisSolutionDesignDrafts? solutionDesignDrafts = null)
+        ICisSolutionDesignDrafts? solutionDesignDrafts = null, ICisTextGenerationService? textGeneration = null)
     {
         _resolver = resolver;
         _providers = providers.OrderBy(item => item.Descriptor.Id, StringComparer.Ordinal).ToArray();
@@ -134,6 +135,7 @@ public sealed partial class AgentService
         _technicalIntentDraftPreparer = technicalIntentDraftPreparer;
         _observedReferencePreparer = observedReferencePreparer;
         _solutionDesignDrafts = solutionDesignDrafts;
+        _textGeneration = textGeneration;
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
     }
 
@@ -242,7 +244,7 @@ public sealed partial class AgentService
             transport, timeoutSeconds, actor, diagnostics);
         var workspace = Path.Combine(context.RepositoryPath, ".cis", "workspace.yml");
         if (!File.Exists(workspace)) diagnostics.Add("ERROR: BRD authoring requires an initialized CIS workspace authority.");
-        var targetPath = Path.Combine(context.DocumentationPath, "specs", "business-requirements.md");
+        var targetPath = CisProductDocumentPaths.Resolve(context.DocumentationPath, "specs", "business-requirements.md");
         if (!File.Exists(targetPath)) diagnostics.Add("ERROR: Canonical business requirements are missing. Run `cis brd init` first.");
         var initial = File.Exists(targetPath) ? File.ReadAllText(targetPath) : string.Empty;
         var initialStatus = FrontMatter(initial, "status") ?? string.Empty;
@@ -406,7 +408,7 @@ public sealed partial class AgentService
         if (context is null) return New(null, "invalid-repository", diagnostics: diagnostics);
         var workspace = Path.Combine(context.RepositoryPath, ".cis", "workspace.yml");
         if (!File.Exists(workspace)) diagnostics.Add("ERROR: BRD question incorporation requires an initialized CIS workspace authority.");
-        var targetPath = Path.Combine(context.DocumentationPath, "specs", "business-requirements.md");
+        var targetPath = CisProductDocumentPaths.Resolve(context.DocumentationPath, "specs", "business-requirements.md");
         if (!File.Exists(targetPath)) diagnostics.Add("ERROR: Canonical business requirements are missing. Run `cis brd init` first.");
         var original = File.Exists(targetPath) ? File.ReadAllText(targetPath) : string.Empty;
         var initialStatus = FrontMatter(original, "status") ?? string.Empty;
@@ -504,7 +506,7 @@ public sealed partial class AgentService
         if (context is null) return New(null, "invalid-repository", diagnostics: diagnostics);
         if (string.IsNullOrWhiteSpace(actor)) diagnostics.Add("ERROR: Human actor identity is required.");
         if (!SafeRunId(reviewRunId)) diagnostics.Add("ERROR: Review run ID is unsafe.");
-        var targetPath = Path.Combine(context.DocumentationPath, "specs", "business-requirements.md");
+        var targetPath = CisProductDocumentPaths.Resolve(context.DocumentationPath, "specs", "business-requirements.md");
         if (!File.Exists(targetPath)) diagnostics.Add("ERROR: Canonical business requirements are missing. Run `cis brd init` first.");
         var original = File.Exists(targetPath) ? File.ReadAllText(targetPath) : string.Empty;
         var dispositionPath = BrdDispositionPath(context, reviewRunId);
@@ -605,7 +607,7 @@ public sealed partial class AgentService
             transport, timeoutSeconds, actor, diagnostics);
         var workspace = Path.Combine(context.RepositoryPath, ".cis", "workspace.yml");
         if (!File.Exists(workspace)) diagnostics.Add("ERROR: BRD review requires an initialized CIS workspace authority.");
-        var targetPath = Path.Combine(context.DocumentationPath, "specs", "business-requirements.md");
+        var targetPath = CisProductDocumentPaths.Resolve(context.DocumentationPath, "specs", "business-requirements.md");
         if (!File.Exists(targetPath)) diagnostics.Add("ERROR: Canonical business requirements are missing. Run `cis brd init` first.");
         var original = File.Exists(targetPath) ? File.ReadAllText(targetPath) : string.Empty;
         if (string.IsNullOrWhiteSpace(original)) diagnostics.Add("ERROR: Canonical business requirements are empty.");
@@ -940,7 +942,8 @@ public sealed partial class AgentService
         bool requireBrdReview = false, bool requireBrdRevision = false,
         string? expectedReviewRunId = null, IReadOnlyList<string>? expectedFindingIds = null,
         bool requireBrdQuestionRevision = false, string? expectedQuestionAnswerDigest = null,
-        IReadOnlyList<string>? expectedQuestionIds = null)
+        IReadOnlyList<string>? expectedQuestionIds = null, bool taskReview = false,
+        IReadOnlyList<string>? evidenceDirectories = null)
     {
         manifest = manifest with { Status = CisAgentRunStates.Starting, UpdatedAtUtc = UtcNow() }; WriteManifest(context, manifest); AppendEvent(context, manifest, new("state", "Agent run is starting."));
         // Every supported host receives policy explicitly, including direct author/review and resumed runs.
@@ -953,7 +956,7 @@ public sealed partial class AgentService
             TimeSpan.FromSeconds(manifest.StartupTimeoutSeconds > 0
                 ? manifest.StartupTimeoutSeconds : Math.Min(30, manifest.TimeoutSeconds)),
             TimeSpan.FromSeconds(manifest.IdleTimeoutSeconds > 0
-                ? manifest.IdleTimeoutSeconds : Math.Min(300, manifest.TimeoutSeconds)));
+                ? manifest.IdleTimeoutSeconds : Math.Min(300, manifest.TimeoutSeconds))) { Model = manifest.Model, TaskReview = taskReview, EvidenceDirectories = evidenceDirectories ?? [] };
         manifest = manifest with { Status = CisAgentRunStates.Running, UpdatedAtUtc = UtcNow() }; WriteManifest(context, manifest); AppendEvent(context, manifest, new("state", "Agent run is running."));
         CisAgentProviderExecutionResult providerResult;
         var checkpoint = Stopwatch.StartNew();
@@ -978,6 +981,8 @@ public sealed partial class AgentService
                 if (item.RequestedCapability is not null) AppendPermission(context, current, item, item.RequestApproved == true);
             }, cancellationToken);
         }
+        catch (OperationCanceledException)
+        { providerResult = new(CisAgentRunStates.Cancelled, null, manifest.ProviderSessionId, string.Empty, [], [], [], null, null, null, "cancellation", ["Agent execution cancelled."]); }
         catch (Exception exception) when (IsRecoverableProviderException(exception))
         { providerResult = new(CisAgentRunStates.Failed, null, manifest.ProviderSessionId, string.Empty, [], [], [], null, null, null, "runner-infrastructure", [Limit(exception.Message)]); }
         var completion = ParseCompletion(providerResult.Summary);
@@ -992,7 +997,7 @@ public sealed partial class AgentService
             if (finalState == CisAgentRunStates.Succeeded && currentManifest.Mode == CisAgentRunModes.Implement && completion!.Validations.Count == 0) finalState = CisAgentRunStates.InvalidEvidence;
             if (finalState == CisAgentRunStates.Succeeded && completion is not null && changedFiles.Count > 0 && completion.ChangedFiles.Count == 0) finalState = CisAgentRunStates.InvalidEvidence;
             if (finalState == CisAgentRunStates.Succeeded && requireBrdReview
-                && (!ValidBrdReview(completion?.Review) || changedFiles.Count > 0))
+                && (!ValidBrdReview(completion?.Review, taskReview) || changedFiles.Count > 0))
                 finalState = CisAgentRunStates.InvalidEvidence;
             if (finalState == CisAgentRunStates.Succeeded && requireBrdRevision
                 && (!ValidBrdRevision(completion?.Revision, expectedReviewRunId!, expectedFindingIds!) || changedFiles.Count != 1))
@@ -1013,7 +1018,7 @@ public sealed partial class AgentService
                 ResultDigest = ShaFile(resultPath) };
             WriteManifest(context, currentManifest); AppendEvent(context, currentManifest, new("state", $"Agent run completed with status {finalState}.", ProviderSessionId: currentManifest.ProviderSessionId,
                 InputTokens: providerResult.InputTokens, OutputTokens: providerResult.OutputTokens, Cost: providerResult.Cost));
-            if (finalState == CisAgentRunStates.Succeeded && requireBrdReview && result.Review is not null)
+            if (finalState == CisAgentRunStates.Succeeded && requireBrdReview && !taskReview && result.Review is not null)
                 WriteAtomic(Path.Combine(RunPath(context, manifest.RunId), "brd-review.md"),
                     RenderBrdReview(currentManifest, envelope, result));
             WriteArtifactInventory(context, manifest.RunId);
@@ -1021,6 +1026,13 @@ public sealed partial class AgentService
         });
         var finalState = finalization.State;
         diagnostics.AddRange(providerResult.Diagnostics.Select(item => "WARNING: " + Limit(item)));
+        if (finalState == CisAgentRunStates.InvalidEvidence && requireBrdRevision && completion is not null)
+        {
+            var missing = expectedFindingIds!.Except(completion.Revision?.AppliedFindingIds ?? [], StringComparer.Ordinal).ToArray();
+            if (missing.Length > 0) diagnostics.Add($"ERROR: Approved findings were not applied: {string.Join(", ", missing)}.");
+            diagnostics.Add("INFO: Revision agent reported: " + Limit(completion.Summary));
+            diagnostics.Add($"INFO: The canonical BRD was not changed. Retained run: {manifest.RunId}.");
+        }
         if (finalState == CisAgentRunStates.InvalidEvidence) diagnostics.Add(requireBrdReview
             ? "ERROR: Provider execution ended without an unchanged workspace and a valid structured BRD review containing recommendation, strengths, and bounded findings."
             : requireBrdRevision
@@ -1312,18 +1324,18 @@ public sealed partial class AgentService
         var candidates = new List<string>
         {
             relativeTarget,
-            Relative(context.RepositoryPath, Path.Combine(context.DocumentationPath, "specs", "business-requirements.md")),
+            Relative(context.RepositoryPath, CisProductDocumentPaths.Resolve(context.DocumentationPath, "specs", "business-requirements.md")),
             Relative(context.RepositoryPath, Path.Combine(context.DocumentationPath, "specs", "technical-intent-questionnaire.md")),
-            Relative(context.RepositoryPath, Path.Combine(context.DocumentationPath, "specs", "technical-intent-spec.md")),
-            Relative(context.RepositoryPath, Path.Combine(context.DocumentationPath, "architecture", "overall-solution-design.md")),
-            Relative(context.RepositoryPath, Path.Combine(context.DocumentationPath, "architecture", "high-level-architecture-diagrams.md")),
-            Relative(context.RepositoryPath, Path.Combine(context.DocumentationPath, "references", "component-sheet.md")),
+            Relative(context.RepositoryPath, CisProductDocumentPaths.Resolve(context.DocumentationPath, "specs", "technical-intent-spec.md")),
+            Relative(context.RepositoryPath, CisProductDocumentPaths.Resolve(context.DocumentationPath, "architecture", "overall-solution-design.md")),
+            Relative(context.RepositoryPath, CisProductDocumentPaths.Resolve(context.DocumentationPath, "architecture", "high-level-architecture-diagrams.md")),
+            Relative(context.RepositoryPath, CisProductDocumentPaths.Resolve(context.DocumentationPath, "references", "component-sheet.md")),
             Relative(context.RepositoryPath, Path.Combine(context.DocumentationPath, "references", "dictionary-index.md")),
             Relative(context.RepositoryPath, Path.Combine(context.DocumentationPath, "specs", "ui-direction-questionnaire.md")),
-            Relative(context.RepositoryPath, Path.Combine(context.DocumentationPath, "design", "ui-direction.md")),
+            Relative(context.RepositoryPath, CisProductDocumentPaths.Resolve(context.DocumentationPath, "design", "ui-direction.md")),
             Relative(context.RepositoryPath, Path.Combine(context.DocumentationPath, "design", "ui-system-preview.md")),
             Relative(context.RepositoryPath, Path.Combine(context.DocumentationPath, "design", "ui-system-preview.svg")),
-            Relative(context.RepositoryPath, Path.Combine(context.DocumentationPath, "plans", "high-level-backlog.md")),
+            Relative(context.RepositoryPath, CisProductDocumentPaths.Resolve(context.DocumentationPath, "plans", "high-level-backlog.md")),
             Relative(context.RepositoryPath, Path.Combine(context.DocumentationPath, "specs", "design-guidelines.md")),
             Relative(context.RepositoryPath, Path.Combine(context.DocumentationPath, "specs", "api-design-and-governance-spec.md")),
             Relative(context.RepositoryPath, Path.Combine(context.DocumentationPath, "specs", "delivery-and-assurance-spec.md")),
@@ -1346,7 +1358,7 @@ public sealed partial class AgentService
             "business-invariant-catalogue.md", "traceability-matrix.md", "erd.md",
         ];
         candidates.AddRange(definitionReferences.Select(name => Relative(context.RepositoryPath,
-            Path.Combine(context.DocumentationPath, "references", name))));
+            CisProductDocumentPaths.Resolve(context.DocumentationPath, "references", name))));
         return candidates.Where(item => CisPathSafety.TryResolveUnderRoot(context.RepositoryPath, item, out var path)
                 && File.Exists(path))
             .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
@@ -1449,6 +1461,10 @@ public sealed partial class AgentService
             builder.AppendLine("This is a deliberately minimal scratch repository containing only the listed artifacts. An artifact omitted from this workspace is unknown, not evidence that it is absent from the canonical repository; do not claim repository-wide searches or source non-existence.");
         }
         builder.AppendLine("Use severity `blocking`, `major`, `minor`, or `observation`; use recommendation `ready`, `revise`, or `blocked`. Keep findings distinct, actionable, and bounded to at most 100.");
+        builder.AppendLine("Every finding's recommendation must propose the actual BRD text change for human approval, not instructions for a future writer. Do not return task descriptions such as 'Add a business narrative', 'Clarify the scope', or 'Define success measures' without the complete proposed wording.");
+        builder.AppendLine("In the recommendation string, name the exact existing heading and insertion/replacement location, then include a fenced `diff` block with the complete proposed Markdown: prefix removed lines with `-`, added lines with `+`, and unchanged anchor lines with a space. Copy removed and context lines verbatim from the current BRD. For an insertion, include a unique adjacent existing line so the placement is reviewable. For a deletion, include the exact text to remove. Use real newlines in the string (JSON-escaped in the final response), not prose descriptions of edits, ellipses, TODOs, or omitted passages.");
+        builder.AppendLine("Place additions where they belong in the existing reading order; do not append them at the end by default. Keep each finding small enough to approve independently; split independent journey walkthroughs or unrelated changes into separate findings, and avoid overlapping edits. The proposed added lines must be publication-ready business prose that the revision agent can apply without inventing wording or making further business decisions.");
+        builder.AppendLine("Ground each proposed sentence in the authorized BRD or included evidence. Do not invent participants, policies, steps, targets, dates or scope merely to fill a gap. Explain the supporting passages in the observation. If the fix needs a stakeholder decision not established by the evidence, explicitly identify that limitation and propose the exact unanswered question to add under Open questions, preserving its existing format and all recorded answers; do not fabricate an answer or present a guessed rule as approved behavior. Preserve all managed/protected blocks. These concrete-text requirements do not expand a closure-only review's permitted scope.");
         return builder.ToString();
     }
 
@@ -1475,11 +1491,12 @@ public sealed partial class AgentService
         var builder = new StringBuilder();
         builder.AppendLine($"Revise the canonical BRD at `{relativeTarget}` using the human-approved disposition record at `{relativeDisposition}`.");
         builder.AppendLine("Implement every approved recommendation exactly as authorized and no other product or technical change. Legacy rejected recommendations are explicit guardrails and must not be implemented indirectly.");
+        builder.AppendLine("When an approved recommendation contains a proposed diff, apply its exact added/removed text at the specified anchor. Do not paraphrase the approved wording, replace it with a different narrative, or append it elsewhere. Keep unchanged context unchanged. If approved edits conflict or their original text/anchor no longer matches, report the conflict instead of inventing a resolution. A proposed unanswered question remains unanswered.");
         builder.AppendLine("Within the exact approved scope, write a plain-language narrative for business readers and keep new evidence links and source references in HTML comments. This writing guidance does not authorize unrelated presentation changes or override any exact human-approved remediation.");
         builder.AppendLine("Preserve complete YAML frontmatter, baseline and feature-traceability blocks, source identities/hashes/classifications, and existing human question answers and provenance exactly. Source-assessment rationale text may change only when an approved recommendation explicitly requires it; never add, remove, or reorder sources. New unresolved ambiguity may be added as a new Open question; do not invent stakeholder answers.");
         builder.AppendLine("Approved findings and their exact authorized recommendation text:");
         foreach (var item in accepted)
-            builder.AppendLine($"- {item.Id}: {MarkdownLine(CisBrdReviewDispositionCodec.EffectiveRecommendation(item))}");
+            builder.AppendLine($"- {item.Id} (exact approved recommendation as a JSON string): {JsonSerializer.Serialize(CisBrdReviewDispositionCodec.EffectiveRecommendation(item))}");
         builder.AppendLine("Legacy rejected guardrails:");
         if (rejected.Length == 0) builder.AppendLine("- None.");
         else foreach (var item in rejected)
@@ -1513,7 +1530,7 @@ public sealed partial class AgentService
     }
 
     private static string? CreateScratchWorkspace(CisRepositoryContext context, string runId,
-        IReadOnlyList<string> artifacts, string commitMessage, List<string> diagnostics)
+        IReadOnlyList<string> artifacts, string commitMessage, List<string> diagnostics, bool allowEmpty = false)
     {
         var root = Path.Combine(context.RepositoryPath, RootPath.Replace('/', Path.DirectorySeparatorChar),
             "workspaces", runId, SafeFile(context.RepositoryId));
@@ -1534,7 +1551,9 @@ public sealed partial class AgentService
             if (init.TimedOut || init.ExitCode != 0) { diagnostics.Add(ScratchGitFailure("repository initialization", init, preparationTimeout)); return null; }
             var add = Git(root, ["add", "--force", "."], timeout: preparationTimeout);
             if (add.TimedOut || add.ExitCode != 0) { diagnostics.Add(ScratchGitFailure("baseline staging", add, preparationTimeout)); return null; }
-            var commit = Git(root, ["-c", "user.name=CIS", "-c", "user.email=cis@local.invalid", "commit", "-m", commitMessage], timeout: preparationTimeout);
+            var commitArguments = new List<string> { "-c", "user.name=CIS", "-c", "user.email=cis@local.invalid", "commit", "-m", commitMessage };
+            if (allowEmpty) commitArguments.Add("--allow-empty");
+            var commit = Git(root, commitArguments, timeout: preparationTimeout);
             if (commit.TimedOut || commit.ExitCode != 0) { diagnostics.Add(ScratchGitFailure("baseline commit", commit, preparationTimeout)); return null; }
             return root;
         }
@@ -1941,7 +1960,7 @@ public sealed partial class AgentService
         AgentBrdQuestionEvidence evidence) =>
         $"Execute only the following digest-bound CIS answered-question incorporation and obey every constraint. The governed human answers are the complete authorized decision scope; do not invoke repository index or lifecycle commands to expand it.\n\nBound context artifacts:\n{ContextArtifactSummary(envelope)}\n\n{envelope.InstructionMarkdown}\n\nFinal response contract:\nReturn one JSON object and do not wrap it in a Markdown fence. It must contain summary (string), changedFiles (an array containing only `{envelope.CanonicalTaskPath}`), validations (non-empty string array), evidence (string array), and questionRevision. questionRevision must contain answerDigest exactly `{evidence.AnswerDigest}` and incorporatedQuestionIds containing exactly these identities once each: {string.Join(", ", evidence.QuestionIds)}.\n";
 
-    private static bool ValidBrdReview(AgentBrdReview? review)
+    private static bool ValidBrdReview(AgentBrdReview? review, bool taskReview = false)
     {
         if (review is null || review.Strengths is null || review.Findings is null || review.Findings.Count > 100
             || review.Recommendation is not ("ready" or "revise" or "blocked")) return false;
@@ -1950,7 +1969,7 @@ public sealed partial class AgentService
         foreach (var finding in review.Findings)
         {
             var identity = finding.Id ?? string.Empty;
-            if (!Regex.IsMatch(identity, "^BRD-REV-[0-9]{3}$",
+            if (!Regex.IsMatch(identity, taskReview ? "^TASK-REV-[0-9]{3}$" : "^BRD-REV-[0-9]{3}$",
                     RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
                 || !identities.Add(identity)
                 || finding.Severity is not ("blocking" or "major" or "minor" or "observation")
@@ -2143,7 +2162,7 @@ public sealed partial class AgentService
         var match = _workspaceRegistry?.Resolve(context.RepositoryPath).Workspace?.Repositories.SingleOrDefault(item => item.Id.Equals(id, StringComparison.Ordinal));
         if (match is null) diagnostics.Add($"ERROR: Target repository '{id}' is not registered in the CIS workspace."); return match;
     }
-    private (string Path, bool Isolated)? ResolveWorkingDirectory(CisRepositoryContext authority, CisWorkspaceRepository target, string runId, string permission, List<string> diagnostics)
+    private (string Path, bool Isolated)? ResolveWorkingDirectory(CisRepositoryContext authority, CisWorkspaceRepository target, string runId, string permission, List<string> diagnostics, bool forceIsolation = false)
     {
         if (permission == CisAgentPermissions.ReadOnly) return (target.RepositoryPath, false);
         if (target.IsDependency)
@@ -2152,7 +2171,7 @@ public sealed partial class AgentService
             return null;
         }
         var gitRepository = IsGitRepository(target.RepositoryPath);
-        if (AllowsDirectWorkingTree(authority)) return (target.RepositoryPath, false);
+        if (!forceIsolation && AllowsDirectWorkingTree(authority)) return (target.RepositoryPath, false);
         if (!gitRepository)
         {
             diagnostics.Add("ERROR: Workspace-write execution requires a Git worktree or an explicitly reviewed direct-dirty-working-tree policy.");
@@ -2161,7 +2180,7 @@ public sealed partial class AgentService
         var worktree = Path.Combine(authority.RepositoryPath, RootPath.Replace('/', Path.DirectorySeparatorChar), "worktrees", runId, SafeFile(target.Id)); Directory.CreateDirectory(Path.GetDirectoryName(worktree)!);
         var snapshot = RepositorySnapshot(target.RepositoryPath);
         var revision = snapshot.Revision;
-        if (snapshot.Dirty)
+        if (snapshot.Dirty || snapshot.Revision == "non-git")
         {
             revision = CreateIsolatedSnapshot(authority, target, runId, diagnostics);
             if (revision is null) return null;
@@ -2186,9 +2205,21 @@ public sealed partial class AgentService
         };
         try
         {
+            var head = Git(target.RepositoryPath, ["rev-parse", "--verify", "HEAD^{commit}"]);
+            string? parent = head.ExitCode == 0 && !head.TimedOut ? head.StandardOutput.Trim() : null;
+            if (parent is null)
+            {
+                // An unborn branch is valid in a newly initialized repository.
+                // Create a root snapshot object without moving its branch or index.
+                var branch = Git(target.RepositoryPath, ["symbolic-ref", "-q", "HEAD"]);
+                var missing = branch.ExitCode == 0 && !branch.TimedOut && branch.StandardOutput.Trim().StartsWith("refs/heads/", StringComparison.Ordinal)
+                    ? Git(target.RepositoryPath, ["show-ref", "--verify", "--quiet", branch.StandardOutput.Trim()]) : null;
+                if (missing?.ExitCode != 1 || missing.TimedOut)
+                { diagnostics.Add("ERROR: The repository HEAD is unavailable and is not a valid branch awaiting its first commit: " + target.Id); return null; }
+            }
             foreach (var step in new[]
             {
-                new[] { "read-tree", "HEAD" },
+                parent is null ? new[] { "read-tree", "--empty" } : new[] { "read-tree", parent },
                 new[] { "add", "-A", "--", "." },
             })
             {
@@ -2205,8 +2236,10 @@ public sealed partial class AgentService
                 diagnostics.Add("ERROR: Dirty working-tree snapshot tree could not be written: " + Limit(tree.StandardError));
                 return null;
             }
-            var commit = Git(target.RepositoryPath,
-                ["commit-tree", tree.StandardOutput.Trim(), "-p", "HEAD", "-m", $"CIS isolated snapshot {runId}"], environment);
+            var commitArguments = new List<string> { "commit-tree", tree.StandardOutput.Trim() };
+            if (parent is not null) commitArguments.AddRange(["-p", parent]);
+            commitArguments.AddRange(["-m", $"CIS isolated snapshot {runId}"]);
+            var commit = Git(target.RepositoryPath, commitArguments, environment);
             if (commit.TimedOut || commit.ExitCode != 0 || string.IsNullOrWhiteSpace(commit.StandardOutput))
             {
                 diagnostics.Add("ERROR: Dirty working-tree snapshot commit could not be written: " + Limit(commit.StandardError));
@@ -2413,7 +2446,7 @@ public sealed partial class AgentService
             if (view?.Result?.Revision is not { } revision || readDiagnostics.Any(item => item.StartsWith("ERROR:", StringComparison.Ordinal))
                 || !revision.ReviewRunId.Equals(reviewRunId, StringComparison.Ordinal)) continue;
             var candidate = Path.Combine(manifest.WorkingDirectory,
-                Path.Combine(context.DocumentationRoot, "specs", "business-requirements.md"));
+                Relative(context.RepositoryPath, CisProductDocumentPaths.Resolve(context.DocumentationPath, "specs", "business-requirements.md")));
             if (File.Exists(candidate)) return view;
         }
         return null;
@@ -2432,7 +2465,7 @@ public sealed partial class AgentService
                 || readDiagnostics.Any(item => item.StartsWith("ERROR:", StringComparison.Ordinal))
                 || !revision.AnswerDigest.Equals(answerDigest, StringComparison.OrdinalIgnoreCase)) continue;
             var candidate = Path.Combine(manifest.WorkingDirectory,
-                Path.Combine(context.DocumentationRoot, "specs", "business-requirements.md"));
+                Relative(context.RepositoryPath, CisProductDocumentPaths.Resolve(context.DocumentationPath, "specs", "business-requirements.md")));
             if (File.Exists(candidate)) return view;
         }
         return null;
@@ -2470,7 +2503,7 @@ public sealed partial class AgentService
             {
                 var view = ReadRun(context, revision.RunId, []);
                 var candidate = Path.Combine(revision.WorkingDirectory,
-                    Path.Combine(context.DocumentationRoot, "specs", "business-requirements.md"));
+                    Relative(context.RepositoryPath, CisProductDocumentPaths.Resolve(context.DocumentationPath, "specs", "business-requirements.md")));
                 if (view?.Result?.QuestionRevision is not null && File.Exists(candidate)
                     && Sha(File.ReadAllText(candidate)).Equals(currentSha, StringComparison.OrdinalIgnoreCase))
                     return revision;

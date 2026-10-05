@@ -45,14 +45,15 @@ public sealed class ToolUsageStore : ICisToolUsageRecorder
         var ledgerPath = LedgerPath(repository);
         Directory.CreateDirectory(Path.GetDirectoryName(ledgerPath)!);
         var outputTokens = EstimateTokens(capture.StandardOutputCharacters + capture.StandardErrorCharacters);
+        var command = CommandPath(capture.Arguments);
         var candidate = capture.SavingsCandidates
+            .Where(item => string.Equals(item.Command, command, StringComparison.Ordinal))
             .OrderByDescending(item => Math.Max(0, item.BaselineEstimatedTokens - (item.ActualEstimatedTokens ?? outputTokens)))
             .FirstOrDefault();
         var baseline = candidate?.BaselineEstimatedTokens ?? outputTokens;
         var actual = candidate?.ActualEstimatedTokens ?? outputTokens;
         var savings = Math.Max(0, baseline - actual);
         var savingsPercent = baseline == 0 ? 0 : Math.Round(100d * savings / baseline, 2);
-        var command = CommandPath(capture.Arguments);
         var entry = new ToolUsageEntry(
             2,
             Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture),
@@ -71,7 +72,8 @@ public sealed class ToolUsageStore : ICisToolUsageRecorder
             savingsPercent,
             candidate?.Basis ?? "command-output-only; no defensible counterfactual registered",
             candidate?.Confidence ?? "none",
-            ClassifyOutcome(command, capture.ExitCode));
+            capture.Outcome is "succeeded" or "invalid-request" or "blocked" or "governed-findings" or "cancelled" or "failed"
+                ? capture.Outcome : ClassifyOutcome(command, capture.ExitCode), capture.BuildIdentity);
         AppendBounded(ledgerPath, entry);
     }
 

@@ -48,6 +48,22 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
         "/.next/",
         "/dist/",
         "/build/",
+        "/.artifacts/",
+        "/artifacts/",
+        "/tmp/",
+        "/temp/",
+        "/.tmp/",
+        "/.temp/",
+        "/.cache/",
+        "/__pycache__/",
+        "/.pytest_cache/",
+        "/.mypy_cache/",
+        "/.ruff_cache/",
+        "/.stryker-tmp/",
+        "/TestResults/",
+        "/test-results/",
+        "/playwright-report/",
+        "/blob-report/",
     ];
 
     private readonly DocumentationCatalogMerger _catalogMerger;
@@ -168,8 +184,11 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
         }
 
         var productRepositories = baselineRepositories.Where(repository => repository.IsProductOwned).ToArray();
+        var previousSources = File.Exists(canonicalPath)
+            ? ParseSourceRows(File.ReadAllText(canonicalPath))
+            : new Dictionary<string, SourceRow>(StringComparer.Ordinal);
         var fileCandidates = productRepositories
-            .SelectMany(repository => FindCandidates(repository, authority, canonicalPath, warnings))
+            .SelectMany(repository => FindCandidates(repository, authority, canonicalPath, previousSources, warnings))
             .ToArray();
         var registeredCandidates = productRepositories
             .SelectMany(repository => FindRegisteredSourceCandidates(repository, warnings))
@@ -205,6 +224,9 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
     }
 
     public BrdResult Initialize(string workspacePath, string title)
+        => InitializeCore(workspacePath, title, importSelected: false);
+
+    private BrdResult InitializeCore(string workspacePath, string title, bool importSelected)
     {
         var discovery = Discover(workspacePath);
         if (discovery.ExitCode != 0)
@@ -267,10 +289,14 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
             if (!current.Contains($"stable_id: {stableId}", StringComparison.Ordinal)
                 || !HasManagedBlocks(current))
             {
-                return Error(
-                    "collision",
-                    discovery,
-                    ["The canonical BRD path already contains an unmanaged document. Preserve it and migrate it explicitly before CIS reconciliation."]);
+                var selected = CisProductDocumentPaths.Read(authority.RepositoryPath).GetValueOrDefault("business");
+                if (!importSelected || selected is null
+                    || !string.Equals(CisProductDocumentPaths.ValidatePath(authority.RepositoryPath, selected), canonicalPath, CisPathSafety.PlatformComparison)
+                    || !TryImportSelectedBrd(current, title, stableId, participantBaselines, sourceCandidates, out var imported))
+                    return Error("collision", discovery,
+                        ["The canonical BRD path contains an unmanaged or conflicting document. Select it through Load existing documents to import it explicitly; conflicting CIS identities require manual review."]);
+                BackupImportedBrd(authority.RepositoryPath, canonicalPath);
+                current = imported;
             }
 
             var upgraded = EnsureNestedFrontMatter(current, "approved_content_hash", "null");
@@ -368,7 +394,7 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
 
         var title = ReadFrontMatter(File.ReadAllText(path), "title")
             ?? "Business Requirements Document";
-        return Initialize(workspacePath, title);
+        return InitializeCore(workspacePath, title, importSelected: true);
     }
 
     public BrdResult Status(string workspacePath)
@@ -553,7 +579,7 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
             var sectionContent = ExtractSection(content, section);
             if (string.IsNullOrWhiteSpace(sectionContent))
             {
-                errors.Add($"Required BRD section is missing or empty: {section}");
+                errors.Add($"No matching BRD section with content was found for: {section}");
             }
             else if (PlaceholderPattern().IsMatch(sectionContent))
             {
@@ -561,6 +587,13 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
             }
         }
 
+        if (CisProductDocumentPaths.Read(authority.RepositoryPath).ContainsKey("business"))
+        {
+            var requirements = BrdRequirementReader.Read(content, "Functional requirements");
+            errors.AddRange(requirements.Errors);
+            if (requirements.Requirements.Count == 0)
+                errors.Add("The imported BRD has no readable functional requirements. Before approval, give each requirement a stable ID in a table row or bold requirement paragraph under Functional requirements. Numbered headings and original requirement IDs are supported.");
+        }
         var questionErrors = new List<string>();
         var openQuestions = ParseQuestions(ExtractSection(content, "Open questions"), questionErrors);
         errors.AddRange(questionErrors);
@@ -891,15 +924,13 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
             return content;
         }
 
-        const string heading = "## Traceability";
-        var headingIndex = content.IndexOf(heading, StringComparison.Ordinal);
-        if (headingIndex < 0)
+        var section = FindSectionBounds(content, "Traceability");
+        if (section is null)
         {
             return content;
         }
 
-        var lineEnd = content.IndexOf('\n', headingIndex + heading.Length);
-        var insertionPoint = lineEnd < 0 ? content.Length : lineEnd + 1;
+        var insertionPoint = section.Value.Start;
         var block = $"\n{FeatureTraceabilityStart}\n{rendered}\n{FeatureTraceabilityEnd}\n";
         return content.Insert(insertionPoint, block);
     }
@@ -907,26 +938,7 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
     private static string ApprovalContentDigest(string content)
     {
         var normalized = content.Replace("\r\n", "\n", StringComparison.Ordinal);
-        foreach (var key in new[] { "status", "last_reviewed" })
-        {
-            normalized = Regex.Replace(
-                normalized,
-                $"(?m)^{key}:.*$",
-                $"{key}: <approval-metadata>",
-                RegexOptions.CultureInvariant,
-                TimeSpan.FromSeconds(1));
-        }
-
-        foreach (var key in new[] { "approved_by", "approved_at", "approval_reason", "approved_content_hash" })
-        {
-            normalized = Regex.Replace(
-                normalized,
-                $"(?m)^  {key}:.*$",
-                $"  {key}: <approval-metadata>",
-                RegexOptions.CultureInvariant,
-                TimeSpan.FromSeconds(1));
-        }
-
+        normalized = CisFrontMatter.NormalizeApproval(normalized);
         return Hash(normalized.TrimEnd());
     }
 
@@ -934,15 +946,16 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
         CisWorkspaceRepository repository,
         CisWorkspaceRepository authority,
         string canonicalPath,
+        IReadOnlyDictionary<string, SourceRow> previousSources,
         ICollection<string> warnings)
     {
         var inspected = 0;
-        foreach (var path in EnumerateCandidateFiles(repository.RepositoryPath))
+        foreach (var path in EnumerateCandidateFiles(repository.RepositoryPath, warnings))
         {
             var relativePath = NormalizePath(Path.GetRelativePath(repository.RepositoryPath, path));
             if (FeatureIntakeService.IsIntakeSource(repository, relativePath)) continue;
-            var normalizedAbsolute = "/" + NormalizePath(path).TrimStart('/') + "/";
-            if (ExcludedSegments.Any(segment => normalizedAbsolute.Contains(segment, StringComparison.OrdinalIgnoreCase))
+            var normalizedRelative = "/" + relativePath + "/";
+            if (ExcludedSegments.Any(segment => normalizedRelative.Contains(segment, StringComparison.OrdinalIgnoreCase))
                 || new[] { "SKILL.md", "AGENTS.md", "CLAUDE.md" }.Contains(Path.GetFileName(path), StringComparer.OrdinalIgnoreCase))
             {
                 continue;
@@ -966,22 +979,27 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
                 continue;
             }
 
+            var isCanonical = repository.Id == authority.Id
+                && string.Equals(Path.GetFullPath(path), Path.GetFullPath(canonicalPath), PathComparison);
+            var id = CandidateId(repository.Id, relativePath);
+            // Keep existing human decisions (including incomplete rationales) visible after
+            // discovery rules change. Unreviewed scan results are not human selections.
+            var previouslyReviewed = previousSources.TryGetValue(id, out var previous)
+                && previous.Assessment is "Adopted" or "Reference" or "Rejected";
             var evidence = DetectCandidateEvidence(relativePath, content);
-            if (evidence.Kind == "feature-specification"
-                && !string.IsNullOrWhiteSpace(ReadNestedFrontMatter(content, "high_level_item"))
-                && !IsCurrentApprovedFeature(content))
+            if (!isCanonical && !previouslyReviewed
+                && (IsSupportingDocument(relativePath, content)
+                    || evidence.Kind == "feature-specification" && !IsCurrentApprovedFeature(content)))
             {
                 continue;
             }
-            var isCanonical = repository.Id == authority.Id
-                && string.Equals(Path.GetFullPath(path), Path.GetFullPath(canonicalPath), PathComparison);
             if (evidence.Signals.Count == 0 && !isCanonical)
             {
                 continue;
             }
 
             yield return new BrdCandidate(
-                CandidateId(repository.Id, relativePath),
+                id,
                 isCanonical ? "business-requirements" : evidence.Kind!,
                 repository.Id,
                 repository.RepositoryPath,
@@ -992,16 +1010,29 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
         }
     }
 
-    private static IEnumerable<string> EnumerateCandidateFiles(string root)
+    private static IEnumerable<string> EnumerateCandidateFiles(string root, ICollection<string> warnings, string? currentDirectory = null)
     {
         // Prune generated/dependency trees before entering them, rather than filtering their files
         // after recursive enumeration (which can traverse hundreds of thousands of ignored paths).
-        foreach (var file in CisPathSafety.EnumerateFiles(root, "*.md", recursive: false)) yield return file;
-        foreach (var directory in CisPathSafety.EnumerateDirectories(root, recursive: false))
+        string[] files = [];
+        string[] directories = [];
+        var current = currentDirectory ?? root;
+        try
         {
-            var normalized = "/" + NormalizePath(directory).TrimStart('/') + "/";
+            files = CisPathSafety.EnumerateFiles(current, "*.md", recursive: false).ToArray();
+            directories = CisPathSafety.EnumerateDirectories(current, recursive: false).ToArray();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            warnings.Add($"Could not inspect BRD candidate directory '{current}': {exception.Message}");
+        }
+
+        foreach (var file in files) yield return file;
+        foreach (var directory in directories)
+        {
+            var normalized = "/" + NormalizePath(Path.GetRelativePath(root, directory)) + "/";
             if (ExcludedSegments.Any(segment => normalized.Contains(segment, StringComparison.OrdinalIgnoreCase))) continue;
-            foreach (var file in EnumerateCandidateFiles(directory)) yield return file;
+            foreach (var file in EnumerateCandidateFiles(root, warnings, directory)) yield return file;
         }
     }
 
@@ -1038,6 +1069,10 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
     {
         var signals = new List<string>();
         var name = Path.GetFileNameWithoutExtension(path);
+        // A feature may cite business requirements without becoming a product BRD.
+        if (FeatureSpecificationNamePattern().IsMatch(name)) signals.Add("feature-specification-file-name");
+        if (FeatureSpecificationTypePattern().IsMatch(content)) signals.Add("feature-specification-type");
+        if (signals.Count > 0) return new CandidateEvidence("feature-specification", signals);
         if (BrdNamePattern().IsMatch(name))
         {
             signals.Add("file-name");
@@ -1181,12 +1216,7 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
 
     private static string ExtractSection(string content, string heading)
     {
-        var match = Regex.Match(
-            content,
-            $"(?ms)^## {Regex.Escape(heading)}\\s*$\\n(?<body>.*?)(?=^## |\\z)",
-            RegexOptions.CultureInvariant,
-            TimeSpan.FromSeconds(1));
-        return match.Success ? match.Groups["body"].Value.Trim() : string.Empty;
+        return ExtractRecognizedSection(content, heading);
     }
 
     private static IReadOnlyList<BrdQuestion> ParseQuestions(string section, List<string>? errors = null)
@@ -1262,10 +1292,10 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
 
     private static string ReplaceSectionContent(string content, string heading, string body)
     {
-        var pattern = $"(?ms)^(?<header>## {Regex.Escape(heading)}\\s*$\\n).*?(?=^## |\\z)";
-        return Regex.Replace(content, pattern,
-            match => match.Groups["header"].Value + "\n" + body.TrimEnd() + "\n\n",
-            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        var bounds = FindSectionBounds(content, heading);
+        return bounds is { } section
+            ? content[..section.Start] + "\n" + body.TrimEnd() + "\n\n" + content[section.End..]
+            : content;
     }
 
     private static string ReplaceBlock(string content, string start, string end, string replacement)
@@ -1297,72 +1327,19 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
             && content.Contains(SourcesEnd, StringComparison.Ordinal);
 
     private static string ReplaceFrontMatter(string content, string key, string value)
-        => Regex.Replace(
-            content,
-            $"(?m)^{Regex.Escape(key)}:.*$",
-            $"{key}: {value}",
-            RegexOptions.CultureInvariant,
-            TimeSpan.FromSeconds(1));
+        => CisFrontMatter.Set(content, key, value);
 
     private static string ReplaceNestedFrontMatter(string content, string key, string value)
-        => Regex.Replace(
-            content,
-            $"(?m)^  {Regex.Escape(key)}:.*$",
-            $"  {key}: {value}",
-            RegexOptions.CultureInvariant,
-            TimeSpan.FromSeconds(1));
-
-    private static string EnsureNestedFrontMatter(string content, string key, string value)
-    {
-        var end = content.IndexOf("\n---", 4, StringComparison.Ordinal);
-        if (!content.StartsWith("---", StringComparison.Ordinal) || end < 0)
-        {
-            return content;
-        }
-        var prefix = content[..end];
-        if (Regex.IsMatch(prefix, $"(?m)^  {Regex.Escape(key)}:", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
-        {
-            return content;
-        }
-        var cisIndex = prefix.IndexOf("\ncis:\n", StringComparison.Ordinal);
-        if (cisIndex < 0)
-        {
-            return content;
-        }
-        return content.Insert(end, $"\n  {key}: {value}");
-    }
+        => CisFrontMatter.Set(content, key, value, nested: true);
 
     private static string? ReadFrontMatter(string content, string key)
-    {
-        var end = content.IndexOf("\n---", 4, StringComparison.Ordinal);
-        if (!content.StartsWith("---", StringComparison.Ordinal) || end < 0)
-        {
-            return null;
-        }
-
-        var match = Regex.Match(
-            content[..end],
-            $"(?m)^{Regex.Escape(key)}:\\s*(?<value>.+)$",
-            RegexOptions.CultureInvariant,
-            TimeSpan.FromSeconds(1));
-        return match.Success ? match.Groups["value"].Value.Trim().Trim('"') : null;
-    }
+        => CisFrontMatter.Read(content, key)?.Trim('"');
 
     private static string? ReadNestedFrontMatter(string content, string key)
-    {
-        var end = content.IndexOf("\n---", 4, StringComparison.Ordinal);
-        if (!content.StartsWith("---", StringComparison.Ordinal) || end < 0)
-        {
-            return null;
-        }
+        => CisFrontMatter.Read(content, key, nested: true)?.Trim('"');
 
-        var match = Regex.Match(
-            content[..end],
-            $"(?m)^  {Regex.Escape(key)}:\\s*(?<value>.+)$",
-            RegexOptions.CultureInvariant,
-            TimeSpan.FromSeconds(1));
-        return match.Success ? match.Groups["value"].Value.Trim().Trim('"') : null;
-    }
+    private static string EnsureNestedFrontMatter(string content, string key, string value)
+        => ReadNestedFrontMatter(content, key) is not null ? content : CisFrontMatter.Set(content, key, value, nested: true);
 
     private static string UpdateCatalogStatus(string catalog, string id, string status)
     {
@@ -1410,10 +1387,7 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
     }
 
     private static string CanonicalPath(CisWorkspaceRepository authority)
-        => Path.Combine(
-            authority.RepositoryPath,
-            authority.DocumentationRoot.Replace('/', Path.DirectorySeparatorChar),
-            "specs",
+        => CisProductDocumentPaths.Resolve(Path.Combine(authority.RepositoryPath, authority.DocumentationRoot.Replace('/', Path.DirectorySeparatorChar)), "specs",
             "business-requirements.md");
 
     private static string CandidateId(string repositoryId, string path)
@@ -1434,16 +1408,7 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
     private static string LegacyContentDigest(string content)
     {
         var normalized = content.Replace("\r\n", "\n", StringComparison.Ordinal);
-        foreach (var key in new[] { "status", "last_reviewed" })
-        {
-            normalized = Regex.Replace(normalized, $"(?m)^{key}:.*$", $"{key}: <approval-metadata>",
-                RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-        }
-        foreach (var key in new[] { "approved_by", "approved_at", "approval_reason", "approved_content_hash" })
-        {
-            normalized = Regex.Replace(normalized, $"(?m)^  {key}:.*$", $"  {key}: <approval-metadata>",
-                RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-        }
+        normalized = CisFrontMatter.NormalizeApproval(normalized);
         return Hash(normalized.TrimEnd());
     }
 

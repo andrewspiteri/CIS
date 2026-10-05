@@ -45,3 +45,12 @@ OpenAI-compatible remote use requires explicit provider selection and
 `--allow-remote`. Exit `0` includes complete, incomplete, and unchanged safe builds;
 exit `2` means invalid input; exit `4` means provider or remote authorization is
 unavailable; exit `5` means one or more card generations failed.
+
+## Concurrent builds and measurement
+
+Builds serialize through a repository-local lock and recheck cards after acquiring it,
+avoiding concurrent equivalent provider work and lost manifest updates. Existing
+content/provider/model/prompt checks still determine reuse. `CIS_PERF_TRACE=1` reports
+discovery/hash, provider-resolution and total timings on stderr.
+
+Concurrent builds wait up to five minutes for the local lock, then report an I/O failure if it remains held.

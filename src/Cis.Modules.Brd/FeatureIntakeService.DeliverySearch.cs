@@ -11,7 +11,7 @@ public sealed partial class FeatureIntakeService
     private sealed record DeliverySearchCache(string Key, IReadOnlyList<DeliveryRoute> Routes, IReadOnlyList<string> Warnings);
 
     private static IReadOnlyList<CisFeatureDeliveryEvidence> ReadDeliveryCode(WizardState state, IReadOnlyList<DeliveryFile> files,
-        IReadOnlyList<DeliveryDraft> drafts, List<string> warnings)
+        IReadOnlyList<DeliveryDraft> drafts, List<string> warnings, bool persistSearch)
     {
         var key = Hash(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { DeliveryVersion, state.Record.Plan.SourceHash,
             files = files.Select(f => new { f.RepositoryId, f.Path, f.Length, f.Modified }) }, Json)));
@@ -53,6 +53,7 @@ public sealed partial class FeatureIntakeService
         var searchWarnings = new List<string>();
         var result = SearchDeliveryCode(files, drafts, searchWarnings);
         warnings.AddRange(searchWarnings);
+        if (!persistSearch) return result;
         var snapshot = new DeliverySearchCache(key, result.Select(e => new DeliveryRoute(e.StoryIds[0], e.RepositoryId, e.Path, e.ContentHash)).ToArray(), searchWarnings);
         var temporary = cachePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try

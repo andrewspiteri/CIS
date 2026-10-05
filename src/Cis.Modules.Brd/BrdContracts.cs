@@ -117,14 +117,22 @@ public sealed record BrdQuestionGuidance(
     string? SuggestedAnswer,
     string? SuggestionConfidence,
     string? SuggestionReason,
-    IReadOnlyList<string> SuggestionContextIds);
+    IReadOnlyList<string> SuggestionContextIds)
+{
+    public string SuggestionKind { get; init; } = "evidence";
+    public IReadOnlyList<string> SuggestionAssumptions { get; init; } = [];
+}
 
 public sealed record BrdQuestionSuggestion(
     string QuestionId,
     string? Answer,
     string Confidence,
     string Reason,
-    IReadOnlyList<string> ContextIds);
+    IReadOnlyList<string> ContextIds)
+{
+    public string Kind { get; init; } = "evidence";
+    public IReadOnlyList<string> Assumptions { get; init; } = [];
+}
 
 public sealed record BrdQuestionSuggestionDocument(
     int SchemaVersion,
@@ -150,7 +158,7 @@ public sealed record BrdQuestionGuidanceResult(
 {
     public int ExitCode => Errors.Count > 0 ? 4 : 0;
     public int UnansweredCount => Questions.Count(item => item.Status == "Unanswered");
-    public int SuggestedCount => Questions.Count(item => !string.IsNullOrWhiteSpace(item.SuggestedAnswer));
+    public int SuggestedCount => Questions.Count(item => item.Status == "Unanswered" && !string.IsNullOrWhiteSpace(item.SuggestedAnswer));
 }
 
 public sealed record BrdReviewDispositionResult(

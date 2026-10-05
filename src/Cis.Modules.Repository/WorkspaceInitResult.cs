@@ -15,6 +15,8 @@ public sealed record WorkspaceInitResult(
     Cis.Abstractions.CisEcosystem? Ecosystem = null,
     Cis.Abstractions.CisProduct? Product = null)
 {
+    public bool GitInitializationPlanned { get; init; }
+    public bool GitInitialized { get; init; }
     public int ExitCode => Errors.Count > 0
         ? 2
         : Collisions.Count > 0

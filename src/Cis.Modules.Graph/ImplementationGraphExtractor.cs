@@ -53,6 +53,14 @@ internal static partial class ImplementationGraphExtractor
         "_old",
         "build_out",
         "nongit",
+        "tmp",
+        "temp",
+        ".tmp",
+        ".temp",
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
     };
 
     public static IReadOnlyList<string> EnumerateInputPaths(string repositoryPath)
@@ -420,6 +428,13 @@ internal static partial class ImplementationGraphExtractor
 
     private static bool IsExcludedDirectory(string path)
     {
+        // Generated agent runtime dependencies are not repository implementation.
+        if (path.Equals(".github/copilot-runtime", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith(".github/copilot-runtime/", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
         var segments = path.Split('/');
         for (var index = 0; index < segments.Length; index++)
         {

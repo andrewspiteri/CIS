@@ -26,7 +26,7 @@ public sealed partial class FeatureIntakeService
     {
         string Read(string relative)
         {
-            var path = Path.Combine(state.Authority.RepositoryPath, state.Authority.DocumentationRoot, relative);
+            var path = CisProductDocumentPaths.Resolve(Path.Combine(state.Authority.RepositoryPath, state.Authority.DocumentationRoot), relative);
             if (!SafeAbsolutePath(path)) throw new InvalidDataException("Unsafe architecture context path.");
             if (!File.Exists(path)) return "";
             if (new FileInfo(path).Length > 2_097_152) throw new InvalidDataException("An architecture context document exceeds 2 MiB.");

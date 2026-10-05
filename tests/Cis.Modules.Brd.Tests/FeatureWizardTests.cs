@@ -93,7 +93,7 @@ public sealed partial class FeatureIntakeTests
         using var f = new Fixture(); CreateIntake(f);
         using var application = new CisHostBuilder().AddModule(new RepositoryModule()).AddModule(new WorkspaceModule())
             .AddModule(new DocsModule()).AddModule(new GraphModule()).AddModule(new BrdModule()).Build();
-        foreach (var command in new[] { "list", "status", "save", "navigation" })
+        foreach (var command in new[] { "list", "status", "save", "navigation", "start-backlog" })
             Assert.Equal(0, application.Invoke(["brd", "feature", "wizard", command, "--help"]));
         Assert.Equal(0, application.Invoke(["brd", "feature", "wizard", "status", "--slug", "referrals", "--workspace", f.Authority, "--format", "json"]));
     }

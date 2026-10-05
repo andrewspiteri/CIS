@@ -30,6 +30,7 @@ public sealed class DefinitionModule : ICisModule
         root.Subcommands.Add(Answer(service));
         root.Subcommands.Add(Approve(service));
         root.Subcommands.Add(Activate(service));
+        root.Subcommands.Add(Documents(service));
         commands.Add(root);
     }
 
@@ -37,7 +38,39 @@ public sealed class DefinitionModule : ICisModule
     {
         var command = new Command(name, description); var workspace = Workspace(); var format = Format();
         command.Options.Add(workspace); command.Options.Add(format);
-        command.SetAction(parse => Render(action(parse.GetValue(workspace)!), parse.GetValue(format)!));
+        var summary = new Option<bool>("--summary") { Description = "Omit detailed artifacts and questions; retain page states, warnings and errors." };
+        command.Options.Add(summary);
+        command.SetAction(parse => Render(action(parse.GetValue(workspace)!), parse.GetValue(format)!, parse.GetValue(summary)));
+        return command;
+    }
+
+    private static Command Documents(DefinitionWizardService service)
+    {
+        var command = new Command("documents", "Load a project document or copy a supplied Markdown file into the project for review.");
+        var workspace = Workspace(); var format = Format();
+        var role = new Option<string?>("--role"); var path = new Option<string?>("--path");
+        var source = new Option<string?>("--source") { Description = "Full path to a Markdown file to copy into the project. The original remains unchanged." };
+        command.Options.Add(workspace); command.Options.Add(format); command.Options.Add(role); command.Options.Add(path);
+        command.Options.Add(source);
+        command.SetAction(parse =>
+        {
+            var output = parse.GetValue(format)!;
+            if (output is not ("json" or "human" or "agent")) { Console.Error.WriteLine("Unsupported format. Use human, json, or agent."); return 2; }
+            var result = service.Documents(parse.GetValue(workspace)!, parse.GetValue(role), parse.GetValue(path), parse.GetValue(source));
+            if (output == "json") Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+            else
+            {
+                Console.WriteLine($"status={result.Status};applied={result.Applied.ToString().ToLowerInvariant()}");
+                foreach (var document in result.Documents)
+                {
+                    Console.WriteLine($"role={document.Role};selected={Clean(document.SelectedPath)};candidates={document.Candidates.Count}");
+                    foreach (var candidate in document.Candidates) Console.WriteLine($"candidate={Clean(candidate.Path)};title={Clean(candidate.Title)}");
+                }
+                foreach (var warning in result.Warnings) Console.WriteLine($"warning={Clean(warning)}");
+                foreach (var error in result.Errors) Console.WriteLine($"error={Clean(error)}");
+            }
+            return result.ExitCode;
+        });
         return command;
     }
 
@@ -89,9 +122,14 @@ public sealed class DefinitionModule : ICisModule
         return command;
     }
 
-    private static int Render(CisDefinitionWizardResult result, string format)
+    private static int Render(CisDefinitionWizardResult result, string format, bool summary = false)
     {
-        if (format.Equals("json", StringComparison.OrdinalIgnoreCase)) Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+        if (summary && format.Equals("json", StringComparison.OrdinalIgnoreCase))
+            Console.WriteLine(JsonSerializer.Serialize(new { result.Status, result.ExitCode, result.Active, result.ReadyToActivate,
+                result.WorkspacePath, result.AuthorityRepositoryId, result.CurrentPage, result.Applied,
+                pages = result.Pages.Select(page => new { page.Id, page.Status, page.Complete, page.Current, page.PrimaryPath }),
+                result.Warnings, result.Errors, detailsOmitted = true, details = "cis definition status without --summary" }, JsonOptions));
+        else if (format.Equals("json", StringComparison.OrdinalIgnoreCase)) Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
         else if (format.Equals("agent", StringComparison.OrdinalIgnoreCase))
         {
             Console.WriteLine($"status={Clean(result.Status)};exitCode={result.ExitCode};active={result.Active.ToString().ToLowerInvariant()};readyToActivate={result.ReadyToActivate.ToString().ToLowerInvariant()};pages={result.Pages.Count};dictionaries={result.Dictionaries.Count};diagrams={result.Diagrams.Count};applied={result.Applied.ToString().ToLowerInvariant()}");

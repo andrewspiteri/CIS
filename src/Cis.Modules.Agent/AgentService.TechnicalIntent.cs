@@ -42,7 +42,7 @@ public sealed partial class AgentService
             if (diagnostics.Any(item => item.StartsWith("ERROR:", StringComparison.Ordinal))) return New(context, "blocked", diagnostics: diagnostics);
             diagnostics.AddRange(_technicalIntentDraftPreparer!.PrepareExistingDraft(repositoryPath).Errors.Select(error => "ERROR: " + error));
             if (diagnostics.Any(item => item.StartsWith("ERROR:", StringComparison.Ordinal))) return New(context, "blocked", diagnostics: diagnostics);
-            var targetPath = Path.Combine(context.DocumentationPath, "specs", "technical-intent-spec.md");
+            var targetPath = CisProductDocumentPaths.Resolve(context.DocumentationPath, "specs", "technical-intent-spec.md");
             var original = File.Exists(targetPath) ? File.ReadAllText(targetPath) : string.Empty;
             if (FrontMatter(original, "status") is not ("Draft" or "Review Required"))
                 diagnostics.Add("ERROR: Technical inference may update only Draft or Review Required technical intent.");
@@ -93,7 +93,7 @@ public sealed partial class AgentService
     {
         var candidates = new List<string> { target };
         candidates.AddRange(new[] { "specs/business-requirements.md", "specs/technical-intent-questionnaire.md" }
-            .Select(path => Relative(context.RepositoryPath, Path.Combine(context.DocumentationPath, path))));
+            .Select(path => Relative(context.RepositoryPath, CisProductDocumentPaths.Resolve(context.DocumentationPath, path))));
         return candidates.Where(path => CisPathSafety.TryResolveUnderRoot(context.RepositoryPath, path, out var resolved)
             && !CisPathSafety.ContainsReparsePoint(context.RepositoryPath, resolved) && File.Exists(resolved)).ToArray();
     }

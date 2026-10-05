@@ -18,9 +18,22 @@ public sealed partial class SolutionDesignService
         var state = Resolve(workspacePath);
         if (state.Errors.Count > 0) return new(state.Errors);
         foreach (var path in new[] { state.DesignPath!, state.ComponentSheetPath! })
-            if (CisPathSafety.ContainsReparsePoint(state.Authority!.RepositoryPath, path)
-                || File.Exists(path) && ReadFrontMatter(File.ReadAllText(path), "status") is not ("Draft" or "Review Required"))
+        {
+            if (CisPathSafety.ContainsReparsePoint(state.Authority!.RepositoryPath, path))
                 return new(["Architecture inference may update only safe Draft or Review Required solution-design paths."]);
+            if (!File.Exists(path)) continue;
+            var existing = File.ReadAllText(path);
+            var status = ReadFrontMatter(existing, "status");
+            // Reconciliation already preserves inferred prose and resets its approval
+            // when the technical baseline changes. Let that transition run for stale
+            // approved inference, while keeping current Active content protected.
+            var staleInference = status == "Active" && existing.Contains(InferredMarker, StringComparison.Ordinal)
+                && ReadNested(existing, "technical_intent_hash") is { Length: > 0 } baseline
+                && baseline != "null" && state.TechnicalIntentVersion is not null
+                && baseline != state.TechnicalIntentVersion;
+            if (status is not ("Draft" or "Review Required") && !staleInference)
+                return new(["Architecture inference may update only safe Draft or Review Required solution-design paths."]);
+        }
         var result = InitializeCore(workspacePath, true);
         return new(result.Errors, result.Applied);
     }

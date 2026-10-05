@@ -36,6 +36,8 @@ internal static class WorkspaceSnapshot
         var format = new Option<string>("--format") { DefaultValueFactory = _ => "human" };
         command.Options.Add(repo);
         command.Options.Add(format);
+        var summary = new Option<bool>("--summary") { Description = "Return query states and diagnostics without full projection payloads." };
+        command.Options.Add(summary);
         command.SetAction(parse =>
         {
             var selectedFormat = (parse.GetValue(format) ?? "human").ToLowerInvariant();
@@ -47,7 +49,12 @@ internal static class WorkspaceSnapshot
             var repository = Path.GetFullPath(parse.GetValue(repo) ?? Directory.GetCurrentDirectory());
             var result = Read(dispatcher, repository);
             if (selectedFormat == "json")
-                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
+                Console.WriteLine(JsonSerializer.Serialize(parse.GetValue(summary) ? (object)new {
+                    result.SchemaVersion, result.RepositoryPath, result.CheckedAt, result.DurationMs,
+                    entries = result.Entries.Select(entry => new { entry.Arguments, entry.Scope, entry.ExitCode, entry.DurationMs,
+                        entry.StandardError, state = SummaryData(entry.Data) }),
+                    detailsOmitted = true, details = "cis workspace snapshot without --summary" } : result,
+                    new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
             else
             {
                 Console.WriteLine(selectedFormat == "agent"
@@ -84,6 +91,14 @@ internal static class WorkspaceSnapshot
             entries.Add(new(arguments, scopeOption, capture.ExitCode, data, capture.StandardError, queryWatch.Elapsed.TotalMilliseconds));
         }
         return new(1, repository, started, watch.Elapsed.TotalMilliseconds, entries);
+    }
+
+    internal static JsonElement? SummaryData(JsonElement? data)
+    {
+        if (data is null) return null;
+        var retained = new[] { "status", "exitCode", "current", "freshness", "effectiveStatus", "active", "readyToActivate", "errors", "warnings", "diagnostics" };
+        return JsonSerializer.SerializeToElement(data.Value.EnumerateObject()
+            .Where(item => retained.Contains(item.Name, StringComparer.Ordinal)).ToDictionary(item => item.Name, item => item.Value.Clone()));
     }
 
     internal sealed record Snapshot(int SchemaVersion, string RepositoryPath, DateTimeOffset CheckedAt, double DurationMs, IReadOnlyList<Entry> Entries);

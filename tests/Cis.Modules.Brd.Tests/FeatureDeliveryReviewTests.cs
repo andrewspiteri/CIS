@@ -85,11 +85,13 @@ public sealed partial class FeatureIntakeTests
         Assert.NotEmpty(Save(request).Errors);
         Assert.NotEmpty(Save(request with { EvidencePaths = [assessment.FeatureRepositoryId + "/../../outside.ts"] }).Errors);
         Assert.NotEmpty(Save(request with { Owners = ["unregistered"], Treatment = "new" }).Errors);
-        var saved = Save(request with { Treatment = "new" });
+        var saved = Save(request with { Treatment = "new", Owners = [] });
         Assert.Empty(saved.Errors);
         Assert.NotEmpty(Save(request with { Treatment = "new" }).Errors); // Stale wizard revision cannot overwrite.
         var result = service.Delivery(f.Authority, "referrals", false);
         Assert.True(result.Stories[0].ReviewCurrent); Assert.Equal("new", result.Stories[0].Review!.Treatment);
+        Assert.Empty(result.Stories[0].Review!.Owners);
+        Assert.Empty(Assert.Single(Assert.Single(service.Navigation(f.Authority).Features).Stories).RepositoryIds);
         Assert.Equal("unresolved", result.Stories[0].Treatment); // Human planning choice never becomes a code finding.
     }
 }

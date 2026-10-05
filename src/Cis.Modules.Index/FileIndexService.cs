@@ -53,6 +53,7 @@ public sealed partial class FileIndexService
 
     public FileIndexBuildResult Build(FileIndexBuildRequest request)
     {
+        using var timing = CisPerformanceTrace.Start("index.build");
         var resolution = _resolver.Resolve(request.RepositoryPath);
         if (!resolution.IsSuccess)
         {
@@ -67,6 +68,8 @@ public sealed partial class FileIndexService
         }
 
         var context = resolution.Context!;
+        using var buildLock = CisBuildLock.Acquire(context.RepositoryPath, "index-cards");
+        timing.Mark("lock-and-resolve");
         var selection = ResolveSelection(context.RepositoryPath, request.Path);
         if (selection.Error is not null)
         {
@@ -90,6 +93,7 @@ public sealed partial class FileIndexService
             candidate => candidate.RelativePath,
             candidate => HashFile(candidate.AbsolutePath),
             StringComparer.OrdinalIgnoreCase);
+        timing.Mark("discover-and-hash");
         var route = ResolveRoute(request.Provider, request.Model);
         var requiresProvider = candidates.Any(candidate => !IsSensitive(candidate.RelativePath));
         if (requiresProvider && route.Error is not null)
@@ -128,6 +132,7 @@ public sealed partial class FileIndexService
                 [], ["Remote index-card generation requires --allow-remote."], false, true, true, false);
         }
 
+        timing.Mark("provider-resolution");
         var generated = 0;
         var reused = 0;
         var pending = 0;

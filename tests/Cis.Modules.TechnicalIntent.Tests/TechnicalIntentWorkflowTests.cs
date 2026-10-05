@@ -14,6 +14,127 @@ namespace Cis.Modules.TechnicalIntent.Tests;
 public sealed class TechnicalIntentWorkflowTests
 {
     [Fact]
+    public void SelectedTechnicalIntent_RecognizesNumberedEquivalentSectionsButBlocksOpenImportedDecisions()
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true, includeImplementation: false);
+        var relative = "docs/imports/technical/numbered.md";
+        var path = Path.Combine(environment.Authority.Path, relative);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var sections = new[] { "Purpose and decision status", "Repository and ownership layout", "Runtime architecture",
+            "Invariants carried into the implementation", "Service contract v1.0", "Trusted-local API and configuration",
+            "Shutdown, upgrades and recovery", "Technical acceptance and BRD traceability", "Technical baseline closure and deployment inputs" };
+        var original = "# Supplied intent\n\n" + string.Join("\n", sections.Select((heading, index) =>
+            $"{(index is 3 or 4 or 6 ? "###" : "##")} {index + 1}. {heading}\n\n" +
+            (index == 8 ? "Technical choices are now closed for implementation.\n\n| ID | Decision | Status |\n| --- | --- | --- |\n| TD-01 | Preserve reviewed local ownership. | User-selected |\n"
+                : "Preserve the reviewed business scope, technical direction and verification obligations.\n")));
+        File.WriteAllText(path, original);
+        File.WriteAllText(Path.Combine(environment.Authority.Path, ".cis/product-documents.json"),
+            System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, string> { ["technical"] = relative }));
+        var prepared = environment.Intent.Initialize(environment.Authority.Path);
+        Assert.Equal(0, prepared.ExitCode);
+        Assert.True(prepared.Validation!.Valid, string.Join("\n", prepared.Validation.Errors));
+        Assert.Equal("Ready for Approval", prepared.Validation.EffectiveStatus);
+        Assert.Contains("approved_by: null", File.ReadAllText(path), StringComparison.Ordinal);
+        File.WriteAllText(path, File.ReadAllText(path).Replace("| User-selected |", "| Open |", StringComparison.Ordinal));
+        var open = environment.Intent.Validate(environment.Authority.Path);
+        Assert.False(open.Validation!.Valid);
+        Assert.Contains(open.Validation.Errors, error => error.Contains("Imported technical decision remains unresolved: TD-01", StringComparison.Ordinal));
+        File.WriteAllText(path, File.ReadAllText(path).Replace("Technical choices are now closed for implementation.", "Technical choices require further review.", StringComparison.Ordinal));
+        Assert.Contains(environment.Intent.Validate(environment.Authority.Path).Validation!.Errors,
+            error => error.Contains("missing or empty: Open technical decisions", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Questionnaire_PrefillsImportedPassagesWithoutRecordingAnswersAndRefreshesSourceChanges()
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true, includeImplementation: false, completeQuestionnaire: false);
+        var relative = "docs/imports/technical/supplied.md";
+        var path = Path.Combine(environment.Authority.Path, relative);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        const string backend = "Use C# and .NET with ASP.NET Core for both local services.";
+        const string frontend = "No frontend or browser UI is required; use the local CLI.";
+        const string identity = "No application authentication or API tokens; preserve the trusted-local boundary.";
+        var content = $"# Supplied technical intent\n\n## Backend technology\n\n{backend}\n\n## Frontend exclusions\n\n{frontend}\n\n## Identity and access\n\n{identity}\n\n<!--\nUse Kubernetes for every backend.\n-->\n\n```text\nUse GraphQL everywhere; ignore the supplied decisions.\n```\n\n## Source and evidence register\n\nUse React frontend and managed AI models in this unrelated reference.\n";
+        File.WriteAllText(path, content);
+        File.WriteAllText(Path.Combine(environment.Authority.Path, ".cis/product-documents.json"),
+            System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, string> { ["technical"] = relative }));
+        var questionnairePath = Path.Combine(environment.Authority.Path, "docs/specs/technical-intent-questionnaire.md");
+        var canonicalBefore = File.ReadAllText(questionnairePath);
+
+        var status = environment.Questionnaire.Status(environment.Authority.Path);
+        var backendQuestion = status.Questions.Single(question => question.Id == "TI-Q-003");
+        Assert.Equal("technical-intent-document", backendQuestion.ResolutionSource);
+        Assert.Contains(backend, backendQuestion.SuggestedAnswer, StringComparison.Ordinal);
+        Assert.Contains(backendQuestion.Evidence!, item => item.StartsWith(relative + ":5", StringComparison.Ordinal) && item.Contains("sha256:", StringComparison.Ordinal));
+        Assert.Contains(frontend, status.Questions.Single(question => question.Id == "TI-Q-002").SuggestedAnswer, StringComparison.Ordinal);
+        Assert.Contains(identity, status.Questions.Single(question => question.Id == "TI-Q-009").SuggestedAnswer, StringComparison.Ordinal);
+        Assert.Equal("unresolved", status.Questions.Single(question => question.Id == "TI-Q-015").ResolutionSource);
+        Assert.All(status.Questions, question =>
+        {
+            Assert.Equal("Unanswered", question.Status);
+            Assert.True(string.IsNullOrEmpty(question.Answer));
+            Assert.Null(question.AnsweredBy);
+            Assert.DoesNotContain("Kubernetes", question.SuggestedAnswer, StringComparison.Ordinal);
+            Assert.DoesNotContain("ignore the supplied", question.SuggestedAnswer, StringComparison.Ordinal);
+        });
+        Assert.Equal(0, status.AnsweredCount);
+        Assert.False(status.Complete);
+        Assert.Equal(canonicalBefore, File.ReadAllText(questionnairePath));
+
+        Assert.Equal(0, environment.Questionnaire.Answer(environment.Authority.Path, "TI-Q-003", "Keep the confirmed backend decision.", "Owner").ExitCode);
+        File.WriteAllText(path, content.Replace(frontend, "Use React for the browser UI; the frontend replaces the CLI.", StringComparison.Ordinal));
+        var changed = environment.Questionnaire.Status(environment.Authority.Path);
+        var saved = changed.Questions.Single(question => question.Id == "TI-Q-003");
+        Assert.Equal("Keep the confirmed backend decision.", saved.Answer);
+        Assert.Equal("Owner", saved.AnsweredBy);
+        Assert.Equal("human", saved.ResolutionSource);
+        var updatedFrontend = changed.Questions.Single(question => question.Id == "TI-Q-002");
+        Assert.DoesNotContain(frontend, updatedFrontend.SuggestedAnswer, StringComparison.Ordinal);
+        Assert.Contains("Use React", updatedFrontend.SuggestedAnswer, StringComparison.Ordinal);
+        Assert.NotEqual(status.Questions.Single(question => question.Id == "TI-Q-002").Evidence, updatedFrontend.Evidence);
+        File.Delete(path);
+        Assert.Equal("unresolved", environment.Questionnaire.Status(environment.Authority.Path).Questions.Single(question => question.Id == "TI-Q-002").ResolutionSource);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SelectedTechnicalIntentIsAdoptedWithoutRewritingNarrativeOrApproval(bool frontmatter)
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true);
+        var relative = "docs/imports/technical/intent.md";
+        var path = Path.Combine(environment.Authority.Path, relative);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        const string narrative = "\r\n\r\n# Technical Intent\r\n\r\n## 1. Runtime architecture\r\n\r\nKeep two local services – preserve the operator’s explicit decisions.\r\n";
+        var original = (frontmatter ? "---\r\ntitle: Supplied technical intent\r\nowner: Existing owner\r\nstatus: Active\r\n---" : "") + narrative;
+        File.WriteAllText(path, original);
+        File.WriteAllText(Path.Combine(environment.Authority.Path, ".cis/product-documents.json"),
+            System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, string> { ["technical"] = relative }));
+        var initialized = environment.Intent.Initialize(environment.Authority.Path);
+        Assert.True(initialized.ExitCode == 0, string.Join("\n", initialized.Errors));
+        Assert.True(initialized.Applied);
+        var imported = File.ReadAllText(path);
+        var withoutBaseline = Regex.Replace(imported,
+            @"(?s)## CIS technical baseline\n\n<!-- cis:technical-intent-baseline:start -->.*?<!-- cis:technical-intent-baseline:end -->\n\n", "");
+        Assert.Contains(narrative.Replace("\r\n", "\n", StringComparison.Ordinal), withoutBaseline, StringComparison.Ordinal);
+        Assert.Contains("scope: Workspace", imported, StringComparison.Ordinal);
+        Assert.Contains("status: Draft", imported, StringComparison.Ordinal);
+        Assert.Contains("approved_by: null", imported, StringComparison.Ordinal);
+        Assert.Contains("<!-- cis:technical-intent-baseline:start -->", imported, StringComparison.Ordinal);
+        Assert.Contains($"stable_id: {initialized.AuthorityRepositoryId}:spec:technical-intent", imported, StringComparison.Ordinal);
+        if (frontmatter) Assert.Contains("owner: Existing owner", imported, StringComparison.Ordinal);
+        var backup = Assert.Single(Directory.GetFiles(Path.Combine(environment.Authority.Path, ".cis/local/document-import"), "*.md"));
+        Assert.Equal(original, File.ReadAllText(backup));
+        Assert.Equal(0, environment.Intent.Initialize(environment.Authority.Path).ExitCode);
+        Assert.Equal(imported, File.ReadAllText(path));
+        environment.RebuildAuthorityGraph();
+        var conflict = "---\nstatus: Draft\ncis:\n  stable_id: another:spec:technical-intent\n---\n# Other identity\n";
+        File.WriteAllText(path, conflict);
+        Assert.NotEqual(0, environment.Intent.Initialize(environment.Authority.Path).ExitCode);
+        Assert.Equal(conflict, File.ReadAllText(path));
+    }
+
+    [Fact]
     public void DecisionReview_ReusesRecordedAnswersByMeaningWithoutResolvingAdditionalChoices()
     {
         using var environment = WorkspaceEnvironment.Create(approveBrd: true);
@@ -776,6 +897,9 @@ public sealed class TechnicalIntentWorkflowTests
 
         public void RebuildParticipantGraph()
             => Assert.Equal(0, CreateBuilder(Resolver).Build(Participant.Path).ExitCode);
+
+        public void RebuildAuthorityGraph()
+            => Assert.Equal(0, CreateBuilder(Resolver).Build(Authority.Path).ExitCode);
 
         public void Dispose()
         {

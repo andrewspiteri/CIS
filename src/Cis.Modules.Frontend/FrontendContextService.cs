@@ -10,7 +10,8 @@ public sealed class FrontendContextService : ICisGraphAugmenter
 {
     public const string StatePath = ".cis/local/frontend/context.json";
     private static readonly string[] Extensions = [".ts", ".tsx", ".js", ".jsx", ".vue", ".swift", ".kt", ".kts", ".gd", ".tscn"];
-    private static readonly string[] Excluded = [".git", ".cis", ".codex-tmp", ".artifacts", "artifacts", "node_modules", "bin", "obj", "dist", "build", ".next", ".nuxt", ".godot", ".gradle", "coverage", "Pods"];
+    private static readonly string[] Excluded = [".git", ".cis", ".codex-tmp", ".artifacts", "artifacts", "node_modules", "bin", "obj", "dist", "build", ".next", ".nuxt", ".godot", ".gradle", "coverage", "Pods",
+        "tmp", "temp", ".tmp", ".temp", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "__fixtures__"];
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private readonly ICisRepositoryContextResolver _resolver;
     private readonly IReadOnlyList<ICisFrontendContextProvider> _providers;
@@ -24,7 +25,7 @@ public sealed class FrontendContextService : ICisGraphAugmenter
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
     }
 
-    public string Name => "frontend-context/3";
+    public string Name => "frontend-context/4";
 
     public FrontendContextResult Discover(string repositoryPath)
     {
@@ -219,7 +220,14 @@ public sealed class FrontendContextService : ICisGraphAugmenter
     }
     private static CisGraphEdge Edge(string repositoryId, string type, string from, string to, CisGraphEvidence evidence) => new($"{repositoryId}::edge::frontend-{Sha256($"{from}\n{type}\n{to}")[..20]}", type, from, to, "discovered", "medium", [evidence], new SortedDictionary<string, string>());
     private static string GraphKind(string kind) => kind switch { "screen" => "screen", "route" => "route", "component" or "screen-component" => "ui-component", "navigation" => "navigation", "api-call" => "api-client", "state" => "state-store", _ => "frontend-observation" };
-    private static bool ExcludedPath(string root, string path) => Path.GetRelativePath(root, path).Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Any(segment => Excluded.Contains(segment, StringComparer.OrdinalIgnoreCase));
+    private static bool ExcludedPath(string root, string path)
+    {
+        var relative = Path.GetRelativePath(root, path).Replace('\\', '/');
+        return relative.Equals(".github/copilot-runtime", StringComparison.OrdinalIgnoreCase)
+            || relative.StartsWith(".github/copilot-runtime/", StringComparison.OrdinalIgnoreCase)
+            || relative.Split('/').Any(segment => Excluded.Contains(segment, StringComparer.OrdinalIgnoreCase)
+                || segment.EndsWith(".Tests", StringComparison.OrdinalIgnoreCase));
+    }
     private static string Relative(CisRepositoryContext context, string path) => Path.GetRelativePath(context.RepositoryPath, path).Replace('\\', '/');
     private static FrontendContextDiagnostic Diagnostic(string code, string severity, string message, params string[] evidence) => new(code, severity, message, evidence);
     private static void AtomicWrite(string path, string content) { var temp = path + ".tmp"; File.WriteAllText(temp, content); File.Move(temp, path, true); }

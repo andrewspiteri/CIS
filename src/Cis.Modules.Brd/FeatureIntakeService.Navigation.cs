@@ -12,13 +12,21 @@ public sealed partial class FeatureIntakeService
         var features = Requests(workspacePath).Select(plan =>
         {
             var wizard = Wizard(workspacePath, plan.Slug);
+            var delivery = wizard.Errors.Count == 0 ? ReadDelivery(workspacePath, plan.Slug, false, null, false) : null;
+            var storyState = delivery is not null ? ReadWizard(workspacePath, plan.Slug) : null;
+            var storyInput = storyState is not null ? ReadDeliveryInput(storyState, false) : null;
             return new CisFeatureNavigationEntry(plan,
                 wizard.Errors.Count > 0 ? "Needs attention" : wizard.Reviewed ? "Definition reviewed"
                     : wizard.Pages.Any(page => page.Id != "foundation" && page.Complete) ? "Definition in progress" : "Draft definition",
                 wizard.Pages.Count(page => page.Complete), wizard.Pages.Count,
-                wizard.Pages.FirstOrDefault(page => !page.Complete)?.Id ?? "review", wizard.RepositoryWork, wizard.Errors);
+                wizard.Pages.FirstOrDefault(page => !page.Complete)?.Id ?? "review", wizard.RepositoryWork,
+                wizard.Errors.Concat(delivery?.Errors ?? []).Distinct().ToArray())
+            {
+                Stories = delivery?.Stories.Select(story => StoryNavigation(storyState!, storyInput!,
+                    plan.Slug, delivery, story)).ToArray() ?? [],
+            };
         }).ToArray();
-        return new(resolved.Workspace, features, []);
+        return new(resolved.Workspace, features, []) { BacklogFeatures = BacklogFeatures(workspacePath, features.Select(feature => feature.Plan).ToArray()) };
     }
 
     private static IReadOnlyList<string> ValidateRepositoryWork(WizardState state, IReadOnlyList<CisFeatureRepositoryWork> items)

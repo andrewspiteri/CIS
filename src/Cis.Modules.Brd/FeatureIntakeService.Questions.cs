@@ -13,7 +13,7 @@ public sealed partial class FeatureIntakeService
         "technical" => [
             new("technical-platform", "Which existing technologies, services and deployment conventions will this feature use?", "technology stack|runtime|hosting|deployment", "stack|runtime|language|framework|hosting|deployment"),
             new("technical-decisions", "Which implementation choices still need to be resolved?", "technical specification|technical design|implementation parameters|outstanding technical|supplier"),
-            new("technical-security", "How will identity, tenant isolation and sensitive data be protected?", "security|identity|access control|privacy", "security|identity|access|privacy"),
+            new("technical-security", "How will identity, tenant isolation and sensitive data be protected?", "security|identity|access control|privacy", "security|identity|access|privacy|trusted.local|application roles"),
             new("technical-operations", "What are the performance, availability, monitoring and recovery requirements?", "performance|availability|reliability|monitoring|observability|disaster|recovery", "performance|availability|reliability|observability|recovery")],
         "architecture" => [
             new("architecture-boundary", "Which components belong to this feature, and what remains in the existing product or external systems?", "system context|platform boundar|responsibilit|out.of.scope|scope exclusion|organisation model", "system context|boundar|container|component"),
@@ -48,6 +48,42 @@ public sealed partial class FeatureIntakeService
         var stories = page == "delivery" ? SuggestStories(state.Source) : null;
         var fields = QuestionsFor(page).Select(question => new CisFeatureWizardField(question.Id, question.Label,
             stories?.GetValueOrDefault(question.Id) ?? SuggestAnswer(state, page, question), saved?.Answers.GetValueOrDefault(question.Id), !legacyNarrative)).ToList();
+        if (page == "technical" && !legacyNarrative)
+        {
+            for (var i = 0; i < fields.Count; i++)
+            {
+                var field = fields[i];
+                var question = QuestionsFor(page).Single(item => item.Id == field.Id);
+                var featureDirection = state.Record.Plan.BacklogItemId is not null
+                    ? SourceExcerpt(state.Source, question.SourceTerms) : FeatureTechnicalDirection(state.Source, question.SourceTerms);
+                var baselineDirection = BaselineExcerpt(state, page, question);
+                var inherited = state.Baseline is { Active: true } && question.BaselineTerms.Length > 0
+                    && featureDirection.Length == 0 && baselineDirection.Length > 0;
+                var hasSaved = !string.IsNullOrWhiteSpace(field.Answer);
+                fields[i] = field with
+                {
+                    Answer = hasSaved ? field.Answer : null,
+                    SuggestedAnswer = inherited ? "Approved product direction:\n\n" + baselineDirection : field.SuggestedAnswer,
+                    Required = !inherited || hasSaved && !HasAnswer(field.Answer),
+                    Inherited = inherited && !hasSaved,
+                    Label = inherited && !hasSaved ? field.Id switch
+                    {
+                        "technical-platform" => "Technologies and deployment inherited from the product",
+                        "technical-security" => "Security and privacy inherited from the product",
+                        _ => "Operations and recovery inherited from the product"
+                    } : field.Label
+                };
+            }
+            var decision = fields.FindIndex(field => field.Id == "technical-decisions");
+            var decisionSource = FeatureTechnicalDirection(state.Source, QuestionsFor(page)[decision].SourceTerms);
+            if (state.Baseline is { Active: true } && decisionSource.Length == 0
+                && fields.Where(field => field.Id != "technical-decisions").All(field => !field.Required))
+                fields[decision] = fields[decision] with
+                {
+                    Label = "Feature-specific technical changes or unresolved choices (optional)",
+                    Required = !string.IsNullOrWhiteSpace(fields[decision].Answer) && !HasAnswer(fields[decision].Answer)
+                };
+        }
         fields.Insert(0, new("summary", legacyNarrative ? "Previously reviewed narrative" : "Additional review notes (optional)", "",
             saved?.Answers.GetValueOrDefault("summary"), legacyNarrative));
         return fields;
@@ -56,7 +92,7 @@ public sealed partial class FeatureIntakeService
     private static string SuggestAnswer(WizardState state, string page, ReviewQuestion question)
     {
         var excerpt = SourceExcerpt(state.Source, question.SourceTerms);
-        if (excerpt.Length > 0) return excerpt;
+        if (UsableDirection(excerpt)) return excerpt;
         if (question.Id == "architecture-views")
             return $"Proposed C4 coverage for {state.Record.Plan.Title}:\n\n"
                 + "- System context: show the feature's users, the existing product and external integration partners.\n"
@@ -64,24 +100,41 @@ public sealed partial class FeatureIntakeService
                 + "- Components: show the responsibilities inside the feature's implementation repository and its integration adapters.\n"
                 + "- Dynamic views: show the main customer journey, asynchronous handoffs and important failure paths.\n\n"
                 + "Identify the existing views to update and any new views needed before implementation.";
-        if (question.BaselineTerms.Length > 0)
-        {
-            var definition = ReviewPages.Single(item => item.Id == page);
-            foreach (var document in definition.Documents)
-            {
-                var path = Path.Combine(state.Authority.RepositoryPath, state.Authority.DocumentationRoot, document);
-                if (!SafeAbsolutePath(path) || !File.Exists(path) || new FileInfo(path).Length > 2_097_152) continue;
-                var text = CisReadScope.Read(typeof(FeatureIntakeService), "feature-question-context", path, () => File.ReadAllText(path, Encoding.UTF8));
-                excerpt = SourceExcerpt(text, question.BaselineTerms);
-                if (excerpt.Length > 0) return "Existing product direction to review for this feature:\n\n" + excerpt;
-            }
-        }
+        excerpt = BaselineExcerpt(state, page, question);
+        if (excerpt.Length > 0) return (state.Baseline is { Active: true } ? "Approved product direction:\n\n" : "Product direction awaiting approval or reconciliation:\n\n") + excerpt;
         // Some BRDs keep delivery/technical parameters as bullets rather than sections.
         // Preserve those actual statements instead of presenting an unrelated section.
         var plainSource = Regex.Replace(state.Source, @"<!--.*?-->", "", RegexOptions.Singleline, TimeSpan.FromSeconds(1));
         var relevantLines = plainSource.Split('\n').Select(line => line.Trim()).Where(line => line.Length > 0
             && !line.StartsWith('#') && Regex.IsMatch(line, question.SourceTerms,
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))).Take(12).ToArray();
-        return relevantLines.Length > 0 ? BoundExcerpt(string.Join("\n\n", relevantLines), 3000) : "";
+        excerpt = relevantLines.Length > 0 ? BoundExcerpt(string.Join("\n\n", relevantLines), 3000) : "";
+        return UsableDirection(excerpt) ? excerpt : "";
+    }
+
+    private static bool UsableDirection(string text) => text.Length > 0
+        && !Regex.IsMatch(text, @"\b(?:TODO|TBD)\b|to be (?:decided|confirmed|defined)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+
+    private static string FeatureTechnicalDirection(string source, string terms)
+    {
+        var excerpt = SourceExcerpt(source, terms);
+        if (excerpt.Length > 0 || terms.Length == 0) return excerpt;
+        var visible = Regex.Replace(source, @"<!--.*?-->", "", RegexOptions.Singleline, TimeSpan.FromSeconds(1));
+        return BoundExcerpt(string.Join("\n", visible.Split('\n').Select(line => line.Trim()).Where(line => !line.StartsWith('#')
+            && Regex.IsMatch(line, terms, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))).Take(12)), 3000);
+    }
+
+    private static string BaselineExcerpt(WizardState state, string page, ReviewQuestion question)
+    {
+        if (question.BaselineTerms.Length == 0) return "";
+        foreach (var document in ReviewPages.Single(item => item.Id == page).Documents)
+        {
+            var path = CisProductDocumentPaths.Resolve(Path.Combine(state.Authority.RepositoryPath, state.Authority.DocumentationRoot), document);
+            if (!SafeAbsolutePath(path) || !File.Exists(path) || new FileInfo(path).Length > 2_097_152) continue;
+            var text = CisReadScope.Read(typeof(FeatureIntakeService), "feature-question-context", path, () => File.ReadAllText(path, Encoding.UTF8));
+            var excerpt = SourceExcerpt(text, question.BaselineTerms);
+            if (UsableDirection(excerpt)) return excerpt;
+        }
+        return "";
     }
 }

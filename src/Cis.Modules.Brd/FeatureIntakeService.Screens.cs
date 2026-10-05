@@ -29,7 +29,7 @@ public sealed partial class FeatureIntakeService
     {
         var answers = state.Review.Pages.GetValueOrDefault("experience")?.Answers ?? [];
         var direction = string.Join("\n\n", answers.OrderBy(pair => pair.Key, StringComparer.Ordinal).Select(pair => pair.Key + ":\n" + pair.Value));
-        var uiPath = Path.Combine(state.Authority.RepositoryPath, state.Authority.DocumentationRoot, "design/ui-direction.md");
+        var uiPath = CisProductDocumentPaths.Resolve(Path.Combine(state.Authority.RepositoryPath, state.Authority.DocumentationRoot), "design/ui-direction.md");
         var baseline = SafeAbsolutePath(uiPath) && File.Exists(uiPath) ? File.ReadAllText(uiPath) : "";
         // Only substantive inputs affect currency: saving another page or the same answer does not stale images.
         var hash = Hash(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new {

@@ -2,6 +2,15 @@ using System.Threading;
 
 namespace Cis.Abstractions;
 
+public sealed record ExistingDocumentCandidate(string Path, string Title,
+    long? SizeBytes = null, DateTimeOffset? LastModifiedUtc = null, string? Summary = null);
+public sealed record ExistingDocumentRole(string Role, string Title, string? SelectedPath, IReadOnlyList<ExistingDocumentCandidate> Candidates);
+public sealed record ExistingDocumentsResult(string Status, string? RepositoryPath, IReadOnlyList<ExistingDocumentRole> Documents,
+    IReadOnlyList<string> Warnings, IReadOnlyList<string> Errors, bool Applied)
+{
+    public int ExitCode => Errors.Count > 0 ? 2 : 0;
+}
+
 public sealed record CisDefinitionPage(
     string Id,
     int Ordinal,
@@ -62,7 +71,10 @@ public sealed record CisDefinitionQuestion(
 
 public sealed record CisDefinitionQuestionnaire(
     string Status, bool Current, bool Complete, IReadOnlyList<CisDefinitionQuestion> Questions,
-    IReadOnlyList<string> Errors);
+    IReadOnlyList<string> Errors)
+{
+    public bool UiRequired { get; init; } = true;
+}
 
 public sealed record CisDefinitionBusinessRepository(string Id, string RepositoryPath, string GraphFreshness);
 
@@ -91,6 +103,7 @@ public sealed record CisDefinitionWizardResult(
     public CisDefinitionQuestionnaire? TechnicalQuestions { get; init; }
     public CisDefinitionQuestionnaire? UiQuestions { get; init; }
     public CisDefinitionBusinessInference? BusinessInference { get; init; }
+    public ExistingDocumentsResult? ExistingDocuments { get; init; }
 }
 
 /// <summary>

@@ -7,7 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Cis.Modules.Feedback.Tests;
 
-public sealed class FeedbackModuleTests : IDisposable
+public sealed partial class FeedbackModuleTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "cis-feedback-tests", Guid.NewGuid().ToString("N"));
 
@@ -69,7 +69,7 @@ public sealed class FeedbackModuleTests : IDisposable
             0,
             40,
             0,
-            [new CisTokenSavingsCandidate(100, 10, "test", "high")]));
+            [new CisTokenSavingsCandidate(100, 10, "test", "high", "probe run")]));
 
         var summary = new FeedbackService(store).Summary(_root, null);
 
@@ -168,13 +168,13 @@ public sealed class FeedbackModuleTests : IDisposable
             ["agent", "runs", "--summary", "--repo", _root], _root,
             now.AddMinutes(-1), now, 25, 0, 8_000, 0,
             [new CisTokenSavingsCandidate(10_000, 2_000,
-                "full manifests versus summary", "high")]));
+                "full manifests versus summary", "high", "agent runs")]));
 
         var result = new FeedbackService(store, () => now).Opportunities(_root, null);
 
         Assert.Contains(result.Opportunities,
             item => item.Code == "CIS-FEEDBACK-COMPACTION" && item.Command == "agent runs");
-        Assert.DoesNotContain(result.Opportunities,
+        Assert.Contains(result.Opportunities,
             item => item.Code == "CIS-FEEDBACK-COMPACTION" && item.Command == "agent runs --summary");
     }
 
@@ -266,7 +266,7 @@ public sealed class FeedbackModuleTests : IDisposable
                 if (addSavings)
                 {
                     services.GetRequiredService<ICisTokenSavingsCollector>().Add(
-                        new CisTokenSavingsCandidate(1_000, 100, "test", "high"));
+                        new CisTokenSavingsCandidate(1_000, 100, "test", "high", "probe run"));
                 }
 
                 return 0;

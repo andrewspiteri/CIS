@@ -328,3 +328,11 @@ execute agents, or mark implementation complete.
   rationale, and previous/new identities without rewriting reviewed evidence.
 - Re-import retires obsolete task documents into historical catalog routes while
   preserving human evidence and lifecycle history.
+
+## Representative workload assessment
+
+Volume-sensitive plans expose missing workload evidence as an early warning. Final
+Delivery Sweep uses the schema and artifact checks documented in
+[plan validation](../manual/cis_plan_validate.md#representative-workload-evidence).
+Component, installation and end-to-end results remain separate. This does not authorize
+resource changes, rollout or workload retries.

@@ -110,11 +110,13 @@ public sealed class UiDirectionService : IChangeReadinessCheck
         if (ReadNested(content, "stable_id") != $"{state.Authority.Id}:design:ui-direction") errors.Add("UI direction has an invalid stable identity.");
         if (ReadNested(content, "ui_direction_schema") != "1") errors.Add("UI-direction schema metadata is missing or unsupported.");
         if (!content.Contains(ManagedStart, StringComparison.Ordinal) || !content.Contains(ManagedEnd, StringComparison.Ordinal)) errors.Add("UI-direction managed markers are missing.");
-        foreach (var heading in RequiredHeadings)
+        var uiRequired = state.Questionnaire is null || UiDirectionQuestionnaireService.RequiresUi(state.Questionnaire.Questions);
+        if ((ReadNested(content, "visual_ui") != "false") != uiRequired) errors.Add("UI applicability changed. Prepare UI direction again for the current scope.");
+        foreach (var heading in uiRequired ? RequiredHeadings : new[] { "UI applicability", "Constraints and exclusions", "Traceability", "UI-specific decisions and accepted exceptions" })
             if (string.IsNullOrWhiteSpace(ExtractSection(content, heading))) errors.Add($"UI-direction section is missing or empty: {heading}");
         if (Regex.IsMatch(content, @"\b(?:TODO|TBD|Not answered)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
             errors.Add("UI direction contains an incomplete placeholder.");
-        foreach (var question in state.Questionnaire?.Questions ?? [])
+        foreach (var question in (state.Questionnaire?.Questions ?? []).Where(question => uiRequired || question.Id == "UI-Q-001"))
             if (!content.Contains($"`{question.Id}`", StringComparison.Ordinal)) errors.Add($"UI direction does not trace `{question.Id}`.");
         var current = state.ReadinessErrors.Count == 0
             && ReadNested(content, "solution_design_hash") == state.SolutionVersion
@@ -144,7 +146,7 @@ public sealed class UiDirectionService : IChangeReadinessCheck
         var context = _repositoryResolver.Resolve(authority.RepositoryPath);
         if (!context.IsSuccess || context.Context is null) return new(resolution.Workspace, authority, null, null, null, null, null, null, [], context.Errors);
         var docs = authority.DocumentationRoot.Replace('/', Path.DirectorySeparatorChar);
-        var path = Path.Combine(authority.RepositoryPath, docs, "design", "ui-direction.md");
+        var path = CisProductDocumentPaths.Resolve(Path.Combine(authority.RepositoryPath, docs), "design", "ui-direction.md");
         var solutionStatus = _solutionDesign.Status(resolution.Workspace.WorkspacePath);
         var solutionReady = solutionStatus.Validation is { } solutionValidation
             && CisDefinitionDraftScope.Accepts(solutionValidation.Valid, solutionValidation.Current, solutionValidation.EffectiveStatus);
@@ -154,12 +156,13 @@ public sealed class UiDirectionService : IChangeReadinessCheck
         if (!solutionReady || string.IsNullOrWhiteSpace(sourceVersion)) readiness.Add("An Active, current overall solution-design bundle is required.");
         if (snapshot is not { Current: true, Complete: true }) readiness.Add("A complete, current UI-direction questionnaire is required. Run `cis ui-direction questions status`.");
         var guideline = Path.Combine(authority.RepositoryPath, docs, "specs", "design-guidelines.md");
-        if (!File.Exists(guideline)) readiness.Add("Active design guidelines are required at `specs/design-guidelines.md`.");
-        var guidelineDigest = File.Exists(guideline) ? Digest(File.ReadAllText(guideline)) : null;
+        var uiRequired = snapshot is null || UiDirectionQuestionnaireService.RequiresUi(snapshot.Questions);
+        if (uiRequired && !File.Exists(guideline)) readiness.Add("Active design guidelines are required at `specs/design-guidelines.md`.");
+        var guidelineDigest = !uiRequired ? "not-applicable" : File.Exists(guideline) ? Digest(File.ReadAllText(guideline)) : null;
         var profiles = resolution.Workspace.Repositories.Select(repository => Path.Combine(repository.RepositoryPath,
                 repository.DocumentationRoot.Replace('/', Path.DirectorySeparatorChar), "references", "ui-framework-profile.md"))
             .Where(File.Exists).Order(StringComparer.OrdinalIgnoreCase).ToArray();
-        var profileDigest = Digest(string.Join("\n--- ui-framework-profile ---\n", profiles.Select(File.ReadAllText)));
+        var profileDigest = !uiRequired ? "not-applicable" : Digest(string.Join("\n--- ui-framework-profile ---\n", profiles.Select(File.ReadAllText)));
         return new(resolution.Workspace, authority, context.Context, path, sourceVersion, snapshot, guidelineDigest,
             profileDigest, readiness.Distinct().ToArray(), []);
     }
@@ -249,6 +252,22 @@ Each UI-bearing feature consumes this direction together with its applicable com
 - UI-framework-profile baseline: `{state.FrameworkProfilesDigest}`.
 - The questionnaire records the exact authority for {Trace(DefinitionsIds)}.
 """;
+        var uiRequired = UiDirectionQuestionnaireService.RequiresUi(state.Questionnaire.Questions);
+        if (!uiRequired) managed = $"""
+## UI applicability
+
+No visual user interface is included in this product scope. Visual-design questions, UI frameworks and screen previews do not apply. CLI and API behavior remains governed by business requirements and technical direction.
+
+## Constraints and exclusions
+
+Adding a visual interface requires a revised surface decision and renewed architecture and UI review. This record does not create screens, visual tokens or component requirements.
+
+## Traceability
+
+- Scope decision: `UI-Q-001` — {Answer("UI-Q-001")}.
+- Solution architecture baseline: `{state.SolutionVersion}`.
+- Questionnaire baseline: `{state.Questionnaire.Digest}`.
+""";
         return $"""
 ---
 title: "{state.Authority!.Id} High-Level UI Direction"
@@ -260,7 +279,7 @@ last_reviewed: null
 review_cadence: on approved surface, shell, brand, design-system, accessibility, or source-baseline change
 cis:
   stable_id: {stableId}
-  ui_direction_schema: 1
+  ui_direction_schema: 1{(!uiRequired ? "\n  visual_ui: false" : "")}
   solution_design_hash: {state.SolutionVersion}
   questionnaire_hash: {state.Questionnaire.Digest}
   design_guidelines_hash: {state.DesignGuidelinesDigest}
@@ -273,7 +292,7 @@ cis:
 
 # {state.Authority.Id} High-Level UI Direction
 
-This workspace-level authority defines the intended look, feel, application shell, interaction language, reusable component basis, responsive behavior, and accessibility baseline. It governs later feature wireframes and visual design packs without prescribing their detailed screens.
+{(uiRequired ? "This workspace-level authority defines the intended look, feel, application shell, interaction language, reusable component basis, responsive behavior, and accessibility baseline. It governs later feature wireframes and visual design packs without prescribing their detailed screens." : "This record carries the project's no-visual-UI scope into the product-definition review. It does not approve a new product surface.")}
 
 {ManagedStart}
 {managed.Trim()}

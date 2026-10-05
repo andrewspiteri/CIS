@@ -6,7 +6,7 @@ using Cis.Modules.Repository;
 
 namespace Cis.Modules.UiDirection;
 
-public sealed class UiDirectionQuestionnaireService
+public sealed partial class UiDirectionQuestionnaireService
 {
     private static readonly IReadOnlyList<QuestionDefinition> Definitions =
     [
@@ -106,7 +106,7 @@ public sealed class UiDirectionQuestionnaireService
             }
             return derived.TryGetValue(definition.Id, out var value) ? ToDerived(definition, value) : ToQuestion(definition);
         }).ToArray();
-        var complete = questions.All(IsResolved);
+        var complete = Complete(questions);
         var content = Render(state.Authority!.Id, state.SolutionVersion!, complete, questions);
         var stableId = $"{state.Authority.Id}:spec:ui-direction-questionnaire";
         var relative = Normalize(Path.GetRelativePath(state.Authority.RepositoryPath, state.Path!));
@@ -146,10 +146,10 @@ public sealed class UiDirectionQuestionnaireService
             Status = "Answered", Answer = answer.Trim(), AnsweredBy = actor.Trim(), AnsweredAtUtc = _clock().ToString("O"),
             ResolutionSource = "human", Confidence = "confirmed", Evidence = [],
         } : item).OrderBy(item => item.Id, StringComparer.Ordinal).ToArray();
-        Write(state.Path!, Render(state.Authority!.Id, state.SolutionVersion!, updated.All(IsResolved), updated));
+        Write(state.Path!, Render(state.Authority!.Id, state.SolutionVersion!, Complete(updated), updated));
         var stableId = $"{state.Authority.Id}:spec:ui-direction-questionnaire";
         var catalog = File.ReadAllText(state.Context!.CatalogPath);
-        Write(state.Context.CatalogPath, UpdateCatalogStatus(catalog, stableId, updated.All(IsResolved) ? "active" : "draft"));
+        Write(state.Context.CatalogPath, UpdateCatalogStatus(catalog, stableId, Complete(updated) ? "active" : "draft"));
         return StatusInternal(state.Workspace!.WorkspacePath, "answered", true);
     }
 
@@ -161,7 +161,7 @@ public sealed class UiDirectionQuestionnaireService
         var questions = Parse(content).Values.OrderBy(item => item.Id, StringComparer.Ordinal).ToArray();
         return new QuestionnaireSnapshot(state.Path, Digest(content), ReadNested(content, "solution_design_hash") ?? string.Empty,
             state.SolutionReady && ReadNested(content, "solution_design_hash") == state.SolutionVersion,
-            questions.Length == Definitions.Count && questions.All(IsResolved), questions);
+            questions.Length == Definitions.Count && Complete(questions), questions);
     }
 
     private UiDirectionQuestionnaireResult StatusInternal(string workspacePath, string status, bool applied)
@@ -174,12 +174,12 @@ public sealed class UiDirectionQuestionnaireService
         var errors = new List<string>(); var warnings = new List<string>();
         if (questions.Length != Definitions.Count) errors.Add($"The questionnaire contains {questions.Length} of {Definitions.Count} required questions. Run `cis ui-direction questions init`.");
         var current = state.SolutionReady && ReadNested(content, "solution_design_hash") == state.SolutionVersion;
-        var complete = questions.Length == Definitions.Count && questions.All(IsResolved);
+        var complete = questions.Length == Definitions.Count && Complete(questions);
         if (!current) warnings.Add("The UI-direction questionnaire does not match the current Active solution-design bundle.");
         if (!complete) warnings.Add($"{questions.Count(item => !IsResolved(item))} high-level UI decision(s) remain unanswered.");
         return new UiDirectionQuestionnaireResult(status, state.Workspace!.WorkspacePath, state.Authority!.Id,
             Normalize(Path.GetRelativePath(state.Authority.RepositoryPath, state.Path)), state.SolutionVersion, current, complete,
-            questions.Count(IsResolved), questions.Count(item => !IsResolved(item)), questions, warnings, errors, applied);
+            questions.Count(IsResolved), RequiresUi(questions) ? questions.Count(item => !IsResolved(item)) : 0, questions, warnings, errors, applied);
     }
 
     private QuestionnaireState Resolve(string workspacePath)
@@ -204,7 +204,12 @@ public sealed class UiDirectionQuestionnaireService
         var result = new Dictionary<string, DerivedDirection>(StringComparer.Ordinal);
         var root = state.Authority!.RepositoryPath;
         var docs = state.Authority.DocumentationRoot.Replace('/', Path.DirectorySeparatorChar);
-        var technicalPath = Path.Combine(root, docs, "specs", "technical-intent-spec.md");
+        if (RecordedNoFrontend(root, docs) is { } noFrontend)
+        {
+            result["UI-Q-001"] = new("No user-facing UI", "high", [noFrontend]);
+            return result;
+        }
+        var technicalPath = CisProductDocumentPaths.Resolve(Path.Combine(root, docs), "specs", "technical-intent-spec.md");
         if (File.Exists(technicalPath))
         {
             var technical = File.ReadAllText(technicalPath);
@@ -267,7 +272,7 @@ This governed pre-design record captures the workspace-level look, feel, shell, 
 ## Decision progress
 
 - Resolved: {{questions.Count(IsResolved)}} of {{questions.Count}}
-- State: {{(complete ? "Complete — ready to generate high-level UI direction" : "Draft — answer every question before generation")}}
+- State: {{(!RequiresUi(questions) ? "No visual UI — visual-design questions do not apply" : complete ? "Complete — ready to generate high-level UI direction" : "Draft — answer every question before generation")}}
 
 ## Questions
 
@@ -306,10 +311,12 @@ This governed pre-design record captures the workspace-level look, feel, shell, 
 
     internal static string SourceDigest(string root, string docs)
     {
-        var design = Path.Combine(root, docs, "architecture", "overall-solution-design.md");
-        var components = Path.Combine(root, docs, "references", "component-sheet.md");
+        var design = CisProductDocumentPaths.Resolve(Path.Combine(root, docs), "architecture", "overall-solution-design.md");
+        var components = CisProductDocumentPaths.Resolve(Path.Combine(root, docs), "references", "component-sheet.md");
         if (!File.Exists(design) || !File.Exists(components)) return string.Empty;
-        return "semantic-v1:" + Digest(NormalizeApproval(File.ReadAllText(design)) + "\n--- component-sheet ---\n" + NormalizeApproval(File.ReadAllText(components)))["sha256:".Length..];
+        var noFrontend = RecordedNoFrontend(root, docs);
+        return "semantic-v1:" + Digest(NormalizeApproval(File.ReadAllText(design)) + "\n--- component-sheet ---\n" + NormalizeApproval(File.ReadAllText(components))
+            + (noFrontend is null ? "" : "\n--- no visual UI ---\n" + noFrontend))["sha256:".Length..];
     }
     private static string NormalizeApproval(string content)
     {

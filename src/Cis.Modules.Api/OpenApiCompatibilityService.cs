@@ -3,7 +3,7 @@ using Cis.Abstractions;
 
 namespace Cis.Modules.Api;
 
-public sealed class OpenApiCompatibilityService(ICisRepositoryContextResolver contextResolver)
+public sealed partial class OpenApiCompatibilityService(ICisRepositoryContextResolver contextResolver)
 {
     private static readonly HashSet<string> Methods = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -45,22 +45,26 @@ public sealed class OpenApiCompatibilityService(ICisRepositoryContextResolver co
         try
         {
             using var current = JsonDocument.Parse(File.ReadAllText(currentAbsolute!));
-            var newOperations = Operations(current.RootElement);
+            var limitations = new SortedSet<string>(StringComparer.Ordinal);
+            var newOperations = Operations(current.RootElement, limitations);
+            var currentLimitations = limitations.ToArray();
             var findings = new List<ApiCompatibilityFinding>();
             var comparisons = new List<ApiBaselineComparison>();
             foreach (var configuredBaseline in resolvedBaselines)
             {
                 using var baseline = JsonDocument.Parse(File.ReadAllText(configuredBaseline.Absolute!));
-                var baselineFindings = Compare(Operations(baseline.RootElement), newOperations)
+                var comparisonLimitations = new SortedSet<string>(currentLimitations, StringComparer.Ordinal);
+                var baselineFindings = Compare(Operations(baseline.RootElement, comparisonLimitations), newOperations)
                     .Select(finding => finding with
                     {
                         Evidence = finding.Evidence.Concat([$"baseline:{configuredBaseline.Path}"]).ToArray(),
                     }).ToArray();
+                limitations.UnionWith(comparisonLimitations.Select(item => configuredBaseline.Path + ": " + item));
                 findings.AddRange(baselineFindings);
                 var comparisonBreaking = baselineFindings.Count(item => item.Severity == "breaking");
                 var comparisonPotential = baselineFindings.Count(item => item.Severity == "potentially-breaking");
                 comparisons.Add(new ApiBaselineComparison(configuredBaseline.Path, currentPath,
-                    comparisonBreaking > 0 ? "breaking" : comparisonPotential > 0 ? "review" : "compatible",
+                    comparisonBreaking > 0 ? "breaking" : comparisonLimitations.Count > 0 ? "partial" : comparisonPotential > 0 ? "review" : "compatible",
                     comparisonBreaking, comparisonPotential,
                     baselineFindings.Count(item => item.Severity == "non-breaking")));
             }
@@ -69,11 +73,11 @@ public sealed class OpenApiCompatibilityService(ICisRepositoryContextResolver co
                 .ThenBy(item => item.Code, StringComparer.Ordinal).ThenBy(item => string.Join('|', item.Evidence), StringComparer.Ordinal).ToList();
             var breaking = findings.Count(item => item.Severity == "breaking");
             var potential = findings.Count(item => item.Severity == "potentially-breaking");
-            return new ApiDiffResult(breaking > 0 ? "breaking" : potential > 0 ? "review" : "compatible",
+            return new ApiDiffResult(breaking > 0 ? "breaking" : limitations.Count > 0 ? "partial" : potential > 0 ? "review" : "compatible",
                 context.RepositoryPath, baselineLabel, currentPath, breaking, potential,
-                findings.Count(item => item.Severity == "non-breaking"), findings, comparisons, [], true);
+                findings.Count(item => item.Severity == "non-breaking"), findings, comparisons, [], true) { CoverageLimitations = limitations.ToArray() };
         }
-        catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException or KeyNotFoundException or InvalidOperationException)
         {
             return new ApiDiffResult("invalid", context.RepositoryPath, baselineLabel, currentPath, 0, 0, 0, [], [],
                 [$"OpenAPI comparison failed: {exception.Message}"], true);
@@ -106,6 +110,9 @@ public sealed class OpenApiCompatibilityService(ICisRepositoryContextResolver co
 
     private static void CompareOperation(OperationShape old, OperationShape current, ICollection<ApiCompatibilityFinding> findings)
     {
+        foreach (var property in old.RequiredResponse.Except(current.RequiredResponse, StringComparer.Ordinal))
+            findings.Add(Finding("CIS-API-DIFF-013", "breaking", "response-required-relaxed", old.Method, old.Path,
+                $"Response property is no longer guaranteed: {property}", "Preserve the required response property or migrate consumers.", property));
         foreach (var required in old.RequiredRequest.Except(current.RequiredRequest, StringComparer.Ordinal))
         {
             findings.Add(Finding("CIS-API-DIFF-101", "non-breaking", "request-required-relaxed", old.Method, old.Path,
@@ -169,7 +176,7 @@ public sealed class OpenApiCompatibilityService(ICisRepositoryContextResolver co
         }
     }
 
-    private static Dictionary<string, OperationShape> Operations(JsonElement root)
+    private static Dictionary<string, OperationShape> Operations(JsonElement root, ISet<string> limitations)
     {
         var result = new Dictionary<string, OperationShape>(StringComparer.OrdinalIgnoreCase);
         if (!root.TryGetProperty("paths", out var paths)) return result;
@@ -179,11 +186,17 @@ public sealed class OpenApiCompatibilityService(ICisRepositoryContextResolver co
             {
                 var key = method.Name.ToUpperInvariant() + " " + route.Name;
                 var requestSchema = ResolveRequestSchema(root, method.Value);
-                var responseSchemas = ResolveResponseSchemas(root, method.Value).ToArray();
+                if (requestSchema is not null) requestSchema = FlattenSchema(root, requestSchema.Value, limitations, key + " request");
+                var responseSchemas = ResolveResponseSchemas(root, method.Value).Select(schema => FlattenSchema(root, schema, limitations, key + " response")).ToArray();
+                if (responseSchemas.Length > 1)
+                    limitations.Add($"{key}: multiple response schema variants are aggregated; review each status and media type independently.");
+                if (requestSchema is not null && Enums(requestSchema, []).Keys.Intersect(Enums(null, responseSchemas).Keys, StringComparer.Ordinal).Any())
+                    limitations.Add($"{key}: overlapping request/response enum paths require independent directional review.");
                 var parameters = Parameters(route.Value).Concat(Parameters(method.Value)).ToArray();
                 var security = Security(method.Value, root);
                 result[key] = new OperationShape(key, method.Name.ToUpperInvariant(), route.Name,
-                    Required(requestSchema), Properties(requestSchema is null ? [] : [requestSchema.Value]), Properties(responseSchemas),
+                    Required(requestSchema), responseSchemas.SelectMany(schema => Required(schema)).ToHashSet(StringComparer.Ordinal),
+                    Properties(requestSchema is null ? [] : [requestSchema.Value]), Properties(responseSchemas),
                     Types(requestSchema is null ? [] : [requestSchema.Value]), Types(responseSchemas), NullableProperties(responseSchemas),
                     parameters.Where(item => item.Required).Select(item => item.Location + ":" + item.Name).ToHashSet(StringComparer.Ordinal),
                     ResponseStatuses(method.Value), security, Enums(requestSchema, responseSchemas));
@@ -197,7 +210,7 @@ public sealed class OpenApiCompatibilityService(ICisRepositoryContextResolver co
         if (!operation.TryGetProperty("requestBody", out var body)) return null;
         body = Dereference(root, body);
         if (!body.TryGetProperty("content", out var content)) return null;
-        foreach (var media in content.EnumerateObject()) if (media.Value.TryGetProperty("schema", out var schema)) return Dereference(root, schema);
+        foreach (var media in content.EnumerateObject()) if (media.Value.TryGetProperty("schema", out var schema)) return schema;
         return null;
     }
 
@@ -208,7 +221,7 @@ public sealed class OpenApiCompatibilityService(ICisRepositoryContextResolver co
         {
             var value = Dereference(root, response.Value);
             if (!value.TryGetProperty("content", out var content)) continue;
-            foreach (var media in content.EnumerateObject()) if (media.Value.TryGetProperty("schema", out var schema)) yield return Dereference(root, schema);
+            foreach (var media in content.EnumerateObject()) if (media.Value.TryGetProperty("schema", out var schema)) yield return schema;
         }
     }
 
@@ -315,7 +328,7 @@ public sealed class OpenApiCompatibilityService(ICisRepositoryContextResolver co
     private static ApiCompatibilityFinding Finding(string code, string severity, string classification, string method, string path, string message, string remediation, params string[] evidence)
         => new(code, severity, classification, method, path, message, remediation, evidence);
 
-    private sealed record OperationShape(string Key, string Method, string Path, HashSet<string> RequiredRequest,
+    private sealed record OperationShape(string Key, string Method, string Path, HashSet<string> RequiredRequest, HashSet<string> RequiredResponse,
         HashSet<string> RequestProperties, HashSet<string> ResponseProperties,
         Dictionary<string, string> RequestTypes, Dictionary<string, string> ResponseTypes, HashSet<string> NullableResponseProperties,
         HashSet<string> RequiredParameters, HashSet<string> ResponseStatuses, HashSet<string> Security,

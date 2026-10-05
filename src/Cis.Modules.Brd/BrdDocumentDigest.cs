@@ -23,12 +23,7 @@ public static class BrdDocumentDigest
     {
         var normalized = CisBrdPresentation.RestoreManagedEvidence(content)
             .Replace("\r\n", "\n", StringComparison.Ordinal);
-        foreach (var key in new[] { "status", "last_reviewed" })
-            normalized = Regex.Replace(normalized, $"(?m)^{key}:.*$", $"{key}: <approval-metadata>",
-                RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-        foreach (var key in new[] { "approved_by", "approved_at", "approval_reason", "approved_content_hash" })
-            normalized = Regex.Replace(normalized, $"(?m)^  {key}:.*$", $"  {key}: <approval-metadata>",
-                RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        normalized = CisFrontMatter.NormalizeApproval(normalized);
         foreach (var block in ManagedBlocks)
             normalized = RemoveManagedBlock(normalized, block.Start, block.End);
         return Hash(normalized.TrimEnd());

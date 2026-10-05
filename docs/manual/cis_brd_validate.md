@@ -24,6 +24,21 @@ Validation requires the managed identity and blocks, all required sections witho
 TODO/TBD placeholders, current hashes for every discovered candidate, one allowed
 assessment and rationale per candidate, readable graphs, and fresh participant graphs.
 
+Imported documents can use numbered headings, different heading levels, and common
+equivalents such as Business objectives, Success criteria, or Assumptions and constraints.
+Validation recognizes those headings without rewriting the source. Related topics such
+as Out of scope do not satisfy Scope, and headings inside code examples are ignored.
+Recognized sections still require substantive content and human review.
+
+Selected imported BRDs also pass the same requirement reader used by backlog generation.
+It accepts requirement tables and bold requirement paragraphs, with optional bullets,
+numbered sections and original domain IDs such as `MD-01` or `EX-01`. Paragraph
+continuations and constraint lists remain attached to their requirement. Code examples
+and comments are excluded. Missing requirement text, duplicate IDs or a functional
+section without readable identified requirements block approval with a format finding.
+This normalization creates an internal read model; it does not rewrite or approve the
+imported document.
+
 Participant baseline differences are reported as drift warnings. They do not prevent
 an explicit approval because approval captures the then-current participant builds.
 After approval, the same difference makes the effective state `Stale`.

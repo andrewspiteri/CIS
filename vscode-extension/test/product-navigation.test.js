@@ -13,6 +13,10 @@ function fixture() {
   const features = ['referrals', 'renewals'].map(slug => ({ plan: { slug, title: slug, repositoryPath: repos[3].repositoryPath, integrationRepositories: ['backend', 'frontend'], requestPath: `docs/specs/feature-requests/${slug}/request.md` }, status: 'Definition in progress', reviewedPages: 3, totalPages: 8, errors: [], repositoryWork: [
     { id: 'API', title: `${slug} API`, repositoryId: 'backend', scope: 'Backend work', dependsOn: [], changeIds: ['CIS-1'] },
     { id: 'UI', title: `${slug} UI`, repositoryId: 'frontend', scope: 'Customer experience', dependsOn: ['API'], changeIds: [] },
+  ], stories: [
+    { id: 'policy', title: 'Agree policy', phase: 'Foundation', repositoryIds: [], status: 'Proposed' },
+    { id: 'api', title: 'Record referral', phase: 'MVP', repositoryIds: ['backend'], status: 'Proposed' },
+    { id: 'journey', title: 'Submit referral', phase: 'MVP', repositoryIds: ['backend', 'frontend'], status: 'Decision saved' },
   ] }));
   const nav = { workspace: { product: { id: 'deposits', name: 'Fixed Term Deposits' }, ecosystem: { name: 'BridgeLink' }, repositories: repos }, features };
   const changes = [{ id: 'CIS-1', title: 'Shared API change', status: 'Proposed' }, { id: 'CIS-2', title: 'Other', status: 'Closed' }];
@@ -42,22 +46,61 @@ test('product stays visible with repositories and wizard even when several chang
   } finally { f.dispose(); }
 });
 
-test('all saved features reopen directly and display repository work and dependencies', async () => {
+test('approved backlog features are visible, actionable and do not duplicate saved definitions', async () => {
+  const f = fixture(); try {
+    f.nav.backlogFeatures = [
+      { id: 'HLT-MD-01', title: 'Market capture', status: 'Ready for feature definition', canStart: true, issues: [] },
+      { id: 'HLT-MD-02', title: 'Capture recovery', status: 'Blocked', canStart: false, issues: ['Start HLT-MD-01 first.'] },
+    ];
+    const nodes = await f.provider('features').getChildren();
+    const planned = nodes.filter(node => node.contextValue === 'cis.backlogFeature');
+    assert.equal(planned.length, 2);
+    assert.equal(planned[0].command.command, 'cis.backlogFeature');
+    assert.deepEqual(planned[0].command.arguments, [{ root: f.root, itemId: 'HLT-MD-01' }]);
+    assert.equal(planned[0].children[0].label, 'Start feature definition');
+    assert.equal(planned[1].children[1].description, 'Start HLT-MD-01 first.');
+    f.nav.features[0].plan.backlogItemId = 'HLT-MD-01';
+    const refreshed = await f.provider('features').getChildren();
+    assert.equal(refreshed.filter(node => node.contextValue === 'cis.backlogFeature').length, 1);
+  } finally { f.dispose(); }
+});
+
+test('all saved features reopen directly and display stories with zero, one or several repository links', async () => {
   const f = fixture(); try {
     const provider = f.provider('features');
     const nodes = await provider.getChildren();
     const features = nodes.filter(node => node.contextValue === 'cis.feature');
     assert.equal(features.length, 2);
     assert.deepEqual(features[0].command.arguments, [{ root: f.root, slug: 'referrals', page: undefined }]);
-    const backend = features[0].children.find(node => node.label === 'backend');
-    assert.equal(backend.children[0].label, 'referrals API');
-    assert.equal(backend.children[0].children[0].command.arguments[0].id, 'CIS-1');
-    const ui = features[0].children.find(node => node.label === 'frontend').children[0];
-    assert.equal(ui.description, 'Depends on API');
-    assert.equal(ui.command.arguments[0].page, 'delivery');
+    const breakdown = features[0].children.find(node => node.label === 'Story breakdown');
+    assert.equal(breakdown.description, '3 stories');
+    assert.deepEqual(breakdown.children.map(node => node.label), ['Agree policy', 'Record referral', 'Submit referral']);
+    assert.deepEqual(breakdown.children.map(node => node.children.length), [0, 1, 2]);
+    assert.deepEqual(breakdown.children[2].children.map(node => node.command.arguments[0].id), ['backend', 'frontend']);
+    assert.equal(breakdown.children[0].command.command, 'cis.featureStory');
+    assert.deepEqual(breakdown.children[0].command.arguments[0], { root: f.root, slug: 'referrals', storyId: 'policy' });
+    assert.ok(!features[0].children.some(node => node.label === 'backend' || node.label === 'Repository work breakdown'));
     const again = await provider.getChildren();
     assert.equal(again[1].id, features[0].id);
     assert.equal(f.calls.filter(args => args.includes('status') && args.includes('wizard')).length, 0, 'no per-feature status process');
+  } finally { f.dispose(); }
+});
+
+test('story tasks appear under their story and open the selected task with stable identities', async () => {
+  const f = fixture(); try {
+    for (const feature of f.nav.features) feature.stories[0].tasks = [
+      { id: 'T1', title: 'Review policy', status: 'Ready', repositoryIds: [] },
+      { id: 'T2', title: 'Implement policy', status: 'Blocked', repositoryIds: ['backend', 'frontend'] },
+    ];
+    const nodes = await f.provider('features').getChildren();
+    const features = nodes.filter(node => node.contextValue === 'cis.feature');
+    const taskNodes = feature => feature.children.find(node => node.label === 'Story breakdown').children[0].children;
+    const tasks = taskNodes(features[0]);
+    assert.deepEqual(tasks.map(task => task.label), ['T1 · Review policy', 'T2 · Implement policy']);
+    assert.deepEqual(tasks.map(task => task.description), ['Ready', 'Blocked']);
+    assert.deepEqual(tasks[1].command.arguments[0], { root: f.root, slug: 'referrals', storyId: 'policy', taskId: 'T2' });
+    assert.deepEqual(tasks[1].children.map(node => node.command.arguments[0].id), ['backend', 'frontend']);
+    assert.notEqual(tasks[0].id, taskNodes(features[1])[0].id);
   } finally { f.dispose(); }
 });
 

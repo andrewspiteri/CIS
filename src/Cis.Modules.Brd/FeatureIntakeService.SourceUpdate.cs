@@ -66,7 +66,8 @@ public sealed partial class FeatureIntakeService
             decisions.Where(question => !previous.OpenDecisions.Contains(question, StringComparer.Ordinal)).ToArray(),
             previous.OpenDecisions.Where(question => !decisions.Contains(question, StringComparer.Ordinal)).ToArray(),
             retained, ReviewPages.Select(page => page.Title).Append("Final review").ToArray());
-        var updatedPlan = previous with { SourcePath = retainedSource, SourceHash = sourceHash, OpenDecisions = decisions, PlanHash = planHash };
+        var updatedPlan = previous with { SourcePath = retainedSource, SourceHash = sourceHash, OpenDecisions = decisions, PlanHash = planHash,
+            SourceBrds = [BrdSource(incoming, retainedSource, sourceHash)] };
         var fingerprint = Hash(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
         {
             title = previous.Title, previous.Slug, sourceHash, repository = previous.RepositoryPath,
@@ -74,7 +75,7 @@ public sealed partial class FeatureIntakeService
         }, Json)));
         var record = state.Record with { Plan = updatedPlan, Fingerprint = fingerprint,
             SourceRevisions = (state.Record.SourceRevisions ?? []).Append(new SourceRevision(previous.SourcePath,
-                previous.SourceHash, history, actor.Trim(), DateTimeOffset.UtcNow.ToString("O"))).ToArray() };
+                previous.SourceHash, history, actor.Trim(), DateTimeOffset.UtcNow.ToString("O")) { SourceBrds = SourceBrds(previous) }).ToArray() };
         var content = ReplaceSourceInRequest(state, record, review);
         // Validate all destinations even on preview; the preview never writes files.
         var destination = SourceUpdatePath(state, retainedSource);
@@ -139,8 +140,9 @@ public sealed partial class FeatureIntakeService
             : string.Join('\n', p.OpenDecisions.Select((decision, i) => $"{i + 1}. {decision}"));
         // Only replace generated source fields, retaining all surrounding human prose.
         content = ReplaceOnce(content, "  source_hash: " + previous.SourceHash + "\n", "  source_hash: " + record.Plan.SourceHash + "\n");
-        content = ReplaceOnce(content, "[Open the original BRD](" + Link(previous.SourcePath) + ")",
-            "[Open the original BRD](" + Link(record.Plan.SourcePath) + ")");
+        var sourceLabel = previous.BacklogItemId is null ? "Open the original BRD" : "Open the requirement snapshot";
+        content = ReplaceOnce(content, "[" + sourceLabel + "](" + Link(previous.SourcePath) + ")",
+            "[" + sourceLabel + "](" + Link(record.Plan.SourcePath) + ")");
         content = ReplaceOnce(content, "## Open decisions from the BRD\n\n" + Decisions(previous) + "\n",
             "## Open decisions from the BRD\n\n" + Decisions(record.Plan) + "\n");
         var start = content.IndexOf(RecordMarker, StringComparison.Ordinal);

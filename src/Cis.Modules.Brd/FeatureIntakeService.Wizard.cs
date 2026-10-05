@@ -153,12 +153,13 @@ public sealed partial class FeatureIntakeService
         var inputs = new Dictionary<string, string>(StringComparer.Ordinal);
         var documentHashes = ReviewPages.SelectMany(page => page.Documents).Distinct(StringComparer.Ordinal).Select(relative =>
         {
-            var path = Path.Combine(authority.RepositoryPath, authority.DocumentationRoot, relative);
+            var path = CisProductDocumentPaths.Resolve(Path.Combine(authority.RepositoryPath, authority.DocumentationRoot), relative);
             inputs[path] = FileHash(path);
             return relative + ":" + inputs[path];
         }).ToArray();
         inputs[workspace!.ConfigurationPath] = FileHash(workspace.ConfigurationPath);
         inputs[sourcePath] = Hash(source);
+        var sourceContext = ReadSourceContext(authority, record.Plan, inputs);
         inputs[Path.Combine(authority.RepositoryPath, ".cis/local/definition-wizard/session.json")] = FileHash(Path.Combine(authority.RepositoryPath, ".cis/local/definition-wizard/session.json"));
         var start = content.IndexOf(ReviewStart, StringComparison.Ordinal);
         var endReview = start < 0 ? -1 : content.IndexOf(ReviewEnd, start, StringComparison.Ordinal);
@@ -171,14 +172,16 @@ public sealed partial class FeatureIntakeService
                 || record.Plan.IntegrationRepositories.Contains(repo.Id, StringComparer.Ordinal)).OrderBy(repo => repo.Id, StringComparer.Ordinal) }, Json);
         var binding = Hash(Encoding.UTF8.GetBytes(prefix + Hash(Encoding.UTF8.GetBytes(boundary)) + requestContext));
         var legacyBinding = Hash(Encoding.UTF8.GetBytes(prefix + inputs[workspace.ConfigurationPath] + requestContext));
-        return new(authority, workspace!, requestPath, content, record, review, Encoding.UTF8.GetString(source), binding, baseline, inputs, legacyBinding);
+        return new(authority, workspace!, requestPath, content, record, review, Encoding.UTF8.GetString(source), binding, baseline, inputs, legacyBinding)
+        { PlanningContext = sourceContext };
     }
 
     private static CisFeatureWizardResult ProjectWizard(WizardState state)
     {
         var plan = state.Record.Plan;
         var pages = new List<CisFeatureWizardPage>();
-        var registered = state.Workspace.Repositories.Any(repo => SamePath(repo.RepositoryPath, plan.RepositoryPath) && repo.IsProductOwned && repo.Role == "participant");
+        var registered = plan.RepositoryMode == "product" && plan.BacklogItemId is not null && SamePath(plan.RepositoryPath, state.Authority.RepositoryPath)
+            || state.Workspace.Repositories.Any(repo => SamePath(repo.RepositoryPath, plan.RepositoryPath) && repo.IsProductOwned && repo.Role == "participant");
         pages.Add(new("foundation", "Feature foundation", registered ? "Complete" : "Needs attention", registered,
             registered ? [] : ["Restore the feature's product-owned repository registration."], [],
             [new("Feature request", plan.RequestPath, true), new("Original feature BRD", plan.SourcePath, true)]));
@@ -187,7 +190,7 @@ public sealed partial class FeatureIntakeService
             var saved = state.Review.Pages.GetValueOrDefault(definition.Id);
             var fields = definition.Id == "business"
                 ? new List<CisFeatureWizardField> { new("summary", definition.Prompt,
-                    SourceExcerpt(state.Source, definition.SourceTerms), saved?.Answers.GetValueOrDefault("summary"), true) }
+                    FeatureDescription(state.Source), saved?.Answers.GetValueOrDefault("summary"), true) }
                 : StructuredFields(state, definition.Id, saved).ToList();
             if (definition.Id == "business") fields.AddRange(plan.OpenDecisions.Select((question, index) =>
                 new CisFeatureWizardField($"decision-{index + 1:000}", question, "", saved?.Answers.GetValueOrDefault($"decision-{index + 1:000}"), true)));
@@ -199,11 +202,12 @@ public sealed partial class FeatureIntakeService
                 attention.AddRange(ValidateRepositoryWork(state, repositoryWork));
             var documents = definition.Documents.Select(relative =>
             {
-                var path = $"{state.Authority.DocumentationRoot}/{relative}";
-                var absolute = Path.Combine(state.Authority.RepositoryPath, path);
+                var absolute = CisProductDocumentPaths.Resolve(Path.Combine(state.Authority.RepositoryPath, state.Authority.DocumentationRoot), relative);
+                var path = Path.GetRelativePath(state.Authority.RepositoryPath, absolute).Replace('\\', '/');
                 return new CisFeatureWizardDocument(Path.GetFileNameWithoutExtension(relative).Replace('-', ' '), path, SafeAbsolutePath(absolute) && File.Exists(absolute));
             }).ToArray();
-            pages.Add(new(definition.Id, definition.Title, attention.Count == 0 ? "Reviewed" : "Needs attention", attention.Count == 0, attention, fields, documents));
+            var inherited = saved is null && fields.Any(field => field.Inherited) && fields.All(field => !field.Required);
+            pages.Add(new(definition.Id, definition.Title, attention.Count > 0 ? "Needs attention" : inherited ? "Inherited" : "Reviewed", attention.Count == 0, attention, fields, documents));
         }
         var current = state.Baseline is { Active: true };
         var final = state.Review.Pages.GetValueOrDefault("review");
@@ -217,11 +221,14 @@ public sealed partial class FeatureIntakeService
         var revision = Hash(Encoding.UTF8.GetBytes(state.Content + state.Binding));
         return new("status", plan, revision, reviewed, current, pages, [], false)
         { RepositoryWork = state.Review.RepositoryWork ?? [], Repositories = state.Workspace.Repositories,
+            SourceBrds = SourceBrds(plan), Description = FeatureDescription(state.Source), PlanningContext = state.PlanningContext,
             SourceHistory = (state.Record.SourceRevisions ?? []).Reverse().SelectMany(revision => new[]
             {
                 new CisFeatureWizardDocument($"BRD before {revision.UpdatedAt} ({revision.Actor})", revision.SourcePath, true),
                 new CisFeatureWizardDocument($"Saved answers before {revision.UpdatedAt}", revision.RequestPath, true)
-            }).Where(document => CisPathSafety.TryResolveUnderRoot(state.Authority.RepositoryPath, document.Path, out var path)
+            }.Concat((revision.SourceBrds ?? []).Select(source => new CisFeatureWizardDocument(
+                $"Source BRD before {revision.UpdatedAt}: {source.Title}", source.Path, true))))
+            .DistinctBy(document => document.Path).Where(document => CisPathSafety.TryResolveUnderRoot(state.Authority.RepositoryPath, document.Path, out var path)
                 && SafeAbsolutePath(path) && File.Exists(path)).ToArray() };
     }
 
@@ -305,7 +312,8 @@ public sealed partial class FeatureIntakeService
     private static CisFeatureWizardResult WizardError(string error) => new("blocked", null, null, false, false, [], [error], false);
     private static string FileHash(string path) => SafeAbsolutePath(path) && File.Exists(path) ? Hash(File.ReadAllBytes(path)) : "missing";
     private static bool HasAnswer(string? answer) => !string.IsNullOrWhiteSpace(answer)
-        && !Regex.IsMatch(answer.Trim(), @"^(?:tbd|todo|unknown|not decided|to be decided|to be confirmed|pending)[.!]?$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        && !Regex.IsMatch(answer.Trim(), @"^(?:tbd|todo|unknown|not decided|to be decided|to be confirmed|pending)[.!]?$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)
+        && !Regex.IsMatch(answer, @"(?im)^\s*(?:[-*+]\s+)?(?:TODO|TBD)\b", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
     private sealed record PageReview(Dictionary<string, string> Answers, string Actor, string SavedAt, string Binding);
     private static bool MatchesBinding(PageReview review, WizardState state)
         => review.Binding == state.Binding || review.Binding == state.LegacyBinding;
@@ -319,5 +327,8 @@ public sealed partial class FeatureIntakeService
         public IReadOnlyList<CisFeatureDeliveryReview>? DeliveryReviews { get; init; }
     }
     private sealed record WizardState(CisWorkspaceRepository Authority, CisWorkspace Workspace, string RequestPath, string Content,
-        IntakeRecord Record, FeatureReview Review, string Source, string Binding, CisProductDefinitionAuthority? Baseline, Dictionary<string, string> Inputs, string LegacyBinding);
+        IntakeRecord Record, FeatureReview Review, string Source, string Binding, CisProductDefinitionAuthority? Baseline, Dictionary<string, string> Inputs, string LegacyBinding)
+    {
+        public string PlanningContext { get; init; } = "";
+    }
 }

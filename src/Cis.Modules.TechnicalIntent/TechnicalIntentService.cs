@@ -108,7 +108,7 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck, ICis
         var catalog = File.ReadAllText(state.Context!.CatalogPath);
         var merge = _catalogMerger.Merge(
             state.Authority.Id,
-            catalog,
+            RouteSelectedTechnicalCatalog(state.Authority.RepositoryPath, canonicalPath, catalog, stableId, relativePath),
             [new CatalogArtifactEntry(stableId, relativePath, "repository-specification", "draft", "canonical")]);
         if (merge.Collisions.Count > 0)
             return new TechnicalIntentResult("collision", state.Workspace!.WorkspacePath, state.Authority.Id,
@@ -126,7 +126,12 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck, ICis
             existing = CisTechnicalIntentPresentation.RestoreManagedEvidence(File.ReadAllText(canonicalPath));
             content = existing;
             if (!content.Contains($"stable_id: {stableId}", StringComparison.Ordinal))
-                return Error("collision", state, "The canonical technical-intent path contains a document with a different stable identity.");
+            {
+                if (!TryImportSelectedTechnicalIntent(state.Authority.RepositoryPath, canonicalPath, content, stableId, out var imported))
+                    return Error("collision", state, "The canonical technical-intent path contains an unmanaged or conflicting document. Select an unmanaged document through Load existing documents; conflicting CIS identities require manual review.");
+                BackupImportedTechnicalIntent(state.Authority.RepositoryPath, canonicalPath);
+                content = imported;
+            }
             content = EnsureMetadata(content);
             content = ReplaceOrInsertBaseline(content, state.Baselines);
             if (!content.Contains("<!-- cis:technical-intent-implementation-authored -->", StringComparison.Ordinal)
@@ -248,6 +253,8 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck, ICis
         if (!string.Equals(ReadFrontMatter(content, "scope"), "Workspace", StringComparison.OrdinalIgnoreCase))
             errors.Add("Authority technical intent must declare `scope: Workspace`.");
         var schema = ReadNestedFrontMatter(content, "technical_intent_schema");
+        var selectedImport = schema == "1" && CisProductDocumentPaths.Read(state.Authority.RepositoryPath).GetValueOrDefault("technical") is { } selected
+            && string.Equals(CisProductDocumentPaths.ValidatePath(state.Authority.RepositoryPath, selected), state.CanonicalPath, CisPathSafety.PlatformComparison);
         if (schema is not ("1" or "2" or "3" or "4"))
             errors.Add("Technical-intent schema metadata is missing or unsupported.");
         if (!content.Contains(BaselineStart, StringComparison.Ordinal) || !content.Contains(BaselineEnd, StringComparison.Ordinal))
@@ -256,6 +263,7 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck, ICis
         foreach (var aliases in RequiredSectionAliases)
         {
             var body = aliases.Select(alias => ExtractSection(content, alias)).FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+            if (string.IsNullOrWhiteSpace(body) && selectedImport) body = ExtractImportedSection(content, aliases[0]);
             if (string.IsNullOrWhiteSpace(body))
                 errors.Add($"Required technical-intent section is missing or empty: {string.Join(" or ", aliases)}");
             else if (PlaceholderPattern().IsMatch(body))
@@ -330,6 +338,13 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck, ICis
         }
 
         var decisionSection = ExtractSection(content, "Open technical decisions");
+        if (string.IsNullOrWhiteSpace(decisionSection) && selectedImport)
+        {
+            decisionSection = ExtractImportedSection(content, "Open technical decisions");
+            foreach (var cells in decisionSection.Split('\n').Select(Cells).Where(cells => cells.Length >= 3))
+                if (Regex.IsMatch(cells[^1], @"\b(?:Open|Proposed|Pending|Unresolved|TBD|TODO)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
+                    errors.Add($"Imported technical decision remains unresolved: {cells[0]}");
+        }
         var decisions = new List<CisTechnicalDecisionReview>();
         var documentRows = document.Split('\n').Select((line, index) => (Cells: Cells(line), Line: index + 1))
             .Where(row => row.Cells.Length == 5 && row.Cells[0].StartsWith("TI-DEC-", StringComparison.Ordinal))
@@ -422,7 +437,7 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck, ICis
             && CisDefinitionDraftScope.Accepts(brdValidation.Valid, brdValidation.Current, brdValidation.EffectiveStatus);
         if (!brdReady)
             readinessErrors.Add("An Active, current BRD is required before technical intent. Run `cis brd status`.");
-        var brdPath = Path.Combine(authority.RepositoryPath, authority.DocumentationRoot.Replace('/', Path.DirectorySeparatorChar), "specs", "business-requirements.md");
+        var brdPath = CisProductDocumentPaths.Resolve(Path.Combine(authority.RepositoryPath, authority.DocumentationRoot.Replace('/', Path.DirectorySeparatorChar)), "specs", "business-requirements.md");
         BusinessEvidence? brd = null;
         if (File.Exists(brdPath))
         {
@@ -512,8 +527,7 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck, ICis
                 warnings.Add($"Authority repository graph is {snapshot.Freshness}; rebuild after canonical edits.");
         }
 
-        var canonical = Path.Combine(authority.RepositoryPath,
-            authority.DocumentationRoot.Replace('/', Path.DirectorySeparatorChar), "specs", "technical-intent-spec.md");
+        var canonical = CisProductDocumentPaths.Resolve(Path.Combine(authority.RepositoryPath, authority.DocumentationRoot.Replace('/', Path.DirectorySeparatorChar)), "specs", "technical-intent-spec.md");
         var existing = File.Exists(canonical) ? File.ReadAllText(canonical) : null;
         var scaffoldEligible = existing is null || IsScaffoldEligible(existing) || IsGeneratedDraft(existing);
         if (scaffoldEligible || ReadNestedFrontMatter(existing ?? string.Empty, "technical_intent_schema") is "2" or "3" or "4")
@@ -1668,41 +1682,31 @@ cis:
 
     private static string ExtractSection(string content, string heading)
     {
-        var match = Regex.Match(content, $"(?ms)^## {Regex.Escape(heading)}\\s*$\\n(?<body>.*?)(?=^## |\\z)",
-            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-        return match.Success ? match.Groups["body"].Value.Trim() : string.Empty;
+        var match = Regex.Match(content, $@"(?m)^(?<level>\#{{2,3}})[ \t]+(?:\d+(?:\.\d+)*\.?[ \t]+)?{Regex.Escape(heading)}(?:[ \t]+v\d+(?:\.\d+)*)?[ \t]*\r?$",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        if (!match.Success) return string.Empty;
+        var body = content[(match.Index + match.Length)..];
+        var end = Regex.Match(body, $@"(?m)^\#{{1,{match.Groups["level"].Length}}}[ \t]+", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        return (end.Success ? body[..end.Index] : body).Trim();
     }
 
     private static string EnsureTopLevelFrontMatter(string content, string key, string value, string beforeKey)
-    {
-        if (ReadFrontMatter(content, key) is not null) return ReplaceFrontMatter(content, key, value);
-        return Regex.Replace(content, $"(?m)^{Regex.Escape(beforeKey)}:", $"{key}: {value}\n{beforeKey}:",
-            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-    }
+        => CisFrontMatter.Set(content, key, value);
 
     private static string EnsureNestedFrontMatter(string content, string key, string value)
-    {
-        if (ReadNestedFrontMatter(content, key) is not null) return content;
-        return Regex.Replace(content, "(?m)^(  stable_id:.*)$", $"$1\n  {key}: {value}",
-            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-    }
+        => ReadNestedFrontMatter(content, key) is not null ? content : CisFrontMatter.Set(content, key, value, nested: true);
 
     private static string ReplaceFrontMatter(string content, string key, string value)
-        => Regex.Replace(content, $"(?m)^{Regex.Escape(key)}:.*$", $"{key}: {value}", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        => CisFrontMatter.Set(content, key, value);
 
     private static string ReplaceNestedFrontMatter(string content, string key, string value)
-        => Regex.Replace(content, $"(?m)^  {Regex.Escape(key)}:.*$", $"  {key}: {value}", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        => CisFrontMatter.Set(content, key, value, nested: true);
 
-    private static string? ReadFrontMatter(string content, string key) => ReadFrontMatterValue(content, $"^{Regex.Escape(key)}:");
-    private static string? ReadNestedFrontMatter(string content, string key) => ReadFrontMatterValue(content, $"^  {Regex.Escape(key)}:");
+    private static string? ReadFrontMatter(string content, string key)
+        => CisFrontMatter.Read(content, key) is { } value ? Unquote(value) : null;
 
-    private static string? ReadFrontMatterValue(string content, string prefix)
-    {
-        var end = content.IndexOf("\n---", 4, StringComparison.Ordinal);
-        if (!content.StartsWith("---", StringComparison.Ordinal) || end < 0) return null;
-        var match = Regex.Match(content[..end], $"(?m){prefix}\\s*(?<value>.+)$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-        return match.Success ? Unquote(match.Groups["value"].Value.Trim()) : null;
-    }
+    private static string? ReadNestedFrontMatter(string content, string key)
+        => CisFrontMatter.Read(content, key, nested: true) is { } value ? Unquote(value) : null;
 
     private static string Unquote(string value)
     {
@@ -1732,10 +1736,7 @@ cis:
     {
         content = CisTechnicalIntentPresentation.RestoreManagedEvidence(content);
         var normalized = content.Replace("\r\n", "\n", StringComparison.Ordinal);
-        foreach (var key in new[] { "status", "last_reviewed" })
-            normalized = Regex.Replace(normalized, $"(?m)^{key}:.*$", $"{key}: <approval-metadata>", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-        foreach (var key in new[] { "approved_by", "approved_at", "approval_reason", "approved_content_hash" })
-            normalized = Regex.Replace(normalized, $"(?m)^  {key}:.*$", $"  {key}: <approval-metadata>", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        normalized = CisFrontMatter.NormalizeApproval(normalized);
         normalized = RemoveManagedBlock(normalized, BaselineStart, BaselineEnd);
         return Hash(normalized.TrimEnd());
     }
@@ -1743,10 +1744,7 @@ cis:
     private static string LegacyContentDigest(string content)
     {
         var normalized = content.Replace("\r\n", "\n", StringComparison.Ordinal);
-        foreach (var key in new[] { "status", "last_reviewed" })
-            normalized = Regex.Replace(normalized, $"(?m)^{key}:.*$", $"{key}: <approval-metadata>", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-        foreach (var key in new[] { "approved_by", "approved_at", "approval_reason", "approved_content_hash" })
-            normalized = Regex.Replace(normalized, $"(?m)^  {key}:.*$", $"  {key}: <approval-metadata>", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        normalized = CisFrontMatter.NormalizeApproval(normalized);
         return Hash(normalized.TrimEnd());
     }
 

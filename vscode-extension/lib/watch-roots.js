@@ -1,6 +1,7 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
+const { createHash } = require('node:crypto');
 
 // Read routing paths from the canonical workspace registry, including repositories
 // that are not open as VS Code folders. Domain status remains the CLI's responsibility.
@@ -40,13 +41,43 @@ function workspaceWatchRoots(roots) {
 
 function ignoredWatchEvent(uri, root) {
   if (!uri?.fsPath) return false;
-  const relative = path.relative(root, uri.fsPath).replaceAll('\\', '/');
+  const relative = path.relative(root, uri.fsPath).replaceAll('\\', '/').toLowerCase();
   if (relative.startsWith('.cis/local/')) {
     return !/^\.cis\/local\/(?:graph\/context\.db(?:-wal|-journal)?$|(?:agents|testing|security)\/runs\/|workflows\/)/u.test(relative);
   }
+  if (relative === '.github/copilot-runtime' || relative.startsWith('.github/copilot-runtime/')) return true;
   return relative.split('/').some(segment => [
     'node_modules', 'bin', 'obj', 'dist', 'build', 'coverage', '.git', '.next', 'artifacts', '.artifacts',
+    '.idea', '.vs', '.codex-tmp', '.stryker-tmp', '.nuxt', '.output', '.svelte-kit', '.terraform',
+    'out', 'build_out', 'nongit', 'skills-quarantine', '_old', 'tmp', 'temp', '.tmp', '.temp',
+    'cache', '.cache', '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache',
+    'test-results', 'testresults', 'playwright-report', 'blob-report',
   ].includes(segment.toLowerCase()));
 }
 
-module.exports = { workspaceWatchRoots, ignoredWatchEvent };
+// Editors can notify again when discovering unchanged MCP configuration. Seed
+// these small, known files before watching; unknown/unreadable inputs still invalidate.
+function createConfigurationWatchFilter(root) {
+  const fingerprint = relative => {
+    try {
+      const absolute = path.join(root, relative);
+      for (const part of [path.dirname(absolute), absolute]) if (fs.lstatSync(part).isSymbolicLink()) return undefined;
+      const stat = fs.statSync(absolute);
+      if (!stat.isFile() || stat.size > 1024 * 1024) return undefined;
+      return createHash('sha256').update(fs.readFileSync(absolute)).digest('hex');
+    } catch (error) { return error.code === 'ENOENT' ? 'missing' : undefined; }
+  };
+  const states = new Map(['.github/mcp.json', '.vscode/mcp.json', '.mcp.json'].map(relative => [relative, fingerprint(relative)]));
+  return uri => {
+    if (!uri?.fsPath) return false;
+    const relative = path.relative(root, uri.fsPath).replaceAll('\\', '/');
+    const key = process.platform === 'win32' ? relative.toLowerCase() : relative;
+    if (!states.has(key)) return false;
+    const previous = states.get(key);
+    const current = fingerprint(relative);
+    states.set(key, current);
+    return current !== undefined && previous === current;
+  };
+}
+
+module.exports = { workspaceWatchRoots, ignoredWatchEvent, createConfigurationWatchFilter };

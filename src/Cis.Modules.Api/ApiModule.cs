@@ -82,6 +82,8 @@ public sealed class ApiModule : ICisModule
     {
         var command = new Command("diff", "Compare every governed supported baseline with current OpenAPI using forward-transitive compatibility.");
         var repo = Repo(); var format = Format();
+        var summary = new Option<bool>("--summary") { Description = "Return totals, coverage limits and baseline results without individual findings." };
+        command.Options.Add(summary);
         var baseline = new Option<string?>("--baseline") { Description = "Optional repository-relative single baseline override; otherwise every profile baseline is compared." };
         var current = new Option<string?>("--current") { Description = "Repository-relative current OpenAPI JSON path; defaults to the profile." };
         command.Options.Add(repo); command.Options.Add(baseline); command.Options.Add(current); command.Options.Add(format);
@@ -89,7 +91,7 @@ public sealed class ApiModule : ICisModule
         {
             var selected = GetFormat(parse.GetValue(format)); if (selected is null) return 2;
             var result = service.Diff(parse.GetValue(repo)!, parse.GetValue(baseline), parse.GetValue(current));
-            RenderDiff(result, selected); return result.ExitCode;
+            RenderDiff(result, selected, parse.GetValue(summary)); return result.ExitCode;
         });
         return command;
     }
@@ -132,19 +134,29 @@ public sealed class ApiModule : ICisModule
         foreach (var item in result.Diagnostics) Console.WriteLine($"- [{item.Severity}] {item.Code} ({item.Rule}) {item.Message}\n  Fix: {item.Remediation}");
     }
 
-    private static void RenderDiff(ApiDiffResult result, string format)
+    private static void RenderDiff(ApiDiffResult result, string format, bool summary = false)
     {
-        if (format == "json") { Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions)); return; }
+        if (format == "json")
+        {
+            if (summary) Console.WriteLine(JsonSerializer.Serialize(new { result.Status, result.ExitCode, result.Baseline, result.Current,
+                result.Breaking, result.PotentiallyBreaking, result.NonBreaking, result.Comparisons, result.CoverageComplete,
+                result.CoverageLimitations, result.Errors, omittedFindings = result.Findings.Count, details = "cis api diff without --summary" }, JsonOptions));
+            else Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+            return;
+        }
+        Console.WriteLine(format == "agent" ? $"coverageComplete={result.CoverageComplete.ToString().ToLowerInvariant()};omittedFindings={(summary ? result.Findings.Count : 0)}" : $"Schema coverage: {(result.CoverageComplete ? "supported constructs compared" : "partial")}");
+        foreach (var limit in result.CoverageLimitations) Console.WriteLine(format == "agent" ? $"coverageLimit={Safe(limit)}" : $"Coverage limit: {limit}");
+        if (summary) Console.WriteLine("details=cis api diff without --summary");
         if (format == "agent")
         {
             Console.WriteLine($"status={result.Status};exitCode={result.ExitCode};breaking={result.Breaking};potentiallyBreaking={result.PotentiallyBreaking};nonBreaking={result.NonBreaking};baselines={result.Comparisons.Count};baseline={Safe(result.Baseline)};current={Safe(result.Current)}");
             foreach (var comparison in result.Comparisons) Console.WriteLine($"comparison={Safe(comparison.Baseline)};current={Safe(comparison.Current)};status={comparison.Status};breaking={comparison.Breaking};potentiallyBreaking={comparison.PotentiallyBreaking};nonBreaking={comparison.NonBreaking}");
-            foreach (var item in result.Findings) Console.WriteLine($"finding={item.Code};severity={Safe(item.Severity)};classification={Safe(item.Classification)};method={item.Method};path={Safe(item.Path)};message={Safe(item.Message)};remediation={Safe(item.Remediation)}");
+            foreach (var item in summary ? [] : result.Findings) Console.WriteLine($"finding={item.Code};severity={Safe(item.Severity)};classification={Safe(item.Classification)};method={item.Method};path={Safe(item.Path)};message={Safe(item.Message)};remediation={Safe(item.Remediation)}");
             foreach (var error in result.Errors) Console.WriteLine($"error={Safe(error)}"); return;
         }
         Console.WriteLine($"API compatibility: {result.Status}; baselines: {result.Comparisons.Count}; breaking: {result.Breaking}; review: {result.PotentiallyBreaking}; non-breaking: {result.NonBreaking}");
         foreach (var comparison in result.Comparisons) Console.WriteLine($"- {comparison.Baseline} -> {comparison.Current}: {comparison.Status}");
-        foreach (var item in result.Findings) Console.WriteLine($"- [{item.Severity}] {item.Method} {item.Path}: {item.Message}");
+        foreach (var item in summary ? [] : result.Findings) Console.WriteLine($"- [{item.Severity}] {item.Method} {item.Path}: {item.Message}");
         foreach (var error in result.Errors) Console.WriteLine($"- error: {error}");
     }
 

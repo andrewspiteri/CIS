@@ -13,7 +13,9 @@ public sealed partial class ReferenceGovernanceService
     internal const int InventorySchemaVersion = 2;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private static readonly string[] ExcludedSegments =
-    [".git", ".codex-tmp", "node_modules", "bin", "obj", ".next", "dist", "coverage", ".terraform", "artifacts", ".artifacts", "out", ".cis"];
+    [".git", ".codex-tmp", "node_modules", "bin", "obj", ".next", "dist", "coverage", ".terraform", "artifacts", ".artifacts", "out", ".cis",
+        "tmp", "temp", ".tmp", ".temp", ".cache", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+        ".stryker-tmp", "TestResults", "test-results", "playwright-report", "blob-report"];
 
     private readonly ICisRepositoryContextResolver _resolver;
     private readonly IReadOnlyList<ICisReferenceProvider> _providers;
@@ -31,6 +33,7 @@ public sealed partial class ReferenceGovernanceService
 
     public ReferenceDiscoveryResult Discover(string repositoryPath)
     {
+        using var timing = CisPerformanceTrace.Start("references.discover");
         var resolution = _resolver.Resolve(repositoryPath);
         if (!resolution.IsSuccess || resolution.Context is null)
             return DiscoveryError(repositoryPath, resolution.Errors);
@@ -38,16 +41,19 @@ public sealed partial class ReferenceGovernanceService
         var context = resolution.Context;
         var diagnostics = ProviderDiagnostics().ToList();
         var discoveryContext = new CisReferenceDiscoveryContext(context.RepositoryPath, context.DocumentationPath, context.RepositoryId);
+        var providers = _providers.GroupBy(item => item.Kind, StringComparer.OrdinalIgnoreCase)
+            .Where(group => group.Count() == 1).OrderBy(group => group.Key, StringComparer.Ordinal)
+            .Select(group => group.Single()).ToArray();
+        var discovered = DiscoverProviders(providers, discoveryContext);
+        timing.Mark("sources");
         var families = new List<ReferenceFamilyState>();
-        foreach (var group in _providers.GroupBy(item => item.Kind, StringComparer.OrdinalIgnoreCase).OrderBy(item => item.Key, StringComparer.Ordinal))
+        foreach (var provider in providers)
         {
-            if (group.Count() != 1) continue;
-            var provider = group.Single();
             var canonicalPath = Path.Combine(context.DocumentationPath, "references", provider.CanonicalFileName);
             var canonical = File.Exists(canonicalPath)
                 ? ParseCanonical(provider.Kind, canonicalPath, context, diagnostics)
                 : [];
-            var observations = DiscoverProvider(provider, discoveryContext);
+            var observations = discovered[provider.Kind];
             var correlated = Correlate(observations, canonical.Where(entry => IsLocal(entry, context.RepositoryId)).ToArray());
             families.Add(new(
                 provider.Kind,
@@ -270,17 +276,26 @@ public sealed partial class ReferenceGovernanceService
                 $"Multiple providers register reference kind '{group.Key}'.", "Remove the conflict or select a distinct stable kind.",
                 group.Select(item => item.GetType().FullName ?? item.GetType().Name).ToArray())).ToArray();
 
-    private static IReadOnlyList<CisReferenceObservation> DiscoverProvider(ICisReferenceProvider provider, CisReferenceDiscoveryContext context)
+    private static IReadOnlyDictionary<string, IReadOnlyList<CisReferenceObservation>> DiscoverProviders(
+        IReadOnlyList<ICisReferenceProvider> providers, CisReferenceDiscoveryContext context)
     {
-        var items = new Dictionary<string, CisReferenceObservation>(StringComparer.Ordinal);
+        var items = providers.ToDictionary(provider => provider.Kind,
+            _ => new Dictionary<string, CisReferenceObservation>(StringComparer.Ordinal), StringComparer.OrdinalIgnoreCase);
+        if (providers.Count == 0) return new Dictionary<string, IReadOnlyList<CisReferenceObservation>>();
         void Observe(string path)
         {
             var relative = Relative(context.RepositoryPath, path);
-            if (!provider.Supports(relative)) return;
+            var supported = providers.Where(provider => provider.Supports(relative)).ToArray();
+            if (supported.Length == 0) return;
             string content;
             try { content = File.ReadAllText(path); }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { return; }
-            foreach (var item in provider.Discover(context, new(relative, content))) items.TryAdd(ObservationKey(item), item);
+            // One file read feeds every applicable provider. Contents are released after
+            // this file; a later discovery enumerates and reads current inputs again.
+            var source = new CisReferenceSourceFile(relative, content);
+            foreach (var provider in supported)
+                foreach (var item in provider.Discover(context, source))
+                    items[provider.Kind].TryAdd(ObservationKey(item), item);
         }
 
         // `.cis` is excluded as derived/internal state, but repository.yml is the canonical
@@ -289,7 +304,10 @@ public sealed partial class ReferenceGovernanceService
         if (File.Exists(repositoryConfiguration)) Observe(repositoryConfiguration);
         foreach (var path in EnumerateSourceFiles(context.RepositoryPath, context.DocumentationPath))
             Observe(path);
-        return items.Values.OrderBy(item => item.Identity, StringComparer.OrdinalIgnoreCase).ThenBy(item => item.SourcePath, StringComparer.Ordinal).ToArray();
+        return items.ToDictionary(pair => pair.Key,
+            pair => (IReadOnlyList<CisReferenceObservation>)pair.Value.Values
+                .OrderBy(item => item.Identity, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(item => item.SourcePath, StringComparer.Ordinal).ToArray(), StringComparer.OrdinalIgnoreCase);
     }
 
     private static IEnumerable<string> EnumerateSourceFiles(string repositoryPath, string documentationPath)
@@ -318,6 +336,7 @@ public sealed partial class ReferenceGovernanceService
             {
                 if (CisPathSafety.IsUnderRoot(documentationPath, child, allowRoot: true)
                     || ExcludedSegments.Contains(Path.GetFileName(child), StringComparer.OrdinalIgnoreCase)
+                    || Relative(repositoryPath, child).Equals(".github/copilot-runtime", StringComparison.OrdinalIgnoreCase)
                     || CisPathSafety.IsReparsePoint(child))
                 {
                     continue;

@@ -39,13 +39,23 @@ a question or relevant BRD-context change does.
 `suggest` submits only the displayed questions and bounded excerpts to a text-generation
 provider. With no provider it selects an available local provider only. Remote use requires
 both an explicit provider and `--allow-remote`. The model must return `null` when the
-evidence cannot support an answer; CIS rejects unknown question IDs, duplicated suggestions,
+evidence cannot support either a factual answer or a useful proposed decision; CIS rejects unknown question IDs, duplicated suggestions,
 unsupported context citations, placeholders, malformed JSON, and stale results. CIS batches
 large question sets to remain within small-model context windows and retries a malformed batch
-per question. An answer is accept-ready only when the model reports at least medium confidence
+per question. Questions omitted from an otherwise valid response are retried individually
+once with the same selected model, preserving the supported answers already returned.
+An answer is accept-ready only when the model reports at least medium confidence
 and cites one or more displayed context excerpts; low-confidence or uncited output is retained
 only as an explicit no-supported-answer result. Suggestion
 generation never writes the canonical BRD or supplies human actor provenance.
+
+Unresolved decisions can receive a concrete proposed answer with explicit assumptions
+and citations to the BRD constraints. These are labelled **Proposed decision — needs your
+confirmation** and populate the editable answer field. They are recommendations, not
+established facts. Missing external facts such as current fee rates must not be invented;
+the proposal can instead define how they must be obtained and verified. Only **Accept
+proposed answer** or saving the edited answer records the human's decision. Existing
+recorded answers are preserved. Legacy factual suggestions retain their evidence checks.
 
 The first `answer` converts the recognized list to this canonical structure while
 preserving every question:
@@ -73,9 +83,13 @@ earlier review.
 The VS Code command **CIS: Answer BRD Open Questions** opens one editor page containing
 the complete question list, relevant BRD context, current answers, and advisory suggestions.
 An answer is recorded only when the named human selects **Accept suggestion** or saves an
-edited text area. The page runs an available local model only when **Generate advisory
-suggestions** is selected; transmitting the displayed context to a configured remote provider
-requires a separate disclosure confirmation.
+edited text area. **Generate advisory suggestions · choose model** and **Regenerate
+advisory suggestions · choose model** open a picker of local and remote models, including
+stronger models exposed by signed-in Codex and Claude providers. The selected provider
+and model are passed explicitly, even when Ollama is running. Remote generation requires
+disclosure confirmation. Generation failures appear on the question page; unsupported
+answers retain an explanation and require a stakeholder decision. The suggested count
+includes only unanswered questions. A stronger model does not establish missing facts.
 After the last answer, the page routes to **Update BRD from answered questions**, then to a
 different-provider independent review of the updated document. It never routes directly from
 the answer page to BRD approval.

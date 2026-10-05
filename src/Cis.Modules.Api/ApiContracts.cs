@@ -137,5 +137,7 @@ public sealed record ApiDiffResult(
     IReadOnlyList<string> Errors,
     bool RepositoryConfigurationValid)
 {
-    public int ExitCode => !RepositoryConfigurationValid ? 2 : Errors.Count > 0 ? 4 : Breaking > 0 ? 5 : 0;
+    public IReadOnlyList<string> CoverageLimitations { get; init; } = [];
+    public bool CoverageComplete => CoverageLimitations.Count == 0;
+    public int ExitCode => !RepositoryConfigurationValid ? 2 : Errors.Count > 0 ? 4 : Breaking > 0 ? 5 : !CoverageComplete ? 4 : 0;
 }

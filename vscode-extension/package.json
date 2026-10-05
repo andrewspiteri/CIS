@@ -47,6 +47,7 @@
     "onView:cis.governance",
     "onCommand:cis.refresh",
     "onCommand:cis.definitionWizard",
+    "onCommand:cis.loadExistingDocuments",
     "onCommand:cis.gettingStarted",
     "onView:cis.features"
   ],
@@ -216,6 +217,11 @@
         "icon": "$(add)"
       },
       {
+        "command": "cis.featureStory",
+        "title": "CIS: Open Story and Tasks",
+        "icon": "$(list-tree)"
+      },
+      {
         "command": "cis.featureAgentDraft",
         "title": "CIS: Draft Feature Specification with Agent"
       },
@@ -338,6 +344,10 @@
       {
         "command": "cis.openRepository",
         "title": "CIS: Open Product Repository in New Window"
+      },
+      {
+        "command": "cis.loadExistingDocuments",
+        "title": "CIS: Load Existing Documents"
       }
     ],
     "viewsContainers": {

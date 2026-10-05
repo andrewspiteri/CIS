@@ -1,6 +1,7 @@
 'use strict';
 
 const vscode = require('vscode');
+const { generateQuestionSuggestions } = require('./lib/brd-question-suggestions');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
@@ -8,13 +9,16 @@ const { AuthoritySelector } = require('./lib/authority');
 const { CisCli, CisCliError } = require('./lib/cis-cli');
 const { confirmRepositoryImport, runRepositoryImport } = require('./lib/repository-import');
 const { uiBaselineSource } = require('./lib/ui-baseline');
+const { loadExistingDocuments } = require('./lib/existing-documents');
+const { proposeBrdSections } = require('./lib/brd-sections');
 const { controlSheetExport } = require('./lib/ui-control-sheet');
 const { architectureApproval } = require('./lib/architecture-approval');
 const { openFeatureIntake } = require('./lib/feature-intake');
+const { openFeatureStory } = require('./lib/feature-story');
 const { doctorFixId, parseDoctorCommand, assertDoctorScope } = require('./lib/doctor-commands');
 const { ACTIONS: GETTING_STARTED_ACTIONS, gettingStartedModel, openGettingStartedPanel } = require('./lib/getting-started');
 const { bound, resolveWithin } = require('./lib/security');
-const { workspaceWatchRoots, ignoredWatchEvent } = require('./lib/watch-roots');
+const { workspaceWatchRoots, ignoredWatchEvent, createConfigurationWatchFilter } = require('./lib/watch-roots');
 const { CisViewProvider, markdownFiles, repositoryMetadata } = require('./lib/views');
 const { projectChangeOverview } = require('./lib/projections');
 const { isActiveCurrent, isReadyForApproval, nextStartableItem, productPaths, reviewMatchesBrd, stateOf } = require('./lib/product-journey');
@@ -34,6 +38,7 @@ function activate(context, overrides = {}) {
   const definitionWizards = new Map();
   const openingWizards = new Map();
   const featureIntakes = new Map();
+  const featureStories = new Map();
   const businessDrafts = new Set();
   const providers = new Map(VIEW_IDS.map(id => [id, new CisViewProvider(vscode, id, authority, cli)]));
   context.subscriptions.push(output);
@@ -59,7 +64,7 @@ function activate(context, overrides = {}) {
     } catch (error) {
       status.text = '$(circle-slash) CIS'; status.tooltip = conciseError(error);
     }
-  }, 250);
+  }, 250, (previous, next) => [previous[0] === true && next[0] === true, Boolean(previous[1] || next[1])]);
 
   const command = (id, handler) => context.subscriptions.push(vscode.commands.registerCommand(id, async (...args) => {
     try { return await handler(...args); }
@@ -73,6 +78,13 @@ function activate(context, overrides = {}) {
   }));
 
   command('cis.refresh', () => refresh(false, true));
+  command('cis.loadExistingDocuments', async () => {
+    const root = authority.root();
+    let loaded = false;
+    try { loaded = await loadExistingDocuments(vscode, cli, root); }
+    catch (error) { loaded = error.documentLoaded === true; throw error; }
+    finally { if (loaded) await refresh(false, true); }
+  });
   command('cis.refreshFeatures', () => {
     for (const id of ['workspace', 'features', 'changes']) providers.get(id).refresh(false);
   });
@@ -104,6 +116,43 @@ function activate(context, overrides = {}) {
   };
   command('cis.featureAdd', () => showFeatureWizard(undefined, true));
   command('cis.featureWizard', showFeatureWizard);
+  command('cis.backlogFeature', async target => {
+    const selected = target?.cis || target;
+    const root = authority.root();
+    if (vscode.workspace.isTrusted === false) throw new Error('Trust this workspace before starting feature definition.');
+    if (!root || !selected?.itemId || selected.root && path.resolve(selected.root).toLowerCase() !== path.resolve(root).toLowerCase())
+      throw new Error('Select this feature in its product authority.');
+    const navigation = await queryWorkspace(cli, ['brd', 'feature', 'wizard', 'navigation'], root);
+    const saved = navigation.features?.find(feature => feature.plan.backlogItemId === selected.itemId);
+    if (saved) return showFeatureWizard({ root, slug: saved.plan.slug });
+    const item = navigation.backlogFeatures?.find(feature => feature.id === selected.itemId);
+    if (!item) throw new Error('This backlog feature is no longer available. Refresh the feature list.');
+    if (!item.canStart) throw new Error((item.issues || []).join(' ') || 'Complete the prerequisite feature definitions first.');
+    const actor = await actorIdentity(); if (!actor) return;
+    if (authority.root() !== root) throw new Error('The authority changed. Open the feature from its current product.');
+    const result = await queryWorkspace(cli, ['brd', 'feature', 'wizard', 'start-backlog', '--item', item.id,
+      '--actor', actor, '--expected-input-hash', item.inputHash], root);
+    if (result.errors?.length || !result.plan?.slug) throw new Error((result.errors || []).join(' ') || 'Feature definition could not be opened.');
+    await cli.runForeground('Refresh feature context', ['graph', 'build', '--workspace', root], { repository: false });
+    await refresh(false);
+    return showFeatureWizard({ root, slug: result.plan.slug });
+  });
+  command('cis.featureStory', target => {
+    const root = authority.root();
+    if (vscode.workspace.isTrusted === false) throw new Error('Trust the workspace before opening a story.');
+    if (!root || !target?.root || path.resolve(root).toLowerCase() !== path.resolve(target.root).toLowerCase())
+      throw new Error('Select the story’s product authority first.');
+    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(target.slug || '') || !/^[a-f0-9]{16}$/u.test(target.storyId || ''))
+      throw new Error('Select a story from the feature story list.');
+    const key = `${root}\0${target.slug}\0${target.storyId}`;
+    if (target.taskId !== undefined && !/^T[1-9][0-9]*$/u.test(target.taskId)) throw new Error('Select a task from the story list.');
+    if (featureStories.has(key)) return featureStories.get(key).reveal(target.taskId);
+    const page = openFeatureStory(vscode, { cli, authority, root, slug: target.slug, storyId: target.storyId, taskId: target.taskId, actorIdentity, refresh, storage: context.workspaceState });
+    featureStories.set(key, page);
+    page.panel.onDidDispose(() => featureStories.delete(key));
+    context.subscriptions.push(page.panel);
+    return page.ready;
+  });
   command('cis.openRepository', async target => {
     const root = authority.root();
     if (target?.root !== root) throw new Error('The product authority changed. Refresh the repository list.');
@@ -157,7 +206,10 @@ function activate(context, overrides = {}) {
     const identity = await promptProductIdentity(repository);
     if (!identity) return;
     const args = ['workspace', 'init', '--repo', repository, '--root', documentationRoot, ...productIdentityArgs(identity)];
-    const plan = await cli.query([...args, '--dry-run'], { repository: false, acceptStructuredFailure: true });
+    const plan = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification,
+      title: 'Preparing the authority initialization plan', cancellable: false }, () =>
+      cli.query([...args, '--dry-run'], { repository: false, acceptStructuredFailure: true,
+        cache: false, interactive: true, timeout: 300_000 }));
     showQuery('Authority initialization plan', plan);
     if (plan.errors?.length || plan.collisions?.length || plan._process?.failed)
       throw new Error('The authority initialization plan needs attention. Review its findings and run Repository Doctor before retrying.');
@@ -245,11 +297,13 @@ function activate(context, overrides = {}) {
     const confirmed = await confirmRepositoryImport(vscode, cli, args);
     if (!confirmed) return;
     await runRepositoryImport(cli, confirmed);
-    await cli.runForeground('Build imported repository context', ['graph', 'build', '--workspace', repository], { repository: false });
-    await refresh(false);
-    const next = await vscode.window.showInformationMessage(
-      'The existing repository was imported and its context graph was built.', 'Open definition wizard');
-    if (next === 'Open definition wizard') await vscode.commands.executeCommand('cis.definitionWizard');
+    gettingStarted?.update(gettingStartedModel(vscode, authority));
+    watcherSet.reset();
+    await refreshImportedContext(cli, repository, refresh);
+    void Promise.resolve(vscode.window.showInformationMessage(
+      'The repository was imported and its context graph was built. Workspace views are reloading.', 'Open definition wizard'))
+      .then(next => next === 'Open definition wizard' ? vscode.commands.executeCommand('cis.definitionWizard') : undefined)
+      .catch(error => output.appendLine(`Unable to open the definition wizard: ${conciseError(error)}`));
   });
   command('cis.productStart', async () => {
     const root = authority.root();
@@ -334,13 +388,15 @@ function activate(context, overrides = {}) {
     let controller;
     const reload = async (page, baseResult) => {
       cli.clearQueryCache?.();
+      Object.assign(paths, currentProductPaths(vscode, authority));
       const next = await loadWizard(() => definitionWizardModel(cli, root, baseResult));
-      model = { ...next, uiBaseline: model.uiBaseline };
+      model = { ...next, uiBaseline: model.uiBaseline, brdSectionSave: model.brdSectionSave };
       controller.update(model, page || controller.page());
       return model;
     };
     const discoverUiBaseline = async (prepareQuestions = true) => {
       if (authority.root() !== root) throw new Error('The CIS authority changed. Reopen the wizard for the selected authority.');
+      if (model.uiQuestions?.uiRequired === false) return;
       try {
         const baseline = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification,
           title: 'Discovering the existing UI baseline', cancellable: false }, () =>
@@ -362,9 +418,46 @@ function activate(context, overrides = {}) {
     const initialPage = model.readyToActivate === true && model.active !== false ? 'review' : undefined;
     controller = openDefinitionWizardPanel(vscode, root, model, async (action, value, wizard) => {
       if (authority.root() !== root) throw new Error('The CIS authority changed. Reopen the wizard for the selected authority.');
+      if (action === 'load-documents' || action === 'load-document-manually') {
+        let loaded = false;
+        try { loaded = await loadExistingDocuments(vscode, cli, root, wizard.page(), {
+          manual: action === 'load-document-manually', documents: model.existingDocuments,
+        }); }
+        catch (error) { loaded = error.documentLoaded === true; throw error; }
+        finally { if (loaded) { await reload(wizard.page()); await refresh(false, true); } }
+        return;
+      }
       if (action === 'refresh') {
         await reload(wizard.page());
         if (wizard.page() === 'experience') await discoverUiBaseline();
+        return;
+      }
+      if (action === 'business-action' && value === 'suggest-sections') {
+        let applied = false;
+        try { applied = await proposeBrdSections(vscode, cli, root, actorIdentity, () => {
+          if (authority.root() !== root) throw new Error('The CIS authority changed. Reopen the wizard.');
+        }, saved => {
+          model = { ...model, brdSectionSave: saved };
+          controller.update(model, 'business');
+          controller.panel.reveal();
+        }); }
+        catch (error) {
+          applied = error.documentApplied === true;
+          if (applied) model = { ...model, brdSectionSave: { ...model.brdSectionSave, phase: 'graph-failed', error: error.message } };
+          throw error;
+        }
+        finally { if (applied) {
+          let refreshed = false;
+          try { try { await reload('business'); } finally { await refresh(false, true); } refreshed = true; }
+          finally {
+            const saved = model.brdSectionSave;
+            if (saved?.phase === 'graph-refreshed') model = { ...model, brdSectionSave: { ...saved, phase: refreshed ? 'complete' : 'refresh-failed' } };
+            controller.update(model, 'business');
+            controller.panel.reveal();
+            if (model.brdSectionSave?.phase === 'complete')
+              void Promise.resolve(vscode.window.showInformationMessage(`CIS: ${saved.count} BRD sections saved. Graph and workspace refreshed.${saved.warnings.length ? ' Review the remaining items shown in the wizard.' : ''}`)).catch(() => {});
+          }
+        } }
         return;
       }
       if (action === 'open-ui-baseline-source') {
@@ -419,10 +512,19 @@ function activate(context, overrides = {}) {
         const input = path.join(inputDirectory, 'decisions.json');
         try {
           fs.writeFileSync(input, JSON.stringify(decisions.map(({ id, assessment, reason, reviewToken }) => ({ id, assessment, reason, reviewToken }))), 'utf8');
-          await cli.runForeground('Save BRD source decisions', ['brd', 'sources', 'assess', '--input', input, '--workspace', root], { repository: false });
+          await cli.runForeground('Save BRD source decisions', ['brd', 'sources', 'assess', '--input', input, '--workspace', root], { repository: false, details: false });
         } finally { fs.rmSync(input, { force: true }); fs.rmdirSync(inputDirectory); }
-        await reload('business');
-        await vscode.window.showInformationMessage(`${decisions.length} source decision${decisions.length === 1 ? '' : 's'} saved.`);
+        const savedMessage = `${decisions.length} source decision${decisions.length === 1 ? '' : 's'} saved.`;
+        try { await reload('business'); }
+        catch (error) {
+          throw new Error(`${savedMessage} The wizard could not refresh: ${conciseError(error)} Use Refresh to load the saved decisions.`);
+        } finally {
+          // Refresh the workspace even if the post-save wizard read fails.
+          await refresh(false, true);
+        }
+        // VS Code resolves this promise only when the notification is dismissed.
+        // The completed save must release the wizard immediately.
+        void Promise.resolve(vscode.window.showInformationMessage(savedMessage)).catch(() => {});
         return;
       }
       if (action === 'open-technical-decision') {
@@ -622,6 +724,7 @@ function activate(context, overrides = {}) {
           await cli.runForeground('Reconcile BRD evidence', ['brd', 'reconcile', '--workspace', root], { repository: false });
         } else if (value === 'questions') await vscode.commands.executeCommand('cis.brdAnswerQuestions');
         else if (value === 'review-brd') await vscode.commands.executeCommand('cis.brdAgentReview');
+        else if (value === 'review-recommendations') await vscode.commands.executeCommand('cis.brdReviewRecommendations');
         await reload('business');
         return;
       }
@@ -885,11 +988,16 @@ function activate(context, overrides = {}) {
       if (!run) throw new Error('CIS did not retain a successful structured BRD review. Open Runs for diagnostics.');
       const structured = await cli.query(['agent', 'show', run.runId, '--summary'], { cache: false, interactive: true });
       if ((structured.run?.result?.review?.findings || []).length) {
-        await cli.runForeground('Initialize BRD review recommendations',
-          ['brd', 'review', 'init', run.runId, '--workspace', root], { repository: false });
+        await vscode.commands.executeCommand('cis.brdReviewRecommendations', run.runId);
+      } else {
+        const questions = await queryWorkspace(cli, ['brd', 'questions', 'guidance'], root);
+        const unanswered = questions.unansweredCount ?? (questions.questions || [])
+          .filter(item => String(item.status).toLowerCase() === 'unanswered').length;
+        void vscode.window.showInformationMessage(unanswered
+          ? `Independent review completed with no recommendations. Answer the ${unanswered} open business questions next.`
+          : 'Independent review completed with no recommendations. Continue in the definition wizard to check readiness and approve the BRD.');
+        await vscode.commands.executeCommand(unanswered ? 'cis.brdAnswerQuestions' : 'cis.definitionWizard');
       }
-      const reviewPath = resolveWithin(root, `.cis/local/agents/runs/${run.runId}/brd-review.md`, { allowLocalEvidence: true });
-      await openCanonical(authority, reviewPath, false, true);
       await refreshAfterReviewCompletion(refresh);
     } catch (error) {
       output.appendLine(`BRD review succeeded; follow-up failed [${error.kind || 'extension'}]: ${conciseError(error)}`);
@@ -902,12 +1010,13 @@ function activate(context, overrides = {}) {
     const root = authority.root(); const paths = currentProductPaths(vscode, authority);
     let selectedRun = typeof reviewRunId === 'string' ? reviewRunId : undefined;
     if (!selectedRun) {
-      const runs = await cli.query(['agent', 'runs', '--change', 'PRODUCT', '--task', 'BRD-REVIEW', '--summary', '--limit', '10']);
+      const runs = await cli.query(['agent', 'runs', '--change', 'PRODUCT', '--task', 'BRD-REVIEW', '--summary', '--limit', '10'],
+        { cache: false, interactive: true });
       selectedRun = (runs.runs || []).find(item => String(item.status).toLowerCase() === 'succeeded'
         && reviewMatchesBrd(item, paths.brd) !== false)?.runId;
     }
-    if (!selectedRun) throw new Error('No successful structured BRD review is available to disposition.');
-    const selectedEvidence = await cli.query(['agent', 'show', selectedRun, '--summary']);
+    if (!selectedRun) throw new Error('No current successful BRD review is available. Run Independent review first.');
+    const selectedEvidence = await cli.query(['agent', 'show', selectedRun, '--summary'], { cache: false, interactive: true });
     if (reviewMatchesBrd(selectedEvidence.run, paths.brd) === false) {
       const next = await vscode.window.showWarningMessage(
         'This review was superseded because the BRD evidence baseline changed after it ran. The user-authored BRD may be unchanged, but evidence-related findings can be obsolete.',
@@ -916,7 +1025,7 @@ function activate(context, overrides = {}) {
       return;
     }
     await cli.runForeground('Initialize BRD review recommendations',
-      ['brd', 'review', 'init', selectedRun, '--workspace', root], { repository: false });
+      ['brd', 'review', 'init', selectedRun, '--workspace', root], { repository: false, details: false });
     let current = await queryWorkspace(cli, ['brd', 'review', 'status', selectedRun], root);
     let busy = false; let actor;
     let controller;
@@ -927,8 +1036,8 @@ function activate(context, overrides = {}) {
     const reportPanelError = async error => {
       const message = conciseError(error);
       output.appendLine(`ERROR [recommendation-review]: ${message}`);
-      const action = await vscode.window.showErrorMessage(`CIS: ${message}`, 'Show output');
-      if (action === 'Show output') output.show(true);
+      void Promise.resolve(vscode.window.showErrorMessage(`CIS: ${message}`, 'Show output'))
+        .then(action => { if (action === 'Show output') output.show(true); }).catch(() => {});
     };
     const continueAfterRecommendationSet = async () => {
       let progress = brdRecommendationProgress(current);
@@ -943,13 +1052,19 @@ function activate(context, overrides = {}) {
       }
       if (progress.state !== 'approved') throw new Error('The completed recommendation set could not be locked.');
       if (progress.accepted > 0) await vscode.commands.executeCommand('cis.brdAgentRevise', selectedRun);
-      else await vscode.window.showInformationMessage('The legacy recommendation set contains no approved remediation. No agent revision or secondary review is required.');
+      else await vscode.commands.executeCommand('cis.definitionWizard');
       return true;
     };
     controller = openRecommendationReviewPanel(vscode, selectedRun, current, async (action, value) => {
       if (busy) return;
       busy = true;
       try {
+        if (action === 'open-report') {
+          const reviewPath = resolveWithin(root, `.cis/local/agents/runs/${selectedRun}/brd-review.md`, { allowLocalEvidence: true });
+          await openCanonical(authority, reviewPath, false, true); return;
+        }
+        if (action === 'apply-approved') { await continueAfterRecommendationSet(); return; }
+        if (action === 'continue-review') { await vscode.commands.executeCommand('cis.brdAgentReview'); return; }
         if (action === 'open-review') {
           const canonical = current.canonicalPath;
           if (!canonical) throw new Error('The canonical review disposition record is unavailable.');
@@ -972,10 +1087,19 @@ function activate(context, overrides = {}) {
           await continueAfterRecommendationSet();
           return;
         }
-        if (action === 'accept' || action === 'modify') {
+        if (action === 'accept' || action === 'modify' || action === 'modify-text') {
+          let editedText;
+          if (action === 'modify-text') {
+            let edited;
+            try { edited = JSON.parse(value); } catch { throw new Error('The edited recommendation is malformed.'); }
+            if (typeof edited?.id !== 'string' || typeof edited.text !== 'string'
+                || !edited.text.trim() || edited.text.length > 16_384)
+              throw new Error('Provide proposed text between 1 and 16,384 characters.');
+            value = edited.id; editedText = edited.text;
+          }
           const finding = (current.disposition?.findings || []).find(item => item.id === value && item.decision === 'pending');
           if (!finding) { await update(); return; }
-          let approvedRecommendation;
+          let approvedRecommendation = editedText;
           if (action === 'modify') {
             approvedRecommendation = await vscode.window.showInputBox({
               title: `Modify and approve ${finding.id}`,
@@ -988,8 +1112,8 @@ function activate(context, overrides = {}) {
             if (approvedRecommendation === undefined) return;
           }
           const args = brdRecommendationDecisionArgs(selectedRun, finding.id, actor, root,
-            action === 'modify' ? approvedRecommendation : undefined);
-          await cli.runForeground(`${action === 'modify' ? 'Modify and approve' : 'Approve'} ${finding.id}`,
+            action !== 'accept' ? approvedRecommendation : undefined);
+          await cli.runForeground(`${action !== 'accept' ? 'Modify and approve' : 'Approve'} ${finding.id}`,
             args, { repository: false });
           await update();
           await continueAfterRecommendationSet();
@@ -998,13 +1122,6 @@ function activate(context, overrides = {}) {
       } catch (error) { await reportPanelError(error); }
       finally { busy = false; }
     });
-    if (brdRecommendationProgress(current).pending === 0
-      && brdRecommendationProgress(current).state !== 'applied') {
-      busy = true;
-      try { await continueAfterRecommendationSet(); }
-      catch (error) { await reportPanelError(error); }
-      finally { busy = false; }
-    }
   });
   command('cis.brdAgentRevise', async reviewRunId => {
     const root = authority.root();
@@ -1057,50 +1174,28 @@ function activate(context, overrides = {}) {
     await cli.runForeground('Refresh CIS workspace graph', ['graph', 'build', '--workspace', root], { repository: false });
     await refresh(false);
     await openCanonical(authority, currentProductPaths(vscode, authority).brd, false);
-    await vscode.window.showInformationMessage('Approved recommendations were applied. Select a different provider for the required secondary review.');
+    void vscode.window.showInformationMessage('Approved recommendations were applied. Select a different provider for the required secondary review.');
     await vscode.commands.executeCommand('cis.brdAgentReview');
   });
   command('cis.brdAnswerQuestions', async () => {
     const root = authority.root(); const paths = currentProductPaths(vscode, authority);
     let current = await queryWorkspace(cli, ['brd', 'questions', 'guidance'], root);
-    let controller; let busy = false; let actor; let completionHandled = current.unansweredCount === 0;
+    let controller; let busy = false; let actor; let disposed = false; let completionHandled = current.unansweredCount === 0;
+    const assertCurrent = () => {
+      if (disposed) throw new Error('The question screen was closed. Reopen it before generating suggestions.');
+      if (authority.root() !== root) throw new Error('The selected product changed. Reopen its question screen.');
+      if (!vscode.workspace.isTrusted) throw new Error('Trust this workspace before generating suggestions.');
+    };
     const update = async () => {
       current = await queryWorkspace(cli, ['brd', 'questions', 'guidance'], root);
       controller.update(current); await refresh(false); return current;
     };
     const reportPanelError = async error => {
       const message = conciseError(error);
+      if (!disposed) controller.update({ ...current, errors: [message] });
       output.appendLine(`ERROR [brd-questions]: ${message}`);
       const action = await vscode.window.showErrorMessage(`CIS: ${message}`, 'Show output');
       if (action === 'Show output') output.show(true);
-    };
-    const availableAi = async () => {
-      try { return await cli.query(['ai', 'status']); }
-      catch { return { providers: [] }; }
-    };
-    const generateSuggestions = async (interactiveRemote) => {
-      const ai = await availableAi();
-      const local = (ai.providers || []).find(provider => provider.isLocal && provider.isAvailable);
-      if (local) {
-        await cli.runForeground(`Generate advisory BRD answers with local ${local.name}`,
-          ['brd', 'questions', 'suggest', '--workspace', root], { repository: false, cancellable: true });
-        await update(); return true;
-      }
-      if (!interactiveRemote) return false;
-      const remote = (ai.providers || []).filter(provider => !provider.isLocal && provider.isAvailable);
-      if (!remote.length) throw new Error('No local AI provider is available. Start Ollama or configure an explicit remote text-generation provider.');
-      const selected = await vscode.window.showQuickPick(remote.map(provider => ({
-        label: provider.name, description: provider.detail || provider.endpoint || 'Configured remote AI provider', provider,
-      })), { placeHolder: 'Select the remote provider for advisory answer suggestions' });
-      if (!selected) return false;
-      const approved = await vscode.window.showWarningMessage(
-        `Allow CIS to send the displayed BRD questions and bounded context excerpts to ${selected.provider.name}? Suggestions remain advisory and no answer is recorded automatically.`,
-        { modal: true }, 'Allow remote suggestion');
-      if (approved !== 'Allow remote suggestion') return false;
-      await cli.runForeground(`Generate advisory BRD answers with ${selected.provider.name}`,
-        ['brd', 'questions', 'suggest', '--provider', selected.provider.name, '--allow-remote', '--workspace', root],
-        { repository: false, cancellable: true });
-      await update(); return true;
     };
     const saveAnswer = async (questionId, answer) => {
       const question = (current.questions || []).find(item => item.id === questionId);
@@ -1129,7 +1224,10 @@ function activate(context, overrides = {}) {
       if (busy) return; busy = true;
       try {
         if (action === 'open-brd') { await openCanonical(authority, paths.brd, false); return; }
-        if (action === 'generate-suggestions') { await generateSuggestions(true); return; }
+        if (action === 'generate-suggestions') {
+          if (await generateQuestionSuggestions(vscode, cli, root, assertCurrent)) { assertCurrent(); await update(); }
+          return;
+        }
         if (action === 'accept-suggestion') {
           const question = (current.questions || []).find(item => item.id === value);
           if (!question?.suggestedAnswer) { await update(); return; }
@@ -1146,6 +1244,7 @@ function activate(context, overrides = {}) {
       } catch (error) { await reportPanelError(error); }
       finally { busy = false; }
     });
+    controller.panel.onDidDispose(() => { disposed = true; });
   });
   command('cis.technicalIntentInferFromProject', () => oneBusinessDraft(() => inferExistingTechnicalDocument('technical-intent')));
   command('cis.solutionDesignInferFromProject', () => oneBusinessDraft(() => inferExistingTechnicalDocument('solution-design')));
@@ -1198,15 +1297,20 @@ function activate(context, overrides = {}) {
   });
   command('cis.technicalIntentQuestions', async () => {
     const root = authority.root(); const paths = currentProductPaths(vscode, authority);
-    let current = await queryWorkspace(cli, ['technical-intent', 'questions', 'status'], root);
+    const readCurrent = async () => {
+      const questions = await queryWorkspace(cli, ['technical-intent', 'questions', 'status'], root);
+      const technicalIntent = await queryWorkspace(cli, ['technical-intent', 'status'], root);
+      return { ...questions, technicalIntent };
+    };
+    let current = await readCurrent();
     if (current.status === 'missing' || !Array.isArray(current.questions) || !current.questions.length) {
       await cli.runForeground('Initialize high-level technical questionnaire',
         ['technical-intent', 'questions', 'init', '--workspace', root], { repository: false });
-      current = await queryWorkspace(cli, ['technical-intent', 'questions', 'status'], root);
+      current = await readCurrent();
     }
     let controller; let busy = false; let actor; let completionHandled = current.complete === true;
     const update = async () => {
-      current = await queryWorkspace(cli, ['technical-intent', 'questions', 'status'], root);
+      current = await readCurrent();
       controller.update(current); await refresh(false); return current;
     };
     const save = async (id, value) => {
@@ -1223,16 +1327,29 @@ function activate(context, overrides = {}) {
       await update();
       if (current.complete === true && current.current === true && (!completionHandled || wasResolved)) {
         completionHandled = true;
-        await vscode.window.showInformationMessage(wasResolved
+        void vscode.window.showInformationMessage(wasResolved
           ? 'Technical direction updated. CIS will now regenerate the technical intent and component map.'
           : 'High-level technical direction is complete. CIS will now generate the technical intent and component map.');
         await vscode.commands.executeCommand('cis.technicalIntentInit');
+        await update();
       }
     };
     controller = openTechnicalIntentQuestionsPanel(vscode, current, async (action, value) => {
       if (busy) return; busy = true;
       try {
         if (action === 'open-questionnaire') { await openCanonical(authority, paths.technicalQuestionnaire, false); return; }
+        if (action === 'open-intent') { await openCanonical(authority, paths.technicalIntent, false); return; }
+        if (action === 'refresh-review') { await update(); return; }
+        if (action === 'approve-technical') {
+          await update();
+          const validation = current.technicalIntent?.validation;
+          if (!current.complete || !current.current || !validation?.valid || !validation?.current
+              || validation.effectiveStatus === 'Active' || current.technicalIntent?.errors?.length)
+            throw new Error('Technical intent is not ready for approval. Review the current findings shown on this page.');
+          if (authority.root() !== root) throw new Error('The authority changed. Reopen the technical questionnaire before approving.');
+          await vscode.commands.executeCommand('cis.technicalIntentApprove');
+          await update(); return;
+        }
         if (action === 'save-answer') {
           let payload;
           try { payload = JSON.parse(value || '{}'); } catch { throw new Error('The technical answer submitted by the page is malformed.'); }
@@ -1646,7 +1763,7 @@ function activate(context, overrides = {}) {
 
   // Invalidate immediately: the display debounce must not let an obsolete in-flight
   // snapshot finish and populate views after an input notification has arrived.
-  const inputsChanged = () => { cli.clearQueryCache?.(); return refresh(true); };
+  const inputsChanged = uri => { cli.clearQueryCache?.(uri?.fsPath ? `file changed: ${uri.fsPath}` : 'workspace folders changed'); return refresh(true); };
   const watcherSet = installWatchers(context, authority, inputsChanged);
   if (typeof vscode.workspace.onDidChangeWorkspaceFolders === 'function')
     context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => { watcherSet.reset(); return inputsChanged(); }));
@@ -2017,6 +2134,7 @@ function installWatchers(context, authority, markStale) {
     const folders = vscode.workspace.workspaceFolders || [];
     const roots = workspaceWatchRoots([...folders.map(folder => folder.uri.fsPath), authority.root()]);
     for (const root of roots) {
+      const unchangedConfiguration = createConfigurationWatchFilter(root);
       const metadata = repositoryMetadata(root, vscode.workspace.getConfiguration('cis').get('documentationRoot', 'docs/cis'));
       const documentationPattern = `${metadata.documentationRoot.replaceAll('\\', '/')}/**/*.md`;
       const patterns = ['.cis/repository.yml', '.cis/workspace.yml', documentationPattern,
@@ -2029,9 +2147,9 @@ function installWatchers(context, authority, markStale) {
       for (const pattern of patterns) {
         const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(root, pattern));
         const changed = uri => {
-          if (ignoredWatchEvent(uri, root)) return;
+          if (ignoredWatchEvent(uri, root) || unchangedConfiguration(uri)) return;
           if (uri?.fsPath && path.resolve(uri.fsPath) === path.resolve(root, '.cis', 'workspace.yml')) reset();
-          markStale();
+          markStale(uri);
         };
         watcher.onDidChange(changed); watcher.onDidCreate(changed); watcher.onDidDelete(changed); active.push(watcher);
       }
@@ -2041,13 +2159,16 @@ function installWatchers(context, authority, markStale) {
   reset(); context.subscriptions.push(manager); return manager;
 }
 
-function debounce(handler, delay) {
+function debounce(handler, delay, mergeArgs) {
   let timer;
   let waiters = [];
   let latestArgs = [];
   return (...args) => new Promise((resolve, reject) => {
-    latestArgs = args;
+    latestArgs = waiters.length && mergeArgs ? mergeArgs(latestArgs, args) : args;
     waiters.push({ resolve, reject });
+    // A refresh batch has a fixed deadline. Watcher traffic must neither postpone
+    // completion indefinitely nor replace a requested reload with stale-only work.
+    if (timer !== undefined && mergeArgs) return;
     clearTimeout(timer);
     timer = setTimeout(async () => {
       timer = undefined;
@@ -2061,6 +2182,18 @@ function debounce(handler, delay) {
       }
     }, delay);
   });
+}
+
+async function refreshImportedContext(cli, repository, refresh) {
+  try {
+    await cli.runForeground('Repository imported. Building context; large repositories can take a few minutes',
+      ['graph', 'build', '--workspace', repository], { repository: false });
+  } catch (error) {
+    error.message = `The repository was imported, but context building did not complete. Run CIS: Build Context Graph to retry. ${error.message}`;
+    throw error;
+  } finally {
+    await refresh(false, true);
+  }
 }
 
 async function refreshAfterReviewCompletion(refresh, wait = delay => new Promise(resolve => setTimeout(resolve, delay))) {
@@ -2108,7 +2241,7 @@ function deactivate() {}
 module.exports = {
   activate, actorIdentity, agentStateCommand, brdRecommendationAcceptAllArgs, brdRecommendationDecisionArgs, brdRecommendationProgress, conciseError, deactivate, debounce, installWatchers,
   approveProductDocument, compactValidationResult, continueApprovedFeatureDelivery, currentProductPaths, definitionWizardModel, ensureSolutionDesignReady, ensureUiDirectionReady, markdownFiles, queryWorkspace, repositoryMetadata,
-  refreshAfterReviewCompletion, requestAgentWork, resolveWithin, resumeAgent, runIdentity, selectBacklogItem, taskTransition, validateProductDocument,
+  refreshAfterReviewCompletion, refreshImportedContext, requestAgentWork, resolveWithin, resumeAgent, runIdentity, selectBacklogItem, taskTransition, validateProductDocument,
   promptProductIdentity, productIdentityArgs, readWorkspaceBoundary, slugIdentity, validateIdentity,
   AuthoritySelector, CisCli, CisViewProvider,
 };

@@ -168,7 +168,7 @@ public sealed class SkillsModule : ICisModule
             var result = service.Validate(
                 parseResult.GetValue(repo) ?? Directory.GetCurrentDirectory(),
                 strict: false);
-            AddCompactSavings(result, selectedFormat, parseResult.GetValue(details), savings);
+            AddCompactSavings(result, selectedFormat, parseResult.GetValue(details), savings, "skills inventory");
             Render(result, selectedFormat, includeDiagnostics: false, parseResult.GetValue(details), parseResult.GetValue(summary));
             return result.ErrorCount > 0 ? 2 : 0;
         });
@@ -206,7 +206,7 @@ public sealed class SkillsModule : ICisModule
                 parseResult.GetValue(repo) ?? Directory.GetCurrentDirectory(),
                 parseResult.GetValue(strict),
                 parseResult.GetValue(fix));
-            AddCompactSavings(result, selectedFormat, parseResult.GetValue(details), savings);
+            AddCompactSavings(result, selectedFormat, parseResult.GetValue(details), savings, "skills validate");
             Render(result, selectedFormat, includeDiagnostics: true, parseResult.GetValue(details));
             return result.ExitCode;
         });
@@ -315,7 +315,7 @@ public sealed class SkillsModule : ICisModule
     }
 
     private static void AddCompactSavings(SkillValidationResult result, string format, bool details,
-        ICisTokenSavingsCollector? savings)
+        ICisTokenSavingsCollector? savings, string command)
     {
         if (format != "agent" || details || savings is null) return;
         var characters = 250 + result.Skills.Sum(skill =>
@@ -325,7 +325,7 @@ public sealed class SkillsModule : ICisModule
             Math.Max(1, (int)Math.Ceiling(characters / 4d)),
             null,
             "deterministic compact skills output versus the same result with --details",
-            "high"));
+            "high", command));
     }
 
     private static void RenderImport(SkillImportResult result, string format)

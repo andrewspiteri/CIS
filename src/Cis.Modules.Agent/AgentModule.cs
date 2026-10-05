@@ -22,7 +22,9 @@ public sealed partial class AgentModule : ICisModule
             productDefinitionAuthorities: serviceProvider.GetServices<ICisProductDefinitionAuthority>(),
             technicalIntentDraftPreparer: serviceProvider.GetService<ICisTechnicalIntentDraftPreparer>(),
             observedReferencePreparer: serviceProvider.GetService<ICisObservedReferencePreparer>(),
-            solutionDesignDrafts: serviceProvider.GetService<ICisSolutionDesignDrafts>()));
+            solutionDesignDrafts: serviceProvider.GetService<ICisSolutionDesignDrafts>(),
+            textGeneration: serviceProvider.GetService<ICisTextGenerationService>()));
+        services.AddSingleton<ICisStoryTaskExecutor>(provider => provider.GetRequiredService<AgentService>());
         services.AddSingleton<AgentEvidenceService>();
         services.AddSingleton<ICisRepositoryDoctorCheck, AgentProviderDoctorCheck>();
     }
@@ -45,6 +47,7 @@ public sealed partial class AgentModule : ICisModule
         root.Subcommands.Add(Cancel(service));
         root.Subcommands.Add(Recover(service));
         root.Subcommands.Add(Revalidate(service));
+        root.Subcommands.Add(RecoverBrdRevision(service));
         root.Subcommands.Add(Resume(service));
         root.Subcommands.Add(Import(service));
         root.Subcommands.Add(Simple("status", "Report envelopes, runs, and imported results.", service.Status));
@@ -163,7 +166,7 @@ public sealed partial class AgentModule : ICisModule
             {
                 var baseline = Math.Max(1, (int)Math.Ceiling(JsonSerializer.Serialize(output, JsonOptions).Length / 4d));
                 savingsCollector.Add(new CisTokenSavingsCandidate(baseline, null,
-                    "deterministic full agent-run manifests versus bounded --summary projection", "high"));
+                    "deterministic full agent-run manifests versus bounded --summary projection", "high", "agent runs"));
             }
             return Render(output, outputFormat, summarizeRuns: summarize);
         });
@@ -349,6 +352,16 @@ public sealed partial class AgentModule : ICisModule
         var run = new Argument<string>("run-id"); var actor = Required("--actor"); var reason = Required("--reason"); var repo = Repo(); var format = Format();
         command.Arguments.Add(run); command.Options.Add(actor); command.Options.Add(reason); command.Options.Add(repo); command.Options.Add(format);
         command.SetAction(result => Render(service.Recover(result.GetValue(repo)!, result.GetValue(run)!, result.GetValue(actor)!, result.GetValue(reason)!), result.GetValue(format)!));
+        return command;
+    }
+
+    private static Command RecoverBrdRevision(AgentService service)
+    {
+        var command = new Command("recover-brd-revision", "Recover a failed BRD revision locally from exact approved diffs, preserving approvals and requiring independent closure review.");
+        var run = new Argument<string>("run-id"); var actor = Required("--actor"); var reason = Required("--reason"); var repo = Repo(); var format = Format();
+        command.Arguments.Add(run); command.Options.Add(actor); command.Options.Add(reason); command.Options.Add(repo); command.Options.Add(format);
+        command.SetAction(result => Render(service.RecoverBrdRevision(result.GetValue(repo)!, result.GetValue(run)!,
+            result.GetValue(actor)!, result.GetValue(reason)!), result.GetValue(format)!));
         return command;
     }
 

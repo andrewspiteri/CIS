@@ -6,6 +6,35 @@ namespace Cis.Modules.Brd.Tests;
 
 public sealed partial class FeatureIntakeTests
 {
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void StoryBreakdownProposesZeroOneOrManyRepositoryLinksWithoutPredefinedWork(int repositoryCount)
+    {
+        using var f = new Fixture(); File.WriteAllText(f.Request.SourcePath, PrivacyStory);
+        AddDeliveryCode(f, "archive", "archive.ts", "export class Archive { getDocumentVersion() {} }");
+        AddDeliveryCode(f, "customer-ui", "privacy.ts", "export class Privacy { acknowledgeDocumentVersion() {} }");
+        CreateIntake(f);
+        var owners = new[] { "archive", "customer-ui" }.Take(repositoryCount).ToArray();
+        var generation = new DeliveryGeneration { Mode = "new", OwnerOverride = owners };
+        var service = DeliveryService(f, generation);
+        var wizard = service.Wizard(f.Authority, "referrals");
+        Assert.Empty(wizard.RepositoryWork);
+        var result = service.Delivery(f.Authority, "referrals", true, wizard.Revision);
+        Assert.Empty(result.Errors);
+        var story = Assert.Single(result.Stories);
+        Assert.Equal("new", story.Treatment);
+        Assert.Equal(owners, story.Owners);
+        var calls = generation.Calls;
+        var navigation = service.Navigation(f.Authority);
+        Assert.Empty(navigation.Errors);
+        var feature = Assert.Single(navigation.Features);
+        Assert.Empty(feature.Errors);
+        Assert.Equal(owners, Assert.Single(feature.Stories).RepositoryIds);
+        Assert.Equal(calls, generation.Calls);
+    }
+
     [Fact]
     public void ConfirmedExistingMaintenanceIsDetectedOnReadAndCannotBecomeNewCrudFromModelOutput()
     {
@@ -106,8 +135,8 @@ public sealed partial class FeatureIntakeTests
         Assert.Equal(0, remote.Calls);
     }
 
-    private static FeatureIntakeService DeliveryService(Fixture f, ICisTextGenerationService generation)
-        => new(f.Registry, f.Importer, new DocumentationCatalogMerger(), [f.Baseline], textGeneration: generation);
+    private static FeatureIntakeService DeliveryService(Fixture f, ICisTextGenerationService generation, ICisStoryTaskExecutor? executor = null)
+        => new(f.Registry, f.Importer, new DocumentationCatalogMerger(), [f.Baseline], textGeneration: generation, storyExecutor: executor);
 
     private static string AddDeliveryCode(Fixture f, string name, string file, string content, string participation = "owned")
     {
@@ -120,6 +149,7 @@ public sealed partial class FeatureIntakeTests
     {
         public int Calls { get; private set; }
         public string Mode { get; init; } = "extend";
+        public string[]? OwnerOverride { get; init; }
         public bool Remote { get; init; }
         public string LastPrompt { get; private set; } = "";
         public List<string> Prompts { get; } = [];
@@ -134,14 +164,14 @@ public sealed partial class FeatureIntakeTests
             using var context = JsonDocument.Parse(request.Prompt[start..end]);
             var evidence = context.RootElement.GetProperty("implementation").EnumerateArray().FirstOrDefault();
             var found = evidence.ValueKind == JsonValueKind.Object;
-            var owner = found ? evidence.GetProperty("repositoryId").GetString() : "existing-admin";
+            var owner = found ? evidence.GetProperty("repositoryId").GetString()! : "existing-admin";
             var evidenceId = found ? evidence.GetProperty("id").GetString() : null;
             var stories = context.RootElement.GetProperty("stories").EnumerateArray().Select(s => new
             {
                 id = s.GetProperty("id").GetString(), treatment = Mode is "conflict" or "new" or "reuse" ? Mode : "extend",
                 existingCapability = Mode == "hook-overclaim" ? "Click Tracking is already implemented in the frontend component." : Mode == "hook-grounded" ? "selectProduct navigates to the deposit page." : "Existing product maintenance is available.",
                 remainingWork = "Add only the integration and required policy fields.",
-                owners = new[] { Mode == "foreign-owner" ? "unknown" : owner },
+                owners = OwnerOverride ?? new[] { Mode == "foreign-owner" ? "unknown" : owner },
                 evidenceIds = Mode == "missing-evidence" || !found ? Array.Empty<string>() : new[] { evidenceId },
                 conflict = Mode == "conflict" ? "The product catalogue source and saved ownership direction differ." : null,
                 confidence = Mode == "low-confidence" ? "low" : "medium"

@@ -72,3 +72,9 @@
 ## Human-readable content
 
 For human-facing prose, apply `docs/standards/human-readable-content-standard.md`. Use `.github/skills/cis-technical-writing/SKILL.md` for documents and reports, `cis-ux-writing` for interface text, and `cis-content-review` for source-aware review and a separate unfamiliar-reader check. Preserve conditions, uncertainty, evidence, stable identifiers and approval boundaries. A readability review does not authorize canonical approval.
+
+## Public repository confidentiality
+
+- Keep closed-source application names, checkout paths, implementation identifiers, and operational evidence outside this repository.
+- Use neutral synthetic fixtures and product-focused documentation when retaining reusable lessons.
+- Before publishing, inspect both the tracked tree and outgoing commits for private application references; removing a file from the latest tree alone does not remove it from unpublished history.

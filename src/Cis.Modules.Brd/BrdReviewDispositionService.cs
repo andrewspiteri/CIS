@@ -336,12 +336,11 @@ public sealed class BrdReviewDispositionService : ICisBrdReviewFreshness
         var authority = workspace.AuthorityRepository!;
         var local = Path.Combine(authority.RepositoryPath, ".cis", "local", "agents", "runs", runId);
         var docs = Path.Combine(authority.RepositoryPath, authority.DocumentationRoot.Replace('/', Path.DirectorySeparatorChar));
-        var brdRelative = Path.Combine(authority.DocumentationRoot.Replace('/', Path.DirectorySeparatorChar),
-            "specs", "business-requirements.md");
+        var brdRelative = Path.GetRelativePath(authority.RepositoryPath, CisProductDocumentPaths.Resolve(docs, "specs", "business-requirements.md"));
         var reviewedBrd = Path.Combine(authority.RepositoryPath, ".cis", "local", "agents", "workspaces",
             runId, authority.Id, brdRelative);
         return new(runId, Path.Combine(docs, "reviews", "brd", runId + ".md"), Path.Combine(local, "manifest.json"),
-            Path.Combine(local, "result.json"), Path.Combine(docs, "specs", "business-requirements.md"), reviewedBrd);
+            Path.Combine(local, "result.json"), CisProductDocumentPaths.Resolve(docs, "specs", "business-requirements.md"), reviewedBrd);
     }
 
     private static string ReviewDriftMessage(ReviewPaths paths, string fallback)

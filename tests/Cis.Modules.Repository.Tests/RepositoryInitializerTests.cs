@@ -55,6 +55,13 @@ public sealed class RepositoryInitializerTests
         var registry = new WorkspaceRegistry(resolver);
         var initializer = new WorkspaceInitializer(new RepositoryInitializer(), registry);
 
+        var preview = initializer.Initialize(new WorkspaceInitRequest(workspace.Path, "docs", true, false,
+            "retail-banking", "cards", "Retail Banking", "Cards"));
+        Assert.Equal(0, preview.ExitCode);
+        Assert.True(preview.GitInitializationPlanned);
+        Assert.False(preview.GitInitialized);
+        Assert.Empty(Directory.EnumerateFileSystemEntries(workspace.Path));
+
         var confirmation = initializer.Initialize(new WorkspaceInitRequest(
             workspace.Path,
             "docs",
@@ -62,6 +69,8 @@ public sealed class RepositoryInitializerTests
             Confirmed: false,
             "retail-banking", "cards", "Retail Banking", "Cards"));
         Assert.Equal(3, confirmation.ExitCode);
+        Assert.True(confirmation.GitInitializationPlanned);
+        Assert.False(Directory.Exists(Path.Combine(workspace.Path, ".git")));
         Assert.False(File.Exists(Path.Combine(workspace.Path, ".cis", "workspace.yml")));
 
         var initialized = initializer.Initialize(new WorkspaceInitRequest(
@@ -72,6 +81,10 @@ public sealed class RepositoryInitializerTests
             "retail-banking", "cards", "Retail Banking", "Cards"));
         Assert.Equal(0, initialized.ExitCode);
         Assert.Equal("initialized", initialized.Status);
+        Assert.True(initialized.GitInitialized);
+        Assert.True(File.Exists(Path.Combine(workspace.Path, ".git/HEAD")));
+        var gitConfig = File.ReadAllText(Path.Combine(workspace.Path, ".git/config"));
+        Assert.DoesNotContain("[remote", gitConfig);
         var resolved = registry.Resolve(workspace.Path);
         Assert.True(resolved.IsSuccess);
         Assert.Equal(workspace.Path, resolved.Workspace!.AuthorityRepository!.RepositoryPath);
@@ -90,6 +103,33 @@ public sealed class RepositoryInitializerTests
         Assert.Equal(0, repeated.ExitCode);
         Assert.Equal("unchanged", repeated.Status);
         Assert.False(repeated.Applied);
+        Assert.False(repeated.GitInitialized);
+        Assert.Equal(gitConfig, File.ReadAllText(Path.Combine(workspace.Path, ".git/config")));
+    }
+
+    [Theory]
+    [InlineData("README.md")]
+    [InlineData(".git/config")]
+    public void WorkspaceInitPreservesNonemptyFoldersAndExistingGit(string existingPath)
+    {
+        using var workspace = TemporaryRepository.Create();
+        workspace.Write(existingPath, "Existing content");
+        var initializer = new WorkspaceInitializer(new RepositoryInitializer(), new WorkspaceRegistry(new CisRepositoryContextResolver()));
+        var result = initializer.Initialize(new(workspace.Path, "docs/cis", false, true, "sample", "sample"));
+        Assert.Equal(0, result.ExitCode);
+        Assert.False(result.GitInitializationPlanned);
+        Assert.False(result.GitInitialized);
+        Assert.Equal("Existing content", File.ReadAllText(Path.Combine(workspace.Path, existingPath)));
+        Assert.False(File.Exists(Path.Combine(workspace.Path, ".git/HEAD")));
+    }
+
+    [Fact]
+    public void InvalidWorkspaceSetupDoesNotInitializeGit()
+    {
+        using var workspace = TemporaryRepository.Create();
+        var initializer = new WorkspaceInitializer(new RepositoryInitializer(), new WorkspaceRegistry(new CisRepositoryContextResolver()));
+        Assert.NotEqual(0, initializer.Initialize(new(workspace.Path, "../outside", false, true, "sample", "sample")).ExitCode);
+        Assert.Empty(Directory.EnumerateFileSystemEntries(workspace.Path));
     }
 
     [Fact]
@@ -765,13 +805,21 @@ public sealed class RepositoryInitializerTests
 
         var first = doctor.Inspect(repository.Path);
         var cached = doctor.Inspect(repository.Path);
+        repository.Write("tmp/probe.json", "{}");
+        repository.Write(".github/copilot-runtime/instructions.md", "Generated runtime instructions");
+        repository.Write("src/.cache/probe.json", "{}");
+        var generatedOnly = doctor.Inspect(repository.Path);
         repository.Write("src/NewService.cs", "public sealed class NewService { }");
         var invalidated = doctor.Inspect(repository.Path);
+        repository.Write(".cis/product-documents.json", "{}");
+        var mappingChanged = doctor.Inspect(repository.Path);
         var forced = doctor.Inspect(repository.Path, refresh: true);
 
         Assert.False(first.InitializationStatusCached);
         Assert.True(cached.InitializationStatusCached);
+        Assert.True(generatedOnly.InitializationStatusCached);
         Assert.False(invalidated.InitializationStatusCached);
+        Assert.False(mappingChanged.InitializationStatusCached);
         Assert.False(forced.InitializationStatusCached);
         Assert.True(File.Exists(Path.Combine(repository.Path, ".cis", "local", "status", "repository-initialization.json")));
     }

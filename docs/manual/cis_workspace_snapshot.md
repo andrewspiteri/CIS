@@ -3,7 +3,7 @@ title: "cis workspace snapshot"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-14"
+last_reviewed: "2026-10-05"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-workspace-snapshot
@@ -18,7 +18,7 @@ input is reused across the projections that need it.
 ## Synopsis
 
 ```text
-cis workspace snapshot [--repo <authority-path>] [--format <human|json|agent>]
+cis workspace snapshot [--repo <authority-path>] [--summary] [--format <human|json|agent>]
 ```
 
 `--repo` defaults to the current directory; `--format` defaults to `human`.
@@ -64,3 +64,16 @@ as individual results. Aggregate success does not mean the workspace is ready.
 - [`cis repo doctor`](cis_repo_doctor.md)
 - [`cis definition status`](cis_definition_status.md)
 - [`cis graph status`](cis_graph_status.md)
+
+## Compact snapshot
+
+`cis workspace snapshot --summary --format json` retains each query's arguments,
+scope, exit code, timing, standard error, and selected status/currency fields, diagnostics,
+warnings and errors under each entry's `state` instead of full `data`. Full
+projection payloads are omitted and `detailsOmitted=true` is explicit. The original
+full snapshot remains available without `--summary`. Failed subqueries retain their
+own outcomes even when the snapshot operation completes successfully.
+
+`--summary` changes JSON output only; human and agent output already list query
+outcomes and timings. Omitted source content is available from the same command
+without `--summary`; summary mode does not change the aggregate exit code.

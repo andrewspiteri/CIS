@@ -61,6 +61,8 @@ public sealed partial class BrdModule : ICisModule
         brd.Subcommands.Add(CreateReviewCommand(services.GetRequiredService<BrdReviewDispositionService>()));
         brd.Subcommands.Add(CreateApproveCommand(service));
         brd.Subcommands.Add(CreateSourceDecisionsCommand(service, services.GetRequiredService<BrdSourceSummaryService>()));
+        brd.Subcommands.Add(CreateSectionsCommand(service,
+            services.GetService<ICisTextGenerationService>() ?? new UnavailableTextGenerationService()));
         brd.Subcommands.Add(CreateBacklogCommand(services.GetRequiredService<BrdBacklogService>()));
         var feature = CreateFeatureCommand(services.GetRequiredService<BrdBacklogService>());
         feature.Subcommands.Add(CreateFeatureIntakeCommand(services.GetRequiredService<FeatureIntakeService>()));
@@ -322,11 +324,13 @@ public sealed partial class BrdModule : ICisModule
         var workspace = WorkspaceOption(); var format = FormatOption();
         var mode = new Option<string?>("--mode") { Description = "requirements or no-planned-work; omission preserves a recorded no-work choice." };
         var actor = new Option<string?>("--actor") { Description = "Human recording the no-planned-work choice." };
+        var applyReviewed = new Option<bool>("--apply-reviewed-changes") { Description = "Save reviewed candidate differences; does not approve the resulting backlog." };
+        command.Options.Add(applyReviewed);
         command.Options.Add(workspace); command.Options.Add(format); command.Options.Add(mode); command.Options.Add(actor);
         command.SetAction(parse =>
         {
             var selected = GetFormat(parse.GetValue(format)); if (selected is null) return 2;
-            var result = service.Build(parse.GetValue(workspace) ?? Directory.GetCurrentDirectory(), parse.GetValue(mode), parse.GetValue(actor));
+            var result = service.Build(parse.GetValue(workspace) ?? Directory.GetCurrentDirectory(), parse.GetValue(mode), parse.GetValue(actor), parse.GetValue(applyReviewed));
             RenderBacklog(result, selected); return result.ExitCode;
         });
         return command;

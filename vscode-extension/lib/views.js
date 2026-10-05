@@ -129,7 +129,7 @@ class CisViewProvider {
       icon: 'symbol-class', children: [
         this.node('Product definition', { id: 'product-definition', description: `${complete}/${definition.pages?.length || 8} steps current`,
           command: 'cis.definitionWizard', icon: 'map' }),
-        this.node('High-level features', { id: 'product-features', description: `${navigation.features?.length || 0} saved features`,
+        this.node('High-level features', { id: 'product-features', description: `${(navigation.features?.length || 0) + (navigation.backlogFeatures?.length || 0)} features`,
           command: 'cis.features.focus', arguments: [], icon: 'lightbulb' }),
         this.node('Repositories', { id: 'repositories', description: `${repositories.length} registered`, children: repositories, icon: 'repo' }),
         this.node('Add high-level feature', { command: 'cis.featureAdd', arguments: [], icon: 'add' }),

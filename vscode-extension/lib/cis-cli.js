@@ -81,7 +81,7 @@ class CisCli {
   arguments(args, options = {}) {
     // Questionnaire answers are text data passed as a single argv value, never through a shell.
     const validated = args.map((value, index) => validateArgument(value, {
-      allowLineBreaks: index > 0 && args[index - 1] === '--answer',
+      allowLineBreaks: index > 0 && ['--answer', '--approved-recommendation'].includes(args[index - 1]),
     }));
     if (options.repository !== false && !validated.includes('--repo')) validated.push('--repo', this.root());
     if (options.format !== false && !validated.includes('--format')) validated.push('--format', options.format || 'json');
@@ -178,10 +178,12 @@ class CisCli {
           }
           if (error) {
             const kind = error.killed ? 'timeout' : error.code === 'ENOENT' ? 'missing-cli' : 'command-failed';
+            const message = messageFrom(data, safeError, data ? error.message : text || error.message);
+            this.output.appendLine(`[error] ${message}`);
             if (options.acceptStructuredFailure === true && kind === 'command-failed'
                 && data && typeof data === 'object' && !Array.isArray(data))
               return resolve({ ...data, _process: { exitCode, failed: true } });
-            return reject(new CisCliError(messageFrom(data, safeError, data ? error.message : text || error.message), kind, exitCode,
+            return reject(new CisCliError(message, kind, exitCode,
               safeError || bound(text, 1024), data));
           }
           if (!data || typeof data !== 'object' || Array.isArray(data))
@@ -234,7 +236,7 @@ class CisCli {
       // Reject the obsolete data, but allow one fresh read after trailing file events.
       // Concurrent callers share the replacement snapshot through readWorkspaceSnapshot.
       if (attempt === 0 && !this.workspaceSnapshot)
-        this.output.appendLine('[snapshot] Inputs changed during loading; retrying once with current evidence.');
+        this.output.appendLine(`[snapshot] Inputs changed during loading (${this.queryInvalidationReason || 'refresh or command'}); retrying once with current evidence.`);
     }
     throw new CisCliError('CIS inputs kept changing during the workspace refresh. Refresh again when changes settle.', 'stale-evidence');
   }
@@ -309,7 +311,8 @@ class CisCli {
     return entry.promise;
   }
 
-  clearQueryCache() {
+  clearQueryCache(reason = 'refresh or command') {
+    this.queryInvalidationReason = JSON.stringify(bound(String(reason), 512));
     this.queryGeneration++;
     this.workspaceSnapshot = undefined;
     this.queryCache.clear();
@@ -459,7 +462,7 @@ function messageFrom(data, stderr, fallback) {
 }
 
 function safeCommandDisplay(executable, args) {
-  const hiddenAfter = new Set(['--message', '--reason', '--rationale', '--answer']);
+  const hiddenAfter = new Set(['--message', '--reason', '--rationale', '--answer', '--approved-recommendation']);
   let hideNext = false;
   return [executable, ...args].map(value => {
     if (hideNext) { hideNext = false; return '[REDACTED-INPUT]'; }

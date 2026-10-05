@@ -293,6 +293,7 @@ public sealed class PlanModule : ICisModule
 
     private static void Render(PlanResult result, string format)
     {
+        if (result.Status == "blocked") CisInvocationOutcome.Report("blocked");
         if (format == "json")
         {
             Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));

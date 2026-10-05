@@ -12,9 +12,8 @@ public sealed partial class FeatureIntakeService
         if (request.Treatment is not ("reuse" or "extend" or "new" or "out-of-scope")
             || !HasAnswer(request.Plan) || request.Plan.Length > 4000 || request.Plan.Contains('\0') || request.Plan.Contains("<!--", StringComparison.Ordinal)
             || request.Owners is null || request.Owners.Count > 8 || request.Owners.Count != request.Owners.Distinct().Count()
-            || (request.Treatment != "out-of-scope" && request.Owners.Count == 0)
             || request.EvidencePaths is null || request.EvidencePaths.Count > 12 || request.EvidencePaths.Any(p => p is null || p.Length > 600))
-            throw new InvalidDataException("Choose a delivery treatment, owning repositories and a bounded description of the planned work.");
+            throw new InvalidDataException("Choose a delivery treatment, zero or more linked repositories and a bounded description of the planned work.");
         var input = ReadDeliveryInput(state);
         if (request.ExpectedInputHash != input.Hash) throw new InvalidDataException("Code or saved direction changed. Refresh the story assessment before saving your decision.");
         var story = input.Drafts.SingleOrDefault(d => d.Id == request.StoryId)

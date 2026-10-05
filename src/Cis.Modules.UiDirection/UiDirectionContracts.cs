@@ -32,6 +32,7 @@ public sealed record UiDirectionQuestionnaireResult(
     IReadOnlyList<string> Errors,
     bool Applied)
 {
+    public bool UiRequired => UiDirectionQuestionnaireService.RequiresUi(Questions);
     public int ExitCode => Status == "blocked" ? 5 : Errors.Count > 0 ? 2 : Status == "missing" ? 4 : Current ? 0 : 5;
 }
 

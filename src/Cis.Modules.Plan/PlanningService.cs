@@ -586,6 +586,10 @@ public sealed class PlanningService
 
         if (target == "Complete" && item.TaskTypeKey == "core.delivery.final-sweep")
         {
+            var workloadFindings = WorkloadEvidenceReview.Review(change.RepositoryPath, _changes.DossierFile(change, "workload-evidence.json"),
+                WorkloadEvidenceReview.SuggestsVolumeSensitiveWork(string.Join(" ", plan.WorkItems.Select(work => work.Title + " " + work.AcceptanceCriteria))));
+            if (workloadFindings.Count > 0) return Error(change.Id, workloadFindings.ToArray());
+
             var unresolved = plan.WorkItems.Where(candidate =>
                     candidate.Id != item.Id
                     && candidate.Category != "coordination"
@@ -715,6 +719,8 @@ public sealed class PlanningService
         var errors = new List<string>();
         var warnings = new List<string>();
         var impact = _impacts.ReadImpact(change);
+        warnings.AddRange(WorkloadEvidenceReview.Review(change.RepositoryPath, _changes.DossierFile(change, "workload-evidence.json"),
+            WorkloadEvidenceReview.SuggestsVolumeSensitiveWork(string.Join(" ", workItems.Select(item => item.Title + " " + item.AcceptanceCriteria)))));
         var completeness = ImpactAnalysisService.CalculateCompleteness(impact.Findings, impact.Truncated);
         if (!completeness.PlanReady)
         {

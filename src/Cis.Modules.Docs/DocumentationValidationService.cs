@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using System.Text.Json;
 using Cis.Abstractions;
 
 namespace Cis.Modules.Docs;
@@ -63,6 +64,14 @@ public sealed partial class DocumentationValidationService
         AddDuplicateErrors(catalog.Documents, entry => entry.Path, "path", errors);
 
         var documentationPrefix = context.DocumentationPath + Path.DirectorySeparatorChar;
+        var selectedPaths = new HashSet<string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        try
+        {
+            foreach (var relative in CisProductDocumentPaths.Read(context.RepositoryPath).Values)
+                selectedPaths.Add(CisProductDocumentPaths.ValidatePath(context.RepositoryPath, relative));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or InvalidDataException)
+        { errors.Add($"Invalid loaded document selection: {exception.Message}"); }
         foreach (var entry in catalog.Documents)
         {
             ValidateRequiredFields(entry, errors);
@@ -100,7 +109,7 @@ public sealed partial class DocumentationValidationService
                 continue;
             }
 
-            if (!absolutePath.StartsWith(documentationPrefix, PathComparison))
+            if (!absolutePath.StartsWith(documentationPrefix, PathComparison) && !selectedPaths.Contains(absolutePath))
             {
                 errors.Add(
                     $"Catalog entry '{DisplayId(entry)}' path must resolve inside {context.DocumentationRoot}.");

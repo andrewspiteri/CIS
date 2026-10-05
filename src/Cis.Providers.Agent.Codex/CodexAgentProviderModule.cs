@@ -10,7 +10,7 @@ public sealed class CodexAgentProviderModule : ICisModule
     public void RegisterServices(IServiceCollection services)
     {
         services.AddSingleton<ICisAgentProvider, CodexAgentProvider>();
-        services.AddSingleton<ICisRepositoryGuidanceProvider, CodexTextGenerationProvider>();
+        services.AddSingleton<ICisAiProvider, CodexTextGenerationProvider>();
     }
     public void RegisterCommands(ICisCommandRegistry commands, IServiceProvider services) { }
 }

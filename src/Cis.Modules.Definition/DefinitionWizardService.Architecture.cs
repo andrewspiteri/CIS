@@ -63,6 +63,23 @@ public sealed partial class DefinitionWizardService
         return header + content[end..];
     }
 
+    private static string RenderDocumentedBoundaryDiagrams(State state, SolutionDesignResult solution, bool writeAssets)
+    {
+        var nodes = new List<ArchitectureNode> { new("product", state.AuthorityRepositoryId!, 0, "proposed") };
+        var edges = new List<ArchitectureEdge>();
+        foreach (var component in solution.Components)
+        {
+            var id = Node(component.Id);
+            nodes.Add(new(id, component.Name, 1, "proposed"));
+            edges.Add(new("product", id, component.Classification.StartsWith("Runtime process", StringComparison.Ordinal)
+                ? "Documented runtime process" : "Documented logical component", "proposed"));
+        }
+        var model = new ArchitectureDiagramModel([new("documented-boundaries", "Documented architecture boundaries",
+            "Proposed solution structure from the technical intent's ownership table. Lines show membership, not calls or data flows. " +
+            "Review responsibilities and exclusions in the component sheet. Integration contracts and deployment details are not inferred from missing dictionaries. No implementation has been verified.", nodes, edges)]);
+        return RenderInferredDiagrams(state, solution, model, writeAssets);
+    }
+
     private static string RenderInferredDiagrams(State state, SolutionDesignResult solution, ArchitectureDiagramModel model, bool writeAssets = true)
     {
         var images = model.Render();
@@ -100,7 +117,7 @@ cis:
 
 # High-Level Architecture Diagrams
 
-These views explain the existing system from the current architecture draft. Each diagram identifies
+{(model.Views.Any(view => view.Id == "documented-boundaries") ? "These views explain the proposed system from the current architecture draft. Each diagram identifies" : "These views explain the existing system from the current architecture draft. Each diagram identifies")}
 its scope, element types and directed relationships. Solid relationships represent observations;
 green represents proposals and amber represents unresolved details. See each view's evidence limitations.
 Source provenance stays in comments in the overall design. The component sheet and design remain

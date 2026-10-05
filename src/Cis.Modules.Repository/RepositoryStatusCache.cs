@@ -128,6 +128,10 @@ internal sealed class RepositoryStatusCache
     {
         if (string.Equals(relativePath, RelativePath, StringComparison.OrdinalIgnoreCase)) return true;
         var segments = relativePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        // Keep CIS configuration in the fingerprint, while matching discovery's
+        // generated-directory boundary everywhere else in the repository.
+        if (segments.Length > 0 && !segments[0].Equals(".cis", StringComparison.OrdinalIgnoreCase)
+            && RepositoryScanExclusions.IsPath(relativePath)) return true;
         for (var index = 0; index < segments.Length; index++)
         {
             var prefix = string.Join('/', segments.Take(index + 1));

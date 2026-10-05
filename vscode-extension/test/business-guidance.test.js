@@ -26,6 +26,28 @@ function model() {
 
 const render = value => renderDefinitionWizardHtml({ cspSource: 'test:' }, '/authority', value, 'business', 'nonce', {});
 
+test('existing document discovery has an actionable load button before drafting tools', () => {
+  const value = model();
+  value.existingDocuments = { documents: [{ role: 'business', candidates: [{ path: 'docs/project/brd.md' }] }] };
+  value.pages[0].guidance.nextActionId = 'load-documents';
+  value.pages[0].guidance.actions.push({ id: 'load-documents', label: 'Load existing documents', status: 'Needed' });
+  const html = render(value);
+  assert.match(html, /1 possible document found in this project/u);
+  assert.match(html, /data-command="load-documents" data-value="load-documents"/u);
+  assert.ok(html.indexOf('Load existing documents') < html.indexOf('Infer from existing project'));
+});
+
+test('saved BRD sections show progress, completion and outstanding review items above existing tools', () => {
+  for (const [phase, expected] of [['saved', /Refreshing the graph/u], ['complete', /Graph and workspace refreshed/u],
+    ['graph-failed', /graph could not refresh/u], ['refresh-failed', /latest workspace state could not be loaded/u]]) {
+    const html = render({ ...model(), brdSectionSave: { phase, count: 7, warnings: ['Open questions need human input <check>.'] } });
+    assert.match(html, /7 BRD sections saved/u);
+    assert.match(html, expected);
+    assert.match(html, /Open questions need human input &lt;check&gt;/u);
+    assert.ok(html.indexOf('7 BRD sections saved') < html.indexOf('Supplied documents'));
+  }
+});
+
 test('business readiness is above tools, explains blockers, and identifies optional and completed actions', () => {
   const html = render(model());
   assert.ok(html.indexOf('19 source documents need a review decision.') < html.indexOf('Dictionaries and implementation evidence'));

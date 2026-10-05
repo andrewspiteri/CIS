@@ -6,7 +6,7 @@ using Cis.Abstractions;
 namespace Cis.Providers.Agent.Codex;
 
 /// <summary>Explicit remote text generation through the user's authenticated Codex CLI.</summary>
-public sealed class CodexTextGenerationProvider : ICisRepositoryGuidanceProvider
+public sealed class CodexTextGenerationProvider : ICisAiProvider
 {
     private readonly string _executable;
     private readonly string _codexDirectory;
@@ -35,7 +35,7 @@ public sealed class CodexTextGenerationProvider : ICisRepositoryGuidanceProvider
             var available = ReadModels(models.RootElement);
             var diagnosis = new CodexAgentProvider(_executable).Diagnose(Path.GetTempPath());
             return _cachedStatus = diagnosis.AuthenticationAvailable && available.Count > 0
-                ? new(Name, "available", "Codex account", false, available, "Uses your signed-in Codex account. Guidance is sent remotely only with explicit authorization.")
+                ? new(Name, "available", "Codex account", false, available, "Uses your signed-in Codex account. Text is sent remotely only with explicit authorization.")
                 : Unavailable("Sign in to the Codex CLI before using this provider.");
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
@@ -56,6 +56,7 @@ public sealed class CodexTextGenerationProvider : ICisRepositoryGuidanceProvider
         try
         {
             var start = CreateStartInfo(_executable, temporary, model, request.JsonSchema);
+            var timeoutSeconds = Math.Clamp(request.TimeoutSeconds, 1, 600);
             string? session = null;
             string summary = string.Empty;
             long? input = null, output = null;
@@ -63,7 +64,7 @@ public sealed class CodexTextGenerationProvider : ICisRepositoryGuidanceProvider
             string? failure = null;
             using var cancellation = new CancellationTokenSource();
             var result = CisAgentProcessRunner.RunLines(start, request.Prompt,
-                TimeSpan.FromSeconds(Math.Clamp(request.TimeoutSeconds, 1, 600)), line =>
+                TimeSpan.FromSeconds(timeoutSeconds), line =>
                 {
                     var item = CodexAgentProvider.ParseJsonEvent(line, ref session, ref summary, ref input, ref output);
                     if (item.ProviderEventType == "error") failure = item.Message;
@@ -83,7 +84,7 @@ public sealed class CodexTextGenerationProvider : ICisRepositoryGuidanceProvider
                 }, null, cancellation.Token);
             if (result.ExitCode != 0 || result.TimedOut || result.Cancelled || result.OutputTruncated || usedTool || string.IsNullOrWhiteSpace(summary))
                 return new("failed", Name, model, null,
-                    result.TimedOut ? "Codex guidance review timed out. " + failure
+                    result.TimedOut ? $"Codex did not finish generating text within {timeoutSeconds} seconds. No proposal was returned. Try again or choose a faster model. " + failure
                     : usedTool ? failure ?? "Codex attempted tool use during a text-only review; its response was discarded."
                     : failure ?? "Codex did not return a complete text response. Check Codex authentication, model access and account limits.", false);
             return new("generated", Name, model, summary, null, false);

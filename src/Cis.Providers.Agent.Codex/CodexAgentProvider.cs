@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using Cis.Abstractions;
 
@@ -135,6 +136,7 @@ public sealed class CodexAgentProvider : ICisAgentProvider, ICisAgentProviderAut
             start.ArgumentList.Add(request.ResumeSessionId);
         }
         start.ArgumentList.Add("--json");
+        if (request.Model is not null) { start.ArgumentList.Add("--model"); start.ArgumentList.Add(request.Model); }
         start.ArgumentList.Add("--sandbox");
         start.ArgumentList.Add(request.Permission);
         if (request.ApproveWithinCeiling)
@@ -310,8 +312,8 @@ public sealed class CodexAgentProvider : ICisAgentProvider, ICisAgentProviderAut
 
     internal static object BuildThreadParameters(CisAgentExecutionRequest request, string sandbox)
         => request.ResumeSessionId is null
-            ? new { cwd = request.WorkingDirectory, approvalPolicy = "on-request", sandbox, serviceName = "change-impact-studio" }
-            : new { threadId = request.ResumeSessionId, cwd = request.WorkingDirectory, approvalPolicy = "on-request", sandbox };
+            ? new { cwd = request.WorkingDirectory, approvalPolicy = "on-request", sandbox, serviceName = "change-impact-studio", model = request.Model }
+            : new { threadId = request.ResumeSessionId, cwd = request.WorkingDirectory, approvalPolicy = "on-request", sandbox, model = request.Model };
 
     internal static CisAgentProviderEvent ParseJsonEvent(string line, ref string? session, ref string summary, ref long? input, ref long? output)
     {
@@ -501,7 +503,14 @@ public sealed class CodexAgentProvider : ICisAgentProvider, ICisAgentProviderAut
         return executableName;
     }
 
-    private ProcessStartInfo StartInfo(string workingDirectory) => new(_executable) { WorkingDirectory = workingDirectory, UseShellExecute = false, CreateNoWindow = true };
+    private ProcessStartInfo StartInfo(string workingDirectory) => CreateStartInfo(_executable, workingDirectory);
+    internal static ProcessStartInfo CreateStartInfo(string executable, string workingDirectory) => new(executable)
+    {
+        WorkingDirectory = workingDirectory, UseShellExecute = false, CreateNoWindow = true,
+        RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
+        StandardInputEncoding = new UTF8Encoding(false), StandardOutputEncoding = new UTF8Encoding(false),
+        StandardErrorEncoding = new UTF8Encoding(false),
+    };
     private static void ApplyEnvironment(ProcessStartInfo start, IReadOnlyDictionary<string, string> environment)
     { start.Environment.Clear(); foreach (var pair in environment) start.Environment[pair.Key] = pair.Value; }
     private static T Wait<T>(Task<T> task, CancellationToken cancellationToken)

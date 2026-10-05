@@ -13,7 +13,25 @@ public sealed partial class BrdModule
         root.Subcommands.Add(CreateFeatureScreensCommand(service));
         root.Subcommands.Add(CreateFeatureArchitectureCommand(service));
         root.Subcommands.Add(CreateFeatureDeliveryCommand(service));
-        var navigation = new Command("navigation", "List the product, repositories, feature definitions and proposed repository work.");
+        root.Subcommands.Add(CreateFeatureStoryCommand(service));
+        var startBacklog = new Command("start-backlog", "Open an approved backlog outcome in the feature-definition wizard.");
+        var startWorkspace = WorkspaceOption(); var startFormat = FormatOption();
+        var startItem = new Option<string>("--item") { Required = true };
+        var startActor = new Option<string>("--actor") { Required = true };
+        var startHash = new Option<string>("--expected-input-hash") { Required = true };
+        startBacklog.Options.Add(startWorkspace); startBacklog.Options.Add(startFormat);
+        startBacklog.Options.Add(startItem); startBacklog.Options.Add(startActor); startBacklog.Options.Add(startHash);
+        startBacklog.SetAction(parse =>
+        {
+            var format = GetFormat(parse.GetValue(startFormat)); if (format is null) return 2;
+            var result = service.StartBacklogFeature(parse.GetValue(startWorkspace) ?? Directory.GetCurrentDirectory(),
+                parse.GetValue(startItem)!, parse.GetValue(startActor)!, parse.GetValue(startHash)!);
+            if (format == "json") Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+            else { Console.WriteLine($"status={Clean(result.Status)};feature={Clean(result.Plan?.Slug)}"); foreach (var error in result.Errors) Console.WriteLine("error=" + Clean(error)); }
+            return result.ExitCode;
+        });
+        root.Subcommands.Add(startBacklog);
+        var navigation = new Command("navigation", "List the product, feature stories and their proposed repository links.");
         var navigationWorkspace = WorkspaceOption(); var navigationFormat = FormatOption();
         navigation.Options.Add(navigationWorkspace); navigation.Options.Add(navigationFormat);
         navigation.SetAction(parse =>
@@ -24,8 +42,13 @@ public sealed partial class BrdModule
             else
             {
                 Console.WriteLine($"product={Clean(result.Workspace?.Product?.Name ?? "")};features={result.Features.Count};repositories={result.Workspace?.Repositories.Count ?? 0}");
-                foreach (var feature in result.Features) Console.WriteLine($"feature={feature.Plan.Slug};title={Clean(feature.Plan.Title)};status={feature.Status};reviewedPages={feature.ReviewedPages};totalPages={feature.TotalPages};repositoryWork={feature.RepositoryWork.Count}");
+                foreach (var feature in result.Features)
+                {
+                    Console.WriteLine($"feature={feature.Plan.Slug};title={Clean(feature.Plan.Title)};status={feature.Status};reviewedPages={feature.ReviewedPages};totalPages={feature.TotalPages};stories={feature.Stories.Count}");
+                    foreach (var story in feature.Stories) Console.WriteLine($"story={story.Id};feature={feature.Plan.Slug};title={Clean(story.Title)};status={Clean(story.Status)};repositories={Clean(string.Join(',', story.RepositoryIds))}");
+                }
                 foreach (var error in result.Errors) Console.WriteLine("error=" + Clean(error));
+                foreach (var item in result.BacklogFeatures) Console.WriteLine($"backlogFeature={item.Id};title={Clean(item.Title)};status={Clean(item.Status)}");
             }
             return result.ExitCode;
         });
@@ -81,6 +104,162 @@ public sealed partial class BrdModule
             root.Subcommands.Add(command);
         }
         return root;
+    }
+
+    private static Command CreateFeatureStoryCommand(FeatureIntakeService service)
+    {
+        var root = new Command("story", "Read a story definition and acceptance criteria, or generate its proposed tasks.");
+        foreach (var operation in new[] { "status", "prepare" })
+        {
+            var command = new Command(operation, operation == "prepare" ? "Generate this story's task breakdown with a selected model; automatic selection stays local." : "Read this story and its current task breakdown.");
+            var workspace = WorkspaceOption(); var format = FormatOption();
+            var slug = new Option<string>("--slug") { Required = true };
+            var story = new Option<string>("--story") { Required = true };
+            var hash = new Option<string?>("--expected-input-hash") { Required = operation == "prepare" };
+            var provider = new Option<string?>("--provider") { Description = "Choose a provider and regenerate the task plan." };
+            var model = new Option<string?>("--model");
+            var allowRemote = new Option<bool>("--allow-remote") { Description = "Authorize sending this story, saved direction and selected code excerpts to the chosen remote model." };
+            command.Options.Add(workspace); command.Options.Add(format); command.Options.Add(slug); command.Options.Add(story); command.Options.Add(hash);
+            command.Options.Add(provider); command.Options.Add(model); command.Options.Add(allowRemote);
+            command.SetAction(parse =>
+            {
+                var selected = GetFormat(parse.GetValue(format)); if (selected is null) return 2;
+                var result = service.Story(parse.GetValue(workspace) ?? Directory.GetCurrentDirectory(), parse.GetValue(slug)!, parse.GetValue(story)!, operation == "prepare", parse.GetValue(hash), parse.GetValue(provider), parse.GetValue(model), parse.GetValue(allowRemote));
+                if (selected == "json") Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+                else
+                {
+                    Console.WriteLine($"status={result.Status};feature={result.Slug};story={result.StoryId};title={Clean(result.Story?.Title ?? "")};tasks={result.Tasks.Count}");
+                    Console.WriteLine($"provider={Clean(result.Provider ?? "")};model={Clean(result.Model ?? "")}");
+                    Console.WriteLine("definition=" + Clean(result.Definition));
+                    foreach (var criterion in result.Story?.Requirements ?? []) Console.WriteLine("acceptance=" + Clean(criterion));
+                    foreach (var task in result.Tasks) Console.WriteLine($"task={task.Id};title={Clean(task.Title)};repositories={Clean(string.Join(',', task.RepositoryIds))}");
+                    foreach (var error in result.Errors) Console.WriteLine("error=" + Clean(error));
+                }
+                return result.ExitCode;
+            });
+            root.Subcommands.Add(command);
+        }
+        foreach (var operation in new[] { "approve", "start", "complete" })
+        {
+            var command = new Command(operation, operation == "approve" ? "Approve the exact reviewed story task plan." : operation == "start" ? "Record the start of a dependency-ready task; this does not launch an agent." : "Record verified task completion and unlock dependent tasks.");
+            var workspace = WorkspaceOption(); var format = FormatOption();
+            var slug = new Option<string>("--slug") { Required = true };
+            var story = new Option<string>("--story") { Required = true };
+            var planHash = new Option<string>("--expected-plan-hash") { Required = true };
+            var revision = new Option<string>("--expected-revision") { Required = true };
+            var actor = new Option<string>("--actor") { Required = true };
+            var reason = new Option<string?>("--reason") { Required = operation == "approve" };
+            var task = new Option<string?>("--task") { Required = operation != "approve" };
+            var evidence = new Option<string?>("--evidence") { Required = operation == "complete" };
+            var verified = new Option<bool>("--criteria-verified");
+            command.Options.Add(workspace); command.Options.Add(format); command.Options.Add(slug); command.Options.Add(story);
+            command.Options.Add(planHash); command.Options.Add(revision); command.Options.Add(actor); command.Options.Add(reason);
+            command.Options.Add(task); command.Options.Add(evidence); command.Options.Add(verified);
+            command.SetAction(parse =>
+            {
+                var selected = GetFormat(parse.GetValue(format)); if (selected is null) return 2;
+                var result = service.UpdateStoryWorkflow(parse.GetValue(workspace) ?? Directory.GetCurrentDirectory(), parse.GetValue(slug)!,
+                    parse.GetValue(story)!, operation, parse.GetValue(planHash)!, parse.GetValue(revision)!, parse.GetValue(actor)!,
+                    parse.GetValue(reason), parse.GetValue(task), parse.GetValue(evidence), parse.GetValue(verified));
+                if (selected == "json") Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+                else
+                {
+                    Console.WriteLine($"status={result.Status};planState={result.PlanState};planHash={result.PlanHash};revision={result.Revision}");
+                    foreach (var progress in result.TaskProgress) Console.WriteLine($"task={progress.Id};status={progress.Status};blocked={Clean(progress.BlockedReason ?? "")}");
+                    foreach (var error in result.Errors) Console.WriteLine("error=" + Clean(error));
+                }
+                return result.ExitCode;
+            });
+            root.Subcommands.Add(command);
+        }
+        root.Subcommands.Add(CreateStoryExecutionCommand(service, false));
+        root.Subcommands.Add(CreateStoryExecutionCommand(service, true));
+        root.Subcommands.Add(CreateStoryFeedbackCommand(service, false));
+        root.Subcommands.Add(CreateStoryFeedbackCommand(service, true));
+        return root;
+    }
+
+    private static Command CreateStoryFeedbackCommand(FeatureIntakeService service, bool suggest)
+    {
+        var command = new Command(suggest ? "feedback-suggest" : "feedback-save", suggest
+            ? "Suggest evidence-backed answers to task review findings without accepting them." : "Save human answers to the exact task review without approving or executing work.");
+        var workspace = WorkspaceOption(); var format = FormatOption();
+        var input = new Option<string?>("--input") { Required = !suggest };
+        var slug = new Option<string?>("--slug") { Required = suggest };
+        var story = new Option<string?>("--story") { Required = suggest };
+        var task = new Option<string?>("--task") { Required = suggest };
+        var revision = new Option<string?>("--expected-revision") { Required = suggest };
+        var provider = new Option<string?>("--provider"); var model = new Option<string?>("--model");
+        var remote = new Option<bool>("--allow-remote");
+        foreach (var option in new Option[] { workspace, format, input, slug, story, task, revision, provider, model, remote }) command.Options.Add(option);
+        command.SetAction(parse =>
+        {
+            var selected = GetFormat(parse.GetValue(format)); if (selected is null) return 2;
+            CisFeatureStoryResult result;
+            try
+            {
+                if (suggest) result = service.SuggestStoryFeedback(parse.GetValue(workspace) ?? Directory.GetCurrentDirectory(),
+                    parse.GetValue(slug)!, parse.GetValue(story)!, parse.GetValue(task)!, parse.GetValue(revision)!, parse.GetValue(provider), parse.GetValue(model), parse.GetValue(remote));
+                else
+                {
+                    var path = parse.GetValue(input)!;
+                    if (!File.Exists(path) || new FileInfo(path).Length > 262_144) throw new InvalidDataException("Select a response file no larger than 256 KiB.");
+                    var request = JsonSerializer.Deserialize<CisStoryFeedbackRequest>(File.ReadAllText(path), JsonOptions)
+                        ?? throw new InvalidDataException("The response file is empty.");
+                    result = service.SaveStoryFeedback(parse.GetValue(workspace) ?? Directory.GetCurrentDirectory(), request);
+                }
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException or JsonException or ArgumentException)
+            { result = new("failed", parse.GetValue(slug) ?? "", parse.GetValue(story) ?? "", null, "", "", null, [], [], [error.Message]); }
+            if (selected == "json") Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+            else
+            {
+                Console.WriteLine($"status={result.Status};planState={result.PlanState};revision={result.Revision}");
+                foreach (var feedback in result.TaskProgress.SelectMany(item => item.ReviewFeedback ?? []))
+                    Console.WriteLine($"finding={feedback.Id};answered={!string.IsNullOrWhiteSpace(feedback.Answer)};suggested={!string.IsNullOrWhiteSpace(feedback.SuggestedAnswer)}");
+                foreach (var error in result.Errors) Console.WriteLine("error=" + Clean(error));
+            }
+            return result.ExitCode;
+        });
+        return command;
+    }
+
+    private static Command CreateStoryExecutionCommand(FeatureIntakeService service, bool execute)
+    {
+        var command = new Command(execute ? "execute" : "execution-plan", execute
+            ? "Implement an approved task and review it with distinct automatically selected models." : "Choose implementation and review models for this approved task without executing it.");
+        var workspace = WorkspaceOption(); var format = FormatOption();
+        var slug = new Option<string>("--slug") { Required = true }; var story = new Option<string>("--story") { Required = true };
+        var task = new Option<string>("--task") { Required = true };
+        var plan = new Option<string?>("--expected-plan-hash") { Required = execute };
+        var revision = new Option<string?>("--expected-revision") { Required = execute };
+        var selection = new Option<string?>("--expected-execution-hash") { Required = execute };
+        var actor = new Option<string>("--actor") { Required = execute };
+        var remote = new Option<bool>("--allow-remote");
+        foreach (var option in new Option[] { workspace, format, slug, story, task, plan, revision, selection, actor, remote }) command.Options.Add(option);
+        command.SetAction(parse =>
+        {
+            var selected = GetFormat(parse.GetValue(format)); if (selected is null) return 2;
+            using var cancellation = new CancellationTokenSource();
+            ConsoleCancelEventHandler cancel = (_, args) => { args.Cancel = true; cancellation.Cancel(); };
+            Console.CancelKeyPress += cancel;
+            try
+            {
+                var result = service.ExecuteStoryTask(parse.GetValue(workspace) ?? Directory.GetCurrentDirectory(), parse.GetValue(slug)!, parse.GetValue(story)!,
+                    parse.GetValue(task)!, execute, parse.GetValue(plan), parse.GetValue(revision), parse.GetValue(selection), parse.GetValue(actor) ?? "", parse.GetValue(remote), cancellation.Token,
+                    item => { if (item.Kind != "provider-heartbeat") Console.Error.WriteLine($"agent-event={Clean(item.Kind)};message={Clean(item.Message)}"); });
+                if (selected == "json") Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+                else
+                {
+                    Console.WriteLine($"status={result.Status};planState={result.PlanState};selection={result.ExecutionPlan?.Hash}");
+                    if (result.ExecutionPlan is { } models) Console.WriteLine($"complexity={models.Complexity};implementation={models.Implementation?.Provider}/{models.Implementation?.Model};review={models.Review?.Provider}/{models.Review?.Model}");
+                    foreach (var error in result.Errors) Console.WriteLine("error=" + Clean(error));
+                }
+                return result.ExitCode;
+            }
+            finally { Console.CancelKeyPress -= cancel; }
+        });
+        return command;
     }
 
     private static Command CreateFeatureDeliveryCommand(FeatureIntakeService service)

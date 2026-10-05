@@ -56,7 +56,10 @@ no folder is open, trust is missing, or the CLI is unavailable.
   offers **CIS: Import Existing Repository**. CIS dry-runs the bounded self-import, asks for
   one confirmation, registers the repository as workspace authority, and builds its context
   graph without copying or rewriting the implementation. The self-import captures explicit
-  product and ecosystem identity.
+  product and ecosystem identity. Setup updates after registration, while context building
+  has its own progress message. On completion, CIS reloads the workspace views automatically;
+  you do not need to dismiss the success notification. If context building fails, the import
+  remains applied. Retry **CIS: Build Context Graph** without importing again.
 - After authority exists, **CIS: Import Existing Repository** selects additional folders.
   Choose **Owned product repository** for implementation governed here, or **External
   dependency repository** plus producer/consumer direction and optional component scope.
@@ -84,6 +87,12 @@ establish stakeholder intent by itself. The wizard stays on Business definition 
 This action is also available as **CIS: Infer Business Definition from Existing Project**.
 Use **Draft from references** for document intake or a new product. The business page does
 not display the generic Prepare action because that command does not infer business content.
+
+For an existing BRD with unmatched sections, use **Suggest missing sections**. Choose a
+text-generation model, inspect the proposed `+` additions and `−` removals, and review
+the supporting excerpts. **Approve changes and refresh graph** applies that exact diff
+and refreshes both the graph and workspace. Cancel leaves the BRD unchanged. Unsupported
+sections remain visible as review gaps. See [BRD section proposals](cis_brd_sections.md).
 
 ### Specify a new product or project
 
@@ -146,11 +155,18 @@ read-only permission ceiling in an isolated workspace. The review produces struc
 findings under `.cis/local/agents/runs/<run-id>/brd-review.md`; it cannot edit, validate, answer
 questions in, or approve the canonical BRD. Original authoring references are shared with the
 review provider only when the controller explicitly opts in after seeing the disclosure prompt.
-If recommendations exist, **Next: Review recommendations** opens an editor-area review screen
+If recommendations exist, CIS automatically opens an editor-area review screen after the review.
+**Review recommendations** on the Business definition page (also available as
+**Next: Review recommendations** in the sidebar) resumes the latest current review without
+running the model again. The full Markdown report remains available from this screen.
+The screen
 that presents every finding's severity, category, location, full observation, and full
 recommendation as one consolidated list. A human may approve items as written, edit and approve
 individual remediation text, or approve all unchanged pending recommendations as one atomic
 batch; earlier edited approvals remain intact. There is no separate aggregate approval.
+After the last decision, CIS opens agent selection. If selection is cancelled,
+**Apply approved recommendations** resumes it. A review without findings proceeds to open
+business questions, or to the definition wizard for readiness checks and explicit human approval.
 Accepted findings route to a different implementation provider in an isolated one-file BRD
 revision; legacy rejections remain guardrails. CIS then starts provider selection for a
 closure-only verification that must differ from the reviser and cannot reopen broad refinement.
@@ -270,6 +286,57 @@ Codex Desktop/App Server session can still be usable.
 | Provider authentication unverified | Run Repository Doctor. Continue when governed execution proves the ambient session works, or run **CIS: Authenticate Agent Provider** for native browser/device setup. |
 | Provider authentication unavailable | Run **CIS: Authenticate Agent Provider**. CIS offers the native methods declared by the selected provider: Codex browser/device or Claude browser/console/SSO. Desktop application registration alone is not proof of CLI authentication. |
 | Interrupted agent run | Use CIS recovery only when offered; resume always creates another retained attempt. |
+
+## Story task review and progress
+
+Expand **Story breakdown** to see each story's generated tasks and their status. Select
+a task to read its work description, repository links, dependencies, story acceptance
+criteria and task completion criteria. **Back to story and plan** returns to the complete
+plan for review.
+
+After generation, review the tasks and select **Approve task plan**. Record your identity
+and approval reason. Approval binds the exact proposal and saved feature scope; it makes
+tasks with no outstanding dependencies ready to start. It does not approve other product
+documents or launch implementation agents.
+
+Open a ready task and select **Start task**. CIS automatically selects an available
+implementation model based on repository count, criteria, dependencies and sensitive
+behavior, then selects a distinct model for secondary review. The confirmation shows
+both models, the complexity assessment and the repository context they will receive.
+Tasks already marked InProgress can also start agent execution.
+
+CIS executes the work in isolated Git worktrees, then gives the reviewer frozen copies
+of the resulting changes and the task's acceptance criteria. Live progress and both
+models' results are retained. Actionable review findings or execution failures leave
+the original repositories unchanged. After a successful review, CIS applies the reviewed
+files only if their originals still match the execution baseline. It does not commit,
+push or mark the task complete. Repository-free tasks produce a report in an isolated
+workspace rather than receiving invented repository ownership.
+
+When the combined changes are too large for the review prompt, CIS supplies the full
+cross-repository evidence through indexed files that the models read in bounded parts.
+It checks those files before and after each run; missing or changed evidence prevents
+application. Correctable findings trigger up to two correction rounds, each followed
+by a fresh review. A required human decision remains pending. Investigation tasks are
+reviewed against their inventory and planning criteria, including required ownership
+decisions, without expecting future feature implementation to exist already.
+
+Inspect the implementation and review results, then select **Record completion**,
+describe your verification and confirm every listed completion criterion. Completing
+a task unlocks its dependent tasks. A failed review can be retried; its previous run
+evidence is retained. Missing suitable implementation or review models blocks execution
+before provider calls.
+
+Use **Retry implementation and review** after addressing the reported failure or saving
+answers to review findings. CIS reuses successful retained implementation only when its
+evidence, approved scope, model selection and repository baseline still match, then
+reviews it again. Saving answers does not resolve findings or record task completion.
+
+The CLI stores approval and task history beside the feature request under
+`story-tasks/<story-id>.json`. These records survive removal of the local generation cache.
+Implementation edits preserve the approved plan; changes to saved feature scope require
+a fresh proposal and review. Generation cannot replace a current approved plan. Stale
+screens must refresh before recording an approval or progress change.
 
 ## Security boundary
 

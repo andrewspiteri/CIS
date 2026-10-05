@@ -22,8 +22,9 @@ cis brd reconcile [--workspace <path>] [--format <human|json|agent>]
 ```
 
 The command refreshes participant graph baselines and the managed source-assessment
-table. New, unapproved, stale, or digest-invalid feature specifications enter as
-`Unreviewed`. A current `Active` feature specification with valid human approval
+table. Unselected feature drafts, routing cards, templates, and issue plans do not
+enter the BRD source queue automatically. Existing human source decisions remain
+visible; changes to those sources still require review. A current `Active` feature specification with valid human approval
 metadata and a matching approval digest is carried forward as `Adopted`, using its
 reviewer and approval rationale, and receives a managed `BRD-SRC-*` traceability entry.
 An existing explicit `Reference` or `Rejected` assessment is never replaced by feature

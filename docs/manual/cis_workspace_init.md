@@ -3,7 +3,7 @@ title: "cis workspace init"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-05"
+last_reviewed: "2026-10-05"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-workspace-init
@@ -83,3 +83,12 @@ cis workspace init --repo C:\work\cards-docs --root docs/cis --ecosystem retail-
 - [`cis repo import`](cis_repo_import.md)
 - [`cis repo list`](cis_repo_list.md)
 - [`cis graph build`](cis_graph_build.md)
+
+## Empty project folders
+
+For an empty target directory, the preview reports `gitInitializationPlanned=true`.
+Confirmed initialization creates a local Git repository before writing CIS files.
+It does not create a commit or configure a remote. Git must be installed, and the
+folder must still be empty when initialization begins; otherwise setup returns an
+error for review. Nonempty directories do not trigger automatic Git initialization.
+JSON and agent output expose `gitInitializationPlanned` and `gitInitialized`.

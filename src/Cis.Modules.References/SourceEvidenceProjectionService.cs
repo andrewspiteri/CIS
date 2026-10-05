@@ -585,7 +585,7 @@ public sealed class SourceEvidenceProjectionService : ICisSourceEvidenceRegistra
 
     private static IReadOnlyList<string> ReadCitations(CisRepositoryContext context, SourceEvidenceEntry entry)
     {
-        var path = Path.Combine(context.DocumentationPath, "specs", "business-requirements.md"); if (!File.Exists(path)) return [];
+        var path = CisProductDocumentPaths.Resolve(context.DocumentationPath, "specs", "business-requirements.md"); if (!File.Exists(path)) return [];
         var text = File.ReadAllText(path);
         text = Regex.Replace(text, "(?s)<!-- cis:sources:start -->.*?<!-- cis:sources:end -->", string.Empty,
             RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
@@ -766,7 +766,7 @@ public sealed class SourceEvidenceProjectionService : ICisSourceEvidenceRegistra
         => new("invalid", TryRepository(repositoryPath), null, [], errors.Select(item => "ERROR: " + item).ToArray(), false);
     private static CisSourceEvidenceRegistration RegistrationError(IEnumerable<string> errors, CisRepositoryContext? context = null)
         => new("invalid", null, null, null, null, context is null ? null : Relative(context, RegistryPath(context)), null, errors.ToArray());
-    private static string RegistryPath(CisRepositoryContext context) => Path.Combine(context.DocumentationPath, "references", RegistryFileName);
+    private static string RegistryPath(CisRepositoryContext context) => CisProductDocumentPaths.Resolve(context.DocumentationPath, "references", RegistryFileName);
     private static string ProjectionDirectory(CisRepositoryContext context, string id) => Path.Combine(context.RepositoryPath, ".cis", "local", "references", id);
     private static string StableId(string repositoryId, string path) => "BRD-SRC-" + Convert.ToHexString(
         SHA256.HashData(Encoding.UTF8.GetBytes(repositoryId + "\u001f" + path.Replace('\\', '/'))))[..12].ToLowerInvariant();

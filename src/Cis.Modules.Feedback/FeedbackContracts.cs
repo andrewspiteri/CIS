@@ -18,7 +18,11 @@ public sealed record ToolUsageEntry(
     double PossibleTokenSavingsPercent,
     string SavingsBasis,
     string SavingsConfidence,
-    string Outcome = "");
+    string Outcome = "",
+    string? BuildIdentity = null)
+{
+    public int OutputExpansionEstimatedTokens => Math.Max(0, ActualEstimatedTokens - BaselineEstimatedTokens);
+}
 
 public sealed record FeedbackSummary(
     string Status,

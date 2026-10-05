@@ -1,4 +1,5 @@
 using Cis.Abstractions;
+using System.Diagnostics;
 using System.Text.RegularExpressions;
 
 namespace Cis.Modules.Repository;
@@ -47,6 +48,10 @@ public sealed class WorkspaceInitializer
         }
 
         var workspacePath = repositoryPlan.RepositoryPath!;
+        var initializeGit = !Directory.EnumerateFileSystemEntries(workspacePath).Any();
+        if (initializeGit)
+            repositoryPlan = repositoryPlan with { Warnings = [.. repositoryPlan.Warnings,
+                "This folder is empty. Setup will initialize a local Git repository before creating the CIS project files."] };
         var workspaceResolution = _registry.ReadForImport(workspacePath);
         if (!workspaceResolution.IsSuccess || workspaceResolution.Workspace is null)
         {
@@ -148,7 +153,16 @@ public sealed class WorkspaceInitializer
                 confirmationRequired,
                 Applied: false,
                 ecosystemIdentity,
-                productIdentity);
+                productIdentity) { GitInitializationPlanned = initializeGit };
+        }
+
+        if (initializeGit)
+        {
+            var error = InitializeGit(workspacePath);
+            if (error is not null)
+                return new("invalid", workspacePath, workspace.ConfigurationPath, id, normalizedRoot, repositoryPlan,
+                    repositoryPlan.Warnings, [], [error], false, false, ecosystemIdentity, productIdentity)
+                    { GitInitializationPlanned = true };
         }
 
         var initialized = _repositoryInitializer.Initialize(new RepositoryInitRequest(
@@ -159,7 +173,7 @@ public sealed class WorkspaceInitializer
             WorkspaceAuthority: true));
         if (initialized.ExitCode != 0)
         {
-            return FromRepositoryPlan(request, initialized);
+            return FromRepositoryPlan(request, initialized) with { GitInitializationPlanned = initializeGit, GitInitialized = initializeGit };
         }
 
         if (registryChanged)
@@ -174,13 +188,44 @@ public sealed class WorkspaceInitializer
             id,
             normalizedRoot,
             initialized,
-            initialized.Warnings,
+            initializeGit ? [.. initialized.Warnings, "Initialized a local Git repository. No commit or remote was created."] : initialized.Warnings,
             [],
             [],
             ConfirmationRequired: false,
             Applied: true,
             ecosystemIdentity,
-            productIdentity);
+            productIdentity) { GitInitializationPlanned = initializeGit, GitInitialized = initializeGit };
+    }
+
+    private static string? InitializeGit(string workspacePath)
+    {
+        try
+        {
+            if (Directory.EnumerateFileSystemEntries(workspacePath).Any())
+                return "The folder changed during setup. Review its contents and retry initialization.";
+            var start = new ProcessStartInfo("git")
+            {
+                WorkingDirectory = workspacePath, UseShellExecute = false, CreateNoWindow = true,
+                RedirectStandardOutput = true, RedirectStandardError = true,
+            };
+            // A caller's Git environment must not redirect initialization to another folder.
+            foreach (var key in start.Environment.Keys.Where(key => key.StartsWith("GIT_", StringComparison.OrdinalIgnoreCase)).ToArray())
+                start.Environment.Remove(key);
+            foreach (var argument in new[] { "init", "--quiet", "--template=", "--", workspacePath }) start.ArgumentList.Add(argument);
+            using var process = Process.Start(start) ?? throw new IOException("Git could not be started.");
+            var output = process.StandardOutput.ReadToEndAsync();
+            var error = process.StandardError.ReadToEndAsync();
+            if (!process.WaitForExit(15000))
+            {
+                process.Kill(entireProcessTree: true);
+                return "Git initialization timed out. Check the project folder before retrying setup.";
+            }
+            Task.WhenAll(output, error).GetAwaiter().GetResult();
+            return process.ExitCode == 0 && Directory.Exists(Path.Combine(workspacePath, ".git")) ? null
+                : "Git initialization failed. " + error.Result.Trim();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        { return "CIS could not initialize Git. Make sure Git is installed and the project folder is writable. " + exception.Message; }
     }
 
     private static WorkspaceInitResult FromRepositoryPlan(

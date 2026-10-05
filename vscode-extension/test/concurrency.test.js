@@ -17,6 +17,20 @@ function api() {
     ProgressLocation: { Notification: 1 }, window: { withProgress: (_options, run) => run({ report() {} }, { onCancellationRequested() {} }) } };
 }
 
+test('failed suggestion logs its structured error without logging the document payload', async () => {
+  const messages = [];
+  const cli = new CisCli(api(), { appendLine: message => messages.push(message) }, { root: () => root }, {
+    execFile: (_exe, _args, _options, callback) => callback(Object.assign(new Error('exit 2'), { code: 2 }), JSON.stringify({
+      errors: ['Codex did not finish within 600 seconds. token=private-value'],
+      originalContent: 'PRIVATE BRD CONTENT', proposedContent: 'PRIVATE DRAFT',
+    }), ''),
+  });
+  await assert.rejects(cli.query(['brd', 'sections', 'suggest'], { repository: false }), /600 seconds/u);
+  assert.ok(messages.some(message => message.startsWith('[error] Codex did not finish within 600 seconds.')));
+  assert.doesNotMatch(messages.join('\n'), /private-value|PRIVATE BRD|PRIVATE DRAFT/u);
+  assert.match(messages.join('\n'), /token=\[REDACTED\]/u);
+});
+
 test('startup BRD reads preserve queued and completed governance projections across refreshes', async () => {
   const started = []; const messages = [];
   const cli = new CisCli(api(), { appendLine: message => messages.push(message) }, { root: () => root }, {
@@ -176,6 +190,33 @@ test('wizard host drops repeated preparation and refresh messages until completi
   await receive({ command: 'navigate', value: 'business' });
   assert.equal(messages.at(-1)?.busy, false, 'Even same-page navigation must acknowledge completion');
   assert.deepEqual(actions, ['prepare', 'refresh', 'open-business-dictionary']);
+});
+
+test('document loading buttons dispatch on every wizard page and always unlock after completion or errors', async () => {
+  for (const page of ['foundation', 'business', 'technical', 'architecture', 'contracts', 'experience', 'delivery', 'review']) {
+    for (const action of ['load-documents', 'load-document-manually']) {
+      for (const fails of [false, true]) {
+        let receive; const actions = []; const messages = [];
+        const local = { Uri: { file: value => value }, ViewColumn: { Active: 1 }, window: {
+          showErrorMessage: () => new Promise(() => {}),
+          createWebviewPanel: () => ({ webview: { cspSource: 'test:', postMessage: async message => messages.push(message),
+            onDidReceiveMessage: callback => { receive = callback; } } }),
+        } };
+        const pageModel = { pages: [{ id: page, ordinal: 1, title: page }], currentPage: page };
+        const controller = openDefinitionWizardPanel(local, root, pageModel, async command => {
+          actions.push(command);
+          if (fails) throw new Error('Document loading failed');
+        }, async () => {}, page);
+        assert.equal(controller.page(), page);
+        assert.match(controller.panel.webview.html, /data-command="load-documents"/u);
+        assert.match(controller.panel.webview.html, /data-command="load-document-manually"/u);
+        await receive({ command: action });
+        assert.deepEqual(actions, [action]);
+        assert.equal(controller.isBusy(), false);
+        assert.deepEqual(messages.map(message => message.busy), [true, false]);
+      }
+    }
+  }
 });
 
 test('wizard script disables controls before posting a click and restores their prior disabled state', () => {

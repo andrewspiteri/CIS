@@ -20,5 +20,14 @@ cis ai status [--format <human|json|agent>]
 
 Local Ollama is read from `OLLAMA_HOST`. The optional `openai-compatible` provider is
 configured through `CIS_AI_ENDPOINT`, `CIS_AI_MODEL`, and `CIS_AI_API_KEY`. Reporting a
-remote provider as available does not authorize its use. Exit `0` means status was
+remote provider as available does not authorize its use.
+
+Signed-in Codex and Claude Code accounts are also available for text generation. Codex
+models come from its local model catalogue. Claude offers its default model and the
+aliases advertised by the installed CLI; account access is checked during generation.
+Unavailable account providers report installation or sign-in guidance. These providers
+use isolated text-only sessions with tools disabled, and require explicit remote-use
+authorization. Automatic selection remains local-only.
+
+Exit `0` means status was
 reported; exit `2` means the output format is invalid.

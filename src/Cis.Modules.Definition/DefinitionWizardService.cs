@@ -158,7 +158,10 @@ public sealed partial class DefinitionWizardService
             var graph = _graph.Build(state.AuthorityRepositoryPath!);
             if (graph.ExitCode != 0) return Error(state, graph.Diagnostics.Where(item => item.Severity == "error").Select(item => item.Message).ToArray());
         }
-        return StatusInternal(state, "prepared", true);
+        var prepared = StatusInternal(state, "prepared", true);
+        if (normalized == "architecture" && (prepared.Diagrams.Count == 0 || prepared.Diagrams.Any(diagram => diagram.Status == "Stale")))
+            return prepared with { Status = "preparation-blocked", Errors = ["Architecture preparation did not produce current diagrams. Review the architecture findings before retrying.", .. prepared.Pages.First(page => page.Id == "architecture").Issues] };
+        return prepared;
     }
 
     public CisDefinitionWizardResult Answer(string workspacePath, string page, string id, string answer, string actor)
@@ -218,9 +221,10 @@ public sealed partial class DefinitionWizardService
                 RequireApproved(_uiDirection.Approve(state.WorkspacePath!, reviewer, reason).Validation?.EffectiveStatus, "UI direction");
                 RequireApproved(_backlog.Approve(state.WorkspacePath!, reviewer, reason).Validation?.EffectiveStatus, "high-level backlog");
             }
-            foreach (var path in new[] { state.DiagramPath!, state.DictionaryIndexPath!, state.PreviewPath! })
+            foreach (var path in new[] { state.DiagramPath!, state.DictionaryIndexPath!, state.PreviewPath! }
+                .Where(path => before.UiQuestions?.UiRequired != false || path != state.PreviewPath))
                 ActivateDerived(path, reviewer, reason);
-            UpdateDerivedCatalogStatus(state, "active");
+            UpdateDerivedCatalogStatus(state, "active", before.UiQuestions?.UiRequired != false);
             var baselineHash = ProductDefinitionAuthority.ComputeBaselineHash(state.DocumentationPath!, out var missing);
             if (missing.Count > 0)
                 throw new InvalidOperationException("Product-definition activation artifacts are missing: " + string.Join(", ", missing));
@@ -278,6 +282,7 @@ public sealed partial class DefinitionWizardService
             technical, solution, uiQuestions, ui, backlog);
         var businessInference = BusinessInference(state, brd);
 
+        var existingDocuments = Documents(state.WorkspacePath!);
         var pages = new List<CisDefinitionPage>
         {
             Page("foundation", 1, "Project foundation", dictionaries.Any(item => item.Applicable) ? "Ready" : "Incomplete",
@@ -288,7 +293,7 @@ public sealed partial class DefinitionWizardService
                 Accepted(brd.Validation?.Valid, brd.Validation?.Current, brd.Validation?.EffectiveStatus), brd.Validation?.Current == true,
                 brd.CanonicalPath, brd.CanonicalPath is null ? [] : [brd.CanonicalPath],
                 brd.Errors.Concat(brd.Validation?.Errors ?? []).Concat(brd.Validation?.Warnings ?? []))
-            with { Guidance = BusinessGuidance(brd, businessInference) },
+            with { Guidance = BusinessGuidance(brd, businessInference, existingDocuments.Documents.Any(document => document.Role == "business" && document.Candidates.Count > 0)) },
             Page("technical", 3, "Technical direction", Effective(technical.Validation?.EffectiveStatus),
                 technicalQuestions.Complete && technicalQuestions.Current && Accepted(technical.Validation?.Valid, technical.Validation?.Current, technical.Validation?.EffectiveStatus),
                 technicalQuestions.Current && technical.Validation?.Current == true, technical.CanonicalPath,
@@ -308,10 +313,10 @@ public sealed partial class DefinitionWizardService
                 File.Exists(state.DictionaryIndexPath) && DerivedStatus(state.DictionaryIndexPath!, DictionarySourceHash(dictionaries)) != "Stale", state.DictionaryIndexRelativePath,
                 Existing(state.DictionaryIndexRelativePath).Concat(dictionaries.Where(item => item.Applicable).Select(item => item.RelativePath)),
                 dictionaries.Any(item => item.Applicable) ? [] : ["No classification-selected dictionaries were found. Re-run repository initialization."]),
-            Page("experience", 6, "Experience direction and UI preview", Effective(ui.Validation?.EffectiveStatus),
-                uiQuestions.Complete && uiQuestions.Current && Accepted(ui.Validation?.Valid, ui.Validation?.Current, ui.Validation?.EffectiveStatus) && preview is not null && preview.Status != "Stale",
-                uiQuestions.Current && ui.Validation?.Current == true && preview?.Status != "Stale", ui.RelativePath,
-                Existing(uiQuestions.RelativePath, ui.RelativePath, state.PreviewRelativePath, state.PreviewSvgRelativePath), uiQuestions.Errors.Concat(ui.Errors).Concat(ui.Validation?.Errors ?? [])),
+            Page("experience", 6, uiQuestions.UiRequired ? "Experience direction and UI preview" : "UI scope — no visual interface", Effective(ui.Validation?.EffectiveStatus),
+                uiQuestions.Complete && uiQuestions.Current && Accepted(ui.Validation?.Valid, ui.Validation?.Current, ui.Validation?.EffectiveStatus) && (!uiQuestions.UiRequired || preview is not null && preview.Status != "Stale"),
+                uiQuestions.Current && ui.Validation?.Current == true && (!uiQuestions.UiRequired || preview?.Status != "Stale"), ui.RelativePath,
+                uiQuestions.UiRequired ? Existing(uiQuestions.RelativePath, ui.RelativePath, state.PreviewRelativePath, state.PreviewSvgRelativePath) : Existing(uiQuestions.RelativePath, ui.RelativePath), uiQuestions.Errors.Concat(ui.Errors).Concat(ui.Validation?.Errors ?? [])),
             Page("delivery", 7, "Delivery map", Effective(backlog.Validation?.EffectiveStatus),
                 Accepted(backlog.Validation?.Valid, backlog.Validation?.Current, backlog.Validation?.EffectiveStatus), backlog.Validation?.Current == true,
                 backlog.RelativePath, Existing(backlog.RelativePath), backlog.Errors.Concat(backlog.Validation?.Errors ?? []).Concat(backlog.Validation?.Warnings ?? []))
@@ -338,8 +343,9 @@ public sealed partial class DefinitionWizardService
                 uiQuestions.Questions.Select(question => new CisDefinitionQuestion(question.Id, question.Area,
                     question.Question, question.Why, question.CommonOptions, question.SuggestedAnswer, question.Status,
                     question.Answer, question.AnsweredBy, question.AnsweredAtUtc, question.ResolutionSource,
-                    question.Confidence, question.Evidence)).ToArray(), uiQuestions.Errors),
+                    question.Confidence, question.Evidence)).ToArray(), uiQuestions.Errors) { UiRequired = uiQuestions.UiRequired },
             BusinessInference = businessInference,
+            ExistingDocuments = existingDocuments,
         };
     }
 
@@ -406,7 +412,7 @@ public sealed partial class DefinitionWizardService
             WriteDerived(state.DiagramPath!, RenderDiagrams(state, solution));
         var dictionaries = ReadDictionaries(state);
         WriteDerived(state.DictionaryIndexPath!, RenderDictionaryIndex(state, dictionaries));
-        if (uiQuestions.Complete && uiQuestions.Current && Accepted(ui.Validation?.Valid, ui.Validation?.Current, ui.Validation?.EffectiveStatus))
+        if (uiQuestions.UiRequired && uiQuestions.Complete && uiQuestions.Current && Accepted(ui.Validation?.Valid, ui.Validation?.Current, ui.Validation?.EffectiveStatus))
         {
             var preview = CreatePreview(state, uiQuestions);
             WriteAtomic(state.PreviewSvgPath!, RenderPreviewSvg(preview));
@@ -440,6 +446,8 @@ public sealed partial class DefinitionWizardService
         var designPath = ResolveDocument(state, solution.DesignPath);
         if (File.Exists(designPath) && File.ReadAllText(designPath).Contains(ArchitectureDiagramModel.Marker, StringComparison.Ordinal))
             return RenderInferredDiagrams(state, solution, ArchitectureDiagramModel.ReadRequired(File.ReadAllText(designPath)), writeAssets);
+        if (solution.Components.Count > 0 && solution.Components.All(component => component.Classification.EndsWith("(technical intent)", StringComparison.Ordinal)))
+            return RenderDocumentedBoundaryDiagrams(state, solution, writeAssets);
         var interactions = ReadInteractions(state, solution);
         var componentNodes = solution.Components.Count == 0
             ? "  system[Product system]"
@@ -670,6 +678,8 @@ The preview is derived from the current high-level UI questionnaire and directio
             var image = match.Success ? Normalize(Path.Combine(Path.GetDirectoryName(state.DiagramRelativePath!)!, match.Groups["path"].Value)) : null;
             return new(id, title, state.DiagramRelativePath!, image is null ? "mermaid" : "svg", status) { SvgRelativePath = image };
         }
+        if (content.Contains("](architecture-diagrams/documented-boundaries-", StringComparison.Ordinal))
+            return [View("documented-boundaries", "Documented architecture boundaries")];
         if (solution.DesignPath is not null)
         {
             var designPath = Path.Combine(state.AuthorityRepositoryPath!, solution.DesignPath);
@@ -685,6 +695,7 @@ The preview is derived from the current high-level UI questionnaire and directio
 
     private static CisDefinitionPreview? ReadPreview(State state, UiDirectionQuestionnaireResult questions)
     {
+        if (!questions.UiRequired) return null;
         if (!File.Exists(state.PreviewPath) || !File.Exists(state.PreviewSvgPath)) return null;
         var preview = CreatePreview(state, questions);
         return new CisDefinitionPreview(state.PreviewRelativePath!, state.PreviewSvgRelativePath!,
@@ -705,7 +716,7 @@ The preview is derived from the current high-level UI questionnaire and directio
         if (merged.Changed) WriteAtomic(state.CatalogPath!, merged.Content);
     }
 
-    private static void UpdateDerivedCatalogStatus(State state, string status)
+    private static void UpdateDerivedCatalogStatus(State state, string status, bool uiRequired = true)
     {
         if (!File.Exists(state.CatalogPath)) return;
         var content = File.ReadAllText(state.CatalogPath);
@@ -714,7 +725,7 @@ The preview is derived from the current high-level UI questionnaire and directio
                      $"{state.AuthorityRepositoryId}:architecture:high-level-diagrams",
                      $"{state.AuthorityRepositoryId}:reference:dictionary-index",
                      $"{state.AuthorityRepositoryId}:design:ui-system-preview",
-                 })
+                 }.Where(id => uiRequired || id != $"{state.AuthorityRepositoryId}:design:ui-system-preview"))
             content = Regex.Replace(content, $@"(?ms)(^\s*-\s+id:\s*{Regex.Escape(id)}\s*$.*?^\s+status:\s*)[^\r\n]+", $"${{1}}{status}");
         WriteAtomic(state.CatalogPath, content);
     }
@@ -798,8 +809,8 @@ The preview is derived from the current high-level UI questionnaire and directio
         var docs = Path.Combine(authority.RepositoryPath, authority.DocumentationRoot.Replace('/', Path.DirectorySeparatorChar));
         return new(resolution.Workspace.WorkspacePath, authority.Id, authority.RepositoryPath, docs, context.Context.CatalogPath,
             Path.Combine(authority.RepositoryPath, SessionRelativePath.Replace('/', Path.DirectorySeparatorChar)),
-            Path.Combine(docs, "architecture", "high-level-architecture-diagrams.md"),
-            Normalize(Path.Combine(authority.DocumentationRoot, "architecture", "high-level-architecture-diagrams.md")),
+            CisProductDocumentPaths.Resolve(docs, "architecture", "high-level-architecture-diagrams.md"),
+            Normalize(Path.GetRelativePath(authority.RepositoryPath, CisProductDocumentPaths.Resolve(docs, "architecture", "high-level-architecture-diagrams.md"))),
             Path.Combine(docs, "references", "dictionary-index.md"),
             Normalize(Path.Combine(authority.DocumentationRoot, "references", "dictionary-index.md")),
             Path.Combine(docs, "design", "ui-system-preview.md"), Normalize(Path.Combine(authority.DocumentationRoot, "design", "ui-system-preview.md")),
@@ -818,12 +829,12 @@ The preview is derived from the current high-level UI questionnaire and directio
         var docs = state.DocumentationPath!;
         return
         [
-            Path.Combine(docs, "specs", "business-requirements.md"),
-            Path.Combine(docs, "specs", "technical-intent-spec.md"),
-            Path.Combine(docs, "architecture", "overall-solution-design.md"),
-            Path.Combine(docs, "references", "component-sheet.md"),
-            Path.Combine(docs, "design", "ui-direction.md"),
-            Path.Combine(docs, "plans", "high-level-backlog.md"),
+            CisProductDocumentPaths.Resolve(docs, "specs", "business-requirements.md"),
+            CisProductDocumentPaths.Resolve(docs, "specs", "technical-intent-spec.md"),
+            CisProductDocumentPaths.Resolve(docs, "architecture", "overall-solution-design.md"),
+            CisProductDocumentPaths.Resolve(docs, "references", "component-sheet.md"),
+            CisProductDocumentPaths.Resolve(docs, "design", "ui-direction.md"),
+            CisProductDocumentPaths.Resolve(docs, "plans", "high-level-backlog.md"),
             state.DiagramPath!, state.DictionaryIndexPath!, state.PreviewPath!, state.CatalogPath!, state.SessionPath!,
         ];
     }

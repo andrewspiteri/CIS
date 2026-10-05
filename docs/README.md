@@ -32,6 +32,7 @@ Reader entry points:
 
 Canonical starting points:
 
+- [Testing harness defaults plan](specs/testing-harness-defaults-plan.md) — proposed language defaults, complete test layers, examples and staged harness migration; planning only
 - [Engineering assurance coverage](references/engineering-assurance-coverage.md) — portable security, testing, browser, contract and tooling safeguards, with verification limits
 
 - `standards/documentation-governance-standard.md` — required structure, stable rules, lifecycle, exceptions, and evidence boundaries for standards

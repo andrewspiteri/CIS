@@ -43,7 +43,7 @@ choice or prove that a test, scanner or CI gate ran. Read the applicable standar
 
 ## Scaffolding, diagnostics and model usage
 
-- Use `cis template` or a repository's distinct deterministic scaffold generator where its templates fit. Identify and describe the smallest template, read its schema/example, gather verified source facts, prepare and validate the model, dry-run, inspect planned paths, then render. Never generate business policy or contract meaning from placeholders.
+- Use `cis generate` or a repository's distinct deterministic scaffold generator where its templates fit. Identify and describe the smallest template, read its schema/example, gather verified source facts, prepare and validate the model, dry-run, inspect planned paths, then render. Never generate business policy or contract meaning from placeholders.
 - Keep intentional overwrites explicit, inspect existing files first and record template, model, output paths and results. Generated code still requires domain implementation, tests, security and contract co-changes.
 - Use `cis diagnostics` and retain distinct repository runtime-diagnostics tools when they supply needed telemetry. Bound queries and live tails, correlate traces, inspect stream health, stop tails before handoff and explain fallback to other logs. Do not substitute telemetry for tests or contract validation.
 - Sanitize runtime evidence before sharing, keep streams out of commits and require explicit production access/retention controls. Do not transmit private diagnostics to a model without the applicable authorization.

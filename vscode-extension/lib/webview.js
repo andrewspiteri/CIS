@@ -60,7 +60,7 @@ function openRecommendationReviewPanel(vscode, runId, status, onAction) {
     localResourceRoots: [],
   });
   const scriptNonce = nonce();
-  const allowed = new Set(['accept', 'accept-all', 'modify', 'open-review']);
+  const allowed = new Set(['accept', 'accept-all', 'modify', 'modify-text', 'open-review', 'open-report', 'apply-approved', 'continue-review']);
   const controller = {
     panel,
     update(nextStatus) {
@@ -146,6 +146,8 @@ function openDefinitionWizardPanel(vscode, root, model, onAction, onPath, initia
   allowed.add('save-technical-decision');
   allowed.add('architecture-action');
   allowed.add('delivery-action');
+  allowed.add('load-documents');
+  allowed.add('load-document-manually');
   let currentModel = model;
   let currentPage = initialPage || model?.currentPage || 'foundation';
   let busy = false;
@@ -200,7 +202,17 @@ function renderDefinitionWizardHtml(webview, root, model, currentPage, scriptNon
   const nav = pages.map(page => `<button type="button" class="step ${page.id === selected.id ? 'current' : ''}" data-command="navigate" data-value="${escapeHtml(page.id)}" aria-current="${page.id === selected.id ? 'step' : 'false'}"><span>${escapeHtml(String(page.ordinal))}</span><span><strong>${escapeHtml(page.title)}</strong><small>${escapeHtml(page.status || 'Not started')}</small></span><i class="${page.complete && page.current ? 'complete' : ''}" aria-hidden="true"></i></button>`).join('');
   const artifacts = (selected.artifactPaths || []).map(item => `<li><button class="link" type="button" data-command="open-path" data-value="${escapeHtml(item)}">${escapeHtml(item)}</button></li>`).join('');
   const issues = (selected.issues || []).map(item => `<li>${escapeHtml(item)}</li>`).join('');
+  const existing = model?.existingDocuments?.documents?.filter(item => item.role === selected.id
+    || selected.id === 'architecture' && ['components', 'diagrams'].includes(item.role)) || [];
+  const found = existing.flatMap(item => item.candidates || []).length;
+  const searchNotes = [...(model?.existingDocuments?.warnings || []), ...(model?.existingDocuments?.errors || [])];
+  const existingDocuments = `<section class="card"><h3>Supplied documents</h3><p>${found ? `${found} possible document${found === 1 ? '' : 's'} found in this project.` : 'Search the project or browse for documents you already have.'} You can choose a Markdown file from anywhere on your computer. CIS copies external files into the project and leaves the originals unchanged, then reconciles the loaded document with available evidence. Legacy BRDs receive tracking sections and a backup; approval still requires review.</p>${searchNotes.length ? `<details><summary>Document search notes</summary><ul>${searchNotes.map(note => `<li>${escapeHtml(note)}</li>`).join('')}</ul></details>` : ''}<div class="actions"><button type="button" data-command="load-documents">Load existing documents</button><button type="button" class="secondary" data-command="load-document-manually">Load document manually…</button></div></section>`;
   const pageBody = renderDefinitionPageBody(webview, root, model, selected, vscode);
+  const sectionSave = selected.id === 'business' ? model?.brdSectionSave : undefined;
+  const sectionSaveProgress = { saved: 'Refreshing the graph…', 'graph-refreshed': 'Graph refreshed. Loading the latest workspace state…',
+    complete: 'Graph and workspace refreshed.', 'graph-failed': 'The graph could not refresh. Your BRD changes are saved.',
+    'refresh-failed': 'The graph was refreshed, but the latest workspace state could not be loaded. Refresh this page.' };
+  const sectionSaveNotice = sectionSave ? `<section class="notice" role="status" aria-live="polite"><strong>${escapeHtml(String(sectionSave.count || 0))} BRD sections saved</strong><p>${escapeHtml(sectionSaveProgress[sectionSave.phase] || '')}</p>${sectionSave.error ? `<p>${escapeHtml(sectionSave.error)}</p>` : ''}${sectionSave.warnings?.length ? `<p>Remaining review items:</p><ul>${sectionSave.warnings.map(warning => `<li>${escapeHtml(warning)}</li>`).join('')}</ul>` : ''}<p>Saving these changes does not approve the BRD.</p></section>` : '';
   const saveNeedsRefresh = selected.id === 'technical' && model.technicalDecisionSave && !model.technicalDecisionSave.refreshed;
   const guidance = saveNeedsRefresh
     ? '<section class="card readiness"><h3>Answer saved · readiness unverified</h3><p>The readiness check did not finish. Refresh to check the saved decision before repeating a save or relying on the previous findings below. Technical intent still requires its own approval.</p><div class="actions"><button type="button" data-command="refresh">Refresh</button></div></section>'
@@ -217,7 +229,7 @@ function renderDefinitionWizardHtml(webview, root, model, currentPage, scriptNon
     </div></footer>`;
   const body = `<header class="hero"><div><span class="eyebrow">High-level product definition · ${escapeHtml(model?.sessionId || 'new draft')}</span><h1>${escapeHtml(selected.title)}</h1><p>Build one coherent business, technical, architecture, contract, experience and delivery baseline before the feature loop.</p></div><span class="badge ${statusClass}">${escapeHtml(selected.status || 'Not started')}</span></header>
     <div class="wizard-layout"><nav class="wizard-steps" aria-label="Definition wizard pages">${nav}</nav><section class="wizard-page" aria-labelledby="page-title"><div class="section-heading"><div><span class="eyebrow">Page ${escapeHtml(String(selected.ordinal))} of ${escapeHtml(String(pages.length || 8))}</span><h2 id="page-title">${escapeHtml(selected.title)}</h2></div><span class="badge ${statusClass}">${selected.complete && selected.current ? 'Complete and current' : selected.id === 'experience' ? escapeHtml(uiState.badge) : 'Needs attention'}</span></div>
-    ${guidance}${!guidance && selected.id !== 'experience' && issues ? `<section class="notice warning"><strong>What needs attention</strong><ul>${issues}</ul></section>` : ''}${pageBody}${artifacts ? `<details><summary>Canonical artifacts (${(selected.artifactPaths || []).length})</summary><ul class="links">${artifacts}</ul></details>` : ''}${(guidance || selected.id === 'experience') && issues ? `<section class="notice warning" aria-label="Validation findings"><strong>Validation findings (${(selected.issues || []).length})</strong><ul>${issues}</ul></section>` : ''}</section></div><p id="wizard-progress" role="status" aria-live="polite" ${busy ? '' : 'hidden'}>CIS is working. Please wait for this action to finish.</p>${footer}`;
+    ${sectionSaveNotice}${existingDocuments}${guidance}${!guidance && selected.id !== 'experience' && issues ? `<section class="notice warning"><strong>What needs attention</strong><ul>${issues}</ul></section>` : ''}${pageBody}${artifacts ? `<details><summary>Canonical artifacts (${(selected.artifactPaths || []).length})</summary><ul class="links">${artifacts}</ul></details>` : ''}${(guidance || selected.id === 'experience') && issues ? `<section class="notice warning" aria-label="Validation findings"><strong>Validation findings (${(selected.issues || []).length})</strong><ul>${issues}</ul></section>` : ''}</section></div><p id="wizard-progress" role="status" aria-live="polite" ${busy ? '' : 'hidden'}>CIS is working. Please wait for this action to finish.</p>${footer}`;
   return studioDocument(webview, 'High-level product definition', body, scriptNonce, definitionWizardScript(scriptNonce, busy));
 }
 
@@ -234,7 +246,7 @@ function renderDefinitionGuidance(page) {
   if (!guidance) return '';
   const action = guidance.actions?.find(item => item.id === guidance.nextActionId);
   const nextButton = action && action.id !== 'continue'
-    ? `<button type="button" data-command="${page.id === 'architecture' ? 'architecture-action' : page.id === 'technical' ? 'technical-action' : 'business-action'}" data-value="${escapeHtml(action.id)}">${escapeHtml(action.label)}</button>` : '';
+    ? `<button type="button" data-command="${action.id === 'load-documents' ? 'load-documents' : page.id === 'architecture' ? 'architecture-action' : page.id === 'technical' ? 'technical-action' : 'business-action'}" data-value="${escapeHtml(action.id)}">${escapeHtml(action.label)}</button>` : '';
   return `<section class="card readiness" aria-labelledby="readiness-title"><span class="eyebrow">${page.complete && page.current ? 'Ready to continue' : 'What needs attention'}</span><h3 id="readiness-title">${escapeHtml(guidance.summary)}</h3>${guidance.reasons?.length ? `<ul>${guidance.reasons.map(reason => `<li>${escapeHtml(reason)}</li>`).join('')}</ul>` : ''}<h4>Next step</h4><p>${escapeHtml(guidance.nextStep)}</p>${nextButton}<p class="muted">Needed actions address this page's findings. Complete actions can be repeated, and optional actions remain available.</p></section>`;
 }
 
@@ -265,7 +277,7 @@ function renderDefinitionPageBody(webview, root, model, page, vscode) {
     return `${renderDocumentApproval(model, 'business')}${preparationCard}<section class="card"><span class="eyebrow">Business narrative</span><h3>Create or revisit the draft</h3><p>Existing repositories can inform actors, workflows, business rules and scope. Drafting produces a Review Required BRD; unresolved policy stays as an open question.</p>
       ${repositories.length ? `<details><summary>Implementation sources (${repositories.length})</summary><ul>${repositories.map(repository => `<li>${escapeHtml(repository.id)}</li>`).join('')}</ul></details>` : '<p>Import the product repositories for implementation inference, or draft a new product from references.</p>'}
       <div class="actions">${action('infer-brd', 'Infer from existing project', canInfer)}${action('draft-brd', 'Draft from references')}</div></section>
-      <section class="card"><h3>Complete the business review</h3><div class="actions">${action('refresh-evidence', 'Refresh BRD evidence')}${action('source-decisions', 'Review source decisions', (page.guidance?.sourceReviews || []).length > 0)}${action('open-brd', 'Read or edit the BRD')}${action('questions', `Answer ${questions.filter(item => String(item.status).toLowerCase() === 'unanswered').length} open questions`)}${action('review-brd', 'Independent review')}</div></section>
+      <section class="card"><h3>Complete the business review</h3><div class="actions">${action('suggest-sections', 'Suggest missing sections')}${action('refresh-evidence', 'Refresh BRD evidence')}${action('source-decisions', 'Review source decisions', (page.guidance?.sourceReviews || []).length > 0)}${action('open-brd', 'Read or edit the BRD')}${action('questions', `Answer ${questions.filter(item => String(item.status).toLowerCase() === 'unanswered').length} open questions`)}${action('review-brd', 'Independent review')}${action('review-recommendations', 'Review recommendations')}</div><p>After independent review, approve or modify its recommendations. Use Review recommendations to resume the latest current review without running the model again.</p></section>
       ${renderBusinessSources(page)}`;
   }
   if (page.id === 'technical') return renderDocumentApproval(model, 'technical') + renderTechnicalPage(root, page, model,
@@ -283,6 +295,10 @@ function renderDefinitionPageBody(webview, root, model, page, vscode) {
     return `<p>These shared references start before feature delivery and are extended by each applicable feature.</p><div class="dictionary-grid">${(model.dictionaries || []).map(item => `<article class="card"><div class="section-heading"><h3>${escapeHtml(item.title)}</h3><span class="badge ${item.applicable ? 'good' : 'warn'}">${item.applicable ? `${item.entryCount} entries` : 'Not applicable'}</span></div>${item.applicable ? `<button type="button" class="link" data-command="open-path" data-value="${escapeHtml(item.relativePath)}">${escapeHtml(item.kind === 'erd' ? 'Preview entity diagrams' : item.relativePath)}</button>` : '<span class="muted">Not selected by repository classification</span>'}</article>`).join('')}</div>`;
   }
   if (page.id === 'experience') {
+    if (model.uiQuestions?.uiRequired === false) {
+      const current = model.uiQuestions.current && page.complete && page.current;
+      return `<section class="card"><span class="badge ${current ? 'good' : 'warn'}">${current ? 'Not applicable' : 'Review scope'}</span><h3>No visual UI is planned</h3><p>The recorded project scope excludes a visual interface. Visual-design questions, UI frameworks and screen previews are not required. CLI and API behavior remains part of the technical direction.</p><p>${current ? 'This step is complete. Continue to the delivery map; the scope record remains part of final review.' : 'Prepare this page to refresh the scope record against the current architecture.'}</p>${page.primaryPath ? `<button type="button" class="link" data-command="open-path" data-value="${escapeHtml(page.primaryPath)}">Review UI scope record</button>` : ''}</section><details><summary>Review or change UI scope</summary>${renderWizardQuestions((model.uiQuestions.questions || []).filter(question => question.id === 'UI-Q-001'), 'experience')}</details>`;
+    }
     const state = experienceState(model, root);
     const preview = model.preview;
     let recorded = '';
@@ -312,7 +328,9 @@ function renderWizardQuestions(questions, page) {
   return `<section class="wizard-questions">${items.map(question => {
     const value = question.answer || question.suggestedAnswer || '';
     const resolved = ['answered', 'derived'].includes(String(question.status || '').toLowerCase());
-    return `<article class="question-card"><div class="question-heading"><div><span class="eyebrow">${escapeHtml(question.id || '')} · ${escapeHtml(question.area || '')}</span><h3>${escapeHtml(question.question || '')}</h3></div><span class="badge ${resolved ? 'good' : 'warn'}">${resolved ? 'Resolved' : 'Decision required'}</span></div><p>${escapeHtml(question.why || '')}</p><label for="wizard-${escapeHtml(question.id || '')}">Direction</label><textarea id="wizard-${escapeHtml(question.id || '')}" data-page="${escapeHtml(page)}" data-question="${escapeHtml(question.id || '')}" rows="4" maxlength="16384">${escapeHtml(value)}</textarea><div class="actions"><button type="button" data-save-question="${escapeHtml(question.id || '')}" data-page="${escapeHtml(page)}">Save direction</button></div></article>`;
+    const imported = !resolved && question.resolutionSource === 'technical-intent-document'
+      ? `<section class="suggestion"><strong>From imported technical intent</strong><p>Review these source excerpts, edit if needed, then save your direction. They are not recorded answers yet.</p><details><summary>Source passages</summary><ul>${(question.evidence || []).map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul></details></section>` : '';
+    return `<article class="question-card"><div class="question-heading"><div><span class="eyebrow">${escapeHtml(question.id || '')} · ${escapeHtml(question.area || '')}</span><h3>${escapeHtml(question.question || '')}</h3></div><span class="badge ${resolved ? 'good' : 'warn'}">${resolved ? 'Resolved' : 'Decision required'}</span></div><p>${escapeHtml(question.why || '')}</p>${imported}<label for="wizard-${escapeHtml(question.id || '')}">Direction</label><textarea id="wizard-${escapeHtml(question.id || '')}" data-page="${escapeHtml(page)}" data-question="${escapeHtml(question.id || '')}" rows="4" maxlength="16384">${escapeHtml(value)}</textarea><div class="actions"><button type="button" data-save-question="${escapeHtml(question.id || '')}" data-page="${escapeHtml(page)}">Save direction</button></div></article>`;
   }).join('')}</section>`;
 }
 
@@ -403,6 +421,7 @@ function renderTechnicalIntentQuestionsHtml(webview, status, scriptNonce) {
   const unanswered = questions.filter(item => !resolvedStatuses.has(String(item.status || '').toLowerCase()));
   const derivedCount = questions.filter(item => String(item.status || '').toLowerCase() === 'derived').length;
   const humanCount = questions.filter(item => String(item.status || '').toLowerCase() === 'answered').length;
+  const importedCount = unanswered.filter(item => item.resolutionSource === 'technical-intent-document').length;
   const cards = questions.map(question => {
     const state = String(question.status || '').toLowerCase();
     const answered = state === 'answered';
@@ -413,6 +432,8 @@ function renderTechnicalIntentQuestionsHtml(webview, status, scriptNonce) {
     const evidence = (question.evidence || []).map(item => `<li>${escapeHtml(item)}</li>`).join('');
     const source = derived
       ? `<section class="suggestion derived"><h3>Derived from the existing project</h3><p>${escapeHtml(question.answer || '')}</p><p class="muted">Confidence: ${escapeHtml(question.confidence || 'unrated')}</p>${evidence ? `<details><summary>Repository evidence</summary><ul>${evidence}</ul></details>` : ''}</section>`
+      : !resolved && question.resolutionSource === 'technical-intent-document'
+        ? `<section class="suggestion"><h3>From imported technical intent</h3><p>The direction below contains exact source excerpts. Review and edit them before saving; they may cover only part of this question.</p><details><summary>Source passages</summary><ul>${evidence}</ul></details></section>`
       : `<section class="suggestion"><h3>Advisory starting direction</h3><p>${escapeHtml(question.suggestedAnswer || 'No suggestion is available.')}</p></section>`;
     return `<article class="question-card" data-question-id="${escapeHtml(question.id || '')}" aria-labelledby="technical-question-${escapeHtml(question.id || '')}">
       <header class="question-heading"><div><span class="eyebrow">${escapeHtml(question.id || '')} · ${escapeHtml(question.area || '')}</span><h2 id="technical-question-${escapeHtml(question.id || '')}">${escapeHtml(question.question || '')}</h2></div><span class="badge ${resolved ? 'answered' : 'unanswered'}">${derived ? 'Derived from project' : answered ? 'Answered' : 'Decision required'}</span></header>
@@ -423,22 +444,32 @@ function renderTechnicalIntentQuestionsHtml(webview, status, scriptNonce) {
         ${answered ? `<p class="muted">Recorded by ${escapeHtml(question.answeredBy || 'unknown')} at ${escapeHtml(question.answeredAtUtc || 'unknown time')}.</p>` : ''}
         <div class="actions"><button type="button" data-command="save-answer" data-value="${escapeHtml(question.id || '')}">${resolved ? 'Update direction' : 'Save direction'}</button></div></section></article>`;
   }).join('');
+  const intent = status?.technicalIntent;
+  const validation = intent?.validation;
+  const approved = validation?.valid === true && validation?.current === true && validation?.effectiveStatus === 'Active';
+  const canApprove = status?.complete === true && status?.current === true && validation?.valid === true
+    && validation?.current === true && !intent?.errors?.length && !approved;
+  const findings = [...(intent?.errors || []), ...(validation?.errors || [])];
   const completed = questions.length && !unanswered.length
-    ? '<section class="completion"><strong>The technical questionnaire is complete.</strong><p>CIS can generate technical intent from these choices. Review the technical-intent document and its open decisions in the high-level setup wizard before continuing.</p></section>' : '';
+    ? `<section class="completion"><strong>The technical questionnaire is complete.</strong><h2>${approved ? 'Technical intent approved' : canApprove ? 'Technical intent is ready for approval' : 'Review the technical-intent document'}</h2>
+      <p>${approved ? 'The approved technical intent is current. Continue with solution architecture.' : canApprove ? 'Review the document, then approve its current technical direction.' : 'Completed answers do not yet mean the document is ready for approval. Review the findings below, update the document, then refresh.'}</p>
+      ${findings.length ? `<ul>${findings.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : !validation ? '<p>Document readiness is unavailable. Refresh to check it.</p>' : !validation.current || !status.current ? '<p>Technical evidence is out of date. Refresh it before approval.</p>' : ''}
+      <div class="actions"><button type="button" class="secondary" data-command="open-intent">Review technical intent</button><button type="button" class="secondary" data-command="refresh-review">Refresh readiness</button><button type="button" data-command="approve-technical" ${canApprove ? '' : 'disabled'}>${approved ? 'Technical intent approved' : 'Approve technical intent'}</button></div></section>` : '';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource}; style-src 'nonce-${scriptNonce}'; script-src 'nonce-${scriptNonce}';">
   <title>High-level technical direction</title><style nonce="${scriptNonce}">
   :root{color-scheme:light dark}*{box-sizing:border-box}body{color:var(--vscode-foreground);background:var(--vscode-editor-background);font:var(--vscode-font-weight) var(--vscode-font-size)/1.55 var(--vscode-font-family);margin:0;padding:2rem;max-width:78rem}main{display:grid;gap:1.2rem}.page-heading,.question-heading{display:flex;justify-content:space-between;align-items:start;gap:1rem}.page-heading{border-bottom:1px solid var(--vscode-panel-border);padding-bottom:1rem}.page-heading h1,.question-heading h2,.suggestion h3{margin:.15rem 0}.page-heading p,.question-card p{max-width:78ch}.eyebrow{display:block;color:var(--vscode-descriptionForeground);font-size:.78rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase}.progress{display:flex;gap:.55rem;flex-wrap:wrap}.badge{display:inline-block;border:1px solid var(--vscode-panel-border);border-radius:999px;padding:.12rem .6rem;font-size:.82rem}.badge.answered,.completion{border-color:var(--vscode-testing-iconPassed);color:var(--vscode-testing-iconPassed)}.badge.unanswered{color:var(--vscode-editorWarning-foreground)}.question-list{display:grid;gap:1rem}.question-card,.completion{border:1px solid var(--vscode-panel-border);border-radius:.35rem;background:var(--vscode-editorWidget-background);padding:1.1rem}.suggestion{border-left:3px solid var(--vscode-focusBorder);background:var(--vscode-textBlockQuote-background);padding:.75rem 1rem;margin:1rem 0}.answer label{display:block;font-weight:600;margin-bottom:.35rem}.muted{color:var(--vscode-descriptionForeground)}textarea{display:block;width:100%;resize:vertical;color:var(--vscode-input-foreground);background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,var(--vscode-panel-border));padding:.65rem;font:inherit;line-height:1.45}textarea:focus{outline:2px solid var(--vscode-focusBorder);outline-offset:1px}.actions{display:flex;gap:.6rem;flex-wrap:wrap;margin-top:.7rem}button{color:var(--vscode-button-foreground);background:var(--vscode-button-background);border:1px solid transparent;border-radius:2px;padding:.48rem .85rem;font:inherit;cursor:pointer}button.secondary{color:var(--vscode-button-secondaryForeground);background:var(--vscode-button-secondaryBackground)}button.link{color:var(--vscode-textLink-foreground);background:transparent;padding:0}button:focus-visible,summary:focus-visible{outline:2px solid var(--vscode-focusBorder);outline-offset:2px}details{margin:.8rem 0}summary{cursor:pointer;font-weight:600}
   @media(max-width:42rem){body{padding:1rem}.page-heading,.question-heading{display:block}.progress{margin-top:.65rem}.actions button{width:100%}}@media(prefers-reduced-motion:reduce){*{transition:none!important}}
   </style></head><body><main><header class="page-heading"><div><span class="eyebrow">Technical definition · governed pre-intent stage</span><h1>Choose the high-level technical direction</h1>
-    <p>${derivedCount ? 'CIS has pre-filled evidence-supported directions from the existing implementation. Review or override them, then answer only the decisions the repository cannot establish safely.' : 'This is a greenfield project. Record the major technology and architecture choices before CIS creates components and interactions.'}</p><button class="link" type="button" data-command="open-questionnaire">Open canonical questionnaire</button></div>
+    <p>${importedCount ? `CIS has prefilled ${importedCount} ${importedCount === 1 ? 'direction' : 'directions'} with passages from your imported technical intent. Review them instead of entering the same choices again. Nothing is recorded until you save a direction.` : derivedCount ? 'CIS has pre-filled evidence-supported directions from the existing implementation. Review or override them, then answer only the decisions the repository cannot establish safely.' : 'This is a greenfield project. Record the major technology and architecture choices before CIS creates components and interactions.'}</p><button class="link" type="button" data-command="open-questionnaire">Open canonical questionnaire</button></div>
     <div class="progress" aria-label="Technical question progress"><span>${derivedCount} derived</span><span>${humanCount} human</span><span>${unanswered.length} remaining</span></div></header>
     ${completed}<section class="question-list" aria-label="High-level technical decisions">${cards || '<p>No technical questions were found.</p>'}</section></main>
   <script nonce="${scriptNonce}">const vscode=acquireVsCodeApi();const prior=vscode.getState()||{};const restore=()=>{const card=prior.questionId?document.querySelector('[data-question-id="'+CSS.escape(prior.questionId)+'"]'):undefined;card?.querySelector('[data-answer]')?.focus({preventScroll:true});window.scrollTo(0,Number.isFinite(prior.scrollY)?prior.scrollY:0);};requestAnimationFrame(()=>requestAnimationFrame(restore));document.querySelectorAll('button[data-command]').forEach(button=>button.addEventListener('click',()=>{const command=button.dataset.command;let value=button.dataset.value||'';if(command==='save-answer'){const card=button.closest('[data-question-id]');vscode.setState({scrollY:window.scrollY,questionId:button.dataset.value||''});value=JSON.stringify({id:button.dataset.value||'',answer:card?.querySelector('[data-answer]')?.value||''});}vscode.postMessage({command,value});}));</script></body></html>`;
 }
 
 function renderUiDirectionQuestionsHtml(webview, status, scriptNonce) {
-  const questions = Array.isArray(status?.questions) ? status.questions : [];
+  const questions = (Array.isArray(status?.questions) ? status.questions : [])
+    .filter(question => status?.uiRequired !== false || question.id === 'UI-Q-001');
   const resolvedStatuses = new Set(['answered', 'derived']);
   const unanswered = questions.filter(item => !resolvedStatuses.has(String(item.status || '').toLowerCase()));
   const derivedCount = questions.filter(item => String(item.status || '').toLowerCase() === 'derived').length;
@@ -474,9 +505,16 @@ function renderUiDirectionQuestionsHtml(webview, status, scriptNonce) {
 function renderBrdQuestionsHtml(webview, status, scriptNonce) {
   const questions = Array.isArray(status?.questions) ? status.questions : [];
   const unanswered = questions.filter(item => String(item.status || '').toLowerCase() === 'unanswered');
-  const suggested = questions.filter(item => typeof item.suggestedAnswer === 'string' && item.suggestedAnswer.trim());
+  const suggested = unanswered.filter(item => typeof item.suggestedAnswer === 'string' && item.suggestedAnswer.trim());
   const provenance = status?.suggestionProvider
     ? `${status.suggestionProvider}${status.suggestionModel ? ` / ${status.suggestionModel}` : ''}` : 'No suggestion run retained';
+  const generationOutcome = status?.suggestionStatus === 'current' && unanswered.length
+    ? `<section class="${suggested.length ? 'suggestion' : 'no-suggestion'}" role="status"><strong>${suggested.length
+      ? `${suggested.length} of ${unanswered.length} unanswered questions have suggested answers.`
+      : 'Generation completed, but no supported answers are available to populate.'}</strong>
+      <p>${suggested.length ? 'Suggested answers are populated below for your review. Nothing has been recorded.'
+        : 'A completed model run does not mean it supplied answers. The explanations below identify what is missing; they are not answers and have not been copied into the answer fields.'}</p>
+      ${unanswered.filter(question => !question.suggestedAnswer).map(question => `<p><strong>${escapeHtml(question.id)}:</strong> ${escapeHtml(question.suggestionReason || 'The model did not provide a supported answer. Review the BRD context and enter your decision.')}</p>`).join('')}</section>` : '';
   const errors = (status?.errors || []).length
     ? `<section class="error" role="alert"><strong>Guidance issue</strong><ul>${status.errors.map(error => `<li>${escapeHtml(error)}</li>`).join('')}</ul></section>` : '';
   const cards = questions.map(question => {
@@ -486,17 +524,18 @@ function renderBrdQuestionsHtml(webview, status, scriptNonce) {
     const cited = (question.suggestionContextIds || []).map(id => contextById.get(id)).filter(Boolean);
     const contextCards = contexts.map(item => `<article class="context-item" id="${escapeHtml(item.id || '')}"><strong>${escapeHtml(item.section || 'BRD context')}</strong><p>${escapeHtml(item.excerpt || '')}</p></article>`).join('');
     const suggestion = question.suggestedAnswer ? `<section class="suggestion" aria-labelledby="suggestion-${escapeHtml(question.id || '')}">
-        <div class="section-heading"><h3 id="suggestion-${escapeHtml(question.id || '')}">Advisory suggested answer</h3><span class="badge">${escapeHtml(question.suggestionConfidence || 'unrated')}</span></div>
+        <div class="section-heading"><h3 id="suggestion-${escapeHtml(question.id || '')}">${question.suggestionKind === 'proposal' ? 'Proposed decision — needs your confirmation' : 'Advisory suggested answer'}</h3><span class="badge">${escapeHtml(question.suggestionConfidence || 'unrated')}</span></div>
         <p>${escapeHtml(question.suggestedAnswer)}</p><p class="muted">${escapeHtml(question.suggestionReason || 'Review against the cited context before accepting.')}</p>
+        ${question.suggestionKind === 'proposal' ? `<p>This is a recommendation, not a decision already established by the BRD. Review or edit the populated answer before saving.</p><strong>Confirm these assumptions or decisions:</strong><ul>${(question.suggestionAssumptions || []).map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : ''}
         ${cited.length ? `<p class="citations"><strong>Based on:</strong> ${cited.map(item => escapeHtml(item.section)).join(', ')}</p>` : ''}</section>`
-      : `<section class="no-suggestion"><strong>No supported answer is currently suggested.</strong><p>${escapeHtml(question.suggestionReason || 'Use the BRD context below and supply the stakeholder decision, or generate advisory suggestions.')}</p></section>`;
+      : isAnswered ? '' : `<section class="no-suggestion"><strong>No supported answer is currently suggested.</strong><p>${escapeHtml(question.suggestionReason || 'Use the BRD context below and supply the stakeholder decision, or generate advisory suggestions.')}</p></section>`;
     const startingValue = question.answer || question.suggestedAnswer || '';
     const answerMeta = isAnswered ? `<p class="answer-meta">Recorded by ${escapeHtml(question.answeredBy || 'unknown')} at ${escapeHtml(question.answeredAtUtc || 'unknown time')}.</p>` : '';
     return `<article class="question-card" data-question-id="${escapeHtml(question.id || '')}" aria-labelledby="question-${escapeHtml(question.id || '')}">
       <header class="question-heading"><div><span class="eyebrow">${escapeHtml(question.id || 'Open question')}</span><h2 id="question-${escapeHtml(question.id || '')}">${escapeHtml(question.question || '')}</h2></div><span class="badge ${isAnswered ? 'answered' : 'unanswered'}">${escapeHtml(question.status || 'Unknown')}</span></header>
       ${suggestion}<section class="answer"><label for="answer-${escapeHtml(question.id || '')}">${isAnswered ? 'Recorded answer' : 'Your answer'}</label>
         <textarea id="answer-${escapeHtml(question.id || '')}" maxlength="16384" rows="5" data-answer>${escapeHtml(startingValue)}</textarea>${answerMeta}
-        <div class="actions">${!isAnswered && question.suggestedAnswer ? `<button type="button" data-command="accept-suggestion" data-value="${escapeHtml(question.id || '')}">Accept suggestion</button>` : ''}
+        <div class="actions">${!isAnswered && question.suggestedAnswer ? `<button type="button" data-command="accept-suggestion" data-value="${escapeHtml(question.id || '')}">${question.suggestionKind === 'proposal' ? 'Accept proposed answer' : 'Accept suggestion'}</button>` : ''}
           <button class="secondary" type="button" data-command="save-answer" data-value="${escapeHtml(question.id || '')}">${isAnswered ? 'Update answer' : question.suggestedAnswer ? 'Save edited answer' : 'Save answer'}</button></div></section>
       <details><summary>Relevant BRD context (${contexts.length})</summary><div class="context-list">${contextCards || '<p>No bounded context was found.</p>'}</div></details></article>`;
   }).join('');
@@ -510,9 +549,20 @@ function renderBrdQuestionsHtml(webview, status, scriptNonce) {
   </style></head><body><main><header class="page-heading"><div><span class="eyebrow">Business requirements</span><h1>Answer open questions</h1>
     <p>Review the relevant BRD context and any advisory suggestion. Nothing is recorded until you explicitly accept a suggestion or save your edited answer.</p><button class="link" type="button" data-command="open-brd">Open canonical BRD</button></div>
     <div class="progress" aria-label="Question progress"><span>${unanswered.length} unanswered</span><span>${questions.length - unanswered.length} answered</span><span>${suggested.length} suggested</span></div></header>
-    <section class="toolbar" aria-label="Question guidance actions"><div><strong>Suggestion evidence: ${escapeHtml(provenance)}</strong><div class="muted">Status: ${escapeHtml(status?.suggestionStatus || 'missing')}</div></div><button type="button" data-command="generate-suggestions">${status?.suggestionStatus === 'current' ? 'Regenerate advisory suggestions' : 'Generate advisory suggestions'}</button></section>
+    <section class="toolbar" aria-label="Question guidance actions"><div><strong>Suggestion evidence: ${escapeHtml(provenance)}</strong><div class="muted">Context status: ${escapeHtml(status?.suggestionStatus || 'missing')} · Choose a model to generate new suggestions.</div></div><button type="button" data-command="generate-suggestions" ${unanswered.length ? '' : 'disabled'}>${status?.suggestionStatus === 'current' ? 'Regenerate advisory suggestions' : 'Generate advisory suggestions'} · choose model…</button></section>
+    ${generationOutcome}
     ${errors}${completed}<section class="question-list" aria-label="Open questions">${cards || '<p>No open questions were found.</p>'}</section></main>
   <script nonce="${scriptNonce}">const vscode=acquireVsCodeApi();document.querySelectorAll('button[data-command]').forEach(button=>button.addEventListener('click',()=>{const command=button.dataset.command;let value=button.dataset.value||'';if(command==='save-answer'){const card=button.closest('[data-question-id]');const answer=card?.querySelector('[data-answer]')?.value||'';value=JSON.stringify({id:button.dataset.value||'',answer});}vscode.postMessage({command,value});}));</script></body></html>`;
+}
+
+function renderRecommendationText(text) {
+  // Render only the explicit diff convention; all model-supplied content stays escaped.
+  const parts = String(text || '').split(/(^```diff\s*\r?\n[\s\S]*?^```\s*$)/gmu);
+  return parts.map(part => {
+    if (!part.startsWith('```diff')) return `<p class="recommendation-prose">${escapeHtml(part)}</p>`;
+    const lines = part.replace(/^```diff\s*\r?\n/u, '').replace(/\r?\n```\s*$/u, '').split(/\r?\n/u);
+    return `<div class="proposed-diff" aria-label="Proposed text changes">${lines.map(line => `<div class="diff-line ${line.startsWith('+') ? 'added' : line.startsWith('-') ? 'removed' : ''}">${escapeHtml(line)}</div>`).join('')}</div>`;
+  }).join('');
 }
 
 function renderRecommendationReviewHtml(webview, runId, status, scriptNonce) {
@@ -532,15 +582,16 @@ function renderRecommendationReviewHtml(webview, runId, status, scriptNonce) {
     const approvedRecommendation = item.approvedRecommendation || item.recommendation || 'No recommendation was supplied.';
     const controls = decision === 'pending' ? `<footer class="actions" aria-label="Decision for ${escapeHtml(item.id || 'finding')}">
         <button type="button" data-command="accept" data-value="${escapeHtml(item.id || '')}">Approve as is</button>
-        <button class="secondary" type="button" data-command="modify" data-value="${escapeHtml(item.id || '')}">Modify and approve</button></footer>` : '';
+        <button class="secondary" type="button" data-command="modify" data-value="${escapeHtml(item.id || '')}">Modify and approve</button></footer>
+        <div class="recommendation-editor" hidden><label>Exact text change to approve<textarea aria-label="Edit proposed change for ${escapeHtml(item.id || '')}" maxlength="16384" rows="14">${escapeHtml(approvedRecommendation)}</textarea></label><p>Edit the proposed wording and preserve its location and diff markers. Saving approves this exact text for the revision agent.</p><div class="actions"><button type="button" data-command="modify-text" data-value="${escapeHtml(item.id || '')}">Save and approve edited change</button><button type="button" class="secondary" data-command="cancel-edit">Cancel edit</button></div></div>` : '';
     return `<article class="finding" aria-labelledby="finding-${escapeHtml(item.id || 'unknown')}">
       <header class="finding-heading"><div><span class="eyebrow">${escapeHtml(item.category || 'Review finding')}</span><h3 id="finding-${escapeHtml(item.id || 'unknown')}">${escapeHtml(item.id || 'Recommendation')}</h3></div>
         <div class="badges"><span class="badge severity">${escapeHtml(item.severity || 'unclassified')}</span><span class="badge ${escapeHtml(decision)}">${escapeHtml(decision)}</span></div></header>
       <dl class="meta"><div><dt>Location</dt><dd>${escapeHtml(item.location || 'Whole document')}</dd></div></dl>
       <section><h4>What the reviewer found</h4><p>${escapeHtml(item.observation || 'No observation was supplied.')}</p></section>
-      <section class="recommendation"><h4>${decision === 'accepted' ? 'Approved recommendation' : 'Recommendation'}</h4><p>${escapeHtml(approvedRecommendation)}</p></section>
+      <section class="recommendation"><h4>${decision === 'accepted' ? 'Approved recommendation' : 'Recommendation'}</h4>${renderRecommendationText(approvedRecommendation)}</section>
       ${item.approvedRecommendation && item.approvedRecommendation !== item.recommendation
-        ? `<p class="source-recommendation"><strong>Reviewer originally proposed:</strong> ${escapeHtml(item.recommendation || '')}</p>` : ''}${item.rationale
+        ? `<details class="source-recommendation"><summary>Reviewer originally proposed</summary>${renderRecommendationText(item.recommendation)}</details>` : ''}${item.rationale
         ? `<p class="rationale"><strong>Legacy rejection rationale:</strong> ${escapeHtml(item.rationale)}</p>` : ''}${controls}</article>`;
   }).join('');
   const completion = approved ? `<section class="completion approved" aria-labelledby="completion-title"><span class="eyebrow">Disposition set approved</span>
@@ -548,21 +599,23 @@ function renderRecommendationReviewHtml(webview, runId, status, scriptNonce) {
         <p>${accepted.length} approved and ${rejected.length} legacy rejected. ${state === 'applied'
           ? 'The approved recommendations have been applied.' : 'Approved recommendations are ready for the revision agent.'}</p></section>`
     : pending.length === 0 ? `<section class="completion" aria-labelledby="completion-title"><span class="eyebrow">All recommendations reviewed</span>
-          <h2 id="completion-title">Preparing the BRD revision</h2>
-          <p>CIS is mechanically locking ${accepted.length} individually approved recommendation${accepted.length === 1 ? '' : 's'}${rejected.length ? ` and ${rejected.length} legacy rejected recommendation${rejected.length === 1 ? '' : 's'}` : ''}, then it will open agent selection. No additional human approval is required.</p></section>`
+          <h2 id="completion-title">Ready to apply the approved recommendations</h2>
+          <p>CIS will lock ${accepted.length} individually approved recommendation${accepted.length === 1 ? '' : 's'}${rejected.length ? ` and ${rejected.length} legacy rejected recommendation${rejected.length === 1 ? '' : 's'}` : ''}, then open agent selection. No additional human approval is required.</p></section>`
       : '';
   const batch = pending.length ? `<section class="batch-bar" aria-label="Batch decision"><div><strong>${pending.length} pending recommendation${pending.length === 1 ? '' : 's'}</strong><p>Approve every unchanged pending recommendation atomically, or edit individual items below first.</p></div>
       <button type="button" data-command="accept-all">Approve all pending as is</button></section>` : '';
-  const content = `${completion}${batch}<section class="recommendation-list" aria-labelledby="recommendations-title"><h2 id="recommendations-title">Overall recommendation list</h2><div class="finding-grid">${recommendationCards}</div></section>`;
+  const next = pending.length === 0 ? `<div class="actions"><button type="button" data-command="${state === 'applied' ? 'continue-review' : 'apply-approved'}">${state === 'applied' ? 'Continue to secondary review' : accepted.length ? 'Apply approved recommendations' : 'Continue to business readiness'}</button></div>` : '';
+  const content = `${completion}${next}${batch}<section class="recommendation-list" aria-labelledby="recommendations-title"><h2 id="recommendations-title">Overall recommendation list</h2><div class="finding-grid">${recommendationCards}</div></section>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource}; style-src 'nonce-${scriptNonce}'; script-src 'nonce-${scriptNonce}';">
   <title>${escapeHtml(`BRD review ${runId}`)}</title><style nonce="${scriptNonce}">
   :root{color-scheme:light dark}*{box-sizing:border-box}body{color:var(--vscode-foreground);background:var(--vscode-editor-background);font:var(--vscode-font-weight) var(--vscode-font-size)/1.55 var(--vscode-font-family);margin:0;padding:2rem;max-width:78rem}main{display:grid;gap:1.25rem}.page-heading,.batch-bar{display:flex;justify-content:space-between;align-items:start;gap:1rem}.page-heading{border-bottom:1px solid var(--vscode-panel-border);padding-bottom:1rem}.page-heading h1,.finding h3,.completion h2,.recommendation-list h2{margin:.15rem 0}.page-heading p,.finding p,.completion p,.batch-bar p{max-width:76ch}.batch-bar{align-items:center;border:1px solid var(--vscode-focusBorder);border-radius:.35rem;padding:1rem}.batch-bar p{margin:.2rem 0 0;color:var(--vscode-descriptionForeground)}.eyebrow,dt{display:block;color:var(--vscode-descriptionForeground);font-size:.78rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase}.progress,.badges{display:flex;gap:.45rem;flex-wrap:wrap;align-items:center}.badge{display:inline-block;border:1px solid var(--vscode-panel-border);border-radius:999px;padding:.12rem .6rem;font-size:.82rem;text-transform:capitalize}.badge.accepted,.approved{border-color:var(--vscode-testing-iconPassed);color:var(--vscode-testing-iconPassed)}.badge.rejected{border-color:var(--vscode-testing-iconFailed);color:var(--vscode-testing-iconFailed)}.badge.pending,.badge.severity{color:var(--vscode-editorWarning-foreground)}.finding,.completion{border:1px solid var(--vscode-panel-border);border-radius:.35rem;background:var(--vscode-editorWidget-background);padding:1.1rem}.finding-grid{display:grid;gap:1rem}.finding-heading{display:flex;justify-content:space-between;gap:1rem}.meta{margin:1rem 0}.meta div{border-top:1px solid var(--vscode-panel-border);padding-top:.65rem}.meta dd{margin:.2rem 0 0;overflow-wrap:anywhere}.recommendation{border-left:3px solid var(--vscode-focusBorder);background:var(--vscode-textBlockQuote-background);padding:.75rem 1rem;margin-top:1rem}.recommendation h4{margin-top:0}.actions{display:flex;flex-wrap:wrap;gap:.6rem;margin-top:1.2rem}button{color:var(--vscode-button-foreground);background:var(--vscode-button-background);border:1px solid transparent;border-radius:2px;padding:.48rem .85rem;font:inherit;cursor:pointer}button:hover{background:var(--vscode-button-hoverBackground)}button.secondary{color:var(--vscode-button-secondaryForeground);background:var(--vscode-button-secondaryBackground)}button.secondary:hover{background:var(--vscode-button-secondaryHoverBackground)}button.link{color:var(--vscode-textLink-foreground);background:transparent;padding:0}button.link:hover{color:var(--vscode-textLink-activeForeground);background:transparent;text-decoration:underline}button:focus-visible,summary:focus-visible,a:focus-visible{outline:2px solid var(--vscode-focusBorder);outline-offset:2px}.rationale,.source-recommendation{color:var(--vscode-descriptionForeground)}
+  .recommendation-prose{white-space:pre-wrap}.recommendation-editor textarea{box-sizing:border-box;display:block;width:100%;font-family:var(--vscode-editor-font-family);color:var(--vscode-input-foreground);background:var(--vscode-input-background);resize:vertical}.proposed-diff{font-family:var(--vscode-editor-font-family);border:1px solid var(--vscode-panel-border)}.diff-line{white-space:pre-wrap;overflow-wrap:anywhere;padding:0 .4rem;min-height:1.55em}.diff-line.added{background:var(--vscode-diffEditor-insertedTextBackground,#164b2944)}.diff-line.removed{background:var(--vscode-diffEditor-removedTextBackground,#6b222244)}
   @media(max-width:42rem){body{padding:1rem}.page-heading,.finding-heading{display:block}.progress{margin-top:.75rem}.meta{grid-template-columns:1fr}.actions button{width:100%}}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
   </style></head><body><main><header class="page-heading"><div><span class="eyebrow">Independent BRD review</span><h1>Review recommendations</h1>
-    <p>Review the complete consolidated list, approve unchanged recommendations individually or as one batch, and edit only the items that need different remediation text. These decisions define revision scope; they do not approve or edit the BRD itself.</p>${canonical}</div>
+    <p>Review the complete consolidated list, approve unchanged recommendations individually or as one batch, and edit only the items that need different remediation text. These decisions define revision scope; they do not approve or edit the BRD itself.</p><p>After the last decision, choose an agent to apply the approved recommendations. CIS then rebuilds the graph and starts a secondary review with a different provider.</p><div class="actions"><button class="link" type="button" data-command="open-report">Read the full review report</button>${canonical}</div></div>
     <div class="progress" aria-label="Review progress"><span class="badge pending">${escapeHtml(progress)}</span><span>${pending.length} pending</span><span>${accepted.length} accepted</span><span>${rejected.length} rejected</span></div></header>${content}</main>
-  <script nonce="${scriptNonce}">const vscode=acquireVsCodeApi();document.querySelectorAll('button[data-command]').forEach(button=>button.addEventListener('click',()=>vscode.postMessage({command:button.dataset.command,value:button.dataset.value||''})));</script></body></html>`;
+  <script nonce="${scriptNonce}">const vscode=acquireVsCodeApi();document.querySelectorAll('button[data-command]').forEach(button=>button.addEventListener('click',()=>{const command=button.dataset.command;const editor=button.closest('.finding')?.querySelector('.recommendation-editor');if(command==='modify'){editor.hidden=false;editor.querySelector('textarea').focus();return;}if(command==='cancel-edit'){editor.hidden=true;return;}const value=command==='modify-text'?JSON.stringify({id:button.dataset.value,text:editor.querySelector('textarea').value}):button.dataset.value||'';vscode.postMessage({command,value});}));</script></body></html>`;
 }
 
 function openChangeOverviewPanel(vscode, overview, onAction, onPath) {

@@ -343,7 +343,7 @@ public sealed class ContextModule : ICisModule
                     baselineTokens,
                     result.EstimatedTokens,
                     "estimated complete selected source documents versus included context-pack excerpts",
-                    "high"));
+                    "high", "context pack"));
             }
             return result.ExitCode;
         });

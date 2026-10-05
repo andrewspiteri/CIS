@@ -42,7 +42,7 @@ public sealed class FrontendContextTests
         repository.Write("web/app/page.tsx", "export default function HomePage(){ return <div>Home</div>; }");
         var service = CreateService();
         var context = new CisRepositoryContextResolver().Resolve(repository.Path).Context!;
-        Assert.Equal("frontend-context/3", service.Name);
+        Assert.Equal("frontend-context/4", service.Name);
 
         var augmentation = service.Augment(context, new Dictionary<string, string> { ["web/app/page.tsx"] = "sha256:test" });
 
@@ -91,6 +91,28 @@ public sealed class FrontendContextTests
         Assert.All(routes, item => Assert.Equal("relative-declaration", item.Properties["routeResolution"]));
         Assert.DoesNotContain(result.Observations, item => item.SourcePath.EndsWith(".spec.ts", StringComparison.Ordinal));
         Assert.DoesNotContain(result.Diagnostics, item => item.Code == "CIS-FRONTEND-ROUTE-001");
+    }
+
+    [Fact]
+    public void NextRoutes_ExcludeTestProjectFixturesAndGeneratedRuntimeSources()
+    {
+        using var repository = Fixture.Create();
+        const string page = "export default function HomePage() { return <main />; }";
+        repository.Write("web/app/page.tsx", page);
+        repository.Write("web/app/tests/page.tsx", page);
+        repository.Write("src/tools/Context.Tests/Fixtures/SampleFrontend/app/page.tsx", page);
+        repository.Write("web/__fixtures__/app/page.tsx", page);
+        repository.Write("tmp/app/page.tsx", page);
+        repository.Write(".github/copilot-runtime/frontend/app/page.tsx", page);
+
+        var result = CreateService().Discover(repository.Path);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.All(result.Observations, observation => Assert.StartsWith("web/app/", observation.SourcePath, StringComparison.Ordinal));
+        var routes = result.Observations.Where(item => item.Kind == "route").ToArray();
+        Assert.Equal(2, routes.Length);
+        Assert.Contains(routes, route => route.Route == "/");
+        Assert.Contains(routes, route => route.Route == "/tests");
     }
 
     [Fact]

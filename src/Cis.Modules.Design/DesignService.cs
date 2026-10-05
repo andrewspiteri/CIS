@@ -963,8 +963,7 @@ approval digests and current file hashes before rendering or approving this pack
 
     private static string? FindUiDirection(ChangeDossier change)
     {
-        var path = Path.Combine(change.RepositoryPath,
-            change.DocumentationRoot.Replace('/', Path.DirectorySeparatorChar), "design", "ui-direction.md");
+        var path = CisProductDocumentPaths.Resolve(Path.Combine(change.RepositoryPath, change.DocumentationRoot.Replace('/', Path.DirectorySeparatorChar)), "design", "ui-direction.md");
         return File.Exists(path) && File.ReadLines(path).Take(30)
             .Any(line => line.Trim().Equals("type: ui-direction", StringComparison.OrdinalIgnoreCase)) ? path : null;
     }

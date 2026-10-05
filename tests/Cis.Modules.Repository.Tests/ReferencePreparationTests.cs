@@ -2,6 +2,41 @@ namespace Cis.Modules.Repository.Tests;
 
 public sealed class ReferencePreparationTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Preparation_RegistersOnlyExistingOrPlannedReferences(bool existingTerms)
+    {
+        using var repository = new Fixture();
+        var initializer = new RepositoryInitializer();
+        Assert.Equal(0, initializer.Initialize(new(repository.Path, "docs/cis", false, true)).ExitCode);
+        var catalogPath = System.IO.Path.Combine(repository.Path, "docs/cis/catalog.yml");
+        var termsPath = System.IO.Path.Combine(repository.Path, "docs/cis/references/human-readable-content-terms.md");
+        var termsBefore = File.ReadAllText(termsPath);
+        if (!existingTerms) File.Delete(termsPath);
+        // Model an older initialized repository without the new terminology starter,
+        // and a missing observed reference that preparation must create and register.
+        File.Delete(System.IO.Path.Combine(repository.Path, "docs/cis/references/data-dictionary.md"));
+        var catalogBefore = System.Text.RegularExpressions.Regex.Replace(File.ReadAllText(catalogPath),
+            @"(?m)^  - id: [^\r\n]+:reference:(human-readable-content-terms|data-dictionary)\r?\n(?:    [^\r\n]*\r?\n)*", "");
+        File.WriteAllText(catalogPath, catalogBefore);
+        var preview = initializer.PrepareObservedReferences(repository.Path, apply: false);
+        Assert.Empty(preview.Errors);
+        Assert.False(preview.Applied);
+        Assert.Equal(catalogBefore, File.ReadAllText(catalogPath));
+
+        var result = initializer.PrepareObservedReferences(repository.Path);
+        Assert.Empty(result.Errors);
+        var catalogAfter = File.ReadAllText(catalogPath);
+        Assert.Equal(existingTerms, catalogAfter.Contains(":reference:human-readable-content-terms"));
+        Assert.Contains(":reference:data-dictionary", catalogAfter);
+        foreach (var line in File.ReadLines(catalogPath).Where(line => line.StartsWith("    path: ", StringComparison.Ordinal)))
+            Assert.True(File.Exists(System.IO.Path.Combine(repository.Path, line[10..].Trim())), line);
+        if (existingTerms) Assert.Equal(termsBefore, File.ReadAllText(termsPath));
+        else Assert.False(File.Exists(termsPath));
+        Assert.False(initializer.PrepareObservedReferences(repository.Path).Applied);
+    }
+
     [Fact]
     public void NestAndTypeOrm_ExtractContractsFieldsRelationshipsAndStatesWithoutRedisLookups()
     {

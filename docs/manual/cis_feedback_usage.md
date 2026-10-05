@@ -3,7 +3,7 @@ title: "cis feedback usage"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-03"
+last_reviewed: "2026-10-05"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-feedback-usage
@@ -26,3 +26,14 @@ invocation is appended only after its result is produced. Exit codes follow
 New entries use ledger schema 2 and record a sanitized outcome classification. Schema-1
 entries remain readable. Concurrent appends are serialized locally; after the ledger
 reaches 16 MiB, disposable history is bounded to 30 days and 25,000 valid entries.
+
+Schema 2 also supports optional `buildIdentity`. JSON entries expose
+`outputExpansionEstimatedTokens` as the positive difference between actual and
+baseline estimates. Older entries without build identity remain readable. Commands
+may supply an explicit bounded outcome: parser errors are invalid requests, plan
+blockers remain blocked, and execution exceptions are failures. Other commands retain
+the documented exit-code fallback.
+
+Savings candidates must identify the same command as the recorded invocation; a
+nested command estimate cannot describe an entire workspace snapshot. Estimated
+output expansion and possible savings remain estimates, not measured model usage.

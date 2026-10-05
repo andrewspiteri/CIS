@@ -13,7 +13,7 @@ function sameRepository(a, b) {
 function repositoryNodes(view, root, navigation) {
   return (navigation.workspace?.repositories || []).map(repository => {
     const features = (navigation.features || []).filter(feature => sameRepository(feature.plan.repositoryPath, repository.repositoryPath)
-      || feature.plan.integrationRepositories.includes(repository.id) || feature.repositoryWork.some(work => work.repositoryId === repository.id));
+      || feature.plan.integrationRepositories.includes(repository.id) || (feature.stories || []).some(story => story.repositoryIds.includes(repository.id)));
     return view.node(repository.id, { id: `repo:${repository.id}`, icon: 'repo',
       description: repository.role === 'authority' ? 'Product authority' : repository.participation === 'dependency' ? 'External dependency' : `${features.length} high-level features`,
       children: [view.node('Open repository folder', { command: 'cis.openRepository', arguments: [{ root, id: repository.id }], icon: 'folder-opened' }),
@@ -22,42 +22,42 @@ function repositoryNodes(view, root, navigation) {
   });
 }
 
-function featureNodes(view, root, navigation, changes = []) {
-  const repositories = navigation.workspace?.repositories || [];
-  return (navigation.features || []).map(feature => {
+function featureNodes(view, root, navigation) {
+  const saved = (navigation.features || []).map(feature => {
     const argument = featureArgument(root, feature);
-    const work = feature.repositoryWork || [];
-    const repositoryIds = [...new Set([
-      repositories.find(repository => sameRepository(repository.repositoryPath, feature.plan.repositoryPath))?.id,
-      ...feature.plan.integrationRepositories, ...work.map(item => item.repositoryId),
-    ].filter(Boolean))];
+    const stories = feature.stories || [];
     return view.node(feature.plan.title, { id: `feature:${feature.plan.slug}`, description: `${feature.status} · ${feature.reviewedPages}/${feature.totalPages} steps`,
       icon: 'lightbulb', contextValue: 'cis.feature', data: argument,
       command: 'cis.featureWizard', arguments: [argument], children: [
         view.node('Resume feature definition', { command: 'cis.featureWizard', arguments: [argument], icon: 'map' }),
-        view.node('Repository work breakdown', { description: `${work.length} proposed repository features`,
-          command: 'cis.featureWizard', arguments: [featureArgument(root, feature, 'delivery')], icon: 'list-tree' }),
-        ...feature.errors.map(error => view.node('Needs attention', { description: error, icon: 'warning' })),
-        ...repositoryIds.map(id => {
-          const items = work.filter(item => item.repositoryId === id);
-          return view.node(id, { id: `feature:${feature.plan.slug}:repo:${id}`, icon: 'repo',
-            description: items.length ? `${items.length} repository features` : 'Scope to break down',
-            children: items.length ? items.map(item => view.node(item.title, {
-              id: `feature:${feature.plan.slug}:work:${item.id}`, icon: 'symbol-event',
-              description: item.dependsOn.length ? `Depends on ${item.dependsOn.join(', ')}` : 'No declared dependencies',
-              tooltip: `${item.id} · Proposed work\n${item.scope}`,
-              command: 'cis.featureWizard', arguments: [featureArgument(root, feature, 'delivery')],
-              children: item.changeIds.map(changeId => {
-                const change = changes.find(candidate => candidate.id === changeId);
-                return view.node(change ? `${change.id}: ${change.title}` : changeId, { id: `feature:${feature.plan.slug}:work:${item.id}:change:${changeId}`,
-                  description: change?.status || 'Linked change unavailable', icon: 'git-pull-request',
-                  command: change ? 'cis.openChange' : undefined, arguments: change ? [change] : [] });
-              }),
-            })) : [view.node('Define repository work', { command: 'cis.featureWizard', arguments: [featureArgument(root, feature, 'delivery')], icon: 'edit' })] });
+        view.node('Story breakdown', { description: `${stories.length} stories`,
+          command: 'cis.featureWizard', arguments: [featureArgument(root, feature, 'delivery')], icon: 'list-tree',
+          children: stories.map(story => view.node(story.title, {
+            id: `feature:${feature.plan.slug}:story:${story.id}`, icon: 'symbol-event',
+            description: `${story.phase} · ${story.status} · ${story.repositoryIds.length} linked repositories`,
+            command: 'cis.featureStory', arguments: [{ root, slug: feature.plan.slug, storyId: story.id }],
+            children: [...(story.tasks || []).map(task => view.node(`${task.id} · ${task.title}`, {
+              id: `feature:${feature.plan.slug}:story:${story.id}:task:${task.id}`, icon: task.status === 'Complete' ? 'pass' : 'tasklist',
+              description: task.status, command: 'cis.featureStory', arguments: [{ root, slug: feature.plan.slug, storyId: story.id, taskId: task.id }],
+              children: task.repositoryIds.map(id => view.node(id, { id: `feature:${feature.plan.slug}:story:${story.id}:task:${task.id}:repo:${id}`,
+                icon: 'repo', command: 'cis.openRepository', arguments: [{ root, id }] })),
+            })), ...story.repositoryIds.map(id => view.node(id, { id: `feature:${feature.plan.slug}:story:${story.id}:repo:${id}`,
+              icon: 'repo', command: 'cis.openRepository', arguments: [{ root, id }] }))],
+          })),
         }),
+        ...feature.errors.map(error => view.node('Needs attention', { description: error, icon: 'warning' })),
         view.node('Feature request', { file: resolveWithin(root, feature.plan.requestPath), icon: 'markdown' }),
       ] });
   });
+  const linked = new Set((navigation.features || []).map(feature => feature.plan.backlogItemId).filter(Boolean));
+  const planned = (navigation.backlogFeatures || []).filter(item => !linked.has(item.id)).map(item => view.node(item.title, {
+    id: `backlog-feature:${item.id}`, contextValue: 'cis.backlogFeature', icon: 'lightbulb',
+    description: `${item.id} · ${item.status}`, command: 'cis.backlogFeature', arguments: [{ root, itemId: item.id }],
+    children: [view.node(item.canStart ? 'Start feature definition' : 'Review prerequisites', {
+      command: 'cis.backlogFeature', arguments: [{ root, itemId: item.id }], icon: item.canStart ? 'map' : 'info' }),
+      ...(item.issues || []).map(issue => view.node('Needs attention', { description: issue, icon: 'warning' }))],
+  }));
+  return [...saved, ...planned];
 }
 
 function linkedChanges(feature, changes, authorityId) {

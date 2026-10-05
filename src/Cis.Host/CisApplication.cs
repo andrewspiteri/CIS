@@ -32,6 +32,7 @@ public sealed class CisApplication : IDisposable
         lock (ConsoleSync)
         {
             savings?.Reset();
+            CisInvocationOutcome.Reset();
             var startedAt = DateTimeOffset.UtcNow;
             var stopwatch = Stopwatch.StartNew();
             var originalOut = Console.Out;
@@ -44,17 +45,26 @@ public sealed class CisApplication : IDisposable
             {
                 Console.SetOut(capturedOut);
                 Console.SetError(capturedError);
-                exitCode = _rootCommand.Parse(args).Invoke();
+                var parsed = _rootCommand.Parse(args);
+                if (parsed.Errors.Count > 0)
+                {
+                    parsed.Invoke();
+                    CisInvocationOutcome.Report("invalid-request");
+                    exitCode = 2;
+                }
+                else exitCode = parsed.Invoke();
                 return exitCode;
             }
             catch (OperationCanceledException)
             {
+                CisInvocationOutcome.Report("cancelled");
                 exitCode = 130;
                 Console.Error.WriteLine("CIS command was cancelled.");
                 return exitCode;
             }
             catch (Exception exception)
             {
+                CisInvocationOutcome.Report("failed");
                 exitCode = 1;
                 Console.Error.WriteLine($"CIS-HOST-UNHANDLED: {exception.GetType().Name}. Run `cis repo doctor` and retain the tool-usage record.");
                 return exitCode;
@@ -75,7 +85,10 @@ public sealed class CisApplication : IDisposable
                         exitCode,
                         capturedOut.CharacterCount,
                         capturedError.CharacterCount,
-                        savings?.Snapshot() ?? []));
+                        savings?.Snapshot() ?? [],
+                        CisInvocationOutcome.Current,
+                        typeof(CisApplication).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+                            .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion));
                 }
                 catch
                 {

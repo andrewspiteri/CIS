@@ -38,10 +38,10 @@ public sealed partial class AgentService
     private static BrdAuthoringResumeContext? ValidateBrdAuthoringResume(CisRepositoryContext context,
         AgentRunView view, AgentTaskEnvelope envelope, List<string> diagnostics, bool technicalIntent = false, bool solutionDesign = false)
     {
-        var target = solutionDesign ? Path.Combine(context.DocumentationPath, DesignRelative)
-            : Path.Combine(context.DocumentationPath, "specs", technicalIntent ? "technical-intent-spec.md" : "business-requirements.md");
+        var target = solutionDesign ? CisProductDocumentPaths.Resolve(context.DocumentationPath, DesignRelative)
+            : CisProductDocumentPaths.Resolve(context.DocumentationPath, "specs", technicalIntent ? "technical-intent-spec.md" : "business-requirements.md");
         var relativeTarget = Relative(context.RepositoryPath, target);
-        var architectureOriginals = solutionDesign && File.Exists(Path.Combine(context.DocumentationPath, ComponentsRelative)) && File.Exists(target)
+        var architectureOriginals = solutionDesign && File.Exists(CisProductDocumentPaths.Resolve(context.DocumentationPath, ComponentsRelative)) && File.Exists(target)
             ? SolutionDesignOriginals(context) : null;
         var allowed = architectureOriginals?.Keys.ToHashSet(StringComparer.Ordinal) ?? new HashSet<string>([relativeTarget], StringComparer.Ordinal);
         if (solutionDesign && (architectureOriginals is null || SolutionDesignContextDigest(context.RepositoryPath, envelope.ContextArtifacts, architectureOriginals) != envelope.AcceptedScopeDigest))
@@ -138,7 +138,7 @@ public sealed partial class AgentService
                 else diagnostics.AddRange(_solutionDesignDrafts.PrepareExistingDraft(repositoryPath).Errors.Select(error => "ERROR: " + error));
                 if (HasErrors(diagnostics)) return New(context, "blocked", diagnostics: diagnostics);
             }
-            var target = Relative(context.RepositoryPath, Path.Combine(context.DocumentationPath,
+            var target = Relative(context.RepositoryPath, CisProductDocumentPaths.Resolve(context.DocumentationPath,
                 solutionDesign ? DesignRelative : technicalIntent ? "specs/technical-intent-spec.md" : "specs/business-requirements.md"));
             var digest = Sha(string.Join('\n', bundles.Select(item => item.Evidence.SnapshotDigest)));
             var task = solutionDesign ? "SOLUTION-DESIGN-EVIDENCE" : technicalIntent ? "TECHNICAL-INTENT-EVIDENCE" : "BRD-EVIDENCE";

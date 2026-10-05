@@ -116,6 +116,48 @@ public sealed partial class SolutionDesignWorkflowTests
         Assert.Equal(sheet, File.ReadAllText(fixture.SheetPath));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Inference_ReopensApprovedInferredBundleWhenTechnicalDirectionChanges(bool upstreamUnderReview)
+    {
+        using var fixture = Fixture.Create();
+        fixture.Service.Initialize(fixture.Root);
+        var design = File.ReadAllText(fixture.DesignPath);
+        var sheet = File.ReadAllText(fixture.SheetPath);
+        Assert.Empty(fixture.Service.ApplyExistingDraft(fixture.Root, design, sheet,
+            design + "\nHuman architecture note.\n" + DiagramJson(), sheet + "\nHuman ownership note.\n").Errors);
+        Assert.Empty(fixture.Service.Approve(fixture.Root, "Owner", "Reviewed together").Errors);
+        var approvedDesign = File.ReadAllText(fixture.DesignPath);
+        var approvedSheet = File.ReadAllText(fixture.SheetPath);
+        Assert.NotEmpty(fixture.Service.PrepareExistingDraft(fixture.Root).Errors);
+        Assert.Equal(approvedDesign, File.ReadAllText(fixture.DesignPath));
+        Assert.Equal(approvedSheet, File.ReadAllText(fixture.SheetPath));
+
+        File.AppendAllText(fixture.TechnicalIntentPath, "\nUpdated architecture direction.\n");
+        if (upstreamUnderReview)
+            fixture.Source.Result = fixture.Source.Result with { Validation = new TechnicalIntentValidation(true, false, "Review Required", "Draft", [], []) };
+        var technical = File.ReadAllText(fixture.TechnicalIntentPath);
+        var prepared = fixture.Service.PrepareExistingDraft(fixture.Root);
+        Assert.Empty(prepared.Errors);
+        Assert.True(prepared.Applied);
+        foreach (var pair in new[] { (fixture.DesignPath, approvedDesign), (fixture.SheetPath, approvedSheet) })
+        {
+            var next = File.ReadAllText(pair.Item1);
+            Assert.Contains("status: Review Required", next);
+            Assert.Contains("approved_by: null", next);
+            Assert.Contains("approved_bundle_hash: null", next);
+            // The existing architecture and human notes survive the lifecycle transition.
+            var body = pair.Item2[(pair.Item2.IndexOf("\n---", StringComparison.Ordinal) + 4)..].Trim();
+            Assert.Contains(body, next);
+        }
+        Assert.Equal(technical, File.ReadAllText(fixture.TechnicalIntentPath));
+        Assert.True(fixture.Service.Status(fixture.Root).Validation!.InferenceReconciliationRequired);
+        Assert.False(fixture.Service.Evaluate(fixture.Root).Ready);
+        Assert.Equal("blocked", fixture.Service.Approve(fixture.Root, "Owner", "Cannot approve pending reconciliation").Status);
+        Assert.False(fixture.Service.PrepareExistingDraft(fixture.Root).Applied);
+    }
+
     [Fact]
     public void DiagramModel_RendersPassiveDeterministicImagesAndRejectsBrokenRelationships()
     {

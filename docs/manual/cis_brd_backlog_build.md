@@ -3,7 +3,7 @@ title: "cis brd backlog build"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-15"
+last_reviewed: "2026-10-05"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-brd-backlog-build
@@ -12,7 +12,7 @@ cis:
 # `cis brd backlog build`
 
 ```text
-cis brd backlog build [--mode <requirements|no-planned-work>] [--actor <human>] [--workspace <path>] [--format <human|json|agent>]
+cis brd backlog build [--mode <requirements|no-planned-work>] [--actor <human>] [--apply-reviewed-changes] [--workspace <path>] [--format <human|json|agent>]
 ```
 
 Requires Active/current BRD, technical intent, overall solution design, component sheet and UI direction.
@@ -53,5 +53,23 @@ CIS does not require a BRD rewrite or renewed BRD approval solely to change pres
 In a multi-repository workspace, implementation routing targets registered participant
 repositories. When a greenfield workspace contains only its authority repository, CIS treats
 that repository as the implementation target so generated items never have an empty repository
-scope. Adding participant repositories later returns routing to the multi-repository rule on the
-next idempotent build.
+scope. Newly generated items use the current participant routing. Existing items keep their
+reviewed repository assignments; adding participants does not silently reroute them.
+
+## Preserving reviewed work
+
+Narrative BRD requirements without an explicit priority preserve an existing backlog
+priority. Existing repository routing, frontend classification, dependencies, feature
+links and notes are retained. An explicit no-visual-UI baseline clears frontend types.
+A new requirement uses the existing default priority.
+Explicit source priorities still participate in the candidate comparison.
+
+For a requirements-mode backlog, if regeneration would change an Active backlog's
+semantic content, the command returns
+a blocked result with candidate `items` and leaves the backlog and catalog untouched.
+Compare the candidate with the saved backlog, then use `--apply-reviewed-changes` to
+save it for renewed approval. This option does not approve the backlog. A no-change
+refresh remains idempotent.
+
+The existing explicit renewal of a `no-planned-work` decision remains governed by
+`--mode no-planned-work --actor`; it does not require `--apply-reviewed-changes`.

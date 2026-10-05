@@ -143,6 +143,16 @@ public sealed partial class FeatureIntakeTests
         Assert.Equal(0, application.Invoke(["brd", "feature", "wizard", "screens", "prepare", "--help"]));
         Assert.Equal(0, application.Invoke(["brd", "feature", "wizard", "architecture", "prepare", "--help"]));
         Assert.Equal(0, application.Invoke(["brd", "feature", "wizard", "delivery", "prepare", "--help"]));
+        Assert.Equal(0, application.Invoke(["brd", "feature", "wizard", "story", "prepare", "--help"]));
+        foreach (var operation in new[] { "approve", "start", "complete", "execution-plan", "execute", "feedback-save", "feedback-suggest" })
+            Assert.Equal(0, application.Invoke(["brd", "feature", "wizard", "story", operation, "--help"]));
+        Assert.Equal(5, application.Invoke(["brd", "feature", "wizard", "story", "feedback-suggest", "--workspace", f.Authority,
+            "--slug", "missing", "--story", "missing", "--task", "T1", "--expected-revision", "none", "--format", "json"]));
+        Assert.Equal(5, application.Invoke(["brd", "feature", "wizard", "story", "feedback-save", "--workspace", f.Authority,
+            "--input", Path.Combine(f.Root, "missing-feedback.json"), "--format", "json"]));
+        Assert.Equal(5, application.Invoke(["brd", "feature", "wizard", "story", "approve", "--slug", "missing", "--story", "missing", "--workspace", f.Authority,
+            "--expected-plan-hash", "old", "--expected-revision", "none", "--actor", "Reviewer", "--reason", "Reviewed", "--format", "json"]));
+        Assert.Equal(5, application.Invoke(["brd", "feature", "wizard", "story", "status", "--slug", "missing", "--story", "missing", "--workspace", f.Authority, "--format", "json"]));
         Assert.Equal(5, application.Invoke(["brd", "feature", "wizard", "delivery", "status", "--slug", "missing", "--workspace", f.Authority, "--format", "json"]));
         Assert.Equal(5, application.Invoke(["brd", "feature", "wizard", "architecture", "status", "--slug", "missing", "--workspace", f.Authority, "--format", "json"]));
         Assert.Equal(5, application.Invoke(["brd", "feature", "wizard", "screens", "status", "--slug", "missing", "--workspace", f.Authority, "--format", "json"]));
@@ -158,7 +168,8 @@ public sealed partial class FeatureIntakeTests
     private sealed class Baseline : ICisProductDefinitionAuthority
     {
         public int Calls { get; private set; }
-        public CisProductDefinitionAuthority Evaluate(string repositoryPath) { Calls++; return new(true, true, "session", "2026-09-15", "sha256:baseline", []); }
+        public bool Active { get; set; } = true;
+        public CisProductDefinitionAuthority Evaluate(string repositoryPath) { Calls++; return new(true, Active, "session", "2026-09-15", "sha256:baseline", []); }
     }
 
     private sealed class Fixture : IDisposable

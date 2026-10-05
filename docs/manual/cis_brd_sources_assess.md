@@ -51,7 +51,10 @@ before retrying. No automatic source assessment is performed.
 
 In VS Code, unfinished edits survive page navigation and refresh. Changed source versions
 require an explicit confirmation against the current source before retained edits can be
-saved. The wizard saves edited entries together and refreshes readiness once per batch.
+saved. The wizard saves edited entries together, reloads readiness once per batch, and
+refreshes the workspace. Its controls unlock without waiting for the success notification
+to be dismissed. If saving succeeds but readiness cannot reload, the error confirms that
+the decisions were saved and directs the user to Refresh.
 
 ## Related commands
 

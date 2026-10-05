@@ -36,7 +36,8 @@ test('delivery shows three story lists in the save form and keeps planning quest
   assert.match(html, /1 review questions/u);
   assert.match(html, /Question 1 of 1/u);
   assert.doesNotMatch(html, /Question 2 of/u);
-  assert.ok(html.indexOf('Required user stories') < html.indexOf('Repository feature breakdown'));
+  assert.ok(html.indexOf('Story breakdown') < html.indexOf('Required user stories'));
+  assert.doesNotMatch(html, /Repository feature breakdown/u);
   fields[1].answer = '### My reviewed story\n\nSaved direction.';
   assert.match(renderReviewPage(model), /<summary>My reviewed story<\/summary>/u);
   model.pageDrafts.delivery = { 'delivery-stories-mvp': '### My edit\n\nUnsaved direction.' };

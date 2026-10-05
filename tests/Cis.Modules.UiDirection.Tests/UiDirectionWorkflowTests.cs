@@ -12,7 +12,7 @@ namespace Cis.Modules.UiDirection.Tests;
 public sealed class UiDirectionConsoleCollection;
 
 [Collection("UiDirectionConsole")]
-public sealed class UiDirectionWorkflowTests
+public sealed partial class UiDirectionWorkflowTests
 {
     [Fact]
     public void Commands_AreRegistered()

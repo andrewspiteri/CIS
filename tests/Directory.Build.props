@@ -1,5 +1,7 @@
 <Project>
   <Import Project="..\Directory.Build.props" />
+  <!-- Module-only fixtures also exercise initialization and need the shipped reference bundle. -->
+  <Import Project="..\src\Cis.Host\ExampleRecipe.props" />
   <ItemGroup>
     <PackageReference Include="coverlet.collector" PrivateAssets="all" />
   </ItemGroup>

@@ -3,7 +3,7 @@ title: "cis verify finalize"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-23"
+last_reviewed: "2026-10-09"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-verify-finalize
@@ -22,7 +22,8 @@ The command first validates the current non-empty workspace-aware snapshot, dete
 1. completes the final delivery sweep;
 2. completes the coordination scope guard;
 3. closes the change dossier;
-4. recaptures changed tracked and untracked files across every registered workspace repository; and
-5. records reviewer, rationale, timestamp, and snapshot digest in `verification.md`.
+4. recaptures changed tracked and untracked files across every registered workspace repository;
+5. records reviewer, rationale, timestamp, and snapshot digest in `verification.md`; and
+6. captures the resulting acceptance bookkeeping and validates that final snapshot again.
 
-Failure before the lifecycle mutations leaves the dossier unchanged. Human identity and rationale remain mandatory; the command does not infer approval from test results.
+Validation failure before mutation leaves the dossier unchanged. A reported failure during finalization restores the protected lifecycle files and snapshot from their saved originals; this is not a guarantee against arbitrary process or filesystem failure. Human identity and rationale remain mandatory; the command does not infer approval from test results.

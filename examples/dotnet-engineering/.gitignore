@@ -1,0 +1,9 @@
+**/bin/
+**/obj/
+.cis/local/
+StrykerOutput/
+**/.stryker-tmp/
+**/TestResults/
+**/BenchmarkDotNet.Artifacts/
+**/.vs/
+**/*.user

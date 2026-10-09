@@ -104,27 +104,35 @@ public sealed class CodexAgentProvider : ICisAgentProvider, ICisAgentProviderAut
         var start = StartInfo(request.WorkingDirectory);
         ConfigureExecArguments(start, request);
         ApplyEnvironment(start, request.Environment);
+        return ExecuteJson(request, onEvent, cancellationToken, start);
+    }
 
+    internal static CisAgentProviderExecutionResult ExecuteJson(CisAgentExecutionRequest request,
+        Action<CisAgentProviderEvent> onEvent, CancellationToken cancellationToken, ProcessStartInfo start)
+    {
         string? session = null;
         string summary = string.Empty;
         long? input = null, output = null;
         var diagnostics = new List<string>();
+        var invalidEvent = false;
         var process = CisAgentProcessRunner.RunLines(start, request.Prompt, request.Timeout, line =>
         {
             var normalized = ParseJsonEvent(line, ref session, ref summary, ref input, ref output);
+            invalidEvent |= normalized.Kind == "invalid-provider-event";
             onEvent(normalized);
         }, line => onEvent(new("provider-stderr", Redact(line))), cancellationToken,
             onStarted: (id, started) => onEvent(new("process-started", $"Codex process {id} started.", ProcessId: id, ProcessStartedAtUtc: started.ToString("O"))),
             startupTimeout: request.StartupTimeout, idleTimeout: request.IdleTimeout);
 
+        if (invalidEvent) diagnostics.Add("Provider stream contained an invalid JSONL event.");
         if (process.OutputTruncated) diagnostics.Add("Provider output exceeded the configured bound.");
         if (!string.IsNullOrWhiteSpace(process.StandardError)) diagnostics.Add(Redact(process.StandardError));
         var state = process.Cancelled ? CisAgentRunStates.Cancelled
             : process.TimedOut ? CisAgentRunStates.TimedOut
-            : process.OutputTruncated ? CisAgentRunStates.InvalidEvidence
+            : process.OutputTruncated || invalidEvent ? CisAgentRunStates.InvalidEvidence
             : process.ExitCode == 0 ? CisAgentRunStates.Succeeded : CisAgentRunStates.Failed;
         return new(state, process.ExitCode, session, summary, [], [], [], input, output, null,
-            FailureKind(process, process.StandardError), diagnostics);
+            state == CisAgentRunStates.InvalidEvidence && invalidEvent ? "invalid-provider-event" : FailureKind(process, process.StandardError), diagnostics);
     }
 
     internal static void ConfigureExecArguments(ProcessStartInfo start, CisAgentExecutionRequest request)
@@ -153,6 +161,12 @@ public sealed class CodexAgentProvider : ICisAgentProvider, ICisAgentProviderAut
     {
         var start = StartInfo(request.WorkingDirectory);
         start.ArgumentList.Add("app-server");
+        return ExecuteAppServer(request, onEvent, cancellationToken, start);
+    }
+
+    internal static CisAgentProviderExecutionResult ExecuteAppServer(CisAgentExecutionRequest request, Action<CisAgentProviderEvent> onEvent,
+        CancellationToken cancellationToken, ProcessStartInfo start)
+    {
         ApplyEnvironment(start, request.Environment);
         start.RedirectStandardInput = true;
         start.RedirectStandardOutput = true;
@@ -173,27 +187,50 @@ public sealed class CodexAgentProvider : ICisAgentProvider, ICisAgentProviderAut
             cancellationToken, totalSource.Token, startupSource.Token, idleSource.Token);
         var firstActivity = 0;
         var compacting = 0;
+        var activityGate = new object();
 
         void RecordActivity()
         {
-            if (Interlocked.Exchange(ref firstActivity, 1) == 0)
-                startupSource.CancelAfter(Timeout.InfiniteTimeSpan);
-            idleSource.CancelAfter(Volatile.Read(ref compacting) == 1
-                ? Timeout.InfiniteTimeSpan : request.IdleTimeout ?? TimeSpan.FromMinutes(5));
+            lock (activityGate)
+            {
+                if (Interlocked.Exchange(ref firstActivity, 1) == 0)
+                    startupSource.CancelAfter(Timeout.InfiniteTimeSpan);
+                idleSource.CancelAfter(Volatile.Read(ref compacting) == 1
+                    ? Timeout.InfiniteTimeSpan : request.IdleTimeout ?? TimeSpan.FromMinutes(5));
+            }
         }
 
         var session = request.ResumeSessionId;
+        string? turnId = null;
+        var pendingEvents = new List<(JsonElement Root, string Line)>();
+        var pendingCharacters = 0;
+        var turnResponded = false;
+        var bufferExceeded = false;
         var summary = string.Empty;
         long? input = null, output = null;
         var terminal = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         var initialized = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var threadReady = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var writeLock = new object();
+        var writeLock = new SemaphoreSlim(1, 1);
 
         void Send(object message)
         {
-            var line = JsonSerializer.Serialize(message, JsonOptions);
-            lock (writeLock) { process.StandardInput.WriteLine(line); process.StandardInput.Flush(); }
+            SendProtocolMessage(process, message, writeLock, linkedSource.Token);
+        }
+
+        void HandleNotification(JsonElement root, string line, bool journal = true)
+        {
+            if (ContextCompactionActivity(root, session, turnId) is { } consolidating)
+            {
+                lock (activityGate)
+                {
+                    Interlocked.Exchange(ref compacting, consolidating ? 1 : 0);
+                    RecordActivity();
+                }
+            }
+            var normalized = ParseAppServerEvent(root, line, session, turnId, ref summary, ref input, ref output);
+            if (journal) onEvent(normalized);
+            if (AppServerTerminalState(root, session, turnId) is { } state) terminal.TrySetResult(state);
         }
 
         var stderr = Task.Run(async () =>
@@ -206,72 +243,109 @@ public sealed class CodexAgentProvider : ICisAgentProvider, ICisAgentProviderAut
         }, CancellationToken.None);
         var reader = Task.Run(async () =>
         {
-            while (await process.StandardOutput.ReadLineAsync().ConfigureAwait(false) is { } line)
+            try
             {
-                RecordActivity();
-                if (line.Length > MaximumProtocolLineCharacters)
+                while (await process.StandardOutput.ReadLineAsync().ConfigureAwait(false) is { } line)
                 {
-                    onEvent(new("invalid-provider-event", "Codex App Server emitted a protocol line above the safe parse limit."));
-                    terminal.TrySetResult(CisAgentRunStates.InvalidEvidence);
-                    continue;
-                }
-                var rawEventTruncated = line.Length > MaximumRawJsonCharacters;
-                JsonDocument document;
-                try { document = JsonDocument.Parse(line); }
-                catch (JsonException)
-                {
-                    onEvent(new("invalid-provider-event", "Codex App Server emitted malformed JSON."));
-                    terminal.TrySetResult(CisAgentRunStates.InvalidEvidence);
-                    continue;
-                }
-                using (document)
-                {
-                    if (rawEventTruncated)
-                        onEvent(new("provider-output-truncated", "Codex App Server event was parsed but its retained raw payload was truncated."));
-                    var root = document.RootElement;
-                    if (ContextCompactionActivity(root) is { } consolidating)
+                    RecordActivity();
+                    if (line.Length > MaximumProtocolLineCharacters)
                     {
-                        Interlocked.Exchange(ref compacting, consolidating ? 1 : 0);
-                        RecordActivity();
+                        onEvent(new("invalid-provider-event", "Codex App Server emitted a protocol line above the safe parse limit."));
+                        terminal.TrySetResult(CisAgentRunStates.InvalidEvidence);
+                        continue;
                     }
-                    if (root.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.Number)
+                    var rawEventTruncated = line.Length > MaximumRawJsonCharacters;
+                    JsonDocument document;
+                    try { document = JsonDocument.Parse(line); }
+                    catch (JsonException)
                     {
-                        if (root.TryGetProperty("method", out var requestMethod))
+                        onEvent(new("invalid-provider-event", "Codex App Server emitted malformed JSON."));
+                        terminal.TrySetResult(CisAgentRunStates.InvalidEvidence);
+                        continue;
+                    }
+                    using (document)
+                    {
+                        if (rawEventTruncated)
+                            onEvent(new("provider-output-truncated", "Codex App Server event was parsed but its retained raw payload was truncated."));
+                        var root = document.RootElement;
+                        if (root.TryGetProperty("id", out var id))
                         {
-                            var method = requestMethod.GetString() ?? string.Empty;
-                            var parameters = root.TryGetProperty("params", out var requestParameters) ? requestParameters : default;
-                            var approval = EvaluateApproval(method, parameters, request);
-                            onEvent(new(CisAgentRunStates.AwaitingPermission,
-                                approval.Approved ? "Permission accepted within the declared ceiling." : "Permission denied by the declared run policy.",
-                                method, session, Limit(line), approval.Capability, approval.Target, RequestApproved: approval.Approved));
-                            if (method == "item/permissions/requestApproval")
-                                Send(new { id = id.GetInt32(), result = new { permissions = Array.Empty<object>(), scope = "turn" } });
-                            else if (method is "item/commandExecution/requestApproval" or "item/fileChange/requestApproval")
-                                Send(new { id = id.GetInt32(), result = new { decision = approval.Approved ? "accept" : "decline" } });
+                            if (id.ValueKind != JsonValueKind.Number || !id.TryGetInt32(out var responseId))
+                                throw new InvalidOperationException("Codex App Server returned an unsupported protocol request or response identity.");
+                            if (root.TryGetProperty("method", out var requestMethod))
+                            {
+                                var method = requestMethod.GetString() ?? string.Empty;
+                                var parameters = root.TryGetProperty("params", out var requestParameters) ? requestParameters : default;
+                                var approval = EvaluateApproval(method, parameters, request);
+                                onEvent(new(CisAgentRunStates.AwaitingPermission,
+                                    approval.Approved ? "Permission accepted within the declared ceiling." : "Permission denied by the declared run policy.",
+                                    method, session, Limit(line), approval.Capability, approval.Target, RequestApproved: approval.Approved));
+                                if (method == "item/permissions/requestApproval")
+                                    Send(new { id = responseId, result = new { permissions = Array.Empty<object>(), scope = "turn" } });
+                                else if (method is "item/commandExecution/requestApproval" or "item/fileChange/requestApproval")
+                                    Send(new { id = responseId, result = new { decision = approval.Approved ? "accept" : "decline" } });
+                                else
+                                    Send(new { id = responseId, error = new { code = -32601, message = "CIS does not support this provider interaction." } });
+                                continue;
+                            }
+                            if (responseId == 0)
+                            {
+                                if (initialized.Task.IsCompleted) throw new InvalidOperationException("Duplicate Codex initialize response.");
+                                if (root.TryGetProperty("error", out var error)) throw new InvalidOperationException(ErrorMessage(error));
+                                else initialized.TrySetResult(true);
+                                continue;
+                            }
+                            if (responseId == 1)
+                            {
+                                if (threadReady.Task.IsCompleted) throw new InvalidOperationException("Duplicate Codex thread response.");
+                                if (root.TryGetProperty("error", out var error)) threadReady.TrySetException(new InvalidOperationException(ErrorMessage(error)));
+                                else if (TryThreadId(root, out var thread)) { session = thread; threadReady.TrySetResult(thread!); }
+                                else threadReady.TrySetException(new InvalidOperationException("Codex thread response did not contain a thread identity."));
+                                continue;
+                            }
+                            if (responseId == 2)
+                            {
+                                if (turnResponded) throw new InvalidOperationException("Duplicate Codex turn/start response.");
+                                turnResponded = true;
+                                if (TurnResponseError(root, out turnId) is { } error)
+                                    terminal.TrySetException(new InvalidOperationException(error));
+                                else
+                                    foreach (var pending in pendingEvents) HandleNotification(pending.Root, pending.Line, journal: false);
+                                pendingEvents.Clear();
+                                pendingCharacters = 0;
+                                continue;
+                            }
+                            throw new InvalidOperationException("Unexpected Codex App Server response identity.");
+                        }
+                        // Notifications can precede the turn/start response. Retain a bounded
+                        // batch until the response identifies which turn this invocation owns.
+                        if (turnId is null && IsCurrentThreadEvent(root, session))
+                        {
+                            onEvent(ParseAppServerEvent(root, line, session, null, ref summary, ref input, ref output));
+                            if (bufferExceeded) continue;
+                            if (pendingEvents.Count >= 128 || pendingCharacters + line.Length > MaximumProtocolLineCharacters)
+                            {
+                                bufferExceeded = true;
+                                onEvent(new("invalid-provider-event", "Codex turn/start did not establish an identity within the event buffer limit."));
+                                terminal.TrySetResult(CisAgentRunStates.InvalidEvidence);
+                            }
                             else
-                                Send(new { id = id.GetInt32(), error = new { code = -32601, message = "CIS does not support this provider interaction." } });
-                            continue;
+                            {
+                                pendingEvents.Add((root.Clone(), line));
+                                pendingCharacters += line.Length;
+                            }
                         }
-                        if (id.GetInt32() == 0)
-                        {
-                            if (root.TryGetProperty("error", out var error)) terminal.TrySetException(new InvalidOperationException(ErrorMessage(error)));
-                            else initialized.TrySetResult(true);
-                            continue;
-                        }
-                        if (id.GetInt32() == 1)
-                        {
-                            if (root.TryGetProperty("error", out var error)) threadReady.TrySetException(new InvalidOperationException(ErrorMessage(error)));
-                            else if (TryThreadId(root, out var thread)) { session = thread; threadReady.TrySetResult(thread!); }
-                            else threadReady.TrySetException(new InvalidOperationException("Codex thread response did not contain a thread identity."));
-                            continue;
-                        }
+                        else HandleNotification(root, line);
                     }
-                    var normalized = ParseAppServerEvent(root, line, session, ref summary, ref input, ref output);
-                    onEvent(normalized);
-                    if (AppServerTerminalState(root) is { } terminalState) terminal.TrySetResult(terminalState);
                 }
+                if (!terminal.Task.IsCompleted) terminal.TrySetResult(CisAgentRunStates.Interrupted);
             }
-            if (!terminal.Task.IsCompleted) terminal.TrySetResult(CisAgentRunStates.Interrupted);
+            catch (Exception error) when (error is not OutOfMemoryException and not StackOverflowException)
+            {
+                initialized.TrySetException(error);
+                threadReady.TrySetException(error);
+                terminal.TrySetException(error);
+            }
         }, CancellationToken.None);
 
         try
@@ -303,11 +377,30 @@ public sealed class CodexAgentProvider : ICisAgentProvider, ICisAgentProviderAut
                 process.HasExited ? process.ExitCode : null, session, summary, [], [], [], input, output, null,
                 cancelled ? "cancellation" : timeoutKind, []);
         }
-        catch (Exception exception) when (exception is InvalidOperationException or AggregateException)
+        catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
         {
             TryKill(process);
             return Failure("provider-protocol", Redact(exception.GetBaseException().Message), session);
         }
+        finally
+        {
+            TryKill(process);
+            // Cancellation can also interrupt an approval response on the reader task.
+            // Observe its failure and release the gate only after both readers have finished.
+            var readers = Task.WhenAll(reader, stderr);
+            _ = readers.ContinueWith(task => { _ = task.Exception; writeLock.Dispose(); }, CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            try { readers.Wait(TimeSpan.FromSeconds(5)); }
+            catch (AggregateException) { /* The run result above retains the protocol/cancellation outcome. */ }
+        }
+    }
+
+    internal static void SendProtocolMessage(Process process, object message, SemaphoreSlim writeLock, CancellationToken cancellationToken)
+    {
+        var line = JsonSerializer.Serialize(message, JsonOptions) + Environment.NewLine;
+        writeLock.Wait(cancellationToken);
+        try { CisAgentInputDelivery.Write(process, line, cancellationToken); }
+        finally { writeLock.Release(); }
     }
 
     internal static object BuildThreadParameters(CisAgentExecutionRequest request, string sandbox)
@@ -347,10 +440,11 @@ public sealed class CodexAgentProvider : ICisAgentProvider, ICisAgentProviderAut
         catch (JsonException) { return new("invalid-provider-event", "Codex emitted malformed JSONL."); }
     }
 
-    private static CisAgentProviderEvent ParseAppServerEvent(JsonElement root, string line, string? session, ref string summary, ref long? input, ref long? output)
+    internal static CisAgentProviderEvent ParseAppServerEvent(JsonElement root, string line, string? session, string? turnId, ref string summary, ref long? input, ref long? output)
     {
         var method = Text(root, "method") ?? "response";
-        if (method == "item/completed" && root.TryGetProperty("params", out var parameters) && parameters.TryGetProperty("item", out var item) && Text(item, "type") == "agentMessage")
+        if (method == "item/completed" && IsCurrentTurnEvent(root, session, turnId)
+            && root.TryGetProperty("params", out var parameters) && parameters.TryGetProperty("item", out var item) && Text(item, "type") == "agentMessage")
             summary = Text(item, "text") ?? summary;
         if (method == "turn/completed" && root.TryGetProperty("params", out var completed) && completed.TryGetProperty("turn", out var turn) && Text(turn, "status") is { } status)
             return new("provider-event", $"Codex turn completed with status {status}.", method, session, Limit(line), InputTokens: input, OutputTokens: output);
@@ -388,8 +482,38 @@ public sealed class CodexAgentProvider : ICisAgentProvider, ICisAgentProviderAut
         return new(approved, method == "item/fileChange/requestApproval" ? "filesystem-write" : "command-execution", target);
     }
 
-    internal static bool? ContextCompactionActivity(JsonElement root)
+    private static string? EventThreadId(JsonElement root)
+        => root.TryGetProperty("params", out var parameters) && parameters.ValueKind == JsonValueKind.Object
+            ? Text(parameters, "threadId") : null;
+
+    private static bool IsCurrentThreadEvent(JsonElement root, string? session)
+        => !string.IsNullOrWhiteSpace(session) && string.Equals(EventThreadId(root), session, StringComparison.Ordinal);
+
+    private static string? EventTurnId(JsonElement root)
     {
+        if (!root.TryGetProperty("params", out var parameters) || parameters.ValueKind != JsonValueKind.Object) return null;
+        return Text(parameters, "turnId") ?? (parameters.TryGetProperty("turn", out var turn) && turn.ValueKind == JsonValueKind.Object
+            ? Text(turn, "id") : null);
+    }
+
+    private static bool IsCurrentTurnEvent(JsonElement root, string? session, string? turnId)
+        => IsCurrentThreadEvent(root, session) && !string.IsNullOrWhiteSpace(turnId)
+            && string.Equals(EventTurnId(root), turnId, StringComparison.Ordinal);
+
+    internal static string? TurnResponseError(JsonElement root, out string? turnId)
+    {
+        turnId = null;
+        if (root.TryGetProperty("error", out var error))
+            return error.ValueKind == JsonValueKind.Object ? ErrorMessage(error) : "Codex turn/start returned an invalid error.";
+        if (root.TryGetProperty("result", out var result) && result.ValueKind == JsonValueKind.Object
+            && result.TryGetProperty("turn", out var turn) && turn.ValueKind == JsonValueKind.Object)
+            turnId = Text(turn, "id");
+        return string.IsNullOrWhiteSpace(turnId) ? "Codex turn/start response did not contain a turn identity." : null;
+    }
+
+    internal static bool? ContextCompactionActivity(JsonElement root, string? session, string? turnId)
+    {
+        if (!IsCurrentTurnEvent(root, session, turnId)) return null;
         var method = Text(root, "method");
         if (method is not ("item/started" or "item/completed")) return null;
         if (!root.TryGetProperty("params", out var parameters) || parameters.ValueKind != JsonValueKind.Object
@@ -400,11 +524,15 @@ public sealed class CodexAgentProvider : ICisAgentProvider, ICisAgentProviderAut
         return method == "item/started";
     }
 
-    internal static string? AppServerTerminalState(JsonElement root)
+    internal static string? AppServerTerminalState(JsonElement root, string? session, string? turnId)
     {
         var method = Text(root, "method");
-        if (method == "turn/completed") return TerminalState(root);
+        // App Server also streams delegated threads. Only the selected thread can
+        // supply this run's result; child completion must not terminate its parent.
+        if (method == "turn/completed") return IsCurrentTurnEvent(root, session, turnId) ? TerminalState(root) : null;
         if (method != "error") return null;
+        if (EventThreadId(root) is not null && !IsCurrentThreadEvent(root, session)) return null;
+        if (EventTurnId(root) is not null && !IsCurrentTurnEvent(root, session, turnId)) return null;
         // Reconnection notices are streamed as errors while the provider is still
         // recovering. Keep journaling them and let its terminal event or our timeout decide.
         return root.TryGetProperty("params", out var parameters)

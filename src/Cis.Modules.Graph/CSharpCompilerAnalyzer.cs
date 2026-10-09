@@ -265,7 +265,15 @@ internal static class CSharpCompilerAnalyzer
             return false;
         }
 
-        var localId = string.Join('/', Encode(input.ComponentId), "csharp", Encode(kind), Encode(qualifiedName));
+        var sourcePaths = symbol.Locations.Where(location => location.IsInSource && location.SourceTree is not null)
+            .Select(location => location.SourceTree!.FilePath.Replace('\\', '/'))
+            .Where(inputs.ContainsKey).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.Ordinal).ToArray();
+        var mixedOwnership = sourcePaths.Select(sourcePath => SourceIdentityScope(inputs[sourcePath]))
+            .Distinct(StringComparer.Ordinal).Skip(1).Any();
+        // Roslyn can merge partial or duplicate types across ownership boundaries.
+        // Such a type must not acquire an owner from whichever path sorts first.
+        var identityScope = mixedOwnership ? "ambiguous/source/ownership" : SourceIdentityScope(input);
+        var localId = string.Join('/', identityScope, "csharp", Encode(kind), Encode(qualifiedName));
         var attributes = EffectiveAttributes(definition)
             .Select(attribute => attribute.AttributeClass?.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat))
             .Where(value => !string.IsNullOrWhiteSpace(value))
@@ -292,9 +300,17 @@ internal static class CSharpCompilerAnalyzer
             attributes,
             interfaces,
             facets,
-            generatedReasons);
+            generatedReasons)
+        {
+            OwnershipConflictPaths = mixedOwnership ? sourcePaths : [],
+        };
         return true;
     }
+
+    // Separate path segments cannot collide with an encoded, single-segment
+    // component ID. Repository fallback is a key namespace, not ownership.
+    private static string SourceIdentityScope(CSharpCompilerInput input)
+        => input.HasConfirmedComponent ? Encode(input.ComponentId) : "unowned/" + Encode(input.ComponentId);
 
     private static CSharpCompilerReferencedSymbol CreateReferencedSymbol(
         ISymbol symbol,
@@ -594,7 +610,8 @@ internal static class CSharpCompilerAnalyzer
 internal sealed record CSharpCompilerInput(
     string Path,
     string Content,
-    string ComponentId);
+    string ComponentId,
+    bool HasConfirmedComponent = true);
 
 internal sealed record CSharpCompilerSymbol(
     string LocalId,
@@ -608,7 +625,10 @@ internal sealed record CSharpCompilerSymbol(
     IReadOnlyList<string> Attributes,
     IReadOnlyList<string> Interfaces,
     IReadOnlyList<string> Facets,
-    IReadOnlyList<string> GeneratedReasons);
+    IReadOnlyList<string> GeneratedReasons)
+{
+    public IReadOnlyList<string> OwnershipConflictPaths { get; init; } = [];
+}
 
 internal sealed record CSharpCompilerReferencedSymbol(
     string LocalId,

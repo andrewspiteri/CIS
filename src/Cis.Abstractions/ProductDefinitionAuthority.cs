@@ -16,4 +16,7 @@ public sealed record CisProductDefinitionAuthority(
 public interface ICisProductDefinitionAuthority
 {
     CisProductDefinitionAuthority Evaluate(string repositoryPath);
+
+    /// <summary>Returns authority-relative source paths that must be compared before feature reconciliation.</summary>
+    IReadOnlyList<string> EvidencePaths(string repositoryPath) => [];
 }

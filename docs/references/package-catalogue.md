@@ -10,7 +10,7 @@ cis:
 
 # Package Catalogue
 
-Governed by `change-impact-studio:spec:package-catalogue`. CIS seeded 48 row(s) from deterministic repository evidence. Review them before changing this document to Active.
+Governed by `change-impact-studio:spec:package-catalogue`. CIS seeded rows from deterministic repository evidence, including the native example harness dependencies. Review them before changing this document to Active. Additions on 9 October 2026 retain Draft status: discovered project/package identities do not approve ownership boundaries or dependency policy.
 
 | Package | Component | Purpose | Version policy | Dependency class | Status | Evidence |
 |---|---|---|---|---|---|---|
@@ -128,3 +128,45 @@ Governed by `change-impact-studio:spec:package-catalogue`. CIS seeded 48 row(s) 
 | xunit.runner.visualstudio | cis-modules-agent-tests | Declared package dependency | centrally managed | package-reference | Active | tests/Cis.Modules.Agent.Tests/Cis.Modules.Agent.Tests.csproj:12 |
 | xunit.v3 | cis-abstractions-tests | Declared package dependency | centrally managed | package-reference | Active | tests/Cis.Abstractions.Tests/Cis.Abstractions.Tests.csproj:12 |
 | xunit.v3 | cis-modules-agent-tests | Declared package dependency | centrally managed | package-reference | Active | tests/Cis.Modules.Agent.Tests/Cis.Modules.Agent.Tests.csproj:11 |
+| BenchmarkDotNet | example-performance | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | examples/dotnet-engineering/tests/performance/Example.Performance.csproj:5 |
+| coverlet.collector | directory-build | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | tests/Directory.Build.props:4 |
+| coverlet.collector | example-business-tests | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | examples/dotnet-engineering/tests/business/Example.BusinessTests.csproj:10 |
+| coverlet.collector | example-unit-tests | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | examples/dotnet-engineering/tests/unit/Example.UnitTests.csproj:16 |
+| Microsoft.AspNetCore.Authentication.JwtBearer | example-web | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | examples/dotnet-engineering/src/Example.Web/Example.Web.csproj:5 |
+| Microsoft.AspNetCore.OpenApi | example-web | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | examples/dotnet-engineering/src/Example.Web/Example.Web.csproj:6 |
+| Microsoft.Extensions.Logging.Abstractions | example-core | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | examples/dotnet-engineering/src/Example.Core/Example.Core.csproj:2 |
+| Microsoft.NET.Test.Sdk | cis-modules-definition-tests | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | tests/Cis.Modules.Definition.Tests/Cis.Modules.Definition.Tests.csproj:11 |
+| Microsoft.NET.Test.Sdk | cis-modules-solution-design-tests | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | tests/Cis.Modules.SolutionDesign.Tests/Cis.Modules.SolutionDesign.Tests.csproj:12 |
+| Microsoft.NET.Test.Sdk | cis-modules-ui-direction-tests | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | tests/Cis.Modules.UiDirection.Tests/Cis.Modules.UiDirection.Tests.csproj:12 |
+| Microsoft.NET.Test.Sdk | example-business-tests | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | examples/dotnet-engineering/tests/business/Example.BusinessTests.csproj:9 |
+| Microsoft.NET.Test.Sdk | example-migration-tests | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | examples/dotnet-engineering/tests/migration/Example.MigrationTests.csproj:7 |
+| Microsoft.NET.Test.Sdk | example-unit-tests | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | examples/dotnet-engineering/tests/unit/Example.UnitTests.csproj:13 |
+| Microsoft.NET.Test.Sdk | example-web-tests | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | examples/dotnet-engineering/tests/web/Example.WebTests.csproj:6 |
+| Microsoft.OpenApi | example-web | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | examples/dotnet-engineering/src/Example.Web/Example.Web.csproj:7 |
+| Microsoft.Playwright | example-web-tests | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | examples/dotnet-engineering/tests/web/Example.WebTests.csproj:9 |
+| Mono.Cecil | weaver | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | tools/function-profiler/Weaver/Weaver.csproj:9 |
+| Npgsql | example-persistence | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | examples/dotnet-engineering/src/Example.Persistence/Example.Persistence.csproj:4 |
+| SonarAnalyzer.CSharp | directory-build | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | examples/dotnet-engineering/Directory.Build.props:13 |
+| SSH.NET | example-business-tests | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | examples/dotnet-engineering/tests/business/Example.BusinessTests.csproj:15 |
+| SSH.NET | example-web-tests | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | examples/dotnet-engineering/tests/web/Example.WebTests.csproj:11 |
+| System.CommandLine | cis-modules-definition | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | src/Cis.Modules.Definition/Cis.Modules.Definition.csproj:15 |
+| System.CommandLine | cis-modules-solution-design | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | src/Cis.Modules.SolutionDesign/Cis.Modules.SolutionDesign.csproj:11 |
+| System.CommandLine | cis-modules-ui-direction | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | src/Cis.Modules.UiDirection/Cis.Modules.UiDirection.csproj:11 |
+| System.CommandLine | example-cli | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | examples/dotnet-engineering/src/Example.Cli/Example.Cli.csproj:6 |
+| Testcontainers.PostgreSql | example-business-tests | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | examples/dotnet-engineering/tests/business/Example.BusinessTests.csproj:13 |
+| Testcontainers.PostgreSql | example-web-tests | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | examples/dotnet-engineering/tests/web/Example.WebTests.csproj:10 |
+| xunit.runner.visualstudio | cis-modules-definition-tests | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | tests/Cis.Modules.Definition.Tests/Cis.Modules.Definition.Tests.csproj:13 |
+| xunit.runner.visualstudio | cis-modules-solution-design-tests | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | tests/Cis.Modules.SolutionDesign.Tests/Cis.Modules.SolutionDesign.Tests.csproj:14 |
+| xunit.runner.visualstudio | cis-modules-ui-direction-tests | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | tests/Cis.Modules.UiDirection.Tests/Cis.Modules.UiDirection.Tests.csproj:14 |
+| xunit.runner.visualstudio | example-business-tests | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | examples/dotnet-engineering/tests/business/Example.BusinessTests.csproj:12 |
+| xunit.runner.visualstudio | example-migration-tests | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | examples/dotnet-engineering/tests/migration/Example.MigrationTests.csproj:9 |
+| xunit.runner.visualstudio | example-unit-tests | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | examples/dotnet-engineering/tests/unit/Example.UnitTests.csproj:15 |
+| xunit.runner.visualstudio | example-web-tests | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | examples/dotnet-engineering/tests/web/Example.WebTests.csproj:8 |
+| xunit.v3 | cis-modules-definition-tests | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | tests/Cis.Modules.Definition.Tests/Cis.Modules.Definition.Tests.csproj:12 |
+| xunit.v3 | cis-modules-solution-design-tests | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | tests/Cis.Modules.SolutionDesign.Tests/Cis.Modules.SolutionDesign.Tests.csproj:13 |
+| xunit.v3 | cis-modules-ui-direction-tests | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | tests/Cis.Modules.UiDirection.Tests/Cis.Modules.UiDirection.Tests.csproj:13 |
+| xunit.v3 | example-business-tests | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | examples/dotnet-engineering/tests/business/Example.BusinessTests.csproj:11 |
+| xunit.v3 | example-migration-tests | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | examples/dotnet-engineering/tests/migration/Example.MigrationTests.csproj:8 |
+| xunit.v3 | example-unit-tests | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | examples/dotnet-engineering/tests/unit/Example.UnitTests.csproj:14 |
+| xunit.v3 | example-web-tests | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | examples/dotnet-engineering/tests/web/Example.WebTests.csproj:7 |
+| YamlDotNet | cis-abstractions | Declared package dependency | Resolved by MSBuild; see source manifest | package-reference | Draft | src/Cis.Abstractions/Cis.Abstractions.csproj:12 |

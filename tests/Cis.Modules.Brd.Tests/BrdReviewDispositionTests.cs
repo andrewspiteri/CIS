@@ -157,6 +157,24 @@ public sealed class BrdReviewDispositionTests
         Assert.False(changedBrd.Compatible);
     }
 
+    [Fact]
+    public void FreshnessPreservesTrailingManagedEvidenceWhileIgnoringOnlyAnswers()
+    {
+        using var fixture = ReviewFixture.Create(trailingEvidence: true);
+        var content = File.ReadAllText(fixture.BrdPath).Replace(
+            "1. Who owns the product outcome?\n2. What launch phase is accepted?",
+            "| ID | Question | Answer | Answered by | Answered at UTC |\n"
+            + "| --- | --- | --- | --- | --- |\n"
+            + "| BRD-Q-001 | Who owns the product outcome? | Synthetic owner. | Test actor | 2026-10-09T00:00:00Z |\n"
+            + "| BRD-Q-002 | What launch phase is accepted? | Unanswered | - | - |", StringComparison.Ordinal);
+        File.WriteAllText(fixture.BrdPath, content);
+        Assert.Equal("question-answers-only", fixture.Service.Freshness(fixture.Root, fixture.RunId).Status);
+        File.WriteAllText(fixture.BrdPath, content.Replace("source-v1", "source-v2", StringComparison.Ordinal));
+        var changed = fixture.Service.Freshness(fixture.Root, fixture.RunId);
+        Assert.Equal("stale", changed.Status);
+        Assert.False(changed.Compatible);
+    }
+
     private sealed class ReviewFixture : IDisposable
     {
         public string Root { get; }
@@ -173,7 +191,7 @@ public sealed class BrdReviewDispositionTests
                 () => DateTimeOffset.Parse("2026-08-30T10:00:00Z"));
         }
 
-        public static ReviewFixture Create(int findingCount = 1)
+        public static ReviewFixture Create(int findingCount = 1, bool trailingEvidence = false)
         {
             var root = Path.Combine(Path.GetTempPath(), "cis-brd-review-tests", Guid.NewGuid().ToString("N"));
             var fixture = new ReviewFixture(root);
@@ -184,6 +202,11 @@ public sealed class BrdReviewDispositionTests
                 + "## Open questions\n\n"
                 + "1. Who owns the product outcome?\n"
                 + "2. What launch phase is accepted?\n");
+            if (trailingEvidence)
+                File.AppendAllText(fixture.BrdPath, "\n<!-- cis:sources:start -->\n"
+                    + "| ID | Type | Repository | Path | Hash | Assessment | Rationale |\n"
+                    + "| BRD-SRC-example | source | fixture | source.md | source-v1 | Reference | Context |\n"
+                    + "<!-- cis:sources:end -->\n");
             var run = Path.Combine(root, ".cis", "local", "agents", "runs", fixture.RunId);
             Directory.CreateDirectory(run);
             var result = JsonSerializer.Serialize(new

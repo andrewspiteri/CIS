@@ -139,9 +139,9 @@ public sealed partial class BrdModule
             });
             root.Subcommands.Add(command);
         }
-        foreach (var operation in new[] { "approve", "start", "complete" })
+        foreach (var operation in new[] { "approve", "start", "complete", "completion-context" })
         {
-            var command = new Command(operation, operation == "approve" ? "Approve the exact reviewed story task plan." : operation == "start" ? "Record the start of a dependency-ready task; this does not launch an agent." : "Record verified task completion and unlock dependent tasks.");
+            var command = new Command(operation, operation == "approve" ? "Approve the exact reviewed story task plan." : operation == "start" ? "Record the start of a dependency-ready task; this does not launch an agent." : operation == "completion-context" ? "Print missing-gate completion templates for each adopted story participant without completing the task." : "Record verified task completion and unlock dependent tasks.");
             var workspace = WorkspaceOption(); var format = FormatOption();
             var slug = new Option<string>("--slug") { Required = true };
             var story = new Option<string>("--story") { Required = true };
@@ -166,6 +166,11 @@ public sealed partial class BrdModule
                 {
                     Console.WriteLine($"status={result.Status};planState={result.PlanState};planHash={result.PlanHash};revision={result.Revision}");
                     foreach (var progress in result.TaskProgress) Console.WriteLine($"task={progress.Id};status={progress.Status};blocked={Clean(progress.BlockedReason ?? "")}");
+                    foreach (var context in result.CompletionContexts)
+                    {
+                        Console.WriteLine($"repository={context.RepositoryId};receipt={context.ReceiptPath}");
+                        if (context.TemplateJson is not null) Console.WriteLine(context.TemplateJson);
+                    }
                     foreach (var error in result.Errors) Console.WriteLine("error=" + Clean(error));
                 }
                 return result.ExitCode;

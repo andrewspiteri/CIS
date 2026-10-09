@@ -17,6 +17,12 @@ public sealed partial class BrdService
     // treating merely related topics as proof that a required section is complete.
     internal static string ExtractRecognizedSection(string content, string heading)
     {
+        try
+        {
+            if (BrdDocumentLayout.Extract(content, heading) is { } mapped) return mapped;
+        }
+        catch (Exception error) when (error is System.Text.Json.JsonException or InvalidDataException)
+        { return string.Empty; } // Validation reports the invalid map; never fall back to a different section.
         var bounds = FindSectionBounds(content, heading);
         return bounds is { } section ? content[section.Start..section.End].Trim() : string.Empty;
     }
@@ -40,7 +46,7 @@ public sealed partial class BrdService
             "Open questions" => ["Outstanding questions"],
             _ => [],
         };
-        var lines = content.Split('\n');
+        var lines = BrdDocumentLayout.Visible(content).Split('\n');
         var headings = new List<(int Offset, int BodyOffset, int Level, string Title)>();
         char fence = '\0';
         var fenceLength = 0;

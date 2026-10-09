@@ -20,7 +20,14 @@ Requires an Active, current technical intent. Creates or reconciles
 bundle, registers both in the documentation catalogue, and projects the structured `TI-MOD-*`
 component ownership and applicable architecture sections. Reruns preserve human-authored
 sections and a current approval when the exact bundle is unchanged. Source or managed-content
-changes reset approval for both files.
+changes reset approval for both files when reconciling the generated scaffold.
+
+A bundle with an explicitly supplied architecture model is preserved as a whole, just like an
+implementation-authored narrative. Preparation keeps its diagram display, component sheet and
+current approval without adding inference provenance. If technical intent changes, the bundle
+becomes stale and requires deliberate architecture reconciliation; preparation cannot silently
+rebind the old model to the new direction. A malformed or modified display remains visible as a
+validation error rather than being erased by scaffold regeneration.
 
 Exit code `5` means an upstream readiness or validation gate is blocked; collision and invalid
 workspace errors are reported without replacing files.

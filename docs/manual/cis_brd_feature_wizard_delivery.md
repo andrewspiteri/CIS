@@ -140,3 +140,19 @@ Exit codes: `0` for successful status/preparation; `5` for invalid, unavailable 
 inputs, concurrent preparation, unavailable local generation or rejected output.
 
 See [wizard status](cis_brd_feature_wizard_status.md) and [save](cis_brd_feature_wizard_save.md).
+
+## Engineering completion evidence
+
+When engineering defaults are adopted, the story's verified-criteria flag is necessary but insufficient. Completion checks current source, graph, policy, alignment and required gate evidence separately for every owned participant. A missing completion service cannot bypass adopted obligations. Existing projects without adoption retain their established workflow.
+
+Prepare templates without changing task state:
+
+Every declared participant must produce exactly one completion result. Results expose `adoptionStatus`, including `not-adopted` for a legacy participant; successful completion retains those outcomes in the event and response. A missing or partial service result cannot silently close the story.
+
+```text
+cis brd feature wizard story completion-context --workspace <authority> --slug <feature> --story <story-id> --task <task-id> --expected-plan-hash <hash> --expected-revision <revision> --actor <identity> --format json
+```
+
+The result's `completionContexts` gives each repository's receipt path and `templateJson`. Save reviewed receipts at the indicated repository-relative `.cis/local/engineering/story-completion/` path. Templates start with Missing gates. They grant no approval and run no checks. Use the same artifact, gate-state and independent-review rules as [task completion context](cis_plan_task_completion_context.md).
+
+Story review manifests bind the task contract, including criteria, direction and constraints; their native task ID ends in `-REVIEW`. Copy the unchanged native review manifest and result from the authority's retained agent run into the participant's local evidence directory when needed, retaining hashes. Repository-relative receipt artifacts cannot escape to another participant. Review must cover the final source after alignment changes. Refresh graph, execution evidence and review when source or the task contract changes. Each participant must pass before the shared task can complete; later-phase tasks remain separate obligations.

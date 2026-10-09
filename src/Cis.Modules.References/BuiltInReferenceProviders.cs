@@ -200,7 +200,9 @@ internal sealed class PackageReferenceProvider : BuiltInReferenceProvider
         => relativePath.EndsWith("package.json", StringComparison.OrdinalIgnoreCase)
             || relativePath.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)
             || relativePath.EndsWith(".fsproj", StringComparison.OrdinalIgnoreCase)
-            || relativePath.EndsWith(".vbproj", StringComparison.OrdinalIgnoreCase);
+            || relativePath.EndsWith(".vbproj", StringComparison.OrdinalIgnoreCase)
+            || relativePath.EndsWith(".props", StringComparison.OrdinalIgnoreCase)
+            || relativePath.EndsWith(".targets", StringComparison.OrdinalIgnoreCase);
     public override IReadOnlyList<CisReferenceObservation> Discover(CisReferenceDiscoveryContext context, CisReferenceSourceFile source)
     {
         var component = Component(source.RelativePath, source.Content);

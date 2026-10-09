@@ -3,7 +3,7 @@ title: "Engineering assurance guidance coverage"
 type: reference
 status: Draft
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-22"
+last_reviewed: "2026-10-09"
 review_cadence: "on onboarding or assurance behavior change"
 cis:
   stable_id: change-impact-studio:reference:engineering-assurance-coverage
@@ -38,3 +38,16 @@ Import can preserve project-specific obligations alongside CIS's portable guidan
 not replace concrete requirements with vague coverage claims or treat generated starters as
 proof that tests or security scans passed. See [repository import](../manual/cis_repo_import.md)
 for review scope, evidence hashing, editable proposals and retirement behavior.
+
+## Qualified Windows .NET milestone
+
+The [readiness record](../../planning/engineering-defaults-trial-readiness.md) maps the completed IP/EQ/SC work
+and native receipts; the [trial guide](../../planning/engineering-defaults-dotnet-trial-guide.md) covers onboarding
+through the next task's reassessment. This qualifies a Windows .NET/C# trial, not every stack or every scanner.
+
+Declared or detected C# initialization installs ignored local reference examples and preserves opt-out and edits.
+Native harness examples include unit, architecture, integration, business, API compatibility, browser and security
+checks, test-mode logs/metrics/traces, and bounded performance/mutation evidence. Actual commands and project
+applicability still require verification. Two providers executed the synthetic interval CLI/portable-skill fixture; bundled reference CLI verification
+remains its separate native test/export evidence. Native permission rules remain distinct from sandbox confinement. Adopted task gates require current final-state evidence
+and an independent reviewer, including missing checks that a passing workflow alone could conceal.

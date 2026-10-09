@@ -7,7 +7,7 @@ using Xunit;
 
 namespace Cis.Modules.Testing.Tests;
 
-public sealed class TestingServiceTests
+public sealed partial class TestingServiceTests
 {
     [Fact]
     public void Inventory_ParsesAndPersistsAValidProfile()
@@ -165,6 +165,23 @@ public sealed class TestingServiceTests
         Assert.Equal("findings", execution.Status);
         Assert.Equal(2, execution.Mutation!.Killed + execution.Mutation.TimedOut);
         Assert.Equal(1, execution.Mutation.Survived);
+        Assert.Equal(50, execution.Mutation.Score);
+    }
+
+    [Theory]
+    [InlineData("Ignored")]
+    [InlineData("CompileError")]
+    [InlineData("RuntimeError")]
+    [InlineData("Unknown")]
+    public void StrykerAdapter_NonExecutedMutantsCannotPass(string status)
+    {
+        using var repository = TestRepository.Create();
+        repository.Write(".cis/local/results/stryker.json", """{"status":"Killed","files":{"src/app.cs":{"mutants":[{"status":"STATUS"}]}}}""".Replace("STATUS", status));
+        var execution = new StrykerJsonResultAdapter().Read(new(repository.Path,
+            Suite("api-mutation", "mutation", "stryker-json", ".cis/local/results/stryker.json"),
+            Path.Combine(repository.Path, ".cis/local/results/stryker.json"), null, null));
+        Assert.Equal("invalid-evidence", execution.Status);
+        Assert.Equal(0, execution.Mutation!.Killed);
     }
 
     [Fact]

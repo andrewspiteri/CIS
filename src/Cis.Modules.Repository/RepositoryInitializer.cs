@@ -3,6 +3,8 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
+using Cis.Abstractions;
+
 namespace Cis.Modules.Repository;
 
 public sealed partial class RepositoryInitializer : Cis.Abstractions.ICisObservedReferencePreparer
@@ -15,6 +17,7 @@ public sealed partial class RepositoryInitializer : Cis.Abstractions.ICisObserve
     private readonly RepositoryClassifier _classifier;
     private readonly StarterManifestStore _manifestStore;
     private readonly RepositoryStarterBinder _starterBinder;
+    private readonly RepositoryExampleInstallation _examples;
 
     public RepositoryInitializer()
         : this(
@@ -25,16 +28,24 @@ public sealed partial class RepositoryInitializer : Cis.Abstractions.ICisObserve
     {
     }
 
+    internal RepositoryInitializer(string distributionPath)
+        : this(new RepositoryClassifier(), new RepositoryStarterBinder(), new StarterManifestStore(),
+            new DocumentationCatalogMerger(), distributionPath)
+    {
+    }
+
     internal RepositoryInitializer(
         RepositoryClassifier classifier,
         RepositoryStarterBinder starterBinder,
         StarterManifestStore manifestStore,
-        DocumentationCatalogMerger catalogMerger)
+        DocumentationCatalogMerger catalogMerger,
+        string? distributionPath = null)
     {
         _classifier = classifier;
         _starterBinder = starterBinder;
         _manifestStore = manifestStore;
         _catalogMerger = catalogMerger;
+        _examples = new RepositoryExampleInstallation(distributionPath ?? AppContext.BaseDirectory);
     }
 
     public RepositoryInitResult Initialize(RepositoryInitRequest request)
@@ -78,6 +89,11 @@ public sealed partial class RepositoryInitializer : Cis.Abstractions.ICisObserve
 
         foreach (var file in plan.Files)
         {
+            if (file.ReplaceAtomically)
+            {
+                WriteExampleFile(plan.Result.RepositoryPath!, file);
+                continue;
+            }
             if (file.Action == PlannedFileAction.Create)
             {
                 using var stream = new FileStream(
@@ -106,9 +122,15 @@ public sealed partial class RepositoryInitializer : Cis.Abstractions.ICisObserve
         {
             // A receipt avoids repeating an unchanged semantic review. Recompute
             // after saving so references bind to the exact accepted contents.
-            var accepted = CreatePlan(request with { DryRun = true, ExpectedAgentsMergeHash = null,
-                ReviewedAgentsContent = null, ExpectedGuidanceMergeHash = null, ReviewedGuidanceContents = null,
-                RetiredGuidancePaths = null }, useGuidanceReceipt: false);
+            var accepted = CreatePlan(request with
+            {
+                DryRun = true,
+                ExpectedAgentsMergeHash = null,
+                ReviewedAgentsContent = null,
+                ExpectedGuidanceMergeHash = null,
+                ReviewedGuidanceContents = null,
+                RetiredGuidancePaths = null
+            }, useGuidanceReceipt: false);
             if (accepted.Result.ExitCode == 0)
                 File.WriteAllText(Path.Combine(plan.Result.RepositoryPath!, ".cis", "guidance-review.sha256"),
                     RepositoryAgentsMerge.ReviewHash(accepted.Result.FileMerges) ?? "", new UTF8Encoding(false));
@@ -203,12 +225,26 @@ public sealed partial class RepositoryInitializer : Cis.Abstractions.ICisObserve
         var existingContext = new CisRepositoryContextResolver().Resolve(repositoryPath!);
         var repositoryId = existingContext.Context?.RepositoryId ?? CreateRepositoryId(repositoryPath!);
         var classification = _classifier.Classify(repositoryPath!);
+        if (request.DeclaredStack is not null)
+        {
+            if (request.DeclaredStack != "csharp") return InvalidPlan(["Only the csharp declared-stack recipe is currently supported."], repositoryPath);
+            classification = classification with { DeclaredStack = request.DeclaredStack };
+        }
         warnings.AddRange(classification.Warnings);
+        var examplePlan = request.MinimalImport
+            ? new ExampleInstallationPlan([], [], [], [])
+            : _examples.Plan(repositoryPath!, classification, request.Examples);
+        if (examplePlan.Errors.Count > 0) return InvalidPlan(examplePlan.Errors, repositoryPath);
+        warnings.AddRange(examplePlan.Warnings);
+        retained.AddRange(examplePlan.Retained);
         var coreBinding = request.MinimalImport ? _starterBinder.BindMinimalImport(repositoryPath!, repositoryId, documentationRoot!, classification) : null;
         var assessment = request.MinimalImport ? RepositoryImportAssessmentBuilder.Analyze(repositoryPath!, documentationRoot!, coreBinding!.Artifacts) : null;
-        var binding = request.MinimalImport ? coreBinding! with { Artifacts = [.. coreBinding!.Artifacts, new RepositoryStarterArtifact(
+        var binding = request.MinimalImport ? coreBinding! with
+        {
+            Artifacts = [.. coreBinding!.Artifacts, new RepositoryStarterArtifact(
             "guidance.instruction.import", "guidance.instruction.import", RepositoryImportAssessmentBuilder.GuidancePath,
-            RepositoryImportAssessmentBuilder.Guidance(documentationRoot!, assessment!), null)] } : _starterBinder.Bind(
+            RepositoryImportAssessmentBuilder.Guidance(documentationRoot!, assessment!), null)]
+        } : _starterBinder.Bind(
             repositoryPath!,
             repositoryId,
             documentationRoot!,
@@ -231,11 +267,24 @@ public sealed partial class RepositoryInitializer : Cis.Abstractions.ICisObserve
             previousArtifacts,
             StringComparer.OrdinalIgnoreCase);
 
+        var policyPath = Path.Combine(repositoryPath!, EngineeringAssessmentService.PolicyPath);
+        var alreadyAdopted = previousArtifacts.ContainsKey(EngineeringAssessmentService.PolicyPath)
+            || previousArtifacts.ContainsKey(CisEngineeringPolicy.AdoptionPath) || File.Exists(Path.Combine(repositoryPath!, CisEngineeringPolicy.AdoptionPath));
+        var emptyRepository = !Directory.EnumerateFileSystemEntries(repositoryPath!)
+            .Any(path => Path.GetFileName(path) != ".git");
+        if (!alreadyAdopted && !request.AdoptEngineeringDefaults && !emptyRepository)
+        {
+            binding = binding with { Artifacts = binding.Artifacts.Where(artifact => artifact.RelativePath != EngineeringAssessmentService.PolicyPath && artifact.RelativePath != CisEngineeringPolicy.AdoptionPath).ToArray() };
+            if (!File.Exists(policyPath))
+                warnings.Add("Engineering completion gates are not adopted. Review repo init --adopt-engineering-defaults --dry-run before explicitly enabling them for this existing repository.");
+        }
+
         var standardDirectories = CreateStandardDirectories(
             repositoryPath!,
             documentationPath!,
             binding.Artifacts.Select(artifact => artifact.RelativePath));
         PlanDirectories(repositoryPath!, standardDirectories, directories, retained, collisions);
+        PlanExampleFiles(repositoryPath!, examplePlan, directories, files, retained, collisions);
 
         AddPreservedFile(
             repositoryPath!,
@@ -500,6 +549,8 @@ public sealed partial class RepositoryInitializer : Cis.Abstractions.ICisObserve
         if (request.MinimalImport && files.All(file => file.RelativePath.StartsWith(".cis/local/", StringComparison.Ordinal)))
             files.Clear(); // A refreshed disposable report alone is not another canonical import.
         var hasChanges = directories.Count > 0 || files.Count > 0 || moves.Count > 0;
+        foreach (var duplicate in files.GroupBy(file => file.AbsolutePath, PathComparer).Where(group => group.Count() > 1))
+            collisions.Add($"Multiple initialization outputs target the same file: {duplicate.First().RelativePath}");
         foreach (var file in files)
             if (Cis.Abstractions.CisPathSafety.ContainsReparsePoint(repositoryPath!, file.AbsolutePath))
                 collisions.Add($"Planned file cannot be written through a symbolic path: {file.RelativePath}");
@@ -559,13 +610,26 @@ public sealed partial class RepositoryInitializer : Cis.Abstractions.ICisObserve
             collisions.Distinct(StringComparer.Ordinal).Order().ToArray(),
             errors,
             confirmationRequired,
-            Applied: false) { FileMerges = fileMerges, ImportAssessment = assessment,
-                ImportPreviews = request.MinimalImport ? files.Where(file => !file.RelativePath.StartsWith(".cis/local/", StringComparison.Ordinal))
+            Applied: false)
+        {
+            FileMerges = fileMerges,
+            ImportAssessment = assessment,
+            ImportPreviews = request.MinimalImport ? files.Where(file => !file.RelativePath.StartsWith(".cis/local/", StringComparison.Ordinal))
                     .Select(file => new RepositoryImportPreview(repositoryPath!, file.RelativePath, file.PreviousContent ?? "", file.Content)).ToArray() : [],
-                ImportPlanHash = request.MinimalImport ? RepositoryAgentsMerge.Hash(JsonSerializer.Serialize(new {
-                    assessment!.InputHash, documentationRoot, request.WorkspaceAuthority,
-                    files = files.Select(file => new { file.RelativePath, file.Action, before = file.PreviousContent,
-                        after = fileMerges.SingleOrDefault(merge => merge.RelativePath == file.RelativePath)?.ReviewHash ?? file.Content }) })) : null };
+            ImportPlanHash = request.MinimalImport ? RepositoryAgentsMerge.Hash(JsonSerializer.Serialize(new
+            {
+                assessment!.InputHash,
+                documentationRoot,
+                request.WorkspaceAuthority,
+                files = files.Select(file => new
+                {
+                    file.RelativePath,
+                    file.Action,
+                    before = file.PreviousContent,
+                    after = fileMerges.SingleOrDefault(merge => merge.RelativePath == file.RelativePath)?.ReviewHash ?? file.Content
+                })
+            })) : null
+        };
 
         return new InitializationPlan(
             result,
@@ -698,6 +762,13 @@ public sealed partial class RepositoryInitializer : Cis.Abstractions.ICisObserve
         }
 
         documentationRoot = ToRepositoryPath(repositoryPath, documentationPath);
+        var exampleRoot = Path.Combine(repositoryPath, RepositoryExampleInstallation.Root.Replace('/', Path.DirectorySeparatorChar));
+        if (CisPathSafety.IsUnderRoot(exampleRoot, documentationPath, allowRoot: true)
+            || CisPathSafety.IsUnderRoot(documentationPath, exampleRoot, allowRoot: true))
+        {
+            errors.Add("Documentation root must not overlap reserved .cis/local/examples storage.");
+            return false;
+        }
         return true;
     }
 
@@ -979,7 +1050,7 @@ public sealed partial class RepositoryInitializer : Cis.Abstractions.ICisObserve
         var normalized = content.Replace("\r\n", "\n", StringComparison.Ordinal);
         if (!Regex.IsMatch(
                 normalized,
-                "(?m)^\\s*technical_intent_schema:\\s*(?:2|3)\\s*$",
+                "(?m)^\\s*technical_intent_schema:\\s*(?:2|3|4)\\s*$",
                 RegexOptions.CultureInvariant))
             return false;
 
@@ -1236,7 +1307,8 @@ public sealed partial class RepositoryInitializer : Cis.Abstractions.ICisObserve
         string AbsolutePath,
         string Content,
         string? PreviousContent,
-        PlannedFileAction Action);
+        PlannedFileAction Action,
+        bool ReplaceAtomically = false);
 
     private enum PlannedFileAction
     {

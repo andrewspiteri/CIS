@@ -135,14 +135,20 @@ public sealed partial class FeatureIntakeTests
         Assert.Equal(0, remote.Calls);
     }
 
-    private static FeatureIntakeService DeliveryService(Fixture f, ICisTextGenerationService generation, ICisStoryTaskExecutor? executor = null)
-        => new(f.Registry, f.Importer, new DocumentationCatalogMerger(), [f.Baseline], textGeneration: generation, storyExecutor: executor);
+    private static FeatureIntakeService DeliveryService(Fixture f, ICisTextGenerationService generation, ICisStoryTaskExecutor? executor = null,
+        ICisStoryEngineeringCompletion? completion = null)
+    {
+        // Existing participants retain their lifecycle; dedicated completion fixtures exercise adoption.
+        return new(f.Registry, f.Importer, new DocumentationCatalogMerger(), [f.Baseline], textGeneration: generation,
+            storyExecutor: executor, storyCompletion: completion);
+    }
 
     private static string AddDeliveryCode(Fixture f, string name, string file, string content, string participation = "owned")
     {
         var root = Path.Combine(f.Root, name); Directory.CreateDirectory(root);
+        var path = Path.Combine(root, file); File.WriteAllText(path, content);
         Assert.Equal(0, f.Importer.Import(new(f.Authority, "docs/cis", [root], false, true, participation, participation == "owned" ? "none" : "producer")).ExitCode);
-        var path = Path.Combine(root, file); File.WriteAllText(path, content); return path;
+        return path;
     }
 
     private sealed class DeliveryGeneration : ICisTextGenerationService
@@ -168,7 +174,8 @@ public sealed partial class FeatureIntakeTests
             var evidenceId = found ? evidence.GetProperty("id").GetString() : null;
             var stories = context.RootElement.GetProperty("stories").EnumerateArray().Select(s => new
             {
-                id = s.GetProperty("id").GetString(), treatment = Mode is "conflict" or "new" or "reuse" ? Mode : "extend",
+                id = s.GetProperty("id").GetString(),
+                treatment = Mode is "conflict" or "new" or "reuse" ? Mode : "extend",
                 existingCapability = Mode == "hook-overclaim" ? "Click Tracking is already implemented in the frontend component." : Mode == "hook-grounded" ? "selectProduct navigates to the deposit page." : "Existing product maintenance is available.",
                 remainingWork = "Add only the integration and required policy fields.",
                 owners = OwnerOverride ?? new[] { Mode == "foreign-owner" ? "unknown" : owner },

@@ -917,7 +917,7 @@ public sealed partial class BrdWorkflowTests
         Assert.True(File.Exists(path));
         var content = File.ReadAllText(path);
         Assert.Contains("status: Review Required", content, StringComparison.Ordinal);
-        Assert.Contains("No BRD or feature-specification evidence was discovered", content, StringComparison.Ordinal);
+        Assert.Contains("No additional non-canonical BRD or feature-specification evidence was discovered", content, StringComparison.Ordinal);
         Assert.Contains("TODO: Complete executive summary", content, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(
             $"id: {environment.AuthorityId}:spec:business-requirements",

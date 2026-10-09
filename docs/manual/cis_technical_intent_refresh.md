@@ -25,6 +25,11 @@ authority is unchanged and all discovered source evidence remains resolved. Mana
 graph IDs and provenance are refreshed without asking a human to approve the same
 content again.
 
+When the current technical approval and semantic baselines can carry forward,
+refresh updates only its managed baseline table. It preserves reviewed technical
+prose, customized generated sections, and review metadata; it does not regenerate
+the scaffold and attach the previous approval to different design text.
+
 The operation stops at the first material change: new or changed unassessed business
 evidence, edited approved content, unresolved technical decisions, changed backlog
 outcomes/routing/dependencies, or invalid documents. It reports the affected stage so
@@ -33,3 +38,10 @@ the human reviews only that difference. It never grants or invents approval.
 Run this command after implementation graph rebuilds and before starting the next
 high-level backlog feature. Exit `0` means all three authorities are Active and current.
 Exit `5` means a material governance review is required.
+
+When approval cannot carry forward, initialization clears the approval and preserves
+previously reviewed project direction, including customized component and integration
+sections. Its preservation marker also protects a second initialization after approval
+has been cleared. The generated standards-evidence inventory still refreshes to show
+current discovered standards and digests. Review the retained direction against those
+standards before renewing approval; preservation does not establish compatibility.

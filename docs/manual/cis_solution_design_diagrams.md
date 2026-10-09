@@ -47,4 +47,6 @@ It neither infers evidence from the JSON nor approves the architecture. Use
 readable, but new inference and this rendering command require C4.
 
 Run `cis definition prepare --page architecture` afterwards to refresh the companion diagram
-document and wizard projection.
+document and wizard projection. This preserves explicitly supplied models and their complete
+design/component bundle even when no inference provider authored it. Changed upstream technical
+intent requires reconciliation before that bundle can be approved again.

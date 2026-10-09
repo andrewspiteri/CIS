@@ -25,9 +25,9 @@ internal static class ImplementationSkillPackRegistry
             [
                 Skill("dotnet-test", "Build and test affected .NET projects with bounded commands and preserved evidence. Use when changing C# or .NET code.",
                     "Verify .NET changes without turning a targeted edit into an unbounded solution-wide run.",
-                    ["Identify the affected project and its direct test projects.", "Run formatting or analyzers required by the repository.", "Build the narrowest project boundary with warnings visible.", "Run targeted tests, then widen only when impact or failures justify it.", "Record exact commands, results, skipped checks, and residual risk."],
+                    ["Identify affected projects, adopted native framework, runner/platform and direct test projects; inspect inherited configuration. If no framework is adopted, consult .cis/local/examples/dotnet-engineering/README.md when installed and the engineering-defaults reference; verify compatibility before adopting a harness. The local example is reference material, not project implementation or passing project evidence.", "Run the native formatter and SDK/Sonar analyzers or adopted alternatives with declared blocking severities.", "Build the narrowest project boundary with warnings visible.", "Run the applicable unit, component, architecture, integration, compatibility, regression, business, browser and security layers; record justified inapplicability separately. Use bounded coverage and mutation with actual reports.", "Enable correlated test-mode logs, metrics and traces without changing application/authentication behavior; preserve partial evidence and first failures.", "Record exact commands, versions, source identity, results and unavailable prerequisites. Reassess required gates independently of the configured command list before completion."],
                     "Do not report a build as proof that behavior or architecture tests passed."),
-            ]);
+            ], declared: classification.DeclaredStack == "csharp");
 
         AddWhen(selected, classification, "core-testing", "Core testing",
             "Production implementation behavior was detected.",
@@ -183,10 +183,11 @@ internal static class ImplementationSkillPackRegistry
         string title,
         string reason,
         Func<RepositoryComponentClassification, bool> predicate,
-        IReadOnlyList<ImplementationSkillDefinition> skills)
+        IReadOnlyList<ImplementationSkillDefinition> skills,
+        bool declared = false)
     {
         var components = classification.Components.Where(predicate).ToArray();
-        if (components.Length == 0)
+        if (components.Length == 0 && !declared)
         {
             return;
         }
@@ -196,7 +197,9 @@ internal static class ImplementationSkillPackRegistry
             .Distinct(StringComparer.Ordinal)
             .Take(12)
             .ToArray();
-        selected.Add(new SelectedImplementationSkillPack(id, title, reason, evidence, skills));
+        selected.Add(new SelectedImplementationSkillPack(id, title,
+            components.Length == 0 ? "Maintainer-declared C# stack; implementation and test tooling remain unverified." : reason,
+            components.Length == 0 ? [DeclaredEngineeringStack.Path] : evidence, skills));
     }
 
     private static bool IsFrontend(RepositoryComponentClassification component)

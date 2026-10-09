@@ -125,6 +125,25 @@ public sealed partial class DefinitionWizardTests
         Assert.Contains(dictionaries, item => item.GetProperty("relativePath").GetString()!.EndsWith("data-dictionary.md") && item.GetProperty("entryCount").GetInt32() == 0);
     }
 
+    [Theory]
+    [InlineData("[]")]
+    [InlineData("null")]
+    public void ProductDefinitionAuthority_RejectsNonObjectActivationRecord(string malformed)
+    {
+        using var repository = TemporaryRepository.Create();
+        using var application = CreateApplication();
+        Assert.Equal(0, Invoke(application,
+            ["workspace", "init", "--repo", repository.Path, "--root", "docs/cis", "--ecosystem", "sample",
+                "--product", "sample", "--ecosystem-name", "Sample", "--product-name", "Sample", "--yes", "--format", "json"]).ExitCode);
+        var path = Path.Combine(repository.Path, ".cis/local/definition-wizard/session.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, malformed);
+        var status = new ProductDefinitionAuthority(new CisRepositoryContextResolver()).Evaluate(repository.Path);
+        Assert.True(status.Applicable);
+        Assert.False(status.Active);
+        Assert.Contains(status.Errors, error => error.Contains("must be a JSON object", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void ProductDefinitionAuthority_RequiresConsolidatedActivationAndDetectsBaselineDrift()
     {
@@ -179,6 +198,10 @@ public sealed partial class DefinitionWizardTests
         }
         var baseline = ProductDefinitionAuthority.ComputeBaselineHash(documentation, out var missing);
         Assert.Empty(missing);
+        var inventory = authority.EvidencePaths(repository.Path);
+        Assert.Equal(27, inventory.Count);
+        Assert.Contains("docs/cis/references/api-dictionary.md", inventory);
+        Assert.All(inventory, path => Assert.True(File.Exists(Path.Combine(repository.Path, path))));
         File.WriteAllText(backlog, File.ReadAllText(backlog)
             .Replace("sha256:first", "sha256:managed-link-update", StringComparison.Ordinal)
             .Replace("not-created", "docs/cis/specs/features/hlt-fr-001/feature-specification.md", StringComparison.Ordinal));

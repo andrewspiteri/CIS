@@ -1325,8 +1325,14 @@ public sealed partial class AgentExecutionTests
             CisAgentPermissions.ReadOnly, null, null, 60, false, "Andrew Spiteri", TestContext.Current.CancellationToken);
         var runRoot = System.IO.Path.Combine(repository.Path, AgentService.RootPath.Replace('/', System.IO.Path.DirectorySeparatorChar), "runs", first.Run!.Manifest.RunId);
         File.Delete(System.IO.Path.Combine(runRoot, "artifacts.json"));
-        var orphan = first.Run.Manifest with { Status = CisAgentRunStates.Running, UpdatedAtUtc = Clock().AddMinutes(-5).ToString("O"),
-            CompletedAtUtc = null, ProcessId = int.MaxValue, ProcessStartedAtUtc = Clock().AddMinutes(-5).ToString("O") };
+        var orphan = first.Run.Manifest with
+        {
+            Status = CisAgentRunStates.Running,
+            UpdatedAtUtc = Clock().AddMinutes(-5).ToString("O"),
+            CompletedAtUtc = null,
+            ProcessId = int.MaxValue,
+            ProcessStartedAtUtc = Clock().AddMinutes(-5).ToString("O")
+        };
         File.WriteAllText(System.IO.Path.Combine(runRoot, "manifest.json"), JsonSerializer.Serialize(orphan, JsonOptions));
         var lockRoot = System.IO.Path.Combine(repository.Path, AgentService.RootPath.Replace('/', System.IO.Path.DirectorySeparatorChar), "locks");
         Directory.CreateDirectory(lockRoot);
@@ -1476,25 +1482,25 @@ public sealed partial class AgentExecutionTests
     [Fact]
     public void CodexAppServer_CompactionActivityEndsOnlyWithItsMatchingCompletion()
     {
-        using var started = JsonDocument.Parse("""{"method":"item/started","params":{"item":{"type":"contextCompaction"}}}""");
-        using var otherItem = JsonDocument.Parse("""{"method":"item/completed","params":{"item":{"type":"agentMessage"}}}""");
+        using var started = JsonDocument.Parse("""{"method":"item/started","params":{"threadId":"parent","turnId":"current","item":{"type":"contextCompaction"}}}""");
+        using var otherItem = JsonDocument.Parse("""{"method":"item/completed","params":{"threadId":"parent","turnId":"current","item":{"type":"agentMessage"}}}""");
         using var notification = JsonDocument.Parse("""{"method":"skills/changed","params":{}}""");
-        using var completed = JsonDocument.Parse("""{"method":"item/completed","params":{"item":{"type":"contextCompaction"}}}""");
+        using var completed = JsonDocument.Parse("""{"method":"item/completed","params":{"threadId":"parent","turnId":"current","item":{"type":"contextCompaction"}}}""");
 
-        Assert.True(CodexAgentProvider.ContextCompactionActivity(started.RootElement));
-        Assert.Null(CodexAgentProvider.ContextCompactionActivity(otherItem.RootElement));
-        Assert.Null(CodexAgentProvider.ContextCompactionActivity(notification.RootElement));
-        Assert.False(CodexAgentProvider.ContextCompactionActivity(completed.RootElement));
+        Assert.True(CodexAgentProvider.ContextCompactionActivity(started.RootElement, "parent", "current"));
+        Assert.Null(CodexAgentProvider.ContextCompactionActivity(otherItem.RootElement, "parent", "current"));
+        Assert.Null(CodexAgentProvider.ContextCompactionActivity(notification.RootElement, "parent", "current"));
+        Assert.False(CodexAgentProvider.ContextCompactionActivity(completed.RootElement, "parent", "current"));
     }
 
     [Fact]
     public void CodexAppServer_RetryNoticeCanRecoverToSuccessfulCompletion()
     {
         using var retry = JsonDocument.Parse("""{"method":"error","params":{"willRetry":true,"error":{"message":"Reconnecting... 2/2","additionalDetails":"idle timeout waiting for websocket"}}}""");
-        using var completed = JsonDocument.Parse("""{"method":"turn/completed","params":{"turn":{"status":"completed"}}}""");
+        using var completed = JsonDocument.Parse("""{"method":"turn/completed","params":{"threadId":"parent","turn":{"id":"current","status":"completed"}}}""");
 
-        Assert.Null(CodexAgentProvider.AppServerTerminalState(retry.RootElement));
-        Assert.Equal(CisAgentRunStates.Succeeded, CodexAgentProvider.AppServerTerminalState(completed.RootElement));
+        Assert.Null(CodexAgentProvider.AppServerTerminalState(retry.RootElement, "parent", "current"));
+        Assert.Equal(CisAgentRunStates.Succeeded, CodexAgentProvider.AppServerTerminalState(completed.RootElement, "parent", "current"));
     }
 
     [Theory]
@@ -1505,7 +1511,7 @@ public sealed partial class AgentExecutionTests
     public void CodexAppServer_ErrorWithoutExplicitRetryIsTerminal(string parameters)
     {
         using var error = JsonDocument.Parse("{\"method\":\"error\",\"params\":" + parameters + "}");
-        Assert.Equal(CisAgentRunStates.Failed, CodexAgentProvider.AppServerTerminalState(error.RootElement));
+        Assert.Equal(CisAgentRunStates.Failed, CodexAgentProvider.AppServerTerminalState(error.RootElement, "parent", "current"));
     }
 
     [Fact]
@@ -1806,17 +1812,19 @@ public sealed partial class AgentExecutionTests
         bool invalidReviewEvidence = false, bool sourceRationaleReview = false,
         bool reviseSourceRationale = false, bool alterSourceIdentity = false,
         bool incorporateQuestions = false, bool alterQuestions = false,
+        string questionBrdPath = "docs/cis/specs/business-requirements.md",
         string id = "fake", string? brdEvidence = null, bool omitImplementationCoverage = false,
         bool inventImplementationEvidence = false, bool mutateImplementation = false,
         bool omitCoverageOnFirstExecution = false, bool draftTechnicalIntent = false, bool draftSolutionDesign = false,
-        Action<CisAgentExecutionRequest>? duringExecution = null, int burstEvents = 0, bool omitRevisionIds = false) : ICisAgentProvider, ICisAgentProviderAuthenticator
+        Action<CisAgentExecutionRequest>? duringExecution = null, int burstEvents = 0, bool omitRevisionIds = false,
+        bool explicitCommands = false) : ICisAgentProvider, ICisAgentProviderAuthenticator
     {
         public int ExecuteCalls { get; private set; }
         public CisAgentExecutionRequest? LastRequest { get; private set; }
         public string? LastAuthenticationMethod { get; private set; }
         public CisAgentProviderDescriptor Descriptor { get; } = new(id, "Fake", "test", true,
             ["fake-json"], [CisAgentRunModes.Plan, CisAgentRunModes.Implement, CisAgentRunModes.Review],
-            [CisAgentPermissions.ReadOnly, CisAgentPermissions.WorkspaceWrite], true, false, "Test provider");
+            [CisAgentPermissions.ReadOnly, CisAgentPermissions.WorkspaceWrite], true, false, "Test provider") { SupportsExplicitCommands = explicitCommands };
         public CisAgentProviderDiagnosis Diagnose(string repositoryPath)
         {
             if (throwDiagnosis) throw new InvalidOperationException("diagnosis failed");
@@ -1869,10 +1877,16 @@ public sealed partial class AgentExecutionTests
                         using var manifest = JsonDocument.Parse(File.ReadAllText(manifestPath));
                         var root = manifest.RootElement;
                         foreach (var area in root.GetProperty("areas").EnumerateArray())
-                            rows.Add(new { sourceId = root.GetProperty("sourceId").GetString(), areaId = area.GetProperty("id").GetString(),
-                                status = "inspected", evidence = inventImplementationEvidence ? ["outside/snapshot.ts"] : root.GetProperty("files").EnumerateArray()
+                            rows.Add(new
+                            {
+                                sourceId = root.GetProperty("sourceId").GetString(),
+                                areaId = area.GetProperty("id").GetString(),
+                                status = "inspected",
+                                evidence = inventImplementationEvidence ? ["outside/snapshot.ts"] : root.GetProperty("files").EnumerateArray()
                                     .Where(file => file.GetProperty("area").GetString() == area.GetProperty("path").GetString())
-                                    .Select(file => file.GetProperty("path").GetString()!).ToArray(), summary = "Observed product behaviour." });
+                                    .Select(file => file.GetProperty("path").GetString()!).ToArray(),
+                                summary = "Observed product behaviour."
+                            });
                         if (mutateImplementation)
                         {
                             var file = root.GetProperty("files").EnumerateArray().First();
@@ -2001,13 +2015,18 @@ The owner evaluates one customer using authorized BI evidence and relevant relat
             }
             if (incorporateQuestions)
             {
-                var brd = System.IO.Path.Combine(request.WorkingDirectory, "docs", "cis", "specs", "business-requirements.md");
+                var brd = System.IO.Path.Combine(request.WorkingDirectory, questionBrdPath);
                 var content = File.ReadAllText(brd).Replace(
                     "TODO: Complete executive summary through human review of workspace evidence.",
                     "The sponsor owns the product outcome for the research prototype.", StringComparison.Ordinal);
                 if (alterQuestions) content = content.Replace("The sponsor.", "A different actor.", StringComparison.Ordinal);
                 File.WriteAllText(brd, content);
-                draftedFiles.Add("docs/cis/specs/business-requirements.md");
+                draftedFiles.Add(questionBrdPath);
+                if (extraFile)
+                {
+                    File.WriteAllText(System.IO.Path.Combine(request.WorkingDirectory, "extra.txt"), "Outside the allowed BRD scope.");
+                    draftedFiles.Add("extra.txt");
+                }
             }
             var revisionRun = Regex.Match(request.Prompt, "reviewRunId exactly `([^`]+)`", RegexOptions.CultureInvariant).Groups[1].Value;
             var questionDigest = Regex.Match(request.Prompt, "answerDigest exactly `([^`]+)`", RegexOptions.CultureInvariant).Groups[1].Value;
@@ -2019,7 +2038,7 @@ The owner evaluates one customer using authorized BI evidence and relevant relat
                 changedFiles = writeFile ? new List<string> { "generated.txt" } : draftedFiles,
                 validations = new[] { "fake-validation" },
                 evidence = new[] { "fake-evidence" },
-                review = reviewBrd ? new
+                review = request.TaskReview ? (object)new { recommendation = "ready", strengths = new[] { "Scoped fixture review." }, findings = Array.Empty<object>() } : reviewBrd ? new
                 {
                     recommendation = "revise",
                     strengths = new[] { "The intended user outcome is stated." },

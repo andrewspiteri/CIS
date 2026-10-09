@@ -20,10 +20,12 @@ public sealed class RepositoryModule : ICisModule
         services.AddSingleton<ICisWorkspaceRegistry>(services =>
             services.GetRequiredService<WorkspaceRegistry>());
         services.AddSingleton<RepositoryInitializer>();
+        services.AddSingleton<ICisEngineeringAssessment, EngineeringAssessmentService>();
         services.AddSingleton<RepositoryImporter>();
         services.AddSingleton<IOllamaProbe, OllamaProbe>();
         services.AddSingleton<ICisRepositoryDoctorCheck, JavaScriptToolingDoctorCheck>();
         services.AddSingleton<ICisRepositoryDoctorCheck, TestSuiteProfileDoctorCheck>();
+        services.AddSingleton<ICisRepositoryDoctorCheck, EngineeringAlignmentDoctorCheck>();
         services.AddSingleton<ICisRepositoryDoctorCheck, SecuritySuiteProfileDoctorCheck>();
         services.AddSingleton<ICisRepositoryDoctorCheck, WorkspaceBoundaryDoctorCheck>();
         services.AddSingleton<RepositoryDoctor>();
@@ -71,6 +73,9 @@ public sealed class RepositoryModule : ICisModule
         {
             Description = "Include component, starter, and retained-path detail in agent output.",
         };
+        var stack = new Option<string?>("--stack") { Description = "Optional intended stack for an empty repository: csharp. Selects guidance without claiming an installed harness." };
+        var adoptEngineering = new Option<bool>("--adopt-engineering-defaults") { Description = "Explicitly adopt required completion gates for an existing repository; inspect the dry-run first." };
+        var examples = new Option<string?>("--examples") { Description = "Persist local reference installation: auto (default) or off. Copies only; never runs examples." };
 
         init.Options.Add(root);
         init.Options.Add(repo);
@@ -80,6 +85,9 @@ public sealed class RepositoryModule : ICisModule
         init.Options.Add(quarantineObsolete);
         init.Options.Add(format);
         init.Options.Add(details);
+        init.Options.Add(stack);
+        init.Options.Add(adoptEngineering);
+        init.Options.Add(examples);
         init.SetAction(parseResult =>
         {
             var selectedFormat = (parseResult.GetValue(format) ?? "human").ToLowerInvariant();
@@ -96,7 +104,7 @@ public sealed class RepositoryModule : ICisModule
                 parseResult.GetValue(dryRun),
                 parseResult.GetValue(yes),
                 parseResult.GetValue(acceptCurrent),
-                parseResult.GetValue(quarantineObsolete));
+                parseResult.GetValue(quarantineObsolete), DeclaredStack: parseResult.GetValue(stack), AdoptEngineeringDefaults: parseResult.GetValue(adoptEngineering), Examples: parseResult.GetValue(examples));
             var result = initializer.Initialize(request);
             if (selectedFormat == "agent" && !parseResult.GetValue(details))
                 savingsCollector?.Add(new CisTokenSavingsCandidate(
@@ -114,6 +122,7 @@ public sealed class RepositoryModule : ICisModule
         repository.Subcommands.Add(CreateListCommand(
             services.GetRequiredService<ICisWorkspaceRegistry>()));
         repository.Subcommands.Add(CreateDoctorCommand(doctorService));
+        repository.Subcommands.Add(RepositoryExampleCommand.Create());
         commands.Add(repository);
     }
 
@@ -165,7 +174,8 @@ public sealed class RepositoryModule : ICisModule
         };
         var ecosystemName = new Option<string?>("--ecosystem-name");
         var productName = new Option<string?>("--product-name");
-        var guidanceMode = new Option<string>("--guidance-mode") {
+        var guidanceMode = new Option<string>("--guidance-mode")
+        {
             Description = "minimal (default): preserve directives, add CIS essentials and report gaps. reconcile: full starters and editable semantic migration.",
             DefaultValueFactory = _ => "minimal",
         };

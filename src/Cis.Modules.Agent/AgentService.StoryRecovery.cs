@@ -36,7 +36,8 @@ public sealed partial class AgentService
             || StoryGit(expectedPath, ["rev-parse", run.Manifest.RepositoryRevision + "^{tree}"]).Trim()
                 != StoryGit(preparedPath, ["rev-parse", baseline + "^{tree}"]).Trim())
             throw new InvalidDataException("The repository baseline changed since the retained implementation for " + target.Id + ". Its work remains available in run " + saved.RunId + ".");
-        if (!ChangedFiles(expectedPath).Order(StringComparer.Ordinal).SequenceEqual(run.Result.ChangedFiles.Order(StringComparer.Ordinal)))
+        if (!TryReadChangedFiles(expectedPath, out var changes)
+            || !changes.Order(StringComparer.Ordinal).SequenceEqual(run.Result.ChangedFiles.Order(StringComparer.Ordinal)))
             throw new InvalidDataException("The retained implementation's file set changed for " + target.Id + ". Inspect run " + saved.RunId + " before continuing.");
         // Freeze the retained files and subject them to a fresh independent review.
         // Prior completion claims never grant approval or bypass copy-back checks.

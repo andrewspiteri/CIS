@@ -29,8 +29,12 @@ public sealed class CompilerCacheTests(ITestOutputHelper output)
             var changed = CSharpAnalysisCache.Analyze(root, inputs);
             Assert.Contains(changed.Symbols, item => item.Name == "Changed" && item.ComponentId == "new-owner");
             Assert.DoesNotContain(changed.Symbols, item => item.Name == "Class0");
+            inputs[0] = inputs[0] with { HasConfirmedComponent = false };
+            var unowned = CSharpAnalysisCache.Analyze(root, inputs);
+            Assert.Contains(unowned.Symbols, item => item.Name == "Changed" && item.LocalId.StartsWith("unowned/", StringComparison.Ordinal));
+            Assert.DoesNotContain(unowned.Symbols, item => item.Name == "Changed" && !item.LocalId.StartsWith("unowned/", StringComparison.Ordinal));
             File.WriteAllText(path, "invalid derived cache");
-            Assert.Equal(JsonSerializer.Serialize(changed), JsonSerializer.Serialize(CSharpAnalysisCache.Analyze(root, inputs)));
+            Assert.Equal(JsonSerializer.Serialize(unowned), JsonSerializer.Serialize(CSharpAnalysisCache.Analyze(root, inputs)));
         }
         finally { Directory.Delete(root, recursive: true); }
     }

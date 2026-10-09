@@ -65,7 +65,10 @@ public sealed record SecuritySuiteExecution(
     int Accepted,
     IReadOnlyList<SecurityFinding> Findings,
     IReadOnlyList<SecurityArtifact> Artifacts,
-    IReadOnlyList<string> Diagnostics);
+    IReadOnlyList<string> Diagnostics)
+{
+    public IReadOnlyList<string>? BlockingSeverities { get; init; }
+}
 
 public sealed record SecurityRunManifest(
     int SchemaVersion,
@@ -80,7 +83,10 @@ public sealed record SecurityRunManifest(
     string CompletedAtUtc,
     string Status,
     IReadOnlyList<SecuritySuiteExecution> Suites,
-    IReadOnlyList<SecurityArtifact> Artifacts);
+    IReadOnlyList<SecurityArtifact> Artifacts,
+    string? InputDigest = null,
+    IReadOnlyList<AcceptedSecurityFinding>? Acceptances = null,
+    string? ProfilePath = null);
 
 public sealed record SecurityResultAdapterContext(
     string RepositoryPath,

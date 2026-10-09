@@ -13,12 +13,14 @@ internal static partial class SecurityEvidence
         var fail = context.Suite.FailSeverities.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var blocking = findings.Any(item => fail.Contains(item.Severity));
+        var unclassified = findings.Any(item => item.Severity == "unclassified");
         return new(context.Suite.Id, context.Suite.Category, context.Suite.Tool,
-            blocking ? "findings" : findings.Count > 0 ? "passed-with-findings" : "passed",
-            blocking ? SecurityFailureKind.Finding : SecurityFailureKind.None,
+            unclassified ? "invalid-evidence" : blocking ? "findings" : findings.Count > 0 ? "passed-with-findings" : "passed",
+            unclassified ? SecurityFailureKind.InvalidEvidence : blocking ? SecurityFailureKind.Finding : SecurityFailureKind.None,
             findings.Count(item => item.Severity == "critical"), findings.Count(item => item.Severity == "high"),
             findings.Count(item => item.Severity == "medium"), findings.Count(item => item.Severity is "low" or "info"),
-            0, findings, [Artifact(context.RepositoryPath, "scanner-result", context.ResultPath)], []);
+            0, findings, [Artifact(context.RepositoryPath, "scanner-result", context.ResultPath)],
+            unclassified ? ["Scanner evidence contains an unclassified severity; resolve its classification before accepting the run."] : []);
     }
 
     public static SecurityFinding Finding(SecurityResultAdapterContext context, string rule, string severity,
@@ -44,14 +46,15 @@ internal static partial class SecurityEvidence
     {
         var normalized = (value ?? string.Empty).Trim().ToLowerInvariant();
         if (double.TryParse(normalized, System.Globalization.CultureInfo.InvariantCulture, out var score))
-            return score >= 9 ? "critical" : score >= 7 ? "high" : score >= 4 ? "medium" : "low";
+            return !double.IsFinite(score) || score is < 0 or > 10 ? "unclassified"
+                : score >= 9 ? "critical" : score >= 7 ? "high" : score >= 4 ? "medium" : "low";
         return normalized switch
         {
             "critical" => "critical",
             "high" or "error" => "high",
             "medium" or "moderate" or "warning" or "warn" => "medium",
             "low" or "note" or "info" or "informational" => "low",
-            _ => "medium",
+            _ => "unclassified",
         };
     }
 
@@ -96,39 +99,43 @@ public sealed class SarifSecurityResultAdapter : ICisSecurityResultAdapter
         var findings = new List<SecurityFinding>();
         foreach (var run in document.RootElement.GetProperty("runs").EnumerateArray())
         {
-            var ruleSeverities = new Dictionary<string, string>(StringComparer.Ordinal);
+            var ruleSeverities = new Dictionary<string, (string? Security, string? Level, string? Problem)>(StringComparer.Ordinal);
             if (run.TryGetProperty("tool", out var tool) && tool.TryGetProperty("driver", out var driver)
                 && driver.TryGetProperty("rules", out var rules) && rules.ValueKind == JsonValueKind.Array)
                 foreach (var descriptor in rules.EnumerateArray())
                 {
                     var id = Text(descriptor, "id");
-                    if (id is not null && descriptor.TryGetProperty("properties", out var ruleProperties))
+                    if (id is not null)
                     {
-                        var value = Text(ruleProperties, "security-severity") ?? Text(ruleProperties, "problem.severity");
-                        if (value is not null) ruleSeverities[id] = value;
+                        descriptor.TryGetProperty("properties", out var ruleProperties);
+                        descriptor.TryGetProperty("defaultConfiguration", out var configuration);
+                        ruleSeverities[id] = (Text(ruleProperties, "security-severity"), Text(configuration, "level"), Text(ruleProperties, "problem.severity"));
                     }
                 }
             foreach (var result in run.TryGetProperty("results", out var results) ? results.EnumerateArray() : [])
             {
-            var rule = Text(result, "ruleId") ?? "unknown-rule";
-            var severity = ruleSeverities.GetValueOrDefault(rule) ?? Text(result, "level") ?? "warning";
-            if (result.TryGetProperty("properties", out var properties))
-                severity = Text(properties, "security-severity") ?? Text(properties, "problem.severity") ?? severity;
-            var message = result.TryGetProperty("message", out var messageNode) ? Text(messageNode, "text") ?? rule : rule;
-            var path = "unknown"; int? line = null;
-            if (result.TryGetProperty("locations", out var locations) && locations.GetArrayLength() > 0)
-            {
-                var physical = locations[0].GetProperty("physicalLocation");
-                if (physical.TryGetProperty("artifactLocation", out var artifact)) path = Text(artifact, "uri") ?? path;
-                if (physical.TryGetProperty("region", out var region) && region.TryGetProperty("startLine", out var start)) line = start.GetInt32();
-            }
-            findings.Add(SecurityEvidence.Finding(context, rule, severity, message, path, line,
-                result.TryGetProperty("partialFingerprints", out var fps) ? fps.EnumerateObject().Select(item => item.Value.ToString()).FirstOrDefault() : null));
+                var rule = Text(result, "ruleId") ?? "unknown-rule";
+                var descriptorSeverity = ruleSeverities.GetValueOrDefault(rule);
+                result.TryGetProperty("properties", out var properties);
+                var severity = Text(properties, "security-severity") ?? descriptorSeverity.Security
+                    ?? Text(result, "level") ?? descriptorSeverity.Level
+                    ?? Text(properties, "problem.severity") ?? descriptorSeverity.Problem ?? "warning";
+                if (severity is "none" or "recommendation") severity = "info";
+                var message = result.TryGetProperty("message", out var messageNode) ? Text(messageNode, "text") ?? rule : rule;
+                var path = "unknown"; int? line = null;
+                if (result.TryGetProperty("locations", out var locations) && locations.GetArrayLength() > 0)
+                {
+                    var physical = locations[0].GetProperty("physicalLocation");
+                    if (physical.TryGetProperty("artifactLocation", out var artifact)) path = Text(artifact, "uri") ?? path;
+                    if (physical.TryGetProperty("region", out var region) && region.TryGetProperty("startLine", out var start)) line = start.GetInt32();
+                }
+                findings.Add(SecurityEvidence.Finding(context, rule, severity, message, path, line,
+                    result.TryGetProperty("partialFingerprints", out var fps) ? fps.EnumerateObject().Select(item => item.Value.ToString()).FirstOrDefault() : null));
             }
         }
         return SecurityEvidence.Build(context, findings);
     }
-    private static string? Text(JsonElement element, string name) => element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+    private static string? Text(JsonElement element, string name) => element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 }
 
 public sealed class SemgrepJsonSecurityResultAdapter : ICisSecurityResultAdapter
@@ -142,7 +149,7 @@ public sealed class SemgrepJsonSecurityResultAdapter : ICisSecurityResultAdapter
         {
             var extra = result.GetProperty("extra");
             findings.Add(SecurityEvidence.Finding(context, result.GetProperty("check_id").GetString() ?? "unknown-rule",
-                extra.TryGetProperty("severity", out var severity) ? severity.GetString() ?? "warning" : "warning",
+                extra.TryGetProperty("severity", out var severity) ? severity.GetString() ?? "unclassified" : "unclassified",
                 extra.TryGetProperty("message", out var message) ? message.GetString() ?? "Semgrep finding." : "Semgrep finding.",
                 result.TryGetProperty("path", out var path) ? path.GetString() ?? "unknown" : "unknown",
                 result.TryGetProperty("start", out var start) && start.TryGetProperty("line", out var line) ? line.GetInt32() : null));
@@ -212,17 +219,17 @@ public sealed class ZapJsonSecurityResultAdapter : ICisSecurityResultAdapter
         using var document = JsonDocument.Parse(File.ReadAllText(context.ResultPath));
         var findings = new List<SecurityFinding>();
         foreach (var site in document.RootElement.TryGetProperty("site", out var sites) ? sites.EnumerateArray() : [])
-        foreach (var alert in site.TryGetProperty("alerts", out var alerts) ? alerts.EnumerateArray() : [])
-        {
-            var rule = alert.TryGetProperty("pluginid", out var plugin) ? plugin.ToString() : "zap-alert";
-            var severity = alert.TryGetProperty("riskcode", out var risk) ? risk.ToString() switch { "3" => "high", "2" => "medium", "1" => "low", _ => "info" } : "medium";
-            var message = alert.TryGetProperty("name", out var name) ? name.ToString()
-                : alert.TryGetProperty("alert", out var alertName) ? alertName.ToString() : "ZAP finding.";
-            var path = context.Suite.Target;
-            if (alert.TryGetProperty("instances", out var instances) && instances.ValueKind == JsonValueKind.Array && instances.GetArrayLength() > 0
-                && instances[0].TryGetProperty("uri", out var uri)) path = uri.ToString();
-            findings.Add(SecurityEvidence.Finding(context, rule, severity, message, path, null));
-        }
+            foreach (var alert in site.TryGetProperty("alerts", out var alerts) ? alerts.EnumerateArray() : [])
+            {
+                var rule = alert.TryGetProperty("pluginid", out var plugin) ? plugin.ToString() : "zap-alert";
+                var severity = alert.TryGetProperty("riskcode", out var risk) ? risk.ToString() switch { "3" => "high", "2" => "medium", "1" => "low", "0" => "info", _ => "unclassified" } : "unclassified";
+                var message = alert.TryGetProperty("name", out var name) ? name.ToString()
+                    : alert.TryGetProperty("alert", out var alertName) ? alertName.ToString() : "ZAP finding.";
+                var path = context.Suite.Target;
+                if (alert.TryGetProperty("instances", out var instances) && instances.ValueKind == JsonValueKind.Array && instances.GetArrayLength() > 0
+                    && instances[0].TryGetProperty("uri", out var uri)) path = uri.ToString();
+                findings.Add(SecurityEvidence.Finding(context, rule, severity, message, path, null));
+            }
         return SecurityEvidence.Build(context, findings);
     }
 }

@@ -19,7 +19,7 @@ Obtain the target repository path and an explicit repository-relative documentat
 
 ## Workflow
 
-1. If project manifests or implementation source already exist, dry-run `cis repo import --workspace <repository> --source <repository> --root <documentation-root> --participation owned --relationship none --ecosystem <id> --product <id>`. For a genuinely empty project, dry-run `cis repo init --repo <repository> --root <documentation-root>`, then create the product authority with `cis workspace init --root <documentation-root> --ecosystem <id> --product <id>`.
+1. If project manifests or implementation source already exist, dry-run `cis repo import --workspace <repository> --source <repository> --root <documentation-root> --participation owned --relationship none --ecosystem <id> --product <id>`. For a new empty authority, first preview `cis workspace init --repo <repository> --root <documentation-root> --ecosystem <id> --product <id> --dry-run --format agent`; apply only after review. Use `repo init --repo <repository> --root <documentation-root> --dry-run` for a participant or later reconciliation, including any declared C# stack.
 2. Review the selected create/import mode, classification evidence, planned creates and updates, warnings, and collisions.
 3. Treat exit code `3` as a confirmation gate, not a failure. After maintainer review and authorization, rerun with `--yes`.
 4. If create or import returns exit code `2`, exit code `4`, an error, or a collision, run `cis repo doctor --repo <repository> --root <documentation-root> --format agent` immediately.

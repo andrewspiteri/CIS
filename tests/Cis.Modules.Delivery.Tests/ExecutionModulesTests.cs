@@ -18,7 +18,7 @@ using Cis.Modules.Workflow;
 
 namespace Cis.Modules.Delivery.Tests;
 
-public sealed class ExecutionModulesTests
+public sealed partial class ExecutionModulesTests
 {
     [Fact]
     public void AiRoutes_AreLocalFirstCachedAndSanitized()
@@ -129,6 +129,30 @@ public sealed class ExecutionModulesTests
         Assert.Equal("evaluated", result.Status);
         Assert.Equal("api-endpoint.md", Assert.Single(result.Candidates, item => item.Template.Id == "api-endpoint.md").Template.Id);
         Assert.Contains("endpoint", result.Candidates.First().RequiredModelFields);
+    }
+
+    [Theory]
+    [InlineData("| check | dotnet --version | missing |")]
+    [InlineData("| check |")]
+    [InlineData("| ../outside | dotnet --version | - | no | 30 |")]
+    [InlineData("| other | dotnet --version | - | maybe | 30 |")]
+    [InlineData("| other | dotnet --version | - | no | bad |")]
+    [InlineData("| other | dotnet --version | - | no | 0 |")]
+    [InlineData("| other | dotnet --version | - | no | 3601 |")]
+    [InlineData("| Step | Command | Depends on | Command | Timeout seconds |")]
+    [InlineData("| Step | Command | Depends on | Timeout seconds |")]
+    public void WorkflowRun_RejectsMalformedDefinitionsBeforeExecutingAnyStep(string malformed)
+    {
+        using var repository = ExecutionRepository.Create();
+        repository.Write("docs/cis/workflows/check.md",
+            "| Step | Command | Depends on | Continue on failure | Timeout seconds |\n"
+            + "|---|---|---|---|---:|\n| check | dotnet --version | - | no | 30 |\n" + malformed);
+        var result = new WorkflowService(new CisRepositoryContextResolver(), Clock)
+            .Run(repository.Path, "check", "MALFORMED");
+        Assert.Equal(4, result.ExitCode);
+        Assert.False(result.Applied);
+        Assert.Null(result.Run);
+        Assert.Contains(result.Diagnostics, message => message.StartsWith("ERROR:", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -811,7 +835,7 @@ status: Draft
         public void Write(string relative, string content)
         { var file = System.IO.Path.Combine(Path, relative.Replace('/', System.IO.Path.DirectorySeparatorChar)); Directory.CreateDirectory(System.IO.Path.GetDirectoryName(file)!); File.WriteAllText(file, content); }
         public string Head() => Git("rev-parse", "HEAD").Trim();
-        private string Git(params string[] arguments)
+        public string Git(params string[] arguments)
         {
             using var process = new Process { StartInfo = new("git") { WorkingDirectory = Path, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true } };
             foreach (var argument in arguments) process.StartInfo.ArgumentList.Add(argument); process.Start(); var output = process.StandardOutput.ReadToEnd(); var error = process.StandardError.ReadToEnd(); process.WaitForExit();

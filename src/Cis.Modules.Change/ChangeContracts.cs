@@ -1,3 +1,5 @@
+using Cis.Abstractions;
+
 namespace Cis.Modules.Change;
 
 public sealed record ChangeRoot(string Id, string? Kind);
@@ -19,7 +21,8 @@ public sealed record ChangeRepositoryBaseline(
     string RepositoryId,
     string BaselineKind,
     string Baseline,
-    IReadOnlyList<ChangeRepositoryWorkingFile>? WorkingTree = null);
+    IReadOnlyList<ChangeRepositoryWorkingFile>? WorkingTree = null,
+    IReadOnlyList<CisRepositoryInput>? CreationInputs = null);
 
 public sealed record ChangeRepositoryWorkingFile(
     string Status,

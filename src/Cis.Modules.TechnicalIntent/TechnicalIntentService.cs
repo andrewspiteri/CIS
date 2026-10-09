@@ -11,6 +11,7 @@ namespace Cis.Modules.TechnicalIntent;
 
 public sealed partial class TechnicalIntentService : IChangeReadinessCheck, ICisTechnicalIntentDraftPreparer
 {
+    private const string PreserveReviewedContent = "<!-- cis:technical-intent-preserve-reviewed-content -->";
     private const string BaselineStart = "<!-- cis:technical-intent-baseline:start -->";
     private const string BaselineEnd = "<!-- cis:technical-intent-baseline:end -->";
     private const string BusinessEvidenceStart = "<!-- cis:technical-intent-business-evidence:start -->";
@@ -132,14 +133,35 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck, ICis
                 BackupImportedTechnicalIntent(state.Authority.RepositoryPath, canonicalPath);
                 content = imported;
             }
-            content = EnsureMetadata(content);
-            content = ReplaceOrInsertBaseline(content, state.Baselines);
-            if (!content.Contains("<!-- cis:technical-intent-implementation-authored -->", StringComparison.Ordinal)
-                && (state.ScaffoldEligible || IsUpgradeableGeneratedSchema3Draft(content)))
-                content = EnrichStarter(content, state);
-            content = RefreshDerivedEvidence(content, state);
             approvalCanCarryForward = HasCurrentApproval(existing)
                 && BaselinesCanCarryForward(existing, state.Baselines, state.Brd?.Content);
+            if (approvalCanCarryForward)
+            {
+                // Carry-forward authorizes provenance changes only. Regenerating
+                // reviewed narrative here could replace custom constraints and then
+                // silently stamp the old approval onto a different technical design.
+                content = ReplaceOrInsertBaseline(content, state.Baselines);
+            }
+            else
+            {
+                content = EnsureMetadata(content);
+                content = ReplaceOrInsertBaseline(content, state.Baselines);
+                if (PreservesReviewedNarrative(existing))
+                {
+                    content = RefreshStandardsEvidence(content, state);
+                    // Stale approval clears authority, not ownership of the reviewed prose.
+                    // Keep this disposition after approval metadata is reset so a second
+                    // initialization cannot silently regenerate the retained sections.
+                    if (!content.Contains(PreserveReviewedContent, StringComparison.Ordinal))
+                        content = content.TrimEnd() + "\n\n" + PreserveReviewedContent + "\n";
+                }
+                else
+                {
+                    if (state.ScaffoldEligible || IsUpgradeableGeneratedSchema3Draft(content))
+                        content = EnrichStarter(content, state);
+                    content = RefreshDerivedEvidence(content, state);
+                }
+            }
         }
 
         var changed = existing is null || !Equivalent(existing, content);
@@ -173,6 +195,11 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck, ICis
 
     public TechnicalIntentResult Validate(string workspacePath)
         => ValidateInternal(workspacePath, "validated", applied: false);
+
+    private static bool PreservesReviewedNarrative(string content)
+        => content.Contains(PreserveReviewedContent, StringComparison.Ordinal)
+            || content.Contains("<!-- cis:technical-intent-implementation-authored -->", StringComparison.Ordinal)
+            || ReadNestedFrontMatter(content, "approved_content_hash") is { Length: > 0 } hash && hash != "null";
 
     public TechnicalIntentResult Status(string workspacePath)
         => CisReadScope.Read(this, nameof(Status), workspacePath,
@@ -643,6 +670,14 @@ cis:
 {RenderManagedEvidence(DecisionEvidenceStart, RenderOpenDecisions(state), DecisionEvidenceEnd)}
 """;
 
+    // Standards are discovered evidence, not inferred project architecture. Refresh their
+    // generated inventory while retaining reviewed direction and clearing stale approval.
+    private static string RefreshStandardsEvidence(string content, State state)
+        => content.Contains(StandardsEvidenceStart, StringComparison.Ordinal)
+            && content.Contains(StandardsEvidenceEnd, StringComparison.Ordinal)
+            ? ReplaceBlock(content, StandardsEvidenceStart, StandardsEvidenceEnd, RenderStandardsEvidence(state))
+            : content;
+
     private static string RefreshDerivedEvidence(string content, State state)
     {
         var implementationAuthored = content.Contains("<!-- cis:technical-intent-implementation-authored -->", StringComparison.Ordinal);
@@ -652,9 +687,7 @@ cis:
         if (content.Contains(SurfaceEvidenceStart, StringComparison.Ordinal)
             && content.Contains(SurfaceEvidenceEnd, StringComparison.Ordinal))
             content = ReplaceBlock(content, SurfaceEvidenceStart, SurfaceEvidenceEnd, RenderTechnicalSurface(state.Surfaces));
-        if (content.Contains(StandardsEvidenceStart, StringComparison.Ordinal)
-            && content.Contains(StandardsEvidenceEnd, StringComparison.Ordinal))
-            content = ReplaceBlock(content, StandardsEvidenceStart, StandardsEvidenceEnd, RenderStandardsEvidence(state));
+        content = RefreshStandardsEvidence(content, state);
         if (state.Questionnaire is { Current: true, Complete: true })
         {
             if (content.Contains(QuestionnaireEvidenceStart, StringComparison.Ordinal)

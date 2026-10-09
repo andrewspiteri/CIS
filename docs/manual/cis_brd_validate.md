@@ -30,10 +30,17 @@ Validation recognizes those headings without rewriting the source. Related topic
 as Out of scope do not satisfy Scope, and headings inside code examples are ignored.
 Recognized sections still require substantive content and human review.
 
+For other layouts, use [`cis brd layout`](cis_brd_layout.md) to preview and apply explicit
+source-heading mappings. The map preserves the narrative, is covered by the approval digest,
+and fails validation when a mapped heading disappears or becomes ambiguous. It does not
+convert future activation decisions into answered open questions.
+
 Selected imported BRDs also pass the same requirement reader used by backlog generation.
 It accepts requirement tables and bold requirement paragraphs, with optional bullets,
 numbered sections and original domain IDs such as `MD-01` or `EX-01`. Paragraph
-continuations and constraint lists remain attached to their requirement. Code examples
+continuations, constraint lists and constraint tables remain attached to their requirement.
+Bold titles can use `**MD-01 Capture events.**`
+or the existing `**MD-01 — Capture events.**` form. Code examples
 and comments are excluded. Missing requirement text, duplicate IDs or a functional
 section without readable identified requirements block approval with a format finding.
 This normalization creates an internal read model; it does not rewrite or approve the

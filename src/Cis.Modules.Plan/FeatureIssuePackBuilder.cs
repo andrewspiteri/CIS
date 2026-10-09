@@ -395,7 +395,7 @@ internal static partial class FeatureIssuePackBuilder
             foreach (var obligation in TestObligations(spec))
                 builder.AppendLine($"| {obligation.Layer} | {obligation.Applicable} | {MarkdownCell(obligation.Evidence)} | {obligation.Completion} |");
             builder.AppendLine();
-            builder.AppendLine("Every applicable row must be passed, explicitly unavailable, or covered by a bounded human-approved exception. Unavailable is never passed implicitly.");
+            builder.AppendLine("Every applicable row must pass before task completion. Failed, missing, stale and skipped evidence block completion. Record justified inapplicability separately; it is not a pass. An exception needs the governing authority and cannot be silently inferred from an unavailable check.");
         }
 
         builder.AppendLine();

@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Reading replay example</title></head>
+<body>
+<main>
+  <h1>Reading replay example</h1>
+  <p>This local test page uses the synthetic identity supplied by the browser fixture.</p>
+  <form id="reading-form">
+    <label for="quantity">Quantity</label>
+    <input id="quantity" name="quantity" type="number" min="0" step="0.00000001" required>
+    <button type="submit">Save reading</button>
+  </form>
+  <button id="reload" type="button">Reload readings</button>
+  <p role="status" aria-live="polite" id="result">No readings loaded.</p>
+</main>
+<script>
+  const result = document.getElementById('result');
+  async function reload() {
+    const response = await fetch('/api/readings');
+    result.textContent = response.ok ? `${(await response.json()).length} readings stored.` : 'Unable to read readings.';
+  }
+  document.getElementById('reload').addEventListener('click', reload);
+  document.getElementById('reading-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const response = await fetch('/api/readings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: crypto.randomUUID(), observedAt: new Date().toISOString(), quantity: Number(document.getElementById('quantity').value) })
+    });
+    if (response.ok) await reload();
+    else result.textContent = 'Unable to save reading.';
+  });
+</script>
+</body>
+</html>

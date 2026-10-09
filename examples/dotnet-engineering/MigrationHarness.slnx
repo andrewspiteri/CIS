@@ -1,0 +1,3 @@
+<Solution>
+  <Project Path="tests/migration/Example.MigrationTests.csproj" />
+</Solution>

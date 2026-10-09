@@ -5,7 +5,7 @@ status: Draft
 version: "0.1"
 scope: "Product:ChangeImpactStudio"
 owner: "Andrew Spiteri"
-last_reviewed: "2026-10-05"
+last_reviewed: "2026-10-09"
 review_cadence: "before implementation and at each milestone"
 cis:
   stable_id: change-impact-studio:plan:testing-harness-defaults
@@ -13,19 +13,27 @@ cis:
 
 # Language defaults and complete testing harness plan
 
+Execution sequencing and .NET trial readiness are defined by the [consolidated implementation plan](engineering-defaults-implementation-plan.md). This document retains the harness design and later language-expansion scope; its task labels are cross-references, not a duplicate execution ledger.
+
+## Implementation disposition — 9 October 2026
+
+The Windows .NET milestone now qualifies a native harness, test-mode diagnostics and representative workloads. Later language recipes and project-specific migrations remain separate work. See the [completed milestone and evidence](../../planning/engineering-defaults-trial-readiness.md) and [trial guide](../../planning/engineering-defaults-dotnet-trial-guide.md). The detailed proposal below retains design rationale and later scope; its Draft metadata is not changed into policy or product approval.
+
 ## Outcome and current authority
 
 CIS should guide each solution towards a complete, maintainable testing harness comparable in assurance to PARR. When a repository has no selected framework, CIS should recommend an established language-appropriate framework, show how to assemble the applicable test layers, and expose gaps before feature work is described as verified. The harness includes test-mode instrumentation: correlated logs, metrics and traces for diagnosis, plus comparable performance evidence that can reveal regressions.
 
-This is a planning proposal requested on 5 October 2026. No CIS implementation, active standard, framework selection, package, CI configuration, or application harness is changed by this document. Implementation and migration exercises remain subsequent work. This document is not an approved CIS delivery plan.
+This is a planning proposal requested on 5 October 2026. No CIS implementation, active standard, framework selection, package, CI configuration, or application harness is changed by this document. The .NET implementation and synthetic exercises have since been completed under the consolidated plan; future project migrations remain separately authorized. This document is not an approved CIS delivery plan.
 
-The scope covers SC-05 through SC-12 and the testing aspects of SC-13 through SC-16 in the [CIS assurance improvement candidates](../references/cis-assurance-improvement-candidates-2026-10-05.md). It does not claim to repair application capacity failures, refactor production code, or close those findings by publishing guidance.
+The scope covers SC-05 through SC-12, the testing aspects of SC-13 through SC-16, and representative-workload business acceptance for SC-17 in the [CIS assurance improvement candidates](../references/cis-assurance-improvement-candidates-2026-10-05.md). It does not claim to repair application capacity failures, refactor production code, or close those findings by publishing guidance.
 
 All qualification examples must be synthetic and reproducible from public CIS fixtures. This proposal does not rely on application-specific source or artifact evidence.
 
 The related [code quality and architecture plan](code-quality-architecture-plan.md) uses this harness for structural enforcement, composition tests and later behavior-preserving refactoring. Shared discovery and classification work should be delivered once. Production refactoring requires the relevant test and instrumentation baseline; optional shared-library work does not block harness delivery.
 
 ## What the investigation established
+
+The companion [agent-facing CLI and skills defaults plan](agent-interface-defaults-plan.md) adds command-contract and workflow qualification: structured results, exit codes, unattended execution, failure diagnostics and maintained skill examples. These should use the native harness and shared test instrumentation described here.
 
 | Finding | Evidence | Planning consequence |
 | --- | --- | --- |
@@ -85,7 +93,7 @@ Every applicable capability needs an owner, suite or check binding, command, pre
 | Architecture | Test dependency direction, ownership and relevant structural/security rules. Demonstrate a deliberately introduced forbidden dependency being detected. |
 | Integration and migrations | Real representative dependencies, deterministic isolated state, readiness, schema setup, transactions, concurrency, retries, rollback and cleanup. Testcontainers is provisioning, not a test layer. |
 | API and contract compatibility | Export the actual contract; compare with the retained supported baseline; test status/error shapes and relevant consumer behavior. Schema validity alone is not compatibility or behavioral correctness. Include CLI and event contracts where applicable. |
-| Business acceptance | Cross-step scenarios in domain language; thin bindings to real application behavior; outcomes beyond individual methods. |
+| Business acceptance | Cross-step scenarios in domain language; thin bindings to real application behavior; outcomes beyond individual methods. Own representative-workload, resource-budget, recovery and installed-behavior acceptance criteria where applicable, with evidence from suitable native test drivers. |
 | Regression | Preserve named defect reproductions and stable requirement identities in the appropriate layers; verify those identities executed. Regression is a purpose across layers, not an excuse to relabel every test as a separate layer. |
 | Frontend component and accessibility | Exercise interaction, accessible names, focus, validation and state where a frontend exists. |
 | Browser automation | Critical composed journeys, enabled actions and persisted outcomes, page/component objects, deterministic identities, traces, screenshots and sanitized logs. Keep separate from backend jobs. |
@@ -96,6 +104,20 @@ Every applicable capability needs an owner, suite or check binding, command, pre
 | Performance regression | Compare selected application/workload metrics against a compatible retained baseline under declared resources and instrumentation. Distinguish regression, pass, missing evidence and inconclusive comparison. |
 | Coverage and independent assurance | Changed-code coverage, reviewed exclusions, baseline non-regression, and the independent techniques required by risk or repository policy. Preserve implementer/assurer and run provenance. |
 
+### Representative workload acceptance belongs to business tests
+
+SC-17 belongs in the business-acceptance capability above, with supporting performance, operational and integration checks. It does not require a separate assurance process. PARR's [testing standard, business tests section](C:/miscwork/portfolio/PARR/docs/generic/standards/testing-standard.md) requires cross-step lifecycle coverage, while its [Reqnroll guidance](C:/miscwork/portfolio/PARR/.github/instructions/reqnroll.instructions.md) places externally meaningful behavior and acceptance criteria in business scenarios with thin steps. These establish the appropriate ownership; inspecting that guidance does not prove every existing PARR scenario exercises representative scale or deployed behavior.
+
+When a business requirement depends on workload size, completion time, resource use, recovery or installed behavior, define those conditions in its acceptance scenarios before implementation. Record representative input shape/volume, relevant environment and artifact identity, resource constraints, expected complete outcome and any agreed time/performance budget. Use reproducible synthetic data and disclose differences from the intended operating conditions.
+
+For example, a synthetic batch-processing scenario can require that the declared input volume is processed within the agreed budget and that all expected results can subsequently be read and validated. A job starting, a component passing or a partial result being produced does not satisfy completion. Where required, add interruption/recovery scenarios proving the business outcome after restart, including missing or duplicate results, and an installed-artifact scenario using the actual deployment/package shape under test.
+
+Keep business scenarios understandable and step bindings thin. Reuse native integration, workload, fault-injection and performance drivers for technical setup and measurement; link their evidence to the acceptance scenario instead of duplicating them in step definitions or creating another test framework. Logs, metrics and traces explain outcomes and support diagnosis. Assertions against the acceptance criteria determine pass/fail.
+
+Small fast business scenarios can run frequently; longer representative scenarios run at the required task/release gate according to impact and policy. A smaller run cannot replace a required representative run, and a scheduled success cannot certify a different artifact or incompatible environment. Missing prerequisites, timeout, incomplete readback or missing evidence cannot become a pass. The [iteration completion process](iteration-alignment-plan.md) includes the applicable business-acceptance results in its all-gates-pass rule, and the assigned reviewer checks that the executed workload matches the requirement.
+
+The [secondary-agent logic-review proposal](code-quality-architecture-plan.md#73-independent-secondary-agent-logic-review) adds a separate reviewer for substantive implementation and refactoring. It should challenge source behavior and test blind spots, retain findings and verify corrections against the current snapshot. Reviewer tools, models and providers are configurable through qualified adapters and a common result contract; no vendor is required or hardcoded. This review complements the harness and must not substitute for an adopted mutation, architecture, security or regression requirement.
+
 Proposed numerical starting points follow existing CIS/PARR direction: 95% changed-production line coverage, with approved bounded exceptions; selected release mutation scopes use high 85, low 80 and break 80, retaining stronger existing settings. PR mutation can begin as an explicit advisory baseline and ratchet toward its agreed enforcing tier. For high-risk changed behavior, the plan must state whether mutation blocks completion; an advisory run is not a release pass. Scores do not substitute for meaningful assertions.
 
 For the CLI-only example application, browser and frontend-component layers are inapplicable while the product remains CLI-only. CLI/service journeys, API compatibility, business scenarios, exact arithmetic, real PostgreSQL, architecture, process faults, resource limits and security remain relevant. Local trusted APIs need the documented local exposure controls, not imported PARR-specific Auth0 or tenant rules.
@@ -103,6 +125,8 @@ For the CLI-only example application, browser and frontend-component layers are 
 ## 4. Proposed CIS behavior and ownership
 
 ### Discovery and repository growth
+
+The [iteration alignment plan](iteration-alignment-plan.md) makes source-growth reassessment part of every task's closing instructions: graph rebuild, CIS dependency reconciliation and all-standard alignment review before completion. Testing contributes its applicability and evidence requirements to that shared process.
 
 - Assess current source evidence alongside saved classification. Detect implementation added after empty initialization without relying solely on the old component list.
 - When intended stack is explicitly selected before source exists, offer its harness recipe; when the stack is unknown, report that choice as unresolved. Do not guess from unrelated files.

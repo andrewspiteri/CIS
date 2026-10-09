@@ -9,6 +9,24 @@ namespace Cis.Host.Tests;
 public sealed class CisHostBuilderTests
 {
     [Fact]
+    public void ExampleRecipeMatchesReviewableGitInventory()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "ChangeImpactStudio.slnx"))) directory = directory.Parent;
+        Assert.NotNull(directory);
+        var root = directory.FullName;
+        var recipe = System.Xml.Linq.XDocument.Load(Path.Combine(root, "src/Cis.Host/ExampleRecipe.props"));
+        var included = recipe.Descendants("Content").Select(item => item.Attribute("Include")!.Value.Replace("../../", "", StringComparison.Ordinal)).Order(StringComparer.Ordinal).ToArray();
+        var command = new System.Diagnostics.ProcessStartInfo("git") { WorkingDirectory = root };
+        foreach (var argument in new[] { "-c", "safe.directory=" + root.Replace('\\', '/'), "ls-files", "--cached", "--others", "--exclude-standard", "--", "examples/dotnet-engineering/" }) command.ArgumentList.Add(argument);
+        var files = CisProcessSafety.Run(command, TimeSpan.FromSeconds(15));
+        Assert.Equal(0, files.ExitCode);
+        Assert.False(files.TimedOut || files.OutputTruncated);
+        Assert.Equal(files.StandardOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Order(StringComparer.Ordinal), included);
+        Assert.DoesNotContain(included, path => path.Contains("TestResults/", StringComparison.Ordinal) || path.Contains("BenchmarkDotNet.Artifacts/", StringComparison.Ordinal) || path.EndsWith(".user", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void AddModule_RejectsDuplicateModuleNames()
     {
         var builder = new CisHostBuilder().AddModule(new HostModule());
@@ -41,6 +59,14 @@ public sealed class CisHostBuilderTests
         var exitCode = application.Invoke(["host", "modules", "--format", "xml"]);
 
         Assert.Equal(2, exitCode);
+    }
+
+    [Fact]
+    public void RepositoryExampleCommandIsRegisteredAndRejectsUnknownFormat()
+    {
+        using var application = new CisHostBuilder().AddModule(new Cis.Modules.Repository.RepositoryModule()).Build();
+        Assert.Equal(0, application.Invoke(["repo", "example", "--help"]));
+        Assert.Equal(2, application.Invoke(["repo", "example", "--format", "xml"]));
     }
 
     [Fact]

@@ -81,8 +81,27 @@ categories, and source ordering. A distinct invocation node is retained only for
 whose generic or semantic facts need an addressable site; ordering nodes are restricted
 to recognized flow milestones. Argument values are deliberately not stored. Bounded dataflow records recognized call milestones within one callable symbol;
 it does not claim interprocedural, branch-sensitive, or runtime flow. Test methods also
-produce test-to-symbol `calls` edges. Lexical extraction remains the deterministic
-fallback for unbound syntax and other supported languages.
+produce test-to-symbol `calls` edges. C# declarations come only from Roslyn; they
+are not combined with regex declarations. If compiler analysis is unavailable,
+CIS reports a warning and retains source-file nodes and lexical test discovery,
+without claiming complete C# declaration or semantic coverage. Other supported
+languages retain their lexical declaration adapters.
+
+Component ownership comes from the canonical repository profile's source-path
+mapping. An unmapped C# symbol uses a separate `unowned/` identity scope and keeps
+its component property empty; a repository name is not proof of component ownership.
+When Roslyn merges a type whose source locations span different ownership scopes,
+CIS leaves ownership unconfirmed and emits `CIS-GRAPH-CSHARP-002` with the conflicting
+source paths. Strict validation blocks on this ambiguity rather than accepting the
+first file's ownership.
+Strict validation reports missing ownership. Reconcile missing profile entries
+against actual project files while preserving custom entries, then rebuild and
+validate. Initialization retaining a human-owned profile does not prove its mapping
+is complete.
+
+Graph builds migrate the disposable SQLite store to storage schema 6, including
+indexes used when replacing obsolete evidence. Use this tool version to rebuild
+the cache; an older tool does not share the newer storage contract.
 
 Dependency extraction supports `.csproj`, `package.json`, Gradle build files, and
 `Package.swift`. A project reference creates `depends-on`; it never proves behavioral

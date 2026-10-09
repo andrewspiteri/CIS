@@ -1,5 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <None Update="Fixtures/benchmarkdotnet-0.15.8-native.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\..\src\Cis.Host\Cis.Host.csproj" />
     <ProjectReference Include="..\..\src\Cis.Modules.Change\Cis.Modules.Change.csproj" />
     <ProjectReference Include="..\..\src\Cis.Modules.Agent\Cis.Modules.Agent.csproj" />

@@ -9,5 +9,6 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="System.CommandLine" />
+    <InternalsVisibleTo Include="Cis.Modules.SolutionDesign.Tests" />
   </ItemGroup>
 </Project>

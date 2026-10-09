@@ -1,3 +1,5 @@
+using Cis.Abstractions;
+
 namespace Cis.Modules.Repository;
 
 internal sealed partial class RepositoryStarterBinder
@@ -168,6 +170,18 @@ internal sealed partial class RepositoryStarterBinder
         AddImplementationSkillPacks(repositoryId, documentationRoot, classification, selections, artifacts);
         AddAgentGuidance(documentationRoot, classification, selections, artifacts);
         AddHumanReadableContent(repositoryId, documentationRoot, classification, selections, artifacts);
+        const string engineeringDefinition = "reference.engineering-defaults";
+        selections.Add(new(engineeringDefinition, "Native harness, readable architecture and verified iteration defaults with preserved project choices.", ["CIS engineering defaults v1"]));
+        artifacts.Add(new(engineeringDefinition, engineeringDefinition, $"{documentationRoot}/references/engineering-defaults.md",
+            EngineeringDefaultsStarter.Guide(repositoryId), new CatalogArtifactEntry($"{repositoryId}:reference:engineering-defaults",
+                $"{documentationRoot}/references/engineering-defaults.md", "reference", "active", "canonical")));
+        artifacts.Add(new("configuration.engineering-defaults", "configuration.engineering-defaults", EngineeringAssessmentService.PolicyPath,
+            EngineeringDefaultsStarter.Policy, null));
+        artifacts.Add(new("configuration.engineering-adoption", "configuration.engineering-adoption", CisEngineeringPolicy.AdoptionPath,
+            """{"schemaVersion":1,"adopted":true}""", null));
+        if (classification.DeclaredStack is not null)
+            artifacts.Add(new("configuration.engineering-stack", "configuration.engineering-stack", DeclaredEngineeringStack.Path,
+                DeclaredEngineeringStack.Render(classification.DeclaredStack), null));
         var referenceSeeds = observedSeeds ?? RepositoryReferenceSeeder.Seed(repositoryPath, classification);
 
         // The authority owns the cross-repository vocabulary and may precede every implementation
@@ -681,7 +695,7 @@ internal sealed partial class RepositoryStarterBinder
         | Provider | Enabled | Preferred transport | Allowed modes | Maximum permission | Notes |
         |---|---|---|---|---|---|
         | codex | yes | app-server | plan, implement, review | workspace-write | `exec-json` is an explicit non-interactive fallback. Resolution checks `CIS_CODEX_EXECUTABLE`, process PATH, then the current Windows Codex Desktop installation. Inconclusive login status is advisory because ambient Desktop/App Server authentication can still execute. Explicit setup uses provider-native browser or device authentication through `cis agent provider authenticate codex`; CIS never receives credentials. |
-        | claude | yes | stream-json | plan, implement, review | workspace-write | Headless execution uses predeclared permissions. |
+        | claude | yes | stream-json | plan, implement, review | workspace-write | Headless execution does not relay interactive approvals. Implementation-only `--allow-command` adds literal native rules per attempt; denied commands fail. Native rules are not an OS sandbox. |
         | portable | yes | envelope | plan, implement, review | read-only | Preparation only; no direct execution. |
         """);
         Add("reference.source-evidence", "references/source-evidence.md", "source-evidence-registry", """
@@ -1241,7 +1255,7 @@ internal sealed partial class RepositoryStarterBinder
         selections.Add(new RepositoryStarterSelection(assuranceDefinition,
             "Preserve portable security, layered testing, browser, contract, evidence and tool-specific safeguards during onboarding.", ["cis curated starter"]));
         artifacts.Add(new RepositoryStarterArtifact(assuranceDefinition, assuranceDefinition,
-            ".github/instructions/cis-engineering-assurance.instructions.md", CreateEngineeringAssuranceInstruction(documentationRoot), null));
+            ".github/instructions/cis-engineering-assurance.instructions.md", CreateEngineeringAssuranceInstruction(documentationRoot), null, TemplateVersion: 2));
         selections.Add(new RepositoryStarterSelection(
             referenceInstructionDefinition,
             "Every initialized repository receives deterministic non-API reference discovery, validation, and drift instructions.",
@@ -2073,8 +2087,8 @@ internal sealed partial class RepositoryStarterBinder
         """;
         var builder = new System.Text.StringBuilder(content.TrimEnd()).AppendLine();
         foreach (var standard in defaultStandards)
-        foreach (var rule in standard.Rules)
-            builder.AppendLine($"| {repositoryId}:standard:{standard.Slug} | {rule.Id} | {string.Join(", ", standard.Targets)} | manual-review | {rule.Verification.Replace("|", "¦", StringComparison.Ordinal)} | Active | PARR-derived starter; strengthen with deterministic enforcement where practical. |");
+            foreach (var rule in standard.Rules)
+                builder.AppendLine($"| {repositoryId}:standard:{standard.Slug} | {rule.Id} | {string.Join(", ", standard.Targets)} | manual-review | {rule.Verification.Replace("|", "¦", StringComparison.Ordinal)} | Active | PARR-derived starter; strengthen with deterministic enforcement where practical. |");
         return builder.ToString();
     }
 
@@ -2970,18 +2984,20 @@ internal sealed partial class RepositoryStarterBinder
     1. For an existing implementation, dry-run `cis repo import --workspace <repository> --source <repository> --root <documentation-root> --participation owned --relationship none --ecosystem <id> --product <id>` and confirm the self-import; use `cis repo init` only for a genuinely new empty project or later reconciliation. If onboarding or command discovery fails, run `cis repo doctor` before retrying.
     2. For pre-change BRD drafting, explicitly select non-sensitive repository-owned plain-text or Word Open XML (`.docx`) reference files and run `cis agent author brd --reference <file> --provider <provider> --actor <human>`. CIS registers each source, builds stable local Markdown anchors, and reconciles the managed BRD source assessment before authoring. Then use `cis agent review brd` with a different provider, review mode, and read-only isolation; include extracted authoring evidence only after explicit disclosure authority. CIS preserves human review and approval. For delivery work, read `{{documentationRoot}}/references/agent-provider-profile.md`, the approved change plan, the selected ready task, and repository delivery policy.
     3. Run `cis agent providers --format agent` and `cis agent provider diagnose <provider> --format agent`; provider availability never grants authority.
-    4. Run `cis agent prepare <change-id> <task-id> --provider <provider> --mode <plan|implement|review> --permission <read-only|workspace-write> --format agent` and inspect the bound digest and permission ceiling.
-    5. Run `cis agent run` with an explicit provider, mode, permission, target, transport, actor, and reason. Workspace-write defaults to an isolated Git worktree whose baseline includes current tracked and non-ignored untracked changes.
-    6. Use `--approve-requests` only when the user explicitly authorizes provider requests within the declared ceiling. Network access and paths outside the bounded workspace remain denied.
-    7. Inspect durable state with `cis agent runs` and `cis agent show`; cancel with an actor and reason. Use `recover` only for a proven orphaned process before an explicit `resume`. Use `revalidate` only for a retained read-only Claude BRD review that fails solely under the corrected legacy telemetry-retention rule. Neither operation erases the original event history.
+    4. Run `cis agent prepare <change-id> <task-id> --provider <provider> --format agent` and inspect the bound digest and permission ceiling.
+    5. Run `cis agent run` with required provider, mode, permission and actor; select target and transport when needed. This command has no `--reason` option; retain rationale with the task. Workspace-write defaults to an isolated Git worktree whose baseline includes current tracked and non-ignored untracked changes.
+    6. Use `--approve-requests` only for explicitly authorized supported Codex requests within its declared ceiling. For Claude implementation tasks with workspace-write, optionally repeat `--allow-command` for reviewed literal commands. These native rules apply to one attempt, not read-only or document-authoring runs. They add permissions, not a shell/filesystem sandbox; native normalization, compound commands, directory changes and build-script effects remain relevant. A denied command is a failed attempt, not a waiting approval dialog.
+    7. Inspect durable state with `cis agent runs` and `cis agent show`; cancel with an actor and reason. Use `recover` only for a proven orphaned process before an explicit `resume`. Use `revalidate` only for a retained read-only Claude BRD review that fails solely under the corrected legacy telemetry-retention rule. Neither operation erases the original event history. Resume requires an explicit actor and reason. Supply any command list again; CIS restarts native session context when either attempt has a list. Retain actual tool outputs, not just the model's success claim.
     8. Inspect the structured result before `cis agent import-result`. Imported output is evidence only; it cannot approve plans, accept designs, complete tasks, or verify delivery.
+
+    Read the `cis agent run` and `cis agent resume` manuals from the CIS distribution for syntax, native matching limits and current resumption behavior.
 
     Never copy provider credentials into CIS, infer permission from tool availability, run a non-ready task, bypass the design barrier for downstream work, or treat an agent's completion claim as canonical CIS state. Coordination, wireframe, and visual-design preparation establish the barrier and are therefore eligible before approval.
     """;
 
     private static string CreateAgentExecutionInstruction(string documentationRoot) => $$"""
     ---
-    applyTo: "{{documentationRoot}}/changes/**/tasks/*.md"
+    applyTo: "{{documentationRoot}}/changes/**/agent-tasks/*.md"
     ---
 
     # CIS agent execution authority
@@ -2990,9 +3006,9 @@ internal sealed partial class RepositoryStarterBinder
     - Direct execution requires an approved plan, accepted impacts, and a ready or in-progress task. The global design barrier blocks downstream work, not coordination, wireframe, or visual-design preparation needed to establish it.
     - Select provider, mode, permission, target, transport, actor, and rationale explicitly. Availability is not authorization.
     - Workspace-write execution uses an isolated Git worktree, seeded from the exact tracked and non-ignored untracked source baseline when dirty, unless the reviewed profile explicitly permits direct dirty-working-tree execution.
-    - Approve provider requests only when the user authorizes per-run approval and the request is inside the declared filesystem and command ceiling. Network permission remains denied unless a future reviewed contract adds it.
+    - `--approve-requests` covers explicitly authorized supported Codex requests within the declared ceiling. Claude uses optional per-attempt `--allow-command` rules for implementation with workspace-write; unsupported providers and read-only runs reject them. Native rules are additive and do not impose full shell, filesystem or network confinement. Inspect invoked scripts and native permissions. A permission-required result is failure, not a pending approval prompt.
     - Runs, attempts, events, permissions, process identity, artifact hashes, and results are durable derived evidence under `.cis/local/agents/runs/`.
-    - Cancellation and resumption append provenance. They never discard the first attempt or rewrite canonical Markdown.
+    - Cancellation and resumption append provenance. They never discard the first attempt or rewrite canonical Markdown. Resupply explicit command rules on each resumed attempt; native session context restarts when either attempt uses them.
     - A provider result is untrusted evidence. Import it explicitly and preserve CIS as the only authority for plan approval, design approval, task transitions, verification, and final acceptance.
     """;
 
@@ -3026,6 +3042,7 @@ internal sealed partial class RepositoryStarterBinder
     - Prefer deterministic generation and workflows. Model output is never approval, acceptance, or completion evidence.
     - Remote model use requires a reviewed route and explicit `--allow-remote` authorization for the exact content.
     - Agent envelopes bind to a task digest. Reject stale results and never infer task completion from an import.
+    - With adopted engineering defaults, request each declared task target's template using `cis plan task completion-context --target <repository-id>` and retain evidence at its authority-relative `receiptPath`. Completion checks every target. Native implementation/review records stay at their authority run paths; other gate evidence belongs to the target. A template never proves execution.
     - Workflow definitions are repository-owned; CIS executes argument lists without a shell and resumes only an unchanged definition.
     - Verification acceptance requires an explicit human reviewer and rationale after deterministic validation passes.
     - Diagnostics may read only enabled, repository-relative, non-sensitive evidence sources.
@@ -3275,7 +3292,7 @@ internal sealed partial class RepositoryStarterBinder
 
         ## Workflow
 
-        1. Inspect the target without mutation. If recognized project manifests or implementation source already exist, run `cis repo import --workspace <repository> --source <repository> --root <documentation-root> --participation owned --relationship none --ecosystem <id> --product <id> --dry-run --format agent`. For a genuinely empty new project, run `cis repo init --repo <repository> --root <documentation-root> --dry-run --format agent`, then create its product authority with `cis workspace init --root <documentation-root> --ecosystem <id> --product <id>`.
+        1. Inspect the target without mutation. If recognized project manifests or implementation source already exist, run `cis repo import --workspace <repository> --source <repository> --root <documentation-root> --participation owned --relationship none --ecosystem <id> --product <id> --dry-run --format agent`. For a new empty authority, first preview `cis workspace init --repo <repository> --root <documentation-root> --ecosystem <id> --product <id> --dry-run --format agent`; apply only after review. Use `repo init --repo <repository> --root <documentation-root> --dry-run` for a participant or later reconciliation, including any declared C# stack.
         2. Review the selected create/import mode, classification evidence, planned creates and updates, warnings, and collisions.
         3. For obsolete managed artifacts, keep the default retention unless the maintainer explicitly requests recoverable cleanup. Preview that cleanup with `--quarantine-obsolete --dry-run`; only unchanged CIS-managed files are eligible, while edited or human-owned files remain in place.
         4. Treat exit code `3` as a confirmation gate, not a failure. After maintainer review and authorization, rerun the same create/import command with `--yes`; include `--quarantine-obsolete` only for init reconciliation when its moves were also reviewed.
@@ -3376,7 +3393,7 @@ internal sealed partial class RepositoryStarterBinder
         1. Confirm `.cis/workspace.yml` identifies one ecosystem, one product, and exactly one product-owned `authority` repository. If not, dry-run `cis workspace init --root <documentation-root> --ecosystem <id> --product <id>` and request review before using `--yes`.
         2. Run `cis graph build --workspace <workspace>` and `cis graph status --workspace <workspace>` before intake. Reserve `cis graph validate --workspace <workspace>` for deep structural assurance.
         3. Run `cis brd discover --workspace <workspace> --format agent`. Treat every found BRD, product-design document such as a GDD, or feature specification in product-owned repositories as unverified source evidence; absence creates no implied requirements. Exclude dependency repositories because their requirements belong to another product authority.
-        4. Run `cis brd init --workspace <workspace> --title <title>`. Preserve the authority repository's canonical document and catalog entry.
+        4. Run `cis brd init --workspace <workspace> --title <title>`. Preserve the authority repository's canonical document and catalog entry. For imported layouts, distinguish unmatched headings from absent business content. Preview an explicit heading map with `cis brd layout --workspace <workspace> --input <layout.json> --format json`; inspect the selected sections and requirement IDs before applying with `--yes --review-hash <preview-reviewHash>`. Preserve the authored narrative. Keep Open questions in its canonical question/answer workflow; do not map a future activation register to it or infer that no unresolved questions remain. Rebuild, reconcile, rebuild and validate after applying a map.
         5. To delegate the initial draft, select explicit non-sensitive plain-text or Word Open XML (`.docx`) references and run `cis agent author brd --reference <file> --provider <provider> --actor <human>`. Word text extraction is bounded and does not execute embedded content. Review the one-file result; agent drafting cannot alter frontmatter or managed blocks and grants no approval.
         6. After implementation graph rebuilds, run `cis technical-intent refresh --workspace <workspace> --format agent` before starting the next feature. Do not request renewed BRD, technical-intent, or backlog approval when this safe refresh succeeds. If its BRD stage blocks on new or materially changed source evidence, use `cis brd reconcile --workspace <workspace> --format agent`, review the exact semantic delta, and request only the authority that delta requires.
         7. Review every source row. Set Assessment to `Adopted`, `Reference`, or `Rejected` and record rationale. For an Adopted feature specification, incorporate its business intent into the relevant BRD sections and cite its `BRD-SRC-*` ID in Traceability.
@@ -3444,7 +3461,7 @@ internal sealed partial class RepositoryStarterBinder
         while upstream documents are under review. It does not grant approval or weaken the ordinary gates
         below. Inspect every implementation area, preserve human notes and stable component IDs, keep source
         citations in comments, and distinguish observed, proposed and unresolved facts. Run
-        `cis definition prepare --page architecture` after authoring to render its four SVG views.
+        `cis definition prepare --page architecture` after authoring to refresh its C4 SVG views. Use a schemaVersion 2 model with context, container and scoped component views; do not equate logical components with deployment units.
 
         1. Confirm `cis technical-intent status --workspace <workspace>` is Active, valid, and current.
         2. Run `cis solution-design init --workspace <workspace> --format agent`.
@@ -3455,6 +3472,10 @@ internal sealed partial class RepositoryStarterBinder
         7. Run `cis solution-design validate` and resolve every structural, traceability, collision, drift, and bundle-integrity finding.
         8. Present both files as one review point. Run `cis solution-design approve --reviewer <human> --reason <rationale>` only with explicit human authority.
         9. Rebuild the graph after approval. Continue with `cis ui-direction questions init` and `cis ui-direction init` for the shared shell, navigation, reusable interaction patterns, accessibility, and visual direction. Detailed screens remain feature-level work.
+
+        ### Retaining a design after source changes
+
+        Inspect both canonical documents and the changed technical direction. If the existing architecture still fits, `cis solution-design reconcile` preserves its narrative and diagrams without requiring an implementation repository or inference provider. Supply `--actor`, a substantive `--reason`, reviewed raw file hashes in `--expected-design-sha256` and `--expected-components-sha256`, and `technicalIntentVersion` from `cis solution-design status --workspace <workspace> --format json` in `--expected-technical-version`. The command records reconciliation and clears the whole bundle's approval. Changed inputs, invalid diagrams and changed component identities block it. Revise an unsuitable design first. Then validate and obtain explicit whole-bundle approval; reconciliation never establishes implementation evidence or authority to approve, and an agent must identify itself as the actor.
 
         Never approve per component, invent business scope, overwrite human sections on rerun, bypass stale source evidence, or treat generated content as Active.
         """;
@@ -3813,7 +3834,10 @@ internal sealed partial class RepositoryStarterBinder
         2. Check every acceptance criterion against direct evidence.
         3. Confirm required specifications and references changed with behavior.
         4. Verify deterministic checks and independent assurance requirements.
-        5. Report a pass/fail verdict and exact remaining work.
+        5. Rebuild the affected graph, preview CIS dependency and all-standard/skill reconciliation, preserve customizations and apply authorized updates. Refresh affected evidence after changes; check context freshness before the next task.
+        6. Inventory required gates independently of configured commands. Failed, missing, stale and skipped block completion; justify inapplicability separately. Check current scoped requirement-to-task-to-source-to-test-to-review traceability and unresolved findings.
+        7. Reuse the assigned independent reviewer for final source, callers/contracts, operational consequences, context omissions and closing evidence. Expand inaccurate summaries to source; a fresh graph alone is insufficient.
+        8. When engineering defaults are adopted, use `cis plan task completion-context` to prepare the missing-state receipt. For multiple declared targets, request each template with `--target <repository-id>` and save it at its returned authority-relative `receiptPath`; completion checks every target. Native implementation/review records stay at their original authority run paths; other gate evidence belongs to the target. Retain current authority and participant context before the existing completion transition. Report the verified verdict and exact remaining work.
 
         ## Output Expectations
 
@@ -4071,7 +4095,7 @@ internal sealed partial class RepositoryStarterBinder
         - Cover context, topology, data consistency, integrations, security, operations/recovery, verification, traceability, and the UI-design handoff.
         - Do not add business requirements or contradict the Active technical intent. Promote durable changes through technical intent or an ADR first.
         - Run `cis solution-design validate` before asking for one whole-bundle approval. Agents may not approve on the user's behalf.
-        - An upstream or bundle-content change makes both artifacts stale; rerun `cis solution-design init`, review the delta, and renew the one bundle approval.
+        - An upstream or bundle-content change makes both artifacts stale. Review the delta; use `cis solution-design reconcile` with reviewed file hashes and source version when retaining an unchanged design, or the authoring workflow for revisions. Validate and renew the one bundle approval. Reconciliation itself grants no approval.
         """;
 
     private static string CreateUiDirectionInstruction(string documentationRoot) => $$"""

@@ -8,7 +8,7 @@ namespace Cis.Modules.Graph;
 
 public sealed class SqliteGraphStore
 {
-    public const int StorageSchemaVersion = 5;
+    public const int StorageSchemaVersion = 6;
     public const string DatabaseRelativePath = ".cis/local/graph/context.db";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -742,6 +742,13 @@ public sealed class SqliteGraphStore
             }
             version = 5;
         }
+        if (version == 5)
+        {
+            using var transaction = connection.BeginTransaction();
+            Execute(connection, transaction, SchemaVersion6);
+            transaction.Commit();
+            version = 6;
+        }
         if (version != StorageSchemaVersion)
             throw new InvalidDataException($"Unsupported SQLite graph schema {version}; expected {StorageSchemaVersion}.");
     }
@@ -812,6 +819,14 @@ public sealed class SqliteGraphStore
         DROP TABLE node_search;
         CREATE VIRTUAL TABLE node_search USING fts5(search_text, content='', contentless_delete=1, tokenize='trigram');
         PRAGMA user_version=5;
+        """;
+
+    // Foreign-key checks during evidence cleanup otherwise scan both complete
+    // link tables once per obsolete evidence row on a source-changing rebuild.
+    private const string SchemaVersion6 = """
+        CREATE INDEX IF NOT EXISTS ix_node_evidence_id ON node_evidence(evidence_id);
+        CREATE INDEX IF NOT EXISTS ix_edge_evidence_id ON edge_evidence(evidence_id);
+        PRAGMA user_version=6;
         """;
 }
 

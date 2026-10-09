@@ -11,11 +11,12 @@ Verify .NET changes without turning a targeted edit into an unbounded solution-w
 
 ## Workflow
 
-1. Identify the affected project and its direct test projects.
-2. Run formatting or analyzers required by the repository.
+1. Identify affected projects, adopted framework, native runner/platform and direct test projects; inspect inherited configuration. When no harness is adopted, consult `.cis/local/examples/dotnet-engineering/README.md` when installed and the engineering-defaults reference. Verify compatibility before adoption; examples are reference material, not project implementation or passing evidence.
+2. Run the native formatter and SDK/Sonar analyzers or adopted alternatives with declared blocking severities.
 3. Build the narrowest project boundary with warnings visible.
-4. Run targeted tests, then widen only when impact or failures justify it.
-5. Record exact commands, results, skipped checks, and residual risk.
+4. Run the applicable unit, component, architecture, integration, compatibility, regression, business, browser and security layers. Use bounded coverage/mutation with actual reports; record justified inapplicability separately. Widen only when impact, policy or failures justify it.
+5. Enable correlated test-mode logs, metrics and traces without changing business/authentication behavior; retain partial evidence and first failures.
+6. Record exact commands, versions, source identity, results, skipped checks, unavailable prerequisites and residual risk. Assess required gates independently of the configured command list before completion.
 
 ## Completion evidence
 

@@ -3,13 +3,18 @@ title: "CIS Command Manual"
 type: navigation
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-10-05"
+last_reviewed: "2026-10-09"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:root
 ---
 
 # CIS command manual
+
+For a new Windows .NET/C# project, follow the [trial guide](../../planning/engineering-defaults-dotnet-trial-guide.md).
+For current package identity and scoped qualification, read the [readiness record](../../planning/engineering-defaults-trial-readiness.md).
+Initialize local examples with [repo init](cis_repo_init.md), inspect [completion context](cis_plan_task_completion_context.md),
+and use [verify finalize](cis_verify_finalize.md) for the standard final-sweep/coordination closure.
 
 ## Visual Studio Code
 
@@ -32,6 +37,7 @@ Each loaded module owns one top-level command group. The following leaf commands
 | [`cis brd feature wizard status`](cis_brd_feature_wizard_status.md) | Report the eight feature-definition pages and outstanding work. |
 | [`cis brd feature wizard screens`](cis_brd_feature_wizard_screens.md) | Generate and inspect proposed feature screens against the existing UI baseline. |
 | [`cis brd feature wizard architecture`](cis_brd_feature_wizard_architecture.md) | Generate feature-specific C4 context, container and component diagrams. |
+| [`cis brd feature reconcile`](cis_brd_feature_reconcile.md) | Retain compatible feature scope against a reviewed definition update and clear approval. |
 | [`cis brd feature wizard delivery`](cis_brd_feature_wizard_delivery.md) | Reconcile requirements with existing implementation and identify remaining work. |
 | [`cis brd feature wizard save`](cis_brd_feature_wizard_save.md) | Save reviewed feature-page answers with drift and concurrency checks. |
 | [`cis brd feature wizard navigation`](cis_brd_feature_wizard_navigation.md) | Navigate product features, repository work and saved definition progress. |
@@ -115,6 +121,7 @@ Each loaded module owns one top-level command group. The following leaf commands
 | [`cis repo import`](cis_repo_import.md) | Register existing repositories as product-owned implementation or directional dependency context. |
 | [`cis repo list`](cis_repo_list.md) | Validate and list repositories registered in a CIS workspace. |
 | [`cis repo doctor`](cis_repo_doctor.md) | Inspect repository readiness, detect Ollama, and report evidence-backed suggested fixes. |
+| [`cis repo example`](cis_repo_example.md) | Inspect or export the bundled native .NET engineering recipe into a new directory. |
 | [`cis skills inventory`](cis_skills_inventory.md) | List portable repository skills and detect structural errors. |
 | [`cis skills validate`](cis_skills_validate.md) | Validate skill names, metadata, bodies, duplicates, and local resource links. |
 | [`cis skills import`](cis_skills_import.md) | Import validated skill bundles from local paths, ZIP archives, or GitHub repositories. |
@@ -176,6 +183,7 @@ Each loaded module owns one top-level command group. The following leaf commands
 | [`cis brd sources assess`](cis_brd_sources_assess.md) | Save explicit human source decisions from the wizard or a checked JSON batch. |
 | [`cis brd sources summarize`](cis_brd_sources_summarize.md) | Cache local-model document summaries for source review. |
 | [`cis brd validate`](cis_brd_validate.md) | Validate BRD content, evidence assessment, and baselines. |
+| [`cis brd layout`](cis_brd_layout.md) | Map existing BRD headings without rewriting business content. |
 | [`cis brd approve`](cis_brd_approve.md) | Record explicit human approval of a valid BRD. |
 | [`cis brd backlog build`](cis_brd_backlog_build.md) | Decompose the Active BRD into traceable high-level product outcomes. |
 | [`cis brd backlog validate`](cis_brd_backlog_validate.md) | Validate high-level coverage, source currency, routing, and dependencies. |
@@ -246,6 +254,8 @@ Each loaded module owns one top-level command group. The following leaf commands
 | [`cis plan capability status`](cis_plan_capability_status.md) | Show canonical extension capability selections and unresolved provider conflicts. |
 | [`cis plan capability select`](cis_plan_capability_select.md) | Record human-approved provider selection and compatible extension replacement. |
 | [`cis plan task transition`](cis_plan_task_transition.md) | Move a generated task through its audited lifecycle while enforcing gates. |
+| [`cis plan task completion-context`](cis_plan_task_completion_context.md) | Print a missing-state template for the current required gates and evidence identities. |
+| [`cis plan performance-check`](cis_plan_performance_check.md) | Compare current native benchmark evidence with explicitly adopted budgets and baseline. |
 | [`cis plan task migrate-type`](cis_plan_task_migrate_type.md) | Migrate an extension task to the selected compatible provider while preserving human evidence. |
 | [`cis design templates`](cis_design_templates.md) | List reusable application-shell/component templates and possible token savings. |
 | [`cis design reuse`](cis_design_reuse.md) | Carry exact approved PNGs into a target screen with verified source provenance. |

@@ -35,6 +35,7 @@ public sealed partial class SolutionDesignWorkflowTests
         Assert.Equal(0, application.Invoke(["solution-design", "status", "--help"]));
         Assert.Equal(0, application.Invoke(["solution-design", "approve", "--help"]));
         Assert.Equal(0, application.Invoke(["solution-design", "diagrams", "--help"]));
+        Assert.Equal(0, application.Invoke(["solution-design", "reconcile", "--help"]));
     }
 
     [Fact]
@@ -328,7 +329,8 @@ public sealed partial class SolutionDesignWorkflowTests
     private sealed class StubTechnicalIntentSource(TechnicalIntentResult result) : ISolutionDesignTechnicalIntentSource
     {
         public TechnicalIntentResult Result { get; set; } = result;
-        public TechnicalIntentResult Status(string workspacePath) => Result;
+        public Func<TechnicalIntentResult>? OnStatus { get; set; }
+        public TechnicalIntentResult Status(string workspacePath) => OnStatus?.Invoke() ?? Result;
     }
 
     private sealed class FixtureDependenciesModule(Fixture fixture) : ICisModule

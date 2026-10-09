@@ -23,7 +23,8 @@ public sealed partial class AgentModule : ICisModule
             technicalIntentDraftPreparer: serviceProvider.GetService<ICisTechnicalIntentDraftPreparer>(),
             observedReferencePreparer: serviceProvider.GetService<ICisObservedReferencePreparer>(),
             solutionDesignDrafts: serviceProvider.GetService<ICisSolutionDesignDrafts>(),
-            textGeneration: serviceProvider.GetService<ICisTextGenerationService>()));
+            textGeneration: serviceProvider.GetService<ICisTextGenerationService>(),
+            taskContracts: serviceProvider.GetService<ICisEngineeringTaskContractReader>()));
         services.AddSingleton<ICisStoryTaskExecutor>(provider => provider.GetRequiredService<AgentService>());
         services.AddSingleton<AgentEvidenceService>();
         services.AddSingleton<ICisRepositoryDoctorCheck, AgentProviderDoctorCheck>();
@@ -59,8 +60,12 @@ public sealed partial class AgentModule : ICisModule
     {
         var group = new Command("discover", "Prepare local implementation evidence without contacting an agent provider.");
         var command = new Command("brd", "Preview digest-bound implementation/test snapshots and coverage areas for selected owned repositories.");
-        var reference = new Option<string[]>("--reference") { Required = true, AllowMultipleArgumentsPerToken = true,
-            Description = "Explicitly selected initialized product-owned repository paths." };
+        var reference = new Option<string[]>("--reference")
+        {
+            Required = true,
+            AllowMultipleArgumentsPerToken = true,
+            Description = "Explicitly selected initialized product-owned repository paths."
+        };
         var actor = Required("--actor"); var repo = Repo(); var format = Format();
         foreach (var option in new Option[] { reference, actor, repo, format }) command.Options.Add(option);
         command.SetAction(result =>
@@ -129,19 +134,20 @@ public sealed partial class AgentModule : ICisModule
         var provider = new Option<string>("--provider") { Required = true };
         var mode = new Option<string>("--mode") { Required = true };
         var permission = new Option<string>("--permission") { Required = true };
+        var allowedCommands = CommandPermissionsOption();
         var target = new Option<string?>("--target"); var transport = new Option<string?>("--transport");
         var timeout = new Option<int>("--timeout-seconds") { DefaultValueFactory = _ => 3_600 };
         var approve = new Option<bool>("--approve-requests") { Description = "Pre-authorize supported provider requests that remain inside the declared permission ceiling." };
         var actor = new Option<string>("--actor") { Required = true }; var repo = Repo(); var format = Format();
         command.Arguments.Add(change); command.Arguments.Add(task);
-        foreach (var option in new Option[] { provider, mode, permission, target, transport, timeout, approve, actor, repo, format }) command.Options.Add(option);
+        foreach (var option in new Option[] { provider, mode, permission, target, transport, timeout, approve, allowedCommands, actor, repo, format }) command.Options.Add(option);
         command.SetAction(result =>
         {
             var outputFormat = result.GetValue(format)!;
             return Render(ExecuteForeground((cancellationToken, progress) => service.Run(
                 result.GetValue(repo)!, result.GetValue(change)!, result.GetValue(task)!, result.GetValue(provider)!,
                 result.GetValue(mode)!, result.GetValue(permission)!, result.GetValue(target), result.GetValue(transport),
-                result.GetValue(timeout), result.GetValue(approve), result.GetValue(actor)!, cancellationToken, progress), outputFormat), outputFormat);
+                result.GetValue(timeout), result.GetValue(approve), result.GetValue(actor)!, cancellationToken, progress, result.GetValue(allowedCommands)), outputFormat), outputFormat);
         });
         return command;
     }
@@ -333,15 +339,16 @@ public sealed partial class AgentModule : ICisModule
     private static Command Resume(AgentService service)
     {
         var command = new Command("resume", "Create another retained attempt for a terminal run when its provider supports continuation.");
+        var allowedCommands = CommandPermissionsOption();
         var run = new Argument<string>("run-id"); var message = new Option<string?>("--message"); var actor = Required("--actor"); var reason = Required("--reason");
         var approve = new Option<bool>("--approve-requests"); var repo = Repo(); var format = Format(); command.Arguments.Add(run);
-        command.Options.Add(message); command.Options.Add(actor); command.Options.Add(reason); command.Options.Add(approve); command.Options.Add(repo); command.Options.Add(format);
+        command.Options.Add(allowedCommands); command.Options.Add(message); command.Options.Add(actor); command.Options.Add(reason); command.Options.Add(approve); command.Options.Add(repo); command.Options.Add(format);
         command.SetAction(result =>
         {
             var outputFormat = result.GetValue(format)!;
             return Render(ExecuteForeground((cancellationToken, progress) => service.Resume(
                 result.GetValue(repo)!, result.GetValue(run)!, result.GetValue(message), result.GetValue(actor)!,
-                result.GetValue(reason)!, result.GetValue(approve), cancellationToken, progress), outputFormat), outputFormat);
+                result.GetValue(reason)!, result.GetValue(approve), cancellationToken, progress, result.GetValue(allowedCommands)), outputFormat), outputFormat);
         });
         return command;
     }

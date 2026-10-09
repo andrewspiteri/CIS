@@ -1,0 +1,9 @@
+Synthetic legacy-harness input for migration qualification, not an executable test framework.
+The simulated old console checks covered these examples but omitted shared boundaries:
+OLD-001 | value=-1 | assignments=0
+OLD-002 | value=0 | assignments=1
+OLD-003 | value=5 | assignments=1
+OLD-004 | value=9 | assignments=1
+OLD-005 | value=15 | assignments=1
+OLD-006 | value=21 | assignments=0
+Contract: adjacent half-open windows [0,10), [10,20) must never assign an event twice.

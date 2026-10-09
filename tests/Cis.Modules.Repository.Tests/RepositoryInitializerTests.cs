@@ -2207,6 +2207,11 @@ public sealed class RepositoryInitializerTests
             "SKILL.md"));
         Assert.Contains("cis repo init", bootstrapSkill, StringComparison.Ordinal);
         Assert.Contains("cis repo doctor", bootstrapSkill, StringComparison.Ordinal);
+        var completionSkill = File.ReadAllText(Path.Combine(repository.Path, ".github", "skills", "cis-validate-completion", "SKILL.md"));
+        Assert.Contains("--target <repository-id>", completionSkill, StringComparison.Ordinal);
+        Assert.Contains("receiptPath", completionSkill, StringComparison.Ordinal);
+        var deliveryInstructions = File.ReadAllText(Path.Combine(repository.Path, ".github", "instructions", "cis-delivery-execution.instructions.md"));
+        Assert.Contains("Completion checks every target", deliveryInstructions, StringComparison.Ordinal);
         var skillGovernanceSkill = File.ReadAllText(Path.Combine(
             repository.Path,
             ".github",
@@ -2246,6 +2251,9 @@ public sealed class RepositoryInitializerTests
             "cis-govern-solution-design",
             "SKILL.md"));
         Assert.Contains("cis solution-design init", solutionDesignSkill, StringComparison.Ordinal);
+        Assert.Contains("cis solution-design reconcile", solutionDesignSkill, StringComparison.Ordinal);
+        Assert.Contains("--expected-technical-version", solutionDesignSkill, StringComparison.Ordinal);
+        Assert.Contains("clears the whole bundle's approval", solutionDesignSkill, StringComparison.Ordinal);
         Assert.Contains("one review point", solutionDesignSkill, StringComparison.Ordinal);
         var solutionDesignInstruction = File.ReadAllText(Path.Combine(
             repository.Path,
@@ -2253,6 +2261,7 @@ public sealed class RepositoryInitializerTests
             "instructions",
             "cis-solution-design.instructions.md"));
         Assert.Contains("one atomic review", solutionDesignInstruction, StringComparison.Ordinal);
+        Assert.Contains("Reconciliation itself grants no approval", solutionDesignInstruction, StringComparison.Ordinal);
         Assert.Contains("TI-MOD-*", solutionDesignInstruction, StringComparison.Ordinal);
         var uiDirectionSkill = File.ReadAllText(Path.Combine(
             repository.Path,
@@ -2907,8 +2916,11 @@ public sealed class RepositoryInitializerTests
         Assert.Contains("ownership: human", File.ReadAllText(Path.Combine(repository.Path, ".cis", "starter-manifest.yml")), StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void Initialize_AdoptsGovernedTechnicalIntentEvolutionWithoutFalseCollision()
+    [Theory]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    public void Initialize_AdoptsGovernedTechnicalIntentEvolutionWithoutFalseCollision(int schemaVersion)
     {
         using var repository = TemporaryRepository.Create();
         var initializer = new RepositoryInitializer();
@@ -2916,14 +2928,14 @@ public sealed class RepositoryInitializerTests
         Assert.Equal(0, initializer.Initialize(request).ExitCode);
 
         var technicalIntentPath = Path.Combine(repository.Path, "docs", "cis", "specs", "technical-intent-spec.md");
-        File.WriteAllText(technicalIntentPath, """
+        File.WriteAllText(technicalIntentPath, $$"""
             ---
             title: Governed Technical Intent
             type: specification
             status: Draft
             cis:
               stable_id: example:spec:technical-intent
-              technical_intent_schema: 3
+              technical_intent_schema: {{schemaVersion}}
             ---
 
             # Governed Technical Intent
@@ -2938,6 +2950,7 @@ public sealed class RepositoryInitializerTests
             Governed business evidence.
             <!-- cis:technical-intent-business-evidence:end -->
             """);
+        var governedContent = File.ReadAllText(technicalIntentPath);
         repository.Write(
             "src/Example.Api/Example.Api.csproj",
             "<Project Sdk=\"Microsoft.NET.Sdk.Web\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
@@ -2950,6 +2963,7 @@ public sealed class RepositoryInitializerTests
         Assert.Contains("docs/cis/specs/technical-intent-spec.md", preview.RetainedPaths);
 
         Assert.Equal(0, initializer.Initialize(request).ExitCode);
+        Assert.Equal(governedContent, File.ReadAllText(technicalIntentPath));
         var repeated = initializer.Initialize(new RepositoryInitRequest(
             repository.Path, "docs/cis", DryRun: true, Confirmed: false));
         Assert.DoesNotContain(repeated.Collisions, collision =>
@@ -3126,6 +3140,25 @@ public sealed class RepositoryInitializerTests
         Assert.Contains("SEC-FEAT-006", matrix, StringComparison.Ordinal);
         Assert.Equal(1, matrix.Split("SEC-FEAT-006", StringSplitOptions.None).Length - 1);
         Assert.Equal("unchanged", initializer.Initialize(request).Status);
+    }
+
+    [Theory]
+    [InlineData(".cis/local/testing/run/*/coverage.cobertura.xml", true)]
+    [InlineData(".cis/local/testing/run/**/coverage.cobertura.xml", true)]
+    [InlineData(".cis/local/../outside/*/coverage.cobertura.xml", false)]
+    [InlineData(".cis/local/testing/run/*/other.xml", false)]
+    [InlineData(".cis/local/testing/*/*/coverage.cobertura.xml", false)]
+    public void TestingDoctorUsesNativeCollectorSelectorGrammar(string selector, bool valid)
+    {
+        using var repository = TemporaryRepository.Create();
+        new RepositoryInitializer().Initialize(new RepositoryInitRequest(repository.Path, "docs/cis", DryRun: false, Confirmed: true));
+        repository.Write("docs/cis/references/test-suite-profile.md",
+            "| Suite ID | Component | Framework | Command | Working directory | Result format | Result path | Coverage path | Mutation path |\n"
+            + "|---|---|---|---|---|---|---|---|---|\n"
+            + $"| native | repository | dotnet-test | dotnet test | . | trx | .cis/local/results/native.trx | {selector} | - |\n");
+        var context = new CisRepositoryContextResolver().Resolve(repository.Path).Context!;
+        var findings = new TestSuiteProfileDoctorCheck().Inspect(context);
+        Assert.Equal(!valid, findings.Any(finding => finding.Code == "CIS-TEST-DOCTOR-004"));
     }
 
     [Fact]

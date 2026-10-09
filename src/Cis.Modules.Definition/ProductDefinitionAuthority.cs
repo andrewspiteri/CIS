@@ -60,6 +60,8 @@ public sealed class ProductDefinitionAuthority(ICisRepositoryContextResolver rep
         {
             using var document = JsonDocument.Parse(File.ReadAllText(sessionPath));
             var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+                return new(true, false, null, null, null, ["The product-definition activation record must be a JSON object."]);
             var sessionId = Text(root, "sessionId");
             var activatedAt = Text(root, "activatedAtUtc");
             var recordedHash = Text(root, "baselineHash");
@@ -86,6 +88,20 @@ public sealed class ProductDefinitionAuthority(ICisRepositoryContextResolver rep
             return new(true, false, null, null, null,
                 [$"The product-definition activation record is unreadable: {exception.Message}"]);
         }
+    }
+
+    public IReadOnlyList<string> EvidencePaths(string repositoryPath)
+    {
+        var context = repositories.Resolve(repositoryPath).Context
+            ?? throw new InvalidDataException("Product-definition repository could not be resolved.");
+        var direction = CisProductDocumentPaths.Resolve(context.DocumentationPath, "design/ui-direction.md");
+        var noVisualUi = File.Exists(direction) && Regex.IsMatch(File.ReadAllText(direction),
+            @"(?m)^  visual_ui: false\r?$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        return DefinitionArtifacts
+            .Where(path => !noVisualUi || path is not ("design/ui-system-preview.md" or "design/ui-system-preview.svg"))
+            .Select(path => Path.GetRelativePath(context.RepositoryPath,
+                CisProductDocumentPaths.Resolve(context.DocumentationPath, path)).Replace('\\', '/'))
+            .Order(StringComparer.Ordinal).ToArray();
     }
 
     internal static string ComputeBaselineHash(string documentationPath, out IReadOnlyList<string> missing)

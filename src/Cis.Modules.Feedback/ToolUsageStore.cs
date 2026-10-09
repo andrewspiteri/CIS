@@ -6,7 +6,7 @@ namespace Cis.Modules.Feedback;
 
 public sealed class ToolUsageStore : ICisToolUsageRecorder
 {
-    public const string RelativeLedgerPath = ".cis/local/feedback/tool-usage.jsonl";
+    public const string RelativeLedgerPath = CisToolUsageSnapshot.LedgerPath;
     private const int CharactersPerEstimatedToken = 4;
     private const int DefaultMaximumRetainedEntries = 25_000;
     private const long DefaultCompactionThresholdBytes = 16 * 1024 * 1024;

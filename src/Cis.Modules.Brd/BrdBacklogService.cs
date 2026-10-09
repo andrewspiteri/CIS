@@ -514,7 +514,7 @@ public sealed partial class BrdBacklogService
             if (!string.Equals(recordedProductDefinition, productDefinition.BaselineHash, StringComparison.Ordinal))
             {
                 current = false;
-                errors.Add("Product-definition baseline: the feature specification was not authored from the current consolidated product definition.");
+                errors.Add(StaleFeatureProductDefinition);
             }
         }
         var documentStatus = ReadFrontMatter(content, "status") ?? "Unknown";

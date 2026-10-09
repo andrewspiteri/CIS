@@ -27,8 +27,8 @@ public sealed class GraphBuilder
         "cis.tracker.state/1",
         "cis.markdown.decisions/1",
         "cis.repository-files/1",
-        "cis.source-declarations/1",
-        "cis.csharp.compiler/3",
+        "cis.source-declarations/2",
+        "cis.csharp.compiler/5",
         "cis.csharp.semantic-facts/3",
         "cis.test-declarations/2",
         "cis.project-dependencies/1",
@@ -1143,7 +1143,7 @@ public sealed class GraphBuilder
             sourceNodes[path] = sourceNode;
             if (language == "csharp")
             {
-                compilerInputs.Add(new CSharpCompilerInput(path, content, componentId));
+                compilerInputs.Add(new CSharpCompilerInput(path, content, componentId, component is not null));
             }
 
             AddEdge(context.RepositoryId, "contains", repositoryNodeKey, sourceNode.Key, "discovered", "high", [sourceEvidence], edges);
@@ -1152,7 +1152,10 @@ public sealed class GraphBuilder
                 AddEdge(context.RepositoryId, "belongs-to", sourceNode.Key, component.Key, "discovered", "high", [sourceEvidence], edges);
             }
 
-            foreach (var declaration in ImplementationGraphExtractor.ExtractDeclarations(path, content, componentId))
+            // C# identities come from Roslyn. Combining them with regex declarations
+            // creates phantom record/struct names and duplicate nested types.
+            foreach (var declaration in language == "csharp"
+                ? [] : ImplementationGraphExtractor.ExtractDeclarations(path, content, componentId))
             {
                 var evidence = Evidence(
                     "repository-source",
@@ -1161,7 +1164,7 @@ public sealed class GraphBuilder
                     declaration.Line.ToString(System.Globalization.CultureInfo.InvariantCulture),
                     hashes.GetValueOrDefault(path),
                     "syntax-recognition",
-                    "cis.source-declarations/1",
+                    "cis.source-declarations/2",
                     "medium",
                     "Lexical language adapter; no compiler binding was performed.");
                 var symbol = new CisGraphNode(
@@ -1267,7 +1270,7 @@ public sealed class GraphBuilder
             diagnostics.Add(Diagnostic(
                 "CIS-GRAPH-CSHARP-001",
                 "warning",
-                $"C# compiler analysis was unavailable; lexical extraction remains active: {exception.Message}"));
+                $"C# declaration and semantic analysis was unavailable; source files and lexical test discovery remain available: {exception.Message}"));
             return;
         }
         var callsByCaller = analysis.Calls
@@ -1280,6 +1283,17 @@ public sealed class GraphBuilder
                 continue;
             }
 
+            // The analyzer's ComponentId also namespaces unowned symbol keys. Only
+            // the canonical profile's path match confirms ownership.
+            var component = discovered.OwnershipConflictPaths.Count == 0
+                ? FindComponentForPath(discovered.Path, components.Values) : null;
+            if (discovered.OwnershipConflictPaths.Count > 0)
+            {
+                diagnostics.Add(Diagnostic(
+                    "CIS-GRAPH-CSHARP-002", "warning",
+                    $"C# symbol '{discovered.QualifiedName}' spans conflicting component scopes; ownership is unconfirmed.",
+                    discovered.OwnershipConflictPaths.ToArray()));
+            }
             var line = discovered.Line.ToString(System.Globalization.CultureInfo.InvariantCulture);
             var evidence = Evidence(
                 "repository-source",
@@ -1288,7 +1302,7 @@ public sealed class GraphBuilder
                 line,
                 hashes.GetValueOrDefault(discovered.Path),
                 "compiler-binding",
-                "cis.csharp.compiler/3",
+                "cis.csharp.compiler/5",
                 "high",
                 "Roslyn resolved the declaration within the repository compilation.");
             var callSemantics = callsByCaller.GetValueOrDefault(discovered.LocalId)?
@@ -1312,7 +1326,7 @@ public sealed class GraphBuilder
                 [new CisGraphLocation(discovered.Path, "line", line)],
                 SortedProperties(
                     ("language", "csharp"),
-                    ("component", discovered.ComponentId),
+                    ("component", component?.LocalId ?? string.Empty),
                     ("qualifiedName", discovered.QualifiedName),
                     ("signature", discovered.Signature),
                     ("binding", "compiler"),
@@ -1325,7 +1339,7 @@ public sealed class GraphBuilder
                 [evidence]);
             AddOrMergeNode(symbol, nodes, diagnostics);
             AddEdge(context.RepositoryId, "contains", sourceNode.Key, symbol.Key, "discovered", "high", [evidence], edges);
-            if (components.TryGetValue(discovered.ComponentId, out var component))
+            if (component is not null)
             {
                 AddEdge(context.RepositoryId, "belongs-to", symbol.Key, component.Key, "discovered", "high", [evidence], edges);
                 AddEdge(context.RepositoryId, "owns", component.Key, symbol.Key, "discovered", "high", [evidence], edges);

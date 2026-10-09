@@ -24,7 +24,7 @@ public sealed record VerifyResult(string Status, string? RepositoryPath, string?
     public int ExitCode => Findings.Any(x => x.Severity == "error") ? 4 : 0;
 }
 
-public sealed class VerifyService
+public sealed partial class VerifyService
 {
     public const string RootPath = ".cis/local/verify";
     private const int GitCommandTimeoutMilliseconds = 30_000;
@@ -143,25 +143,9 @@ public sealed class VerifyService
             findings.Add(new("error", "CIS-VERIFY-EVIDENCE", "No passing verification evidence is recorded.", Relative(context, verification)));
         if (_testing is not null && Regex.IsMatch(planText, @"(?im)^feature_spec_path:\s*.+$"))
             ValidateReconciledTesting(context, change, verification, findings);
-        if (_security is not null && File.Exists(Path.Combine(context.DocumentationPath, "references", "security-suite-profile.md")))
-            ValidateReconciledSecurity(context, findings);
+        if (_security is not null) ValidateWorkspaceSecurity(context, findings);
         return New(context, change, snapshot, findings, ReadEvidence(verification), false,
             findings.Any(x => x.Severity == "error") ? "invalid" : "valid");
-    }
-
-    private void ValidateReconciledSecurity(CisRepositoryContext context, List<VerifyFinding> findings)
-    {
-        var result = _security!.Status(context.RepositoryPath, null);
-        if (result.Manifest is null)
-        {
-            findings.Add(new("error", "CIS-VERIFY-SECURITY-EVIDENCE", "No reconciled security run is available for the repository.", ".cis/local/security"));
-            return;
-        }
-        if (result.Manifest.Status is not ("passed" or "passed-with-findings"))
-            findings.Add(new("error", "CIS-VERIFY-SECURITY-STATUS", $"Security run '{result.Manifest.RunId}' is {result.Manifest.Status}.", $".cis/local/security/runs/{result.Manifest.RunId}/manifest.json"));
-        var revision = GitRevision(context.RepositoryPath);
-        if (revision != "unavailable" && !result.Manifest.RepositoryRevision.Equals(revision, StringComparison.OrdinalIgnoreCase))
-            findings.Add(new("error", "CIS-VERIFY-SECURITY-STALE", "Security evidence was reconciled against a different repository revision.", $".cis/local/security/runs/{result.Manifest.RunId}/manifest.json"));
     }
 
     private static string GitRevision(string repository)
@@ -302,12 +286,22 @@ public sealed class VerifyService
         var baselines = new List<VerifyRepositoryBaseline>();
         foreach (var repository in Repositories(context, findings).OrderBy(x => x.Id, StringComparer.Ordinal))
         {
+            var nestedRoots = _workspaceRegistry?.Resolve(context.RepositoryPath).Workspace?.Repositories
+                .Where(other => CisPathSafety.IsUnderRoot(repository.RepositoryPath, other.RepositoryPath))
+                .Select(other => other.RepositoryPath).ToArray() ?? [];
             var exact = declared.TryGetValue(repository.Id, out var stored);
-            var kind = exact ? stored!.BaselineKind : "git";
+            var isAuthority = repository.Id.Equals(context.RepositoryId, StringComparison.OrdinalIgnoreCase);
+            var kind = exact ? stored!.BaselineKind : isAuthority ? dossier.BaselineKind : "git";
             var baseline = exact ? stored!.Baseline : repository.Id.Equals(context.RepositoryId, StringComparison.OrdinalIgnoreCase)
                 ? dossier.Baseline : Git(repository.RepositoryPath, repository.Id, findings, "rev-parse", "HEAD").Trim();
             if (!exact && repository.Id != context.RepositoryId)
                 findings.Add(new("warning", "CIS-VERIFY-BASELINE-FALLBACK", "Legacy dossier has no participant creation baseline; current HEAD is used.", repository.Id));
+            if (kind.Equals("graph", StringComparison.OrdinalIgnoreCase))
+            {
+                files.AddRange(GraphBaselineDiff(repository, stored, nestedRoots, findings));
+                baselines.Add(new(repository.Id, kind, baseline, exact && stored!.CreationInputs is not null));
+                continue;
+            }
             if (!kind.Equals("git", StringComparison.OrdinalIgnoreCase) || baseline.Length == 0)
             {
                 findings.Add(new("error", "CIS-VERIFY-BASELINE", "Verification requires a Git baseline.", repository.Id));
@@ -315,7 +309,7 @@ public sealed class VerifyService
             }
             baselines.Add(new(repository.Id, kind, baseline, exact));
             files.AddRange(GitDiff(repository.RepositoryPath, repository.Id, baseline,
-                exact ? stored!.WorkingTree : null, findings));
+                exact ? stored!.WorkingTree : null, nestedRoots, findings));
         }
         if (findings.Any(x => x.Severity == "error")) return null;
         var ordered = files.DistinctBy(x => $"{x.RepositoryId}\u001f{x.Status}\u001f{x.Path}", StringComparer.OrdinalIgnoreCase)
@@ -328,7 +322,7 @@ public sealed class VerifyService
         if (_workspaceRegistry is not null)
         {
             var result = _workspaceRegistry.Resolve(context.RepositoryPath);
-            if (result.IsSuccess && result.Workspace is not null) return result.Workspace.Repositories;
+            if (result.IsSuccess && result.Workspace is not null) return result.Workspace.Repositories.Where(x => x.IsProductOwned).ToArray();
             if (File.Exists(Path.Combine(context.RepositoryPath, ".cis", "workspace.yml")))
                 findings.AddRange(result.Errors.Select(x => new VerifyFinding("error", "CIS-VERIFY-WORKSPACE", x, null)));
         }
@@ -350,13 +344,16 @@ public sealed class VerifyService
         string id,
         string baseline,
         IReadOnlyList<ChangeRepositoryWorkingFile>? initialWorkingTree,
+        IReadOnlyList<string> nestedRoots,
         List<VerifyFinding> findings)
     {
-        var tracked = Git(repo, id, findings, "diff", "--name-status", "--find-renames", baseline)
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(x => x.TrimEnd('\r').Split('\t'))
-            .Where(x => x.Length >= 2).Select(x => WorkingState(repo, x[0], x[^1]));
-        var untracked = Git(repo, id, findings, "ls-files", "--others", "--exclude-standard")
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(x => WorkingState(repo, "??", x.TrimEnd('\r')));
+        bool Included(string path) => !path.Replace('\\', '/').StartsWith(".cis/local/", StringComparison.OrdinalIgnoreCase)
+            && !nestedRoots.Any(nested => CisPathSafety.IsUnderRoot(nested, Path.Combine(repo, path), allowRoot: true));
+        var tracked = CisGitChangeScope.Read(Git(repo, id, findings, "diff", "--name-status", "--find-renames", "-z", baseline), Included)
+            .Select(x => WorkingState(repo, x.Status, x.Path));
+        var untracked = Git(repo, id, findings, "ls-files", "--others", "--exclude-standard", "-z")
+            .Split('\0', StringSplitOptions.RemoveEmptyEntries)
+            .Where(Included).Select(x => WorkingState(repo, "??", x));
         var current = tracked.Concat(untracked)
             .Where(x => !x.Path.StartsWith(".cis/local/", StringComparison.OrdinalIgnoreCase))
             .DistinctBy(x => x.Path, StringComparer.OrdinalIgnoreCase)
@@ -365,7 +362,7 @@ public sealed class VerifyService
             return current.Values.Select(x => new VerifyFileChange(x.Status, x.Path, id, x.Digest)).ToArray();
 
         var initial = initialWorkingTree
-            .Where(x => !x.Path.StartsWith(".cis/local/", StringComparison.OrdinalIgnoreCase))
+            .Where(x => Included(x.Path))
             .DistinctBy(x => x.Path, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(x => x.Path, StringComparer.OrdinalIgnoreCase);
         return current.Keys.Union(initial.Keys, StringComparer.OrdinalIgnoreCase)
@@ -407,6 +404,11 @@ public sealed class VerifyService
             {
                 findings.Add(new("error", "CIS-VERIFY-GIT-TIMEOUT",
                     $"Git command exceeded {GitCommandTimeoutMilliseconds / 1000} seconds: git {string.Join(' ', args)}", id));
+                return string.Empty;
+            }
+            if (result.OutputTruncated)
+            {
+                findings.Add(new("error", "CIS-VERIFY-GIT-OUTPUT", "Git output was truncated; a complete inventory cannot be established.", id));
                 return string.Empty;
             }
             if (result.ExitCode == 0) return result.StandardOutput;

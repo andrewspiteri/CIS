@@ -35,6 +35,7 @@ public sealed class SolutionDesignModule : ICisModule
         command.Subcommands.Add(CreateSimple("validate", "Validate structure, traceability, source currency, and approval readiness for both design artifacts.", service.Validate));
         command.Subcommands.Add(CreateSimple("status", "Report lifecycle and drift for the overall design and component sheet.", service.Status));
         command.Subcommands.Add(CreateApprove(service));
+        command.Subcommands.Add(CreateReconcile(service));
         var diagrams = new Command("diagrams", "Render C4 SVGs inside a review-only overall design; optionally replace its data model.");
         var workspace = WorkspaceOption(); var format = FormatOption();
         var model = new Option<string?>("--model") { Description = "Optional path to a reviewed schemaVersion 2 C4 JSON model." };
@@ -52,6 +53,31 @@ public sealed class SolutionDesignModule : ICisModule
         command.Options.Add(workspace); command.Options.Add(format);
         command.SetAction(result => Render(action(result.GetValue(workspace) ?? Directory.GetCurrentDirectory()),
             result.GetValue(format) ?? "human"));
+        return command;
+    }
+
+    private static Command CreateReconcile(SolutionDesignService service)
+    {
+        var command = new Command("reconcile", "Retain a reviewed architecture against current technical direction and require renewed approval.");
+        var workspace = WorkspaceOption(); var format = FormatOption();
+        var design = new Option<string>("--expected-design-sha256") { Required = true, Description = "SHA-256 of the reviewed overall design bytes." };
+        var components = new Option<string>("--expected-components-sha256") { Required = true, Description = "SHA-256 of the reviewed component sheet bytes." };
+        var technical = new Option<string>("--expected-technical-version") { Required = true, Description = "Current technicalIntentVersion from solution-design status." };
+        var actor = new Option<string>("--actor") { Required = true, Description = "Identity of the person or agent reconciling the source." };
+        var reason = new Option<string>("--reason") { Required = true, Description = "Why the retained design remains suitable for the changed source." };
+        foreach (var option in new Option[] { workspace, format, design, components, technical, actor, reason }) command.Options.Add(option);
+        command.SetAction(result =>
+        {
+            var selectedFormat = result.GetValue(format) ?? "human";
+            if (!new[] { "human", "json", "agent" }.Contains(selectedFormat, StringComparer.OrdinalIgnoreCase))
+            {
+                Console.Error.WriteLine($"Unsupported format '{selectedFormat}'. Expected human, json, or agent.");
+                return 2;
+            }
+            return Render(service.Reconcile(result.GetValue(workspace) ?? Directory.GetCurrentDirectory(),
+                result.GetValue(design) ?? "", result.GetValue(components) ?? "", result.GetValue(technical) ?? "",
+                result.GetValue(actor) ?? "", result.GetValue(reason) ?? ""), selectedFormat);
+        });
         return command;
     }
 

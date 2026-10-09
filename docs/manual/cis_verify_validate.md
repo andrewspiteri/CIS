@@ -29,6 +29,14 @@ to refresh these mappings before recapturing the verification snapshot.
 
 Git subprocess output is drained concurrently and each Git operation is bounded to 30 seconds. A timeout becomes a `CIS-VERIFY-GIT-TIMEOUT` finding instead of leaving the workflow waiting indefinitely.
 
+Security evidence is checked in each product-owned repository with a security profile or
+adopted completion policy. A documentation authority's configured scans remain required;
+its evidence cannot substitute for a participant's run. Verification checks the manifest's
+repository and run identity, Git revision, execution input digest when adopted or recorded,
+current profile, scanner verdicts, accepted findings and retained artifact hashes. Errors
+identify the owning repository as `repository::path`. External dependency repositories are
+excluded from these delivery checks.
+
 The completion gate treats lifecycle according to task role:
 
 - implementation, verification, assurance, and other executable tasks must be

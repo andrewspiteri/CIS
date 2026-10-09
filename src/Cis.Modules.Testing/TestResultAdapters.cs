@@ -13,6 +13,8 @@ internal static partial class TestResultEvidence
         if (string.IsNullOrWhiteSpace(context.CoveragePath) || !File.Exists(context.CoveragePath)) return null;
         if (Path.GetExtension(context.CoveragePath).Equals(".json", StringComparison.OrdinalIgnoreCase))
         {
+            if (File.Exists(Path.Combine(context.RepositoryPath, ChangedProductionScope.RelativePath)))
+                throw new InvalidDataException("Changed-production coverage currently requires native Cobertura XML; JSON coverage remains repository-scoped.");
             using var document = JsonDocument.Parse(File.ReadAllText(context.CoveragePath));
             var root = document.RootElement;
             if (root.TryGetProperty("total", out var total)) root = total;
@@ -26,6 +28,8 @@ internal static partial class TestResultEvidence
         }
 
         var xml = XDocument.Load(context.CoveragePath);
+        if (File.Exists(Path.Combine(context.RepositoryPath, ChangedProductionScope.RelativePath)))
+            return ChangedCoverageProjection.Read(context, xml);
         var rootElement = xml.Root ?? throw new InvalidDataException("Coverage XML has no root element.");
         var lines = Ratio(rootElement.Attribute("line-rate")?.Value);
         var branches = Ratio(rootElement.Attribute("branch-rate")?.Value);
@@ -38,6 +42,14 @@ internal static partial class TestResultEvidence
         using var stream = File.OpenRead(path);
         return new TestArtifact(kind, Relative(repository, path),
             Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant(), stream.Length);
+    }
+
+    public static IReadOnlyList<TestArtifact> Artifacts(TestResultAdapterContext context)
+    {
+        var artifacts = new List<TestArtifact> { Artifact(context.RepositoryPath, "test-result", context.ResultPath) };
+        if (context.CoveragePath is not null && File.Exists(context.CoveragePath))
+            artifacts.Add(Artifact(context.RepositoryPath, "coverage-result", context.CoveragePath));
+        return artifacts;
     }
 
     public static string CaseId(string value)
@@ -100,7 +112,7 @@ public sealed class JUnitTestResultAdapter : ICisTestResultAdapter
         var skipped = cases.Count(item => item.Status == "skipped");
         var passed = cases.Count(item => item.Status == "passed");
         var status = cases.Count == 0 ? "invalid-evidence" : failed > 0 ? "failed" : passed == 0 ? "skipped" : "passed";
-        var artifacts = new[] { TestResultEvidence.Artifact(context.RepositoryPath, "test-result", context.ResultPath) };
+        var artifacts = TestResultEvidence.Artifacts(context);
         return new TestSuiteExecution(context.Suite.Id, context.Suite.Layer, context.Suite.Framework, status,
             cases.Count == 0 ? TestFailureKind.InvalidEvidence : failed > 0 ? TestFailureKind.Product : TestFailureKind.None,
             cases.Count, passed, failed, skipped, cases.Sum(item => item.DurationMilliseconds), cases,
@@ -162,7 +174,7 @@ public sealed class VitestJsonResultAdapter : ICisTestResultAdapter
             cases.Count == 0 ? TestFailureKind.InvalidEvidence : failed > 0 ? TestFailureKind.Product : TestFailureKind.None,
             cases.Count, passed, failed, skipped, cases.Sum(item => item.DurationMilliseconds), cases,
             TestResultEvidence.Coverage(context), null,
-            [TestResultEvidence.Artifact(context.RepositoryPath, "test-result", context.ResultPath)],
+            TestResultEvidence.Artifacts(context),
             cases.Count == 0 ? ["Result file contains no test cases."] : []);
     }
 
@@ -243,61 +255,4 @@ public sealed class TrxTestResultAdapter : ICisTestResultAdapter
 
     private static double ParseDuration(string? value)
         => TimeSpan.TryParse(value, out var duration) ? duration.TotalMilliseconds : 0;
-}
-
-public sealed class StrykerJsonResultAdapter : ICisTestResultAdapter
-{
-    public string Format => "stryker-json";
-
-    public TestSuiteExecution Read(TestResultAdapterContext context)
-    {
-        using var document = JsonDocument.Parse(File.ReadAllText(context.ResultPath));
-        var statuses = new List<string>();
-        Visit(document.RootElement, statuses);
-        var killed = statuses.Count(item => item.Equals("Killed", StringComparison.OrdinalIgnoreCase));
-        var survived = statuses.Count(item => item.Equals("Survived", StringComparison.OrdinalIgnoreCase));
-        var timedOut = statuses.Count(item => item.Equals("Timeout", StringComparison.OrdinalIgnoreCase));
-        var noCoverage = statuses.Count(item => item.Equals("NoCoverage", StringComparison.OrdinalIgnoreCase));
-        var denominator = killed + survived + timedOut;
-        var score = denominator == 0 ? 0 : (killed + timedOut) * 100d / denominator;
-        var root = document.RootElement;
-        var high = Threshold(root, "thresholds", "high");
-        var low = Threshold(root, "thresholds", "low");
-        var @break = Threshold(root, "cisGate", "break");
-        var mutation = new TestMutationSummary(score, killed, survived, timedOut, noCoverage,
-            high, low, @break, TestResultEvidence.Relative(context.RepositoryPath, context.ResultPath));
-        var gatePassed = @break is not null && score >= @break && noCoverage == 0;
-        var status = statuses.Count == 0 ? "invalid-evidence"
-            : gatePassed || survived == 0 && noCoverage == 0 ? "passed"
-            : "findings";
-        return new TestSuiteExecution(context.Suite.Id, context.Suite.Layer, context.Suite.Framework, status,
-            statuses.Count == 0 ? TestFailureKind.InvalidEvidence : TestFailureKind.None,
-            statuses.Count, killed + timedOut, survived, noCoverage, 0, [], null, mutation,
-            [TestResultEvidence.Artifact(context.RepositoryPath, "mutation-result", context.ResultPath)],
-            statuses.Count == 0 ? ["Mutation result contains no mutants."] : []);
-    }
-
-    private static double? Threshold(JsonElement root, string container, string name)
-    {
-        if (!root.TryGetProperty(container, out var thresholds) || thresholds.ValueKind != JsonValueKind.Object
-            || !thresholds.TryGetProperty(name, out var value)) return null;
-        return value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var number) ? number : null;
-    }
-
-    private static void Visit(JsonElement element, ICollection<string> statuses)
-    {
-        if (element.ValueKind == JsonValueKind.Object)
-        {
-            foreach (var property in element.EnumerateObject())
-            {
-                if (property.NameEquals("status") && property.Value.ValueKind == JsonValueKind.String)
-                    statuses.Add(property.Value.GetString() ?? string.Empty);
-                else Visit(property.Value, statuses);
-            }
-        }
-        else if (element.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var item in element.EnumerateArray()) Visit(item, statuses);
-        }
-    }
 }

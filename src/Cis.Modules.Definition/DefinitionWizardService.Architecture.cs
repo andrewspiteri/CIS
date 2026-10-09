@@ -14,8 +14,8 @@ public sealed partial class DefinitionWizardService
             "Reconcile the architecture with the updated technical direction.",
             "reconcile-architecture",
             "Use Reconcile architecture with technical direction to review the owned repositories and update the design, component sheet and C4 diagrams together. The existing draft is the starting point; human notes and component identities are preserved. Review the resulting changes before approval.",
-            ["This architecture was inferred from an earlier technical baseline. Prepare preserves that narrative; it cannot apply changed technical decisions. Refresh only rechecks status."],
-            [new("reconcile-architecture", "Reconcile architecture with technical direction", "Needed", "Update the inferred architecture against the current technical intent, then regenerate its diagrams.")]);
+            ["This architecture bundle was prepared against an earlier technical baseline. Prepare preserves that narrative; it cannot apply changed technical decisions. Refresh only rechecks status."],
+            [new("reconcile-architecture", "Reconcile architecture with technical direction", "Needed", "Update the architecture bundle against the current technical intent, then regenerate its diagrams.")]);
 
     private static void BindDiagramSources(State state, SolutionDesignResult solution)
     {

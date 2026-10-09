@@ -8,6 +8,18 @@ Apply the relevant sections to the changed behavior. Preserve the repository's a
 contract names, acceptance criteria, release ordering and stronger safeguards. Import does not approve a new technology
 choice or prove that a test, scanner or CI gate ran. Read the applicable standards below `docs/standards/`.
 
+## Engineering defaults and iteration closure
+
+- Read `docs/references/engineering-defaults.md` when present. Select a native language harness when none is adopted; preserve capable alternatives. Never invent a test runner to substitute for native discovery/assertions.
+- For C# examples, consult `.cis/local/examples/dotnet-engineering/README.md` and its `.github/skills/example-replay/SKILL.md` when installed. They demonstrate native assurance and explicit application composition. Reference code and results do not satisfy this project's implementation or completion gates; respect the persistent examples opt-out.
+- Keep code responsibilities cohesive, dependencies explicit and navigation readable. Use DI where substitution helps, without requiring a container, excessive interfaces or a shared framework. Lint, formatting and architecture tests complement source-based readability review; assess partial types together.
+- Provide an application CLI and portable workflow skills by default where applicable. Expose normal use cases, stable structured output and noninteractive operations through trusted application boundaries.
+- Enable correlated logs, metrics and traces in test composition; bound and sanitize capture, dispose collectors, preserve partial artifacts and first failures. Do not change business/auth behavior in test mode. Business tests own representative workload outcomes and performance budgets.
+- Before reusing context, check source freshness. At each task end rebuild the graph, reconcile CIS dependencies and capability growth, reassess all standards/skills/checks, preserve customizations and refresh evidence after changes. Never infer alignment from a green subset of configured commands.
+- Reuse the assigned independent reviewer through a configurable provider. Supply final source, callers, contracts, operational consequences, scope/omissions and evidence; expand inaccurate or incomplete summaries to source. A fresh graph alone is insufficient context.
+- Complete only when all applicable gates pass and blocking findings are resolved. Keep passed, failed, missing, stale, skipped and justified inapplicable distinct. Review and evidence become stale after relevant edits; later-phase requirements remain visible without conferring operational activation.
+
+
 ## Secure feature implementation
 
 - Before coding, identify actors, principal types, tenant/customer scope, assets, trust boundaries, entry points, abuse cases, affected contracts and minimum negative tests.

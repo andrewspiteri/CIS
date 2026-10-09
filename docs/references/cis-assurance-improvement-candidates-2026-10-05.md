@@ -16,6 +16,11 @@ claims about a particular application or an approved implementation plan. Each n
 an explicit CIS requirement, a reproducible public fixture, and verification before
 it can be treated as resolved. Application-specific evidence is excluded.
 
+The [consolidated implementation plan](../specs/engineering-defaults-implementation-plan.md)
+orders the proposed work and defines the finish line for a fresh .NET/C# project
+trial. Its task and qualification mappings cover SC-01 through SC-17 without
+claiming those candidates are already resolved.
+
 | ID | Candidate improvement | Evidence needed in CIS |
 | --- | --- | --- |
 | SC-01 | Detect dense code that obscures behavior. | A maintainability rule and representative synthetic examples. |
@@ -42,8 +47,25 @@ Relevant CIS sources are the [testing standard](../standards/testing-standard.md
 [planning specification](../specs/change-impact-and-planning-spec.md).
 The [testing harness defaults plan](../specs/testing-harness-defaults-plan.md) proposes
 work on SC-05 through SC-12 and the testing aspects of SC-13 through SC-16.
+SC-17 is also addressed there through business-acceptance scenarios with applicable
+representative workloads, resource budgets, recovery and installed-behavior criteria;
+supporting operational/performance checks supply evidence to those scenarios.
 The [code quality and architecture plan](../specs/code-quality-architecture-plan.md)
 proposes work on SC-01 through SC-04 and related prevention for SC-12, SC-14 and SC-15.
 Both plans remain Draft proposals; their publication does not close these candidates.
+The [agent-facing CLI and skills defaults plan](../specs/agent-interface-defaults-plan.md)
+records a complementary positive practice to retain: supported application workflows
+should be accessible through an agent-friendly CLI and portable, maintained skills.
+It is a proposed default, not an additional claim about a particular application.
+The [iteration alignment plan](../specs/iteration-alignment-plan.md) addresses SC-12 through SC-16
+through a required closing sequence in iteration instructions: rebuild the graph,
+update CIS dependencies and review all applicable standards before recording task
+completion. Every applicable gate must pass, required gates cannot be omitted, and
+the assigned reviewer checks current traceability and evidence. Missing, stale,
+skipped and failed states remain distinct from justified inapplicability.
+Review context must cover relevant callers and operational consequences, disclose
+material omissions and use direct source evidence when derived context is incomplete
+or inaccurate. Reused context is checked for freshness when the next task starts.
+This remains proposed work, not closure evidence.
 The [remediation record](../../planning/cis-trial-remediation-2026-10-05.md) documents
 implemented CIS changes; those changes do not close every candidate in this inventory.

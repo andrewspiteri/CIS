@@ -74,6 +74,8 @@ public sealed partial class AgentService
             if (workspace is null) return New(context, "invalid-workspace", diagnostics: diagnostics);
             var candidatePath = Path.Combine(workspace, relative.Replace('/', Path.DirectorySeparatorChar));
             WriteAtomic(candidatePath, candidate);
+            if (!TryReadChangedFiles(workspace, out var changes))
+                return New(context, "invalid-workspace", diagnostics: ["ERROR: Recovery workspace changed-file inventory could not be verified."]);
             var now = UtcNow();
             // Preserve the original producer for independent closure review; the distinct
             // transport and event explicitly record that this recovery invokes no provider.
@@ -89,7 +91,7 @@ public sealed partial class AgentService
             var accepted = disposition!.Findings.Where(item => item.Decision == "accepted").Select(item => item.Id).Order(StringComparer.Ordinal).ToArray();
             var result = new AgentResultDocument(2, envelope!.Id, CisAgentRunStates.Succeeded,
                 $"Recovered {accepted.Length} approved findings locally from retained run {runId}; no provider was executed.",
-                ChangedFiles(workspace),
+                changes,
                 ["Every approved diff matched exactly one location in the approved baseline; original context and mixed line endings were preserved.",
                  "Only reversible OEM-437 corruption of UTF-8 punctuation was decoded; approval records were not rewritten."],
                 [$"Original run: {runId}; result digest: {source.ResultDigest}.", $"Recovery reason: {reason.Trim()}"],

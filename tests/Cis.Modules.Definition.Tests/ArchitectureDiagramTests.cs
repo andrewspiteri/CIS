@@ -7,9 +7,10 @@ namespace Cis.Modules.Definition.Tests;
 public sealed partial class DefinitionWizardTests
 {
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void ArchitecturePreparation_RendersInferredDraftRepairsImagesAndKeepsActivationBlocked(bool c4)
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    public void ArchitecturePreparation_RendersInferredDraftRepairsImagesAndKeepsActivationBlocked(bool c4, bool inferred)
     {
         using var repository = TemporaryRepository.Create();
         using var application = CreateApplication();
@@ -35,6 +36,11 @@ public sealed partial class DefinitionWizardTests
         foreach (var heading in new[] { "Component catalogue", "Component responsibility profiles", "Component interaction catalogue", "Ownership rules", "Component-specific notes and accepted exceptions" })
             sheet += $"\n## {heading}\n\nApplication ownership remains subject to review.\n";
         sheet += "\n| `TI-MOD-SYSTEM` | System | application | Product requests | Product state | External identity | BR-FR-001 |\n<!-- cis:component-sheet-managed:end -->\n<!-- cis:solution-design-implementation-authored -->\n";
+        if (!inferred)
+        {
+            design = design.Replace("<!-- cis:solution-design-implementation-authored -->", "", StringComparison.Ordinal);
+            sheet = sheet.Replace("<!-- cis:solution-design-implementation-authored -->", "", StringComparison.Ordinal);
+        }
         File.WriteAllText(designPath, design); File.WriteAllText(sheetPath, sheet);
         if (c4)
         {

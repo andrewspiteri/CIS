@@ -16,7 +16,9 @@ public sealed record AgentTaskEnvelope(int SchemaVersion, string Id, string Repo
     IReadOnlyList<string> ContextArtifacts, IReadOnlyList<string> Constraints, string? TargetRepositoryId = null,
     string? RepositoryRevision = null, string? WorkingTreeDigest = null, string? Mode = null, string? Permission = null,
     string? AcceptedScopeDigest = null, string? ExpiresAtUtc = null,
-    IReadOnlyList<CisBrdImplementationEvidence>? ImplementationEvidence = null);
+    IReadOnlyList<CisBrdImplementationEvidence>? ImplementationEvidence = null,
+    IReadOnlyList<AgentAuthorityArtifact>? AuthorityArtifacts = null, string? AuthoritySelectionDigest = null);
+public sealed record AgentAuthorityArtifact(string Path, string Sha256, string Content);
 public sealed record AgentBrdReviewFinding(string Id, string Severity, string Category, string Location,
     string Observation, string Recommendation);
 public sealed record AgentBrdReview(string Recommendation, IReadOnlyList<string> Strengths,
@@ -37,7 +39,12 @@ public sealed record AgentRunManifest(int SchemaVersion, string RunId, int Attem
     string? CompletedAtUtc, string Status, string? FailureKind, string? ProviderSessionId, int? ProcessId,
     string? ProcessStartedAtUtc, string Actor, int TimeoutSeconds, int StartupTimeoutSeconds = 30,
     int IdleTimeoutSeconds = 300, string? ExecutablePath = null, string? ExecutableDigest = null,
-    string? ProviderProtocol = null, string? ContextManifestDigest = null, string? ResultDigest = null, string? Model = null);
+    string? ProviderProtocol = null, string? ContextManifestDigest = null, string? ResultDigest = null, string? Model = null,
+    string? InputDigest = null, string? TaskContractDigest = null, string? OutputDigest = null, string? AuthorityInputDigest = null,
+    string? AuthorityDossierDigest = null)
+{
+    public IReadOnlyList<string> AllowedCommands { get; init; } = [];
+}
 public sealed record AgentRunEvent(int SchemaVersion, string RunId, int Attempt, long Sequence, string TimestampUtc,
     string Kind, string Message, string? ProviderEventType, string? ProviderSessionId, string? RawJson,
     string? RequestedCapability, string? RequestedTarget, long? InputTokens, long? OutputTokens, decimal? Cost,
@@ -112,6 +119,7 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
     private readonly ICisSolutionDesignDrafts? _solutionDesignDrafts;
     private readonly ICisObservedReferencePreparer? _observedReferencePreparer;
     private readonly ICisTextGenerationService? _textGeneration;
+    private readonly ICisEngineeringTaskContractReader? _taskContracts;
     private readonly ConcurrentDictionary<string, (long Length, long Count)> _eventSequences = new(
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
 
@@ -124,7 +132,8 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         IEnumerable<ICisProductDefinitionAuthority>? productDefinitionAuthorities = null,
         ICisTechnicalIntentDraftPreparer? technicalIntentDraftPreparer = null,
         ICisObservedReferencePreparer? observedReferencePreparer = null,
-        ICisSolutionDesignDrafts? solutionDesignDrafts = null, ICisTextGenerationService? textGeneration = null)
+        ICisSolutionDesignDrafts? solutionDesignDrafts = null, ICisTextGenerationService? textGeneration = null,
+        ICisEngineeringTaskContractReader? taskContracts = null)
     {
         _resolver = resolver;
         _providers = providers.OrderBy(item => item.Descriptor.Id, StringComparer.Ordinal).ToArray();
@@ -136,6 +145,7 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         _observedReferencePreparer = observedReferencePreparer;
         _solutionDesignDrafts = solutionDesignDrafts;
         _textGeneration = textGeneration;
+        _taskContracts = taskContracts;
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
     }
 
@@ -194,20 +204,42 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         if (ContainsUnapprovedDesignGate(text) && !IsDesignPreparationTask(text))
             diagnostics.Add("ERROR: Task is behind an unapproved design gate.");
         if (diagnostics.Count > 0) return New(context, "blocked", diagnostics: diagnostics);
-        var envelope = CreateEnvelope(context, changeId, taskId, provider, text, task, null, null, null, null);
+        AgentTaskEnvelope envelope;
+        try { envelope = CreateEnvelope(context, changeId, taskId, provider, text, task, null, null, null, null); }
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
+        {
+            diagnostics.Add("ERROR: Authority context could not be prepared: " + error.Message);
+            return New(context, "blocked", diagnostics: diagnostics);
+        }
         var output = EnvelopePath(context, changeId, taskId); WriteAtomic(output, JsonSerializer.Serialize(envelope, JsonOptions));
         return New(context, "prepared", envelope, diagnostics: diagnostics, applied: true);
     }
 
     public AgentResult Run(string repositoryPath, string changeId, string taskId, string providerId, string mode,
         string permission, string? targetRepositoryId, string? transport, int timeoutSeconds, bool approveWithinCeiling, string actor,
-        CancellationToken cancellationToken = default, Action<CisAgentProviderEvent>? progress = null)
+        CancellationToken cancellationToken = default, Action<CisAgentProviderEvent>? progress = null,
+        IReadOnlyList<string>? allowedCommands = null)
     {
         var context = Resolve(repositoryPath, out var diagnostics); if (context is null) return New(null, "invalid-repository", diagnostics: diagnostics);
+        allowedCommands = allowedCommands?.ToArray() ?? [];
         var provider = FindProvider(providerId, diagnostics); ValidateExecutionOptions(provider, mode, permission, transport, timeoutSeconds, actor, diagnostics);
-        var task = FindTask(context, changeId, taskId, diagnostics); if (task is not null) ValidateTaskEligibility(context, changeId, File.ReadAllText(task), diagnostics);
+        ValidateCommandPermissions(provider, allowedCommands, mode, permission, diagnostics);
+        var task = FindTask(context, changeId, taskId, diagnostics);
         if (provider is null || task is null || diagnostics.Count > 0) return New(context, "blocked", diagnostics: diagnostics);
-        var target = ResolveTarget(context, File.ReadAllText(task), targetRepositoryId, diagnostics); if (target is null || diagnostics.Count > 0) return New(context, "invalid-target", diagnostics: diagnostics);
+        string taskText;
+        try
+        {
+            var total = 0;
+            taskText = ReadAuthorityArtifact(context, Relative(context.RepositoryPath, task), ref total).Content;
+            ValidateTaskEligibility(context, changeId, taskText, diagnostics);
+        }
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or DecoderFallbackException)
+        {
+            diagnostics.Add("ERROR: Task eligibility could not be verified: " + error.Message);
+            return New(context, "blocked", diagnostics: diagnostics);
+        }
+        if (diagnostics.Count > 0) return New(context, "blocked", diagnostics: diagnostics);
+        var target = ResolveTarget(context, taskText, targetRepositoryId, diagnostics); if (target is null || diagnostics.Count > 0) return New(context, "invalid-target", diagnostics: diagnostics);
         var diagnosis = SafeDiagnose(provider, target.RepositoryPath);
         if (!diagnosis.Available)
         { diagnostics.AddRange(diagnosis.Diagnostics.Select(item => "ERROR: " + item)); if (diagnostics.Count == 0) diagnostics.Add($"ERROR: Provider '{providerId}' is not available."); return New(context, diagnosis.Status, diagnoses: [diagnosis], diagnostics: diagnostics); }
@@ -216,8 +248,44 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         try
         {
             var working = ResolveWorkingDirectory(context, target, runId, permission, diagnostics); if (working is null) return New(context, "invalid-workspace", diagnostics: diagnostics);
-            var taskText = File.ReadAllText(task); var snapshot = RepositorySnapshot(target.RepositoryPath);
-            var envelope = CreateEnvelope(context, changeId, taskId, providerId, taskText, task, target.Id, target.RepositoryPath, mode, permission);
+            var snapshot = RepositorySnapshot(target.RepositoryPath);
+            string? taskContractDigest;
+            string? inputDigest;
+            string? authorityInputDigest;
+            string? authorityDossierDigest;
+            try
+            {
+                taskContractDigest = _taskContracts?.ReadTaskDigest(context.RepositoryPath, changeId, taskId);
+                inputDigest = CisExecutionIdentity.CaptureIfAdopted(new(working.Value.Path, target.Id, target.DocumentationRoot,
+                    Path.Combine(working.Value.Path, target.DocumentationRoot), Path.Combine(working.Value.Path, target.DocumentationRoot, "catalog.yml")));
+                authorityInputDigest = target.Id != context.RepositoryId && inputDigest is not null ? CisExecutionIdentity.Capture(context) : null;
+                authorityDossierDigest = authorityInputDigest is null ? null : CisTaskAuthorityContext.Capture(context, changeId);
+            }
+            catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
+            {
+                diagnostics.Add($"ERROR: Task execution contract could not be read: {exception.Message}");
+                return New(context, "blocked", diagnostics: diagnostics);
+            }
+            if (inputDigest is not null && mode == CisAgentRunModes.Implement && string.IsNullOrWhiteSpace(taskContractDigest))
+            {
+                diagnostics.Add("ERROR: Adopted implementation requires the plan task-contract reader before execution.");
+                return New(context, "blocked", diagnostics: diagnostics);
+            }
+            AgentTaskEnvelope envelope;
+            try
+            {
+                envelope = CreateEnvelope(context, changeId, taskId, providerId, taskText, task, target.Id, target.RepositoryPath, mode, permission);
+                envelope = BindAuthorityArtifacts(context, envelope, diagnostics);
+                if (envelope.AuthorityArtifacts is { } artifacts)
+                    ValidateTaskEligibility(context, changeId, taskText, diagnostics,
+                        artifacts.ToDictionary(item => item.Path, StringComparer.Ordinal));
+            }
+            catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException or DecoderFallbackException)
+            {
+                diagnostics.Add("ERROR: Authority context could not be prepared: " + error.Message);
+                return New(context, "blocked", diagnostics: diagnostics);
+            }
+            if (diagnostics.Count > 0) return New(context, "blocked", envelope, diagnostics: diagnostics);
             var envelopePath = EnvelopePath(context, changeId, taskId); WriteAtomic(envelopePath, JsonSerializer.Serialize(envelope, JsonOptions));
             var executable = ExecutableProvenance(diagnosis.Executable);
             var now = UtcNow(); var manifest = new AgentRunManifest(1, runId, 1, changeId, taskId, envelope.Id, Sha(File.ReadAllText(envelopePath)),
@@ -226,9 +294,20 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
                 envelope.AcceptedScopeDigest ?? string.Empty, diagnosis.Version, DigestOptional(Path.Combine(context.DocumentationPath, "references", "agent-provider-profile.md")),
                 now, now, null, CisAgentRunStates.Prepared, null, null, null, null, actor.Trim(), timeoutSeconds,
                 Math.Min(30, timeoutSeconds), Math.Min(300, timeoutSeconds), executable.Path, executable.Digest,
-                selectedTransport, envelope.AcceptedScopeDigest);
+                selectedTransport, envelope.AcceptedScopeDigest,
+                InputDigest: inputDigest,
+                TaskContractDigest: taskContractDigest, AuthorityInputDigest: authorityInputDigest, AuthorityDossierDigest: authorityDossierDigest)
+            { AllowedCommands = allowedCommands };
+            if (IsEngineeringReview(manifest) && (taskContractDigest is null || permission != CisAgentPermissions.ReadOnly))
+            {
+                diagnostics.Add("ERROR: Adopted engineering review requires the plan task-contract reader and read-only permission.");
+                return New(context, "blocked", diagnostics: diagnostics);
+            }
             InitializeRun(context, manifest);
-            return ExecuteRun(context, provider, manifest, envelope, BuildPrompt(envelope), approveWithinCeiling, cancellationToken, diagnostics, diagnosis, progress);
+            var engineeringReview = IsEngineeringReview(manifest);
+            return ExecuteRun(context, provider, manifest, envelope, EngineeringReviewPrompt(envelope, engineeringReview),
+                approveWithinCeiling, cancellationToken, diagnostics, diagnosis, progress,
+                requireBrdReview: engineeringReview, taskReview: engineeringReview);
         }
         finally { ReleaseLock(lockPath); }
     }
@@ -690,7 +769,8 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
     }
 
     public AgentResult Resume(string repositoryPath, string runId, string? message, string actor, string reason, bool approveWithinCeiling,
-        CancellationToken cancellationToken = default, Action<CisAgentProviderEvent>? progress = null)
+        CancellationToken cancellationToken = default, Action<CisAgentProviderEvent>? progress = null,
+        IReadOnlyList<string>? allowedCommands = null)
     {
         var context = Resolve(repositoryPath, out var diagnostics); if (context is null) return New(null, "invalid-repository", diagnostics: diagnostics);
         if (string.IsNullOrWhiteSpace(actor) || string.IsNullOrWhiteSpace(reason)) diagnostics.Add("ERROR: Resume actor and reason are required.");
@@ -703,12 +783,29 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
             diagnostics.Add("ERROR: This document-authoring task cannot be resumed; use its governed authoring or revision command.");
         if (!CisAgentRunStates.IsTerminal(view.Manifest.Status)) diagnostics.Add("ERROR: Only a terminal or interrupted run can be resumed.");
         var provider = FindProvider(view.Manifest.Provider, diagnostics); if (provider is not null && !provider.Descriptor.SupportsResume) diagnostics.Add($"ERROR: Provider '{provider.Descriptor.Id}' does not support resume.");
+        allowedCommands = allowedCommands?.ToArray() ?? [];
+        ValidateCommandPermissions(provider, allowedCommands, view.Manifest.Mode, view.Manifest.Permission, diagnostics);
+        if (allowedCommands.Count > 0 && view.Manifest.ChangeId == ProductAuthoringChange)
+            diagnostics.Add("ERROR: Explicit commands are supported only for task runs, not document authoring.");
         if (!Directory.Exists(view.Manifest.WorkingDirectory)) diagnostics.Add("ERROR: The recorded run working directory no longer exists.");
         if (provider is null || diagnostics.Count > 0) return New(context, "blocked", runs: ReadRunManifests(context), run: view, diagnostics: diagnostics);
         var envelopePath = EnvelopePath(context, view.Manifest.ChangeId, view.Manifest.TaskId); var envelope = Read<AgentTaskEnvelope>(envelopePath, "envelope", diagnostics);
         if (envelope is null || Sha(File.ReadAllText(envelopePath)) != view.Manifest.EnvelopeDigest) diagnostics.Add("ERROR: The run envelope is missing or changed; prepare a new run instead of resuming.");
         if (envelope?.ExpiresAtUtc is { } expires && (!DateTimeOffset.TryParse(expires, out var expiry) || _clock().ToUniversalTime() > expiry.ToUniversalTime()))
             diagnostics.Add("ERROR: The retained agent envelope expired; prepare a new run instead of resuming.");
+        if (envelope is not null && !AuthorityArtifactsCurrent(context, envelope))
+            diagnostics.Add("ERROR: Bound authority context is missing, changed or stale; prepare a new run instead of resuming.");
+        if (view.Manifest.AuthorityInputDigest is { } authorityDigest)
+        {
+            try
+            {
+                if (CisExecutionIdentity.Capture(context) != authorityDigest
+                    || CisTaskAuthorityContext.Capture(context, view.Manifest.ChangeId) != view.Manifest.AuthorityDossierDigest)
+                    diagnostics.Add("ERROR: Authority execution inputs changed; prepare a new run instead of resuming.");
+            }
+            catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException)
+            { diagnostics.Add("ERROR: Authority execution identity could not be verified: " + error.Message); }
+        }
         if (diagnostics.Count > 0) return New(context, "blocked", envelope, run: view, diagnostics: diagnostics);
         var brdResume = resumesBrdAuthoring || resumesTechnicalIntent || resumesSolutionDesign
             ? ValidateBrdAuthoringResume(context, view, envelope!, diagnostics, resumesTechnicalIntent, resumesSolutionDesign) : null;
@@ -729,16 +826,31 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
                 Directory.CreateDirectory(Path.GetDirectoryName(retainedResult)!);
                 if (!File.Exists(retainedResult)) File.Copy(previousResult, retainedResult);
             }
-            var updated = view.Manifest with { Attempt = view.Manifest.Attempt + 1, Status = CisAgentRunStates.Prepared,
-                StartedAtUtc = UtcNow(), UpdatedAtUtc = UtcNow(), CompletedAtUtc = null, FailureKind = null,
-                ProcessId = null, ProcessStartedAtUtc = null, Actor = actor.Trim() };
+            var updated = view.Manifest with
+            {
+                Attempt = view.Manifest.Attempt + 1,
+                Status = CisAgentRunStates.Prepared,
+                StartedAtUtc = UtcNow(),
+                UpdatedAtUtc = UtcNow(),
+                CompletedAtUtc = null,
+                FailureKind = null,
+                ProcessId = null,
+                ProcessStartedAtUtc = null,
+                Actor = actor.Trim(),
+                AllowedCommands = allowedCommands,
+                // Restart context so native sessions cannot retain a previous attempt's permissions.
+                ProviderSessionId = allowedCommands.Count > 0 || view.Manifest.AllowedCommands.Count > 0
+                    ? null : view.Manifest.ProviderSessionId
+            };
             WriteManifest(context, updated); AppendEvent(context, updated, new("resume", Limit(reason), ProviderSessionId: updated.ProviderSessionId));
             var diagnosis = SafeDiagnose(provider, updated.TargetRepositoryPath);
             var continuation = string.IsNullOrWhiteSpace(message)
                 ? "Continue the bounded CIS task from the retained provider session and return the required structured completion JSON."
                 : message.Trim();
-            var prompt = BuildPrompt(envelope!) + "\nContinuation instruction:\n" + continuation + "\n";
-            var executed = ExecuteRun(context, provider, updated, envelope!, prompt, approveWithinCeiling, cancellationToken, diagnostics, diagnosis, progress);
+            var engineeringReview = IsEngineeringReview(updated);
+            var prompt = EngineeringReviewPrompt(envelope!, engineeringReview) + "\nContinuation instruction:\n" + continuation + "\n";
+            var executed = ExecuteRun(context, provider, updated, envelope!, prompt, approveWithinCeiling, cancellationToken, diagnostics, diagnosis, progress,
+                requireBrdReview: engineeringReview, taskReview: engineeringReview);
             if (resumesSolutionDesign && brdResume?.ArchitectureOriginals is not null)
                 return ApplySolutionDesignAuthoringResult(context, executed, envelope!, brdResume.ArchitectureOriginals, brdResume.Implementation);
             if (resumesTechnicalIntent && brdResume is not null)
@@ -807,8 +919,14 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         WithRunEvidenceLock(context, runId, () =>
         {
             var current = ReadManifest(context, runId, []) ?? view.Manifest;
-            var interrupted = current with { Status = CisAgentRunStates.Interrupted, FailureKind = "orphaned-process",
-                UpdatedAtUtc = UtcNow(), CompletedAtUtc = UtcNow(), Actor = actor.Trim() };
+            var interrupted = current with
+            {
+                Status = CisAgentRunStates.Interrupted,
+                FailureKind = "orphaned-process",
+                UpdatedAtUtc = UtcNow(),
+                CompletedAtUtc = UtcNow(),
+                Actor = actor.Trim()
+            };
             WriteManifest(context, interrupted); AppendEvent(context, interrupted, new("recovered", Limit(reason)));
             WriteArtifactInventory(context, runId);
             return true;
@@ -860,7 +978,8 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
                 || !view.Manifest.TaskDigest.Equals(envelope.CanonicalTaskDigest, StringComparison.OrdinalIgnoreCase))
                 diagnostics.Add("ERROR: The canonical BRD changed after the review; run a fresh review instead.");
         }
-        if (Directory.Exists(view.Manifest.WorkingDirectory) && ChangedFiles(view.Manifest.WorkingDirectory).Count != 0)
+        if (!Directory.Exists(view.Manifest.WorkingDirectory)
+            || !TryReadChangedFiles(view.Manifest.WorkingDirectory, out var retainedChanges) || retainedChanges.Count != 0)
             diagnostics.Add("ERROR: The retained read-only workspace is not unchanged.");
         if (diagnostics.Count > 0) return New(context, "invalid", envelope, run: view, diagnostics: diagnostics);
 
@@ -948,16 +1067,20 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         manifest = manifest with { Status = CisAgentRunStates.Starting, UpdatedAtUtc = UtcNow() }; WriteManifest(context, manifest); AppendEvent(context, manifest, new("state", "Agent run is starting."));
         // Every supported host receives policy explicitly, including direct author/review and resumed runs.
         // The task envelope retains authority; referenced source artifacts remain untrusted evidence.
-        prompt = HumanReadableContentPolicy.Instructions("the task's document reader and human reviewer",
-            "the bounded task below and its structured final report", requireBrdReview ? "review" : null) + prompt;
+        prompt = CommandPermissionPrompt(manifest.AllowedCommands) + HumanReadableContentPolicy.Instructions("the task's document reader and human reviewer",
+            "the bounded task below and its structured final report", requireBrdReview ? "review" : null) + AuthorityArtifactPrompt(envelope) + prompt;
         var request = new CisAgentExecutionRequest(manifest.RunId, manifest.Attempt, manifest.Provider, manifest.Transport, manifest.Mode,
             manifest.Permission, manifest.WorkingDirectory, prompt, TimeSpan.FromSeconds(manifest.TimeoutSeconds), manifest.ProviderSessionId,
             approveWithinCeiling, manifest.Actor, AllowedEnvironment(),
             TimeSpan.FromSeconds(manifest.StartupTimeoutSeconds > 0
                 ? manifest.StartupTimeoutSeconds : Math.Min(30, manifest.TimeoutSeconds)),
             TimeSpan.FromSeconds(manifest.IdleTimeoutSeconds > 0
-                ? manifest.IdleTimeoutSeconds : Math.Min(300, manifest.TimeoutSeconds))) { Model = manifest.Model, TaskReview = taskReview, EvidenceDirectories = evidenceDirectories ?? [] };
+                ? manifest.IdleTimeoutSeconds : Math.Min(300, manifest.TimeoutSeconds)))
+        { Model = manifest.Model, TaskReview = taskReview, EvidenceDirectories = evidenceDirectories ?? [], AllowedCommands = manifest.AllowedCommands };
+        RecordCommandPermissions(context, manifest);
         manifest = manifest with { Status = CisAgentRunStates.Running, UpdatedAtUtc = UtcNow() }; WriteManifest(context, manifest); AppendEvent(context, manifest, new("state", "Agent run is running."));
+        var unversionedBaseline = manifest.RepositoryRevision == "non-git"
+            ? CaptureUnversionedInputs(manifest.WorkingDirectory) : null;
         CisAgentProviderExecutionResult providerResult;
         var checkpoint = Stopwatch.StartNew();
         try
@@ -972,8 +1095,14 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
                     || item.ProcessId is not null && item.ProcessId != current.ProcessId
                     || item.ProcessStartedAtUtc is not null && item.ProcessStartedAtUtc != current.ProcessStartedAtUtc
                     || item.RequestedCapability is not null;
-                current = current with { Status = state, UpdatedAtUtc = UtcNow(), ProviderSessionId = item.ProviderSessionId ?? current.ProviderSessionId,
-                    ProcessId = item.ProcessId ?? current.ProcessId, ProcessStartedAtUtc = item.ProcessStartedAtUtc ?? current.ProcessStartedAtUtc };
+                current = current with
+                {
+                    Status = state,
+                    UpdatedAtUtc = UtcNow(),
+                    ProviderSessionId = item.ProviderSessionId ?? current.ProviderSessionId,
+                    ProcessId = item.ProcessId ?? current.ProcessId,
+                    ProcessStartedAtUtc = item.ProcessStartedAtUtc ?? current.ProcessStartedAtUtc
+                };
                 // Persist every event, but avoid two atomic manifest replacements for every
                 // stdout/token fragment. Identity, permission and lifecycle changes are immediate.
                 if (checkpointRequired) { WriteManifest(context, current); checkpoint.Restart(); }
@@ -989,15 +1118,58 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         var finalization = WithRunEvidenceLock(context, manifest.RunId, () =>
         {
             var currentManifest = ReadManifest(context, manifest.RunId, []) ?? manifest;
-            var changedFiles = ChangedFiles(currentManifest.WorkingDirectory);
+            var inventoryAvailable = TryReadExecutionChanges(currentManifest.WorkingDirectory, unversionedBaseline, out var changedFiles);
             var cancellationRequested = currentManifest.Status is CisAgentRunStates.Cancelling or CisAgentRunStates.Cancelled;
             var finalState = cancellationRequested ? CisAgentRunStates.Cancelled : providerResult.Status;
+            if (!inventoryAvailable)
+            {
+                diagnostics.Add("ERROR: Changed-file inventory could not be verified; the workspace cannot be treated as unchanged.");
+                if (finalState == CisAgentRunStates.Succeeded) finalState = CisAgentRunStates.InvalidEvidence;
+            }
+            string? outputDigest = null;
+            if (currentManifest.InputDigest is not null)
+            {
+                try
+                {
+                    var executionContext = _resolver.Resolve(currentManifest.WorkingDirectory).Context
+                        ?? throw new InvalidDataException("Execution context is unavailable.");
+                    outputDigest = CisExecutionIdentity.Capture(executionContext);
+                    if (currentManifest.Mode == CisAgentRunModes.Review && outputDigest != currentManifest.InputDigest)
+                        finalState = CisAgentRunStates.InvalidEvidence;
+                }
+                catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException)
+                { diagnostics.Add("ERROR: Final execution identity could not be verified: " + error.Message); finalState = CisAgentRunStates.InvalidEvidence; }
+            }
             if (currentManifest.Status == CisAgentRunStates.Interrupted) finalState = CisAgentRunStates.Interrupted;
             if (finalState == CisAgentRunStates.Succeeded && completion is null) finalState = CisAgentRunStates.InvalidEvidence;
+            if (finalState == CisAgentRunStates.Succeeded && !AuthorityArtifactsCurrent(context, envelope))
+            {
+                diagnostics.Add("ERROR: Bound authority context changed during execution; the result cannot establish current evidence.");
+                finalState = CisAgentRunStates.InvalidEvidence;
+            }
+            if (finalState == CisAgentRunStates.Succeeded && currentManifest.AuthorityInputDigest is { } authorityDigest)
+            {
+                try
+                {
+                    if (CisExecutionIdentity.Capture(context) != authorityDigest
+                        || CisTaskAuthorityContext.Capture(context, currentManifest.ChangeId) != currentManifest.AuthorityDossierDigest)
+                    {
+                        diagnostics.Add("ERROR: Authority execution inputs changed during the participant run.");
+                        finalState = CisAgentRunStates.InvalidEvidence;
+                    }
+                }
+                catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException)
+                { diagnostics.Add("ERROR: Authority execution identity could not be verified: " + error.Message); finalState = CisAgentRunStates.InvalidEvidence; }
+            }
             if (finalState == CisAgentRunStates.Succeeded && currentManifest.Mode == CisAgentRunModes.Implement && completion!.Validations.Count == 0) finalState = CisAgentRunStates.InvalidEvidence;
-            if (finalState == CisAgentRunStates.Succeeded && completion is not null && changedFiles.Count > 0 && completion.ChangedFiles.Count == 0) finalState = CisAgentRunStates.InvalidEvidence;
+            if (finalState == CisAgentRunStates.Succeeded && currentManifest.Mode != CisAgentRunModes.Review
+                && completion is not null && changedFiles.Count > 0 && completion.ChangedFiles.Count == 0) finalState = CisAgentRunStates.InvalidEvidence;
+            if (finalState == CisAgentRunStates.Succeeded && unversionedBaseline is not null
+                && currentManifest.Mode == CisAgentRunModes.Review && changedFiles.Count != 0)
+                finalState = CisAgentRunStates.InvalidEvidence;
             if (finalState == CisAgentRunStates.Succeeded && requireBrdReview
-                && (!ValidBrdReview(completion?.Review, taskReview) || changedFiles.Count > 0))
+                && (!ValidBrdReview(completion?.Review, taskReview)
+                    || (taskReview ? RepositorySnapshot(currentManifest.WorkingDirectory).Digest != currentManifest.WorkingTreeDigest : changedFiles.Count > 0)))
                 finalState = CisAgentRunStates.InvalidEvidence;
             if (finalState == CisAgentRunStates.Succeeded && requireBrdRevision
                 && (!ValidBrdRevision(completion?.Revision, expectedReviewRunId!, expectedFindingIds!) || changedFiles.Count != 1))
@@ -1012,10 +1184,17 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
                 requireBrdQuestionRevision ? completion?.QuestionRevision : null);
             var resultPath = Path.Combine(RunPath(context, manifest.RunId), "result.json");
             WriteAtomic(resultPath, JsonSerializer.Serialize(result, JsonOptions));
-            currentManifest = currentManifest with { Status = finalState, FailureKind = finalState == CisAgentRunStates.Succeeded ? null
+            currentManifest = currentManifest with
+            {
+                Status = finalState,
+                FailureKind = finalState == CisAgentRunStates.Succeeded ? null
                     : cancellationRequested ? "cancellation" : providerResult.FailureKind ?? finalState.ToLowerInvariant(),
-                ProviderSessionId = providerResult.SessionId ?? currentManifest.ProviderSessionId, UpdatedAtUtc = UtcNow(), CompletedAtUtc = UtcNow(),
-                ResultDigest = ShaFile(resultPath) };
+                ProviderSessionId = providerResult.SessionId ?? currentManifest.ProviderSessionId,
+                UpdatedAtUtc = UtcNow(),
+                CompletedAtUtc = UtcNow(),
+                ResultDigest = ShaFile(resultPath),
+                OutputDigest = outputDigest
+            };
             WriteManifest(context, currentManifest); AppendEvent(context, currentManifest, new("state", $"Agent run completed with status {finalState}.", ProviderSessionId: currentManifest.ProviderSessionId,
                 InputTokens: providerResult.InputTokens, OutputTokens: providerResult.OutputTokens, Cost: providerResult.Cost));
             if (finalState == CisAgentRunStates.Succeeded && requireBrdReview && !taskReview && result.Review is not null)
@@ -1046,11 +1225,14 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
     private AgentTaskEnvelope CreateEnvelope(CisRepositoryContext context, string changeId, string taskId, string provider,
         string taskText, string taskPath, string? target, string? targetRepositoryPath, string? mode, string? permission)
     {
+        var participant = target is not null && target != context.RepositoryId;
+        var selectionDigest = participant ? AuthorityDocumentSelectionDigest(context) : null;
         var relative = Relative(context.RepositoryPath, taskPath); var artifacts = new List<string> { relative };
-        foreach (var candidate in new[] { "proposal.md", "impact.md", "plan.md", "decisions.md", "test-cases.md", "verification.md" })
+        foreach (var candidate in new[] { "proposal.md", "impact.md", "plan.md", "design.md", "decisions.md", "test-cases.md", "test-cases.csv", "verification.md" })
         { var path = Path.Combine(context.DocumentationPath, "changes", changeId, candidate); if (File.Exists(path)) artifacts.Add(Relative(context.RepositoryPath, path)); }
         var planPath = Path.Combine(context.DocumentationPath, "changes", changeId, "plan.md");
-        if (File.Exists(planPath) && FrontMatter(File.ReadAllText(planPath), "feature_spec_path") is { } feature
+        var planBytes = 0;
+        if (File.Exists(planPath) && FrontMatter(ReadAuthorityArtifact(context, Relative(context.RepositoryPath, planPath), ref planBytes).Content, "feature_spec_path") is { } feature
             && CisPathSafety.TryResolveUnderRoot(context.RepositoryPath, feature, out var featurePath) && File.Exists(featurePath))
             artifacts.Add(Relative(context.RepositoryPath, featurePath));
         foreach (var candidate in new[]
@@ -1061,13 +1243,21 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
             Path.Combine(context.RepositoryPath, ".github", "instructions", "cis-agent-execution.instructions.md"),
         })
             if (File.Exists(candidate)) artifacts.Add(Relative(context.RepositoryPath, candidate));
+        foreach (var document in new[] { "specs/business-requirements.md", "specs/technical-intent-spec.md",
+            "architecture/overall-solution-design.md", "references/component-sheet.md", "design/ui-direction.md", "plans/high-level-backlog.md" })
+        {
+            var candidate = CisProductDocumentPaths.Resolve(context.DocumentationPath, document);
+            if (File.Exists(candidate)) artifacts.Add(Relative(context.RepositoryPath, candidate));
+        }
         artifacts = artifacts.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
         var revision = RepositorySnapshot(targetRepositoryPath ?? context.RepositoryPath);
-        var scopeDigest = Sha(string.Join("\n", artifacts.Select(path => path + ":" + DigestOptional(Path.Combine(context.RepositoryPath, path.Replace('/', Path.DirectorySeparatorChar))))));
+        // Participant scope is hashed only after safe, bounded reads in BindAuthorityArtifacts.
+        var scopeDigest = participant ? null : Sha(string.Join("\n", artifacts.Select(path => path + ":" + DigestOptional(Path.Combine(context.RepositoryPath, path.Replace('/', Path.DirectorySeparatorChar))))));
         var digest = Sha(taskText); var id = $"{context.RepositoryId}:{changeId}:{taskId}:{digest[..12]}";
         return new(target is null ? 1 : 2, id, context.RepositoryId, changeId, taskId, provider, relative, digest, UtcNow(), taskText, artifacts,
             ["Canonical Markdown remains authoritative.", "Do not infer approvals or completion.", "Return a structured final JSON object; do not edit CIS lifecycle evidence directly."],
-            target, revision.Revision, revision.Digest, mode, permission, scopeDigest, _clock().AddHours(24).ToUniversalTime().ToString("O"));
+            target, revision.Revision, revision.Digest, mode, permission, scopeDigest, _clock().AddHours(24).ToUniversalTime().ToString("O"),
+            AuthoritySelectionDigest: selectionDigest);
     }
 
     private IReadOnlyList<AgentReferenceInput> ReadReferenceInputs(CisRepositoryContext context,
@@ -1659,10 +1849,18 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
     private AgentResult ApplyBrdQuestionRevisionResult(CisRepositoryContext context, AgentResult executed,
         string targetPath, string relativeTarget, string original, AgentBrdQuestionEvidence evidence)
     {
-        if (executed.Run is null || executed.Run.Manifest.Status != CisAgentRunStates.Succeeded) return executed;
+        if (executed.Run is null || executed.Run.Manifest.Status != CisAgentRunStates.Succeeded)
+            return executed with { Applied = false };
         var diagnostics = executed.Diagnostics.ToList();
-        var actual = executed.Run.Result?.ChangedFiles.Select(item => item.Replace('\\', '/')).ToArray() ?? [];
-        if (actual.Length != 1 || !actual[0].Equals(relativeTarget, StringComparison.Ordinal))
+        var recorded = executed.Run.Result?.ChangedFiles.ToArray() ?? [];
+        var legacyQuotedTarget = "\"" + relativeTarget + "\"";
+        var recordedScopeMatches = recorded.Length == 1
+            && (recorded[0].Equals(relativeTarget, StringComparison.Ordinal)
+                || recorded[0].Equals(legacyQuotedTarget, StringComparison.Ordinal));
+        // Recheck retained workspaces; never repair historical receipts or trust quoted paths alone.
+        var inventoryAvailable = TryReadChangedFiles(executed.Run.Manifest.WorkingDirectory, out var actual);
+        if (!inventoryAvailable || !recordedScopeMatches || actual.Count != 1
+            || !actual[0].Equals(relativeTarget, StringComparison.Ordinal))
             diagnostics.Add($"ERROR: BRD question incorporation changed files outside its one-file scope: {string.Join(", ", actual.DefaultIfEmpty("none"))}");
         if (!File.Exists(targetPath) || Sha(File.ReadAllText(targetPath)) != Sha(original))
             diagnostics.Add("ERROR: Canonical business requirements changed while answered questions were being incorporated; the isolated revision was not applied.");
@@ -2094,12 +2292,21 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         try { var completion = JsonSerializer.Deserialize<AgentCompletion>(trimmed, JsonOptions); return completion is not null && !string.IsNullOrWhiteSpace(completion.Summary) ? completion : null; }
         catch (JsonException) { return null; }
     }
-    private void ValidateTaskEligibility(CisRepositoryContext context, string changeId, string taskText, List<string> diagnostics)
+    private void ValidateTaskEligibility(CisRepositoryContext context, string changeId, string taskText, List<string> diagnostics,
+        IReadOnlyDictionary<string, AgentAuthorityArtifact>? snapshots = null)
     {
+        var total = 0;
+        AgentAuthorityArtifact Read(string path)
+        {
+            var relative = Relative(context.RepositoryPath, path);
+            if (snapshots is null) return ReadAuthorityArtifact(context, relative, ref total);
+            return snapshots.TryGetValue(relative, out var artifact) ? artifact
+                : throw new InvalidDataException("Eligibility evidence is missing from the bound authority context: " + relative);
+        }
         var status = FrontMatter(taskText, "task_status") ?? FrontMatter(taskText, "status") ?? string.Empty;
         if (status is not ("Ready" or "InProgress")) diagnostics.Add($"ERROR: Direct execution requires task status Ready or InProgress; current status is '{status}'.");
         var planPath = Path.Combine(context.DocumentationPath, "changes", changeId, "plan.md");
-        var planText = File.Exists(planPath) ? File.ReadAllText(planPath) : string.Empty;
+        var planText = File.Exists(planPath) ? Read(planPath).Content : string.Empty;
         if (!File.Exists(planPath) || !string.Equals(FrontMatter(planText, "status"), "Approved", StringComparison.OrdinalIgnoreCase)) diagnostics.Add("ERROR: Direct execution requires an approved current plan.");
         var featurePath = FrontMatter(planText, "feature_spec_path");
         var approvedFeatureDigest = FrontMatter(planText, "feature_spec_sha256");
@@ -2109,7 +2316,7 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
                 diagnostics.Add("ERROR: The approved plan references a missing or unsafe feature specification.");
             else
             {
-                var currentDigest = "sha256:" + ShaFile(resolvedFeature);
+                var currentDigest = "sha256:" + Read(resolvedFeature).Sha256;
                 if (!string.Equals(approvedFeatureDigest, currentDigest, StringComparison.OrdinalIgnoreCase))
                     diagnostics.Add("ERROR: The approved feature specification changed after plan approval.");
                 var taskFeatureDigest = FrontMatter(taskText, "feature_spec_sha256");
@@ -2118,11 +2325,11 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
             }
         }
         var impactPath = Path.Combine(context.DocumentationPath, "changes", changeId, "impact.md");
-        if (!File.Exists(impactPath) || File.ReadAllText(impactPath).Contains("| proposed |", StringComparison.OrdinalIgnoreCase)) diagnostics.Add("ERROR: Direct execution requires fully dispositioned impact findings.");
+        if (!File.Exists(impactPath) || Read(impactPath).Content.Contains("| proposed |", StringComparison.OrdinalIgnoreCase)) diagnostics.Add("ERROR: Direct execution requires fully dispositioned impact findings.");
         var designPath = Path.Combine(context.DocumentationPath, "changes", changeId, "design.md");
         if (planText.Contains("feature_spec_frontend: true", StringComparison.OrdinalIgnoreCase)
             && !IsDesignPreparationTask(taskText)
-            && (!File.Exists(designPath) || !File.ReadAllText(designPath).Contains("approval_status: Approved", StringComparison.OrdinalIgnoreCase)))
+            && (!File.Exists(designPath) || !Read(designPath).Content.Contains("approval_status: Approved", StringComparison.OrdinalIgnoreCase)))
             diagnostics.Add("ERROR: Direct execution is blocked by the global design approval barrier.");
     }
     private void ValidateExecutionOptions(ICisAgentProvider? provider, string mode, string permission, string? transport, int timeoutSeconds, string actor, List<string> diagnostics)
@@ -2130,9 +2337,12 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         ValidateProviderRegistration(diagnostics); if (!CisAgentRunModes.All.Contains(mode)) diagnostics.Add($"ERROR: Unsupported agent mode '{mode}'.");
         if (!CisAgentPermissions.All.Contains(permission)) diagnostics.Add($"ERROR: Unsupported agent permission '{permission}'.");
         if (timeoutSeconds is < 30 or > 86_400) diagnostics.Add("ERROR: Timeout must be between 30 and 86400 seconds."); if (string.IsNullOrWhiteSpace(actor)) diagnostics.Add("ERROR: Run actor is required.");
-        if (provider is not null) { if (!provider.Descriptor.Modes.Contains(mode, StringComparer.Ordinal)) diagnostics.Add($"ERROR: Provider '{provider.Descriptor.Id}' does not support mode '{mode}'.");
+        if (provider is not null)
+        {
+            if (!provider.Descriptor.Modes.Contains(mode, StringComparer.Ordinal)) diagnostics.Add($"ERROR: Provider '{provider.Descriptor.Id}' does not support mode '{mode}'.");
             if (!provider.Descriptor.Permissions.Contains(permission, StringComparer.Ordinal)) diagnostics.Add($"ERROR: Provider '{provider.Descriptor.Id}' does not support permission '{permission}'.");
-            if (transport is not null && !provider.Descriptor.Transports.Contains(transport, StringComparer.Ordinal)) diagnostics.Add($"ERROR: Provider '{provider.Descriptor.Id}' does not support transport '{transport}'."); }
+            if (transport is not null && !provider.Descriptor.Transports.Contains(transport, StringComparer.Ordinal)) diagnostics.Add($"ERROR: Provider '{provider.Descriptor.Id}' does not support transport '{transport}'.");
+        }
     }
     private ICisAgentProvider? FindProvider(string id, List<string> diagnostics)
     { var matches = _providers.Where(item => item.Descriptor.Id.Equals(id, StringComparison.OrdinalIgnoreCase)).ToArray(); if (matches.Length == 0) diagnostics.Add($"ERROR: Unknown or non-executable agent provider '{id}'."); if (matches.Length > 1) diagnostics.Add($"ERROR: Duplicate agent provider identifier '{id}'."); return matches.Length == 1 ? matches[0] : null; }
@@ -2262,21 +2472,36 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
     private static bool IsGitRepository(string path) => Directory.Exists(Path.Combine(path, ".git")) || Git(path, ["rev-parse", "--is-inside-work-tree"]).ExitCode == 0;
     private static (string Revision, bool Dirty, string Digest) RepositorySnapshot(string path)
     { var revision = Git(path, ["rev-parse", "HEAD"]); var status = Git(path, ["status", "--porcelain=v1", "--untracked-files=all"]); return (revision.ExitCode == 0 ? revision.StandardOutput.Trim() : "non-git", !string.IsNullOrWhiteSpace(status.StandardOutput), Sha(status.StandardOutput)); }
-    private static IReadOnlyList<string> ChangedFiles(string path)
-    { var status = Git(path, ["status", "--porcelain=v1", "--untracked-files=all"]); if (status.ExitCode != 0) return []; return status.StandardOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
-        .Select(line => line.Length > 3 ? line[3..].Trim().Split(" -> ", StringSplitOptions.TrimEntries).Last() : string.Empty).Where(SafeRelative).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray(); }
     private static CisProcessResult Git(string path, IReadOnlyList<string> arguments, IReadOnlyDictionary<string, string>? environment = null, TimeSpan? timeout = null)
-    { try { var start = new ProcessStartInfo("git") { WorkingDirectory = path, UseShellExecute = false, CreateNoWindow = true }; foreach (var argument in arguments) start.ArgumentList.Add(argument); if (environment is not null) foreach (var item in environment) start.Environment[item.Key] = item.Value; return CisProcessSafety.Run(start, timeout ?? TimeSpan.FromSeconds(15), 4 * 1024 * 1024); }
-      catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException) { return new(null, false, string.Empty, exception.Message, false); } }
+    {
+        try { var start = new ProcessStartInfo("git") { WorkingDirectory = path, UseShellExecute = false, CreateNoWindow = true }; foreach (var argument in arguments) start.ArgumentList.Add(argument); if (environment is not null) foreach (var item in environment) start.Environment[item.Key] = item.Value; return CisProcessSafety.Run(start, timeout ?? TimeSpan.FromSeconds(15), 4 * 1024 * 1024); }
+        catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException) { return new(null, false, string.Empty, exception.Message, false); }
+    }
     private static IReadOnlyDictionary<string, string> AllowedEnvironment()
-    { var names = new[] { "PATH", "PATHEXT", "SystemRoot", "WINDIR", "TEMP", "TMP", "HOME", "USERPROFILE", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "LANG", "LC_ALL" }; return names.Select(name => (name, value: Environment.GetEnvironmentVariable(name))).Where(item => item.value is not null).ToDictionary(item => item.name, item => item.value!, StringComparer.OrdinalIgnoreCase); }
+    {
+        // Native build tools resolve user and machine configuration through OS directory variables.
+        // Preserve the host's locations without inheriting arbitrary credentials or tool settings.
+        string[] names = ["PATH", "PATHEXT", "SystemRoot", "WINDIR", "TEMP", "TMP", "HOME", "USERPROFILE",
+            "APPDATA", "LOCALAPPDATA", "ProgramData", "ALLUSERSPROFILE", "ProgramFiles", "ProgramFiles(x86)",
+            "ProgramW6432", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "LANG", "LC_ALL"];
+        return names.Select(name => (name, value: Environment.GetEnvironmentVariable(name)))
+            .Where(item => item.value is not null)
+            .ToDictionary(item => item.name, item => item.value!, StringComparer.OrdinalIgnoreCase);
+    }
 
     private string? AcquireLock(CisRepositoryContext context, string change, string task, string target, string runId, List<string> diagnostics)
     {
         var root = Path.Combine(context.RepositoryPath, RootPath.Replace('/', Path.DirectorySeparatorChar), "locks"); Directory.CreateDirectory(root); var path = LockPath(context, change, task, target);
-        if (File.Exists(path)) { try { using var document = JsonDocument.Parse(File.ReadAllText(path)); var existing = document.RootElement.TryGetProperty("runId", out var id) ? id.GetString() : null; var manifest = existing is null ? null : ReadManifest(context, existing, []);
-                if (manifest is not null && !CisAgentRunStates.IsTerminal(manifest.Status)) { diagnostics.Add($"ERROR: Task and target already have active agent run '{existing}'."); return null; } File.Delete(path); }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException) { diagnostics.Add("ERROR: Existing agent lock could not be validated safely: " + Limit(exception.Message)); return null; } }
+        if (File.Exists(path))
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(File.ReadAllText(path)); var existing = document.RootElement.TryGetProperty("runId", out var id) ? id.GetString() : null; var manifest = existing is null ? null : ReadManifest(context, existing, []);
+                if (manifest is not null && !CisAgentRunStates.IsTerminal(manifest.Status)) { diagnostics.Add($"ERROR: Task and target already have active agent run '{existing}'."); return null; }
+                File.Delete(path);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException) { diagnostics.Add("ERROR: Existing agent lock could not be validated safely: " + Limit(exception.Message)); return null; }
+        }
         try { using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None); JsonSerializer.Serialize(stream, new { runId, createdAtUtc = UtcNow() }, JsonOptions); return path; }
         catch (IOException) { diagnostics.Add("ERROR: Another process acquired the agent task lock."); return null; }
     }
@@ -2320,13 +2545,17 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
     { var root = RunPath(context, manifest.RunId); Directory.CreateDirectory(root); WriteAtomic(Path.Combine(root, "manifest.json"), JsonSerializer.Serialize(manifest, JsonOptions)); var attempt = Path.Combine(root, "attempts", manifest.Attempt.ToString(System.Globalization.CultureInfo.InvariantCulture)); Directory.CreateDirectory(attempt); WriteAtomic(Path.Combine(attempt, "manifest.json"), JsonSerializer.Serialize(manifest, JsonOptions)); }
     private static AgentRunManifest? ReadManifest(CisRepositoryContext context, string runId, List<string> diagnostics) => SafeRunId(runId) ? Read<AgentRunManifest>(Path.Combine(RunPath(context, runId), "manifest.json"), "run manifest", diagnostics) : AddNull<AgentRunManifest>(diagnostics, "ERROR: Run ID is unsafe.");
     private static AgentRunView? ReadRun(CisRepositoryContext context, string runId, List<string> diagnostics)
-    { var manifest = ReadManifest(context, runId, diagnostics); if (manifest is null) return null; var root = RunPath(context, runId); return new(manifest,
+    {
+        var manifest = ReadManifest(context, runId, diagnostics); if (manifest is null) return null; var root = RunPath(context, runId); return new(manifest,
         ReadJsonLines<AgentRunEvent>(Path.Combine(root, "events.jsonl"), diagnostics), ReadOptional<AgentResultDocument>(Path.Combine(root, "result.json"), diagnostics),
-        ReadJsonLines<AgentPermissionRecord>(Path.Combine(root, "permissions.jsonl"), diagnostics), ReadArtifacts(root, diagnostics)); }
+        ReadJsonLines<AgentPermissionRecord>(Path.Combine(root, "permissions.jsonl"), diagnostics), ReadArtifacts(root, diagnostics));
+    }
     private static IReadOnlyList<AgentRunManifest> ReadRunManifests(CisRepositoryContext context)
-    { var root = Path.Combine(context.RepositoryPath, RootPath.Replace('/', Path.DirectorySeparatorChar), "runs"); if (!Directory.Exists(root)) return []; return Directory.EnumerateDirectories(root).Select(path =>
+    {
+        var root = Path.Combine(context.RepositoryPath, RootPath.Replace('/', Path.DirectorySeparatorChar), "runs"); if (!Directory.Exists(root)) return []; return Directory.EnumerateDirectories(root).Select(path =>
         { try { return JsonSerializer.Deserialize<AgentRunManifest>(File.ReadAllText(Path.Combine(path, "manifest.json")), JsonOptions); } catch (Exception exception) when (exception is IOException or JsonException) { return null; } })
-        .Where(item => item is not null).Cast<AgentRunManifest>().OrderByDescending(item => item.UpdatedAtUtc, StringComparer.Ordinal).ToArray(); }
+        .Where(item => item is not null).Cast<AgentRunManifest>().OrderByDescending(item => item.UpdatedAtUtc, StringComparer.Ordinal).ToArray();
+    }
     private static IReadOnlyList<T> ReadJsonLines<T>(string path, List<string> diagnostics)
     { if (!File.Exists(path)) return []; var output = new List<T>(); foreach (var line in File.ReadLines(path)) { try { if (JsonSerializer.Deserialize<T>(line, JsonLineOptions) is { } item) output.Add(item); } catch (JsonException) { diagnostics.Add($"ERROR: Derived JSONL is malformed: {path}"); break; } } return output; }
     private static T? ReadOptional<T>(string path, List<string> diagnostics) => File.Exists(path) ? Read<T>(path, "derived result", diagnostics) : default;
@@ -2402,21 +2631,30 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
     private static IReadOnlyList<string> FrontMatterArray(string text, string key)
     { var value = FrontMatter(text, key); if (value is null) return []; value = value.Trim(); if (!value.StartsWith("[", StringComparison.Ordinal) || !value.EndsWith("]", StringComparison.Ordinal)) return []; try { return JsonSerializer.Deserialize<string[]>(value, JsonOptions) ?? []; } catch (JsonException) { return []; } }
     private static string? FindTask(CisRepositoryContext context, string change, string task, List<string> diagnostics)
-    { var root = Path.Combine(context.DocumentationPath, "changes", change, "agent-tasks"); if (!Directory.Exists(root)) { diagnostics.Add($"ERROR: Change task directory does not exist: {change}"); return null; }
-      var match = Directory.EnumerateFiles(root, "*.md").FirstOrDefault(path => Path.GetFileNameWithoutExtension(path).Equals(task, StringComparison.OrdinalIgnoreCase)); if (match is null) diagnostics.Add($"ERROR: Unknown task '{task}'."); return match; }
+    {
+        var root = Path.Combine(context.DocumentationPath, "changes", change, "agent-tasks"); if (!Directory.Exists(root)) { diagnostics.Add($"ERROR: Change task directory does not exist: {change}"); return null; }
+        var match = Directory.EnumerateFiles(root, "*.md").FirstOrDefault(path => Path.GetFileNameWithoutExtension(path).Equals(task, StringComparison.OrdinalIgnoreCase)); if (match is null) diagnostics.Add($"ERROR: Unknown task '{task}'."); return match;
+    }
     private static string EnvelopePath(CisRepositoryContext context, string change, string task) => Path.Combine(context.RepositoryPath, RootPath.Replace('/', Path.DirectorySeparatorChar), "envelopes", SafeFile(change), SafeFile(task) + ".json");
     private static string RunPath(CisRepositoryContext context, string runId) => Path.Combine(context.RepositoryPath, RootPath.Replace('/', Path.DirectorySeparatorChar), "runs", runId);
     private static string? ResolveInput(CisRepositoryContext context, string path, List<string> diagnostics)
-    { string absolute; try { absolute = Path.IsPathRooted(path) ? Path.GetFullPath(path) : Path.GetFullPath(Path.Combine(context.RepositoryPath, path)); }
-      catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException) { diagnostics.Add("ERROR: Invalid input path: " + exception.Message); return null; }
-      if (!File.Exists(absolute)) { diagnostics.Add($"ERROR: File does not exist: {path}"); return null; } return absolute; }
+    {
+        string absolute; try { absolute = Path.IsPathRooted(path) ? Path.GetFullPath(path) : Path.GetFullPath(Path.Combine(context.RepositoryPath, path)); }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException) { diagnostics.Add("ERROR: Invalid input path: " + exception.Message); return null; }
+        if (!File.Exists(absolute)) { diagnostics.Add($"ERROR: File does not exist: {path}"); return null; }
+        return absolute;
+    }
     private static T? Read<T>(string? path, string label, List<string> diagnostics)
-    { if (path is null || !File.Exists(path)) { if (path is not null) diagnostics.Add($"ERROR: Missing {label}: {path}"); return default; }
-      try { return JsonSerializer.Deserialize<T>(File.ReadAllText(path), JsonOptions) ?? throw new JsonException("empty"); }
-      catch (Exception exception) when (exception is JsonException or IOException) { diagnostics.Add($"ERROR: Invalid {label}: {exception.Message}"); return default; } }
+    {
+        if (path is null || !File.Exists(path)) { if (path is not null) diagnostics.Add($"ERROR: Missing {label}: {path}"); return default; }
+        try { return JsonSerializer.Deserialize<T>(File.ReadAllText(path), JsonOptions) ?? throw new JsonException("empty"); }
+        catch (Exception exception) when (exception is JsonException or IOException) { diagnostics.Add($"ERROR: Invalid {label}: {exception.Message}"); return default; }
+    }
     private static IReadOnlyList<AgentImportRecord> ReadImports(CisRepositoryContext context)
-    { var root = Path.Combine(context.RepositoryPath, RootPath.Replace('/', Path.DirectorySeparatorChar), "results"); if (!Directory.Exists(root)) return []; return CisPathSafety.EnumerateFiles(root, "*.json").Select(path =>
-        { try { return JsonSerializer.Deserialize<AgentImportRecord>(File.ReadAllText(path), JsonOptions); } catch (JsonException) { return null; } }).Where(item => item is not null).Cast<AgentImportRecord>().OrderBy(item => item.ImportedAtUtc, StringComparer.Ordinal).ToArray(); }
+    {
+        var root = Path.Combine(context.RepositoryPath, RootPath.Replace('/', Path.DirectorySeparatorChar), "results"); if (!Directory.Exists(root)) return []; return CisPathSafety.EnumerateFiles(root, "*.json").Select(path =>
+        { try { return JsonSerializer.Deserialize<AgentImportRecord>(File.ReadAllText(path), JsonOptions); } catch (JsonException) { return null; } }).Where(item => item is not null).Cast<AgentImportRecord>().OrderBy(item => item.ImportedAtUtc, StringComparer.Ordinal).ToArray();
+    }
     private CisRepositoryContext? Resolve(string path, out List<string> diagnostics) { var result = _resolver.Resolve(path); diagnostics = result.Errors.Select(item => "ERROR: " + item).ToList(); return result.Context; }
     private AgentResult New(CisRepositoryContext? context, string status, AgentTaskEnvelope? envelope = null, IReadOnlyList<CisAgentProviderDiagnosis>? diagnoses = null,
         IReadOnlyList<AgentRunManifest>? runs = null, AgentRunView? run = null, IReadOnlyList<string>? diagnostics = null, bool applied = false,
@@ -2425,9 +2663,11 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
             includeImports && context is not null ? ReadImports(context) : [],
             runs ?? (includeRuns && context is not null ? ReadRunManifests(context) : []), run, diagnostics ?? [], applied);
     private static bool SafeChangedFile(CisRepositoryContext context, string value)
-    { var separator = value.IndexOf("::", StringComparison.Ordinal); if (separator < 0) return SafeRelative(value); if (value.IndexOf("::", separator + 2, StringComparison.Ordinal) >= 0) return false;
-      var repositoryId = value[..separator]; var relative = value[(separator + 2)..]; if (repositoryId.Length == 0 || relative.Length == 0 || repositoryId.Any(character => !char.IsLetterOrDigit(character) && character is not '-' and not '_' and not '.')) return false;
-      var workspace = Path.Combine(context.RepositoryPath, ".cis", "workspace.yml"); if (!File.Exists(workspace) || !File.ReadLines(workspace).Any(line => Regex.IsMatch(line, $"^\\s*-?\\s*id:\\s*[\\\"']?{Regex.Escape(repositoryId)}[\\\"']?\\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))) return false; return SafeRelative(relative); }
+    {
+        var separator = value.IndexOf("::", StringComparison.Ordinal); if (separator < 0) return SafeRelative(value); if (value.IndexOf("::", separator + 2, StringComparison.Ordinal) >= 0) return false;
+        var repositoryId = value[..separator]; var relative = value[(separator + 2)..]; if (repositoryId.Length == 0 || relative.Length == 0 || repositoryId.Any(character => !char.IsLetterOrDigit(character) && character is not '-' and not '_' and not '.')) return false;
+        var workspace = Path.Combine(context.RepositoryPath, ".cis", "workspace.yml"); if (!File.Exists(workspace) || !File.ReadLines(workspace).Any(line => Regex.IsMatch(line, $"^\\s*-?\\s*id:\\s*[\\\"']?{Regex.Escape(repositoryId)}[\\\"']?\\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))) return false; return SafeRelative(relative);
+    }
     private static bool SafeRelative(string path) => !string.IsNullOrWhiteSpace(path) && !Path.IsPathRooted(path) && !path.Replace('\\', '/').Split('/').Any(item => item is ".." or "");
     private static bool SafeRunId(string value) => value.Length is > 0 and <= 100 && value.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_');
     private static string SafeFile(string value) => new(value.Select(character => char.IsLetterOrDigit(character) || character is '-' or '_' ? character : '-').ToArray());
@@ -2542,7 +2782,11 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         return path;
     }
     private static string Sha(string value) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
-    private static string ShaFile(string path) => Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path)));
+    private static string ShaFile(string path)
+    {
+        using var stream = File.OpenRead(path);
+        return Convert.ToHexStringLower(SHA256.HashData(stream));
+    }
     private static string DigestOptional(string path) => File.Exists(path) ? ShaFile(path) : "missing";
     private static (string? Path, string? Digest) ExecutableProvenance(string? executable)
     {

@@ -127,7 +127,7 @@ public sealed partial class DefinitionWizardService
                     if (architecture.Validation?.InferenceReconciliationRequired == true)
                         return StatusInternal(state, "reconciliation-required", false) with
                         {
-                            Errors = ["Architecture preparation is blocked: the inferred design must be reconciled with the updated technical direction. Use Reconcile architecture with technical direction in this wizard, or cis agent author solution-design. The existing narrative and diagrams were preserved."],
+                            Errors = ["Architecture preparation is blocked: the architecture bundle must be reconciled with the updated technical direction. Use Reconcile architecture with technical direction in this wizard, or cis agent author solution-design. The existing narrative and diagrams were preserved."],
                         };
                     if (architecture.ExitCode != 0)
                     {

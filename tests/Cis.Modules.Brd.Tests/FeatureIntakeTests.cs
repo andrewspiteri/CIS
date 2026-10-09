@@ -144,7 +144,7 @@ public sealed partial class FeatureIntakeTests
         Assert.Equal(0, application.Invoke(["brd", "feature", "wizard", "architecture", "prepare", "--help"]));
         Assert.Equal(0, application.Invoke(["brd", "feature", "wizard", "delivery", "prepare", "--help"]));
         Assert.Equal(0, application.Invoke(["brd", "feature", "wizard", "story", "prepare", "--help"]));
-        foreach (var operation in new[] { "approve", "start", "complete", "execution-plan", "execute", "feedback-save", "feedback-suggest" })
+        foreach (var operation in new[] { "approve", "start", "complete", "completion-context", "execution-plan", "execute", "feedback-save", "feedback-suggest" })
             Assert.Equal(0, application.Invoke(["brd", "feature", "wizard", "story", operation, "--help"]));
         Assert.Equal(5, application.Invoke(["brd", "feature", "wizard", "story", "feedback-suggest", "--workspace", f.Authority,
             "--slug", "missing", "--story", "missing", "--task", "T1", "--expected-revision", "none", "--format", "json"]));
@@ -185,6 +185,7 @@ public sealed partial class FeatureIntakeTests
         public Fixture()
         {
             Authority = Path.Combine(Root, "authority"); Directory.CreateDirectory(Authority);
+            File.WriteAllText(Path.Combine(Authority, "README.md"), "Existing authority fixture; engineering adoption is exercised separately.");
             Registry = new(new CisRepositoryContextResolver());
             Assert.Equal(0, new WorkspaceInitializer(new RepositoryInitializer(), Registry)
                 .Initialize(new(Authority, "docs/cis", false, true, "fixture", "fixture", "Fixture", "Fixture")).ExitCode);

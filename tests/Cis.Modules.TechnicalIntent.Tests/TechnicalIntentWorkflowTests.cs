@@ -11,7 +11,7 @@ using Xunit;
 
 namespace Cis.Modules.TechnicalIntent.Tests;
 
-public sealed class TechnicalIntentWorkflowTests
+public sealed partial class TechnicalIntentWorkflowTests
 {
     [Fact]
     public void SelectedTechnicalIntent_RecognizesNumberedEquivalentSectionsButBlocksOpenImportedDecisions()

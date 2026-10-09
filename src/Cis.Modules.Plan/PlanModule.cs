@@ -23,6 +23,8 @@ public sealed class PlanModule : ICisModule
         services.AddSingleton<TaskTypeRegistry>();
         services.AddSingleton<TaskTypeCapabilityStore>();
         services.AddSingleton<PlanningService>();
+        services.AddSingleton<ICisEngineeringTaskContractReader>(provider => provider.GetRequiredService<PlanningService>());
+        services.AddSingleton<ICisStoryEngineeringCompletion, StoryEngineeringCompletion>();
     }
 
     public void RegisterCommands(ICisCommandRegistry commands, IServiceProvider services)
@@ -38,7 +40,31 @@ public sealed class PlanModule : ICisModule
         plan.Subcommands.Add(Create("status", "Show plan state and validation readiness.", service.Status));
         plan.Subcommands.Add(CreateCapabilityCommand(service));
         plan.Subcommands.Add(CreateTaskCommand(service));
+        plan.Subcommands.Add(CreatePerformanceCheck(services.GetRequiredService<ICisRepositoryContextResolver>()));
         commands.Add(plan);
+    }
+
+    private static Command CreatePerformanceCheck(ICisRepositoryContextResolver resolver)
+    {
+        var command = new Command("performance-check", "Check native benchmark evidence against the adopted baseline without changing policy or completing a task.");
+        var candidate = new Option<string>("--candidate") { Required = true };
+        var workflow = new Option<string>("--workflow") { Required = true };
+        var repository = new Option<string>("--repo") { DefaultValueFactory = _ => Directory.GetCurrentDirectory() };
+        var format = new Option<string>("--format") { DefaultValueFactory = _ => "human" };
+        foreach (var option in new Option[] { candidate, workflow, repository, format }) command.Options.Add(option);
+        command.SetAction(parse =>
+        {
+            var output = parse.GetValue(format);
+            if (output is not ("human" or "json" or "agent")) return 2;
+            var context = resolver.Resolve(parse.GetValue(repository)!).Context;
+            var result = context is null ? new EngineeringPerformanceResult(1, "invalid", ["Repository context is unavailable."])
+                : BenchmarkEvidenceReview.Inspect(context, parse.GetValue(candidate)!, parse.GetValue(workflow)!);
+            if (output == "json") Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+            else Console.WriteLine(output == "agent" ? $"status={result.Status};exitCode={result.ExitCode}" : $"Performance evidence: {result.Status}.");
+            foreach (var error in result.Errors) Console.Error.WriteLine(error);
+            return result.ExitCode;
+        });
+        return command;
     }
 
     private static Command CreateTaskCommand(PlanningService service)
@@ -72,8 +98,42 @@ public sealed class PlanModule : ICisModule
             return result.ExitCode;
         });
         task.Subcommands.Add(transition);
+        task.Subcommands.Add(CreateCompletionContextCommand(service));
         task.Subcommands.Add(CreateTaskMigrationCommand(service));
         return task;
+    }
+
+    private static Command CreateCompletionContextCommand(PlanningService service)
+    {
+        var command = new Command("completion-context", "Print the current required-gate receipt template as JSON; all gates start missing. Does not write or complete a task.");
+        var change = new Argument<string>("change-id");
+        var task = new Argument<string>("task-id");
+        var target = new Option<string>("--target") { Description = "Declared repository target; required when the task has multiple targets." };
+        var repo = new Option<string>("--repo") { DefaultValueFactory = _ => Directory.GetCurrentDirectory() };
+        var format = new Option<string>("--format") { DefaultValueFactory = _ => "json", Description = "Output format: human, json or agent; JSON includes the complete receipt template." };
+        command.Arguments.Add(change);
+        command.Arguments.Add(task);
+        command.Options.Add(repo);
+        command.Options.Add(format);
+        command.Options.Add(target);
+        command.SetAction(parse =>
+        {
+            var selected = parse.GetValue(format);
+            if (selected is not ("human" or "json" or "agent")) { Console.Error.WriteLine("Expected human, json or agent format."); return 2; }
+            var result = service.CompletionContext(parse.GetValue(repo)!, parse.GetValue(change)!, parse.GetValue(task)!, parse.GetValue(target));
+            if (result.Template is not null)
+            {
+                if (selected == "json") Console.WriteLine(EngineeringCompletionReview.Serialize(result.Template));
+                else
+                {
+                    Console.WriteLine($"change={result.Template.ChangeId} task={result.Template.TaskId} repository={result.Template.RepositoryId} receipt={result.Template.ReceiptPath} gates={result.Template.Gates.Count} state=missing");
+                    foreach (var gate in result.Template.Gates) Console.WriteLine($"gate={gate.Id} state=missing");
+                }
+            }
+            foreach (var error in result.Errors) Console.Error.WriteLine(error);
+            return result.Errors.Count == 0 ? 0 : 2;
+        });
+        return command;
     }
 
     private static Command CreateTaskMigrationCommand(PlanningService service)

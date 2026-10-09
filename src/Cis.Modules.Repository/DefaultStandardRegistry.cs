@@ -5,7 +5,7 @@ namespace Cis.Modules.Repository;
 internal static class DefaultStandardRegistry
 {
     public static IReadOnlyList<DefaultStandardDefinition> Select(RepositoryClassification classification)
-        => Definitions.Where(definition => definition.Applies(classification)).ToArray();
+        => Definitions.Concat(EngineeringDefaultStandards.All).Where(definition => definition.Applies(classification)).ToArray();
 
     public static string Render(string repositoryId, DefaultStandardDefinition definition)
     {
@@ -30,7 +30,7 @@ internal static class DefaultStandardRegistry
             .AppendLine("source_of_truth: This file")
             .AppendLine("provenance:")
             .AppendLine("  method: curated adaptation")
-            .AppendLine("  source_repository: PARR")
+            .AppendLine($"  source_repository: {definition.SourceRepository}")
             .AppendLine("  source_paths:");
         foreach (var path in definition.SourcePaths)
             builder.AppendLine($"    - {path}");
@@ -45,7 +45,9 @@ internal static class DefaultStandardRegistry
             .AppendLine()
             .AppendLine(definition.Purpose)
             .AppendLine()
-            .AppendLine("This starter is a classification-safe adaptation of the listed PARR standards. Repository maintainers may strengthen it, record bounded exceptions, or supersede it through reviewed canonical changes.")
+            .AppendLine(definition.SourceRepository == "PARR"
+                ? "This starter is a classification-safe adaptation of the listed PARR standards. Repository maintainers may strengthen it, record bounded exceptions, or supersede it through reviewed canonical changes."
+                : $"This starter adapts the listed {definition.SourceRepository} sources. Repository maintainers may strengthen it, record bounded exceptions, or supersede it through reviewed canonical changes.")
             .AppendLine()
             .AppendLine("## Scope")
             .AppendLine()
@@ -91,7 +93,7 @@ internal static class DefaultStandardRegistry
         => HasRole(classification, "backend-api-producer", "worker", "frontend-consumer", "mobile-client", "native-frontend", "event-producer", "event-consumer");
 
     private static bool HasImplementation(RepositoryClassification classification)
-        => classification.Components.Any(component =>
+        => classification.DeclaredStack == "csharp" || classification.Components.Any(component =>
             component.Roles.Any(role => role != "test-automation")
             && component.Languages.Any(language => language is "csharp" or "typescript" or "javascript" or "swift" or "kotlin" or "gdscript" or "hcl"));
 
@@ -177,7 +179,7 @@ internal static class DefaultStandardRegistry
                 - Treat AI-generated tests as candidates. Reject tautological tests, excessive mocks, presence-only interaction checks, and snapshot updates with no explained behavioral change.
                 - Run the smallest meaningful affected layer during iteration, then broaden according to impact and release risk.
                 - Pin container images or modules, wait for service readiness rather than fixed sleeps, isolate state, dispose resources, and never silently replace a required real dependency with a fake.
-                - Keep test framework and folder conventions repository-specific. The layered strategy is portable; PARR-specific xUnit, ReqNroll, Stryker.NET, Playwright for .NET, and PostgreSQL choices are examples rather than universal CIS defaults.
+                - Preserve adopted native frameworks and folder conventions. When no harness is selected, use the language defaults and qualification procedure in the engineering-defaults reference; .NET starts with xUnit while NUnit, MSTest and capable alternatives remain supported. Never replace native discovery/assertions with a custom runner.
                 """),
         new(
             "secure-feature-implementation",
@@ -356,6 +358,7 @@ internal sealed record DefaultStandardDefinition(
     IReadOnlyList<string> SourcePaths,
     Func<RepositoryClassification, bool> Applies,
     IReadOnlyList<DefaultStandardRule> Rules,
-    string? Guidance = null);
+    string? Guidance = null,
+    string SourceRepository = "PARR");
 
 internal sealed record DefaultStandardRule(string Id, string Statement, string Verification);

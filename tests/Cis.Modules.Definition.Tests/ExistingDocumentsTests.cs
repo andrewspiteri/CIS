@@ -101,6 +101,9 @@ public sealed partial class DefinitionWizardTests
         Assert.Equal("Draft", status.RootElement.GetProperty("validation").GetProperty("documentStatus").GetString());
         Assert.NotEqual("Active", status.RootElement.GetProperty("validation").GetProperty("effectiveStatus").GetString());
 
+        var inventory = new ProductDefinitionAuthority(new Cis.Modules.Repository.CisRepositoryContextResolver()).EvidencePaths(repository.Path);
+        Assert.Contains("docs/applications/product/brd-spec.md", inventory);
+        Assert.DoesNotContain("docs/cis/specs/business-requirements.md", inventory);
         var selectionFile = Path.Combine(repository.Path, CisProductDocumentPaths.SelectionFile);
         var before = File.ReadAllText(selectionFile);
         foreach (var (role, invalid) in new[] { ("business", "../outside.md"), ("business", "missing.md"), ("unknown", "docs/applications/product/brd-spec.md"), ("technical", "docs/applications/product/brd-spec.md") })

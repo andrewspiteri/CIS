@@ -3,7 +3,7 @@ title: "cis repo init"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-15"
+last_reviewed: "2026-10-09"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-repo-init
@@ -25,15 +25,66 @@ cis repo init --root <repository-relative-path> [options]
 | --- | --- | --- | --- |
 | `--root <path>` | Yes | — | Sets the documentation root relative to the target repository, for example `docs/cis`. It must remain inside the repository and cannot be the repository root. |
 | `--repo <path>` | No | Current directory | Selects the target repository. The directory must already exist. |
+| `--stack csharp` | No | Detected source only | Records intended C# guidance for a greenfield repository. Reconciliation retains the declaration; installed frameworks and execution remain unverified until detected and tested. Other declared-stack recipes are not yet qualified. |
 | `--dry-run` | No | `false` | Produces the complete classification and change plan without writing files. It does not require `--yes`. |
 | `--yes` | No | `false` | Confirms the displayed classification and artifact changes when review is required. |
+| `--examples <auto|off>` | No | Saved choice, otherwise `auto` | Persist automatic local reference installation or disable future installation/updates. Existing copies remain intact. |
+| `--adopt-engineering-defaults` | No | `false` | Explicitly adopts mandatory task-completion gates in an existing repository. Review the policy addition with `--dry-run`, then apply with `--yes`. Empty repositories adopt the policy on initialization. |
 | `--accept-current` | No | `false` | After manual review, records conflicting current starter files as human-owned canonical artifacts. Their content is retained and subsequent init runs do not replace it with starter templates. Use with `--yes` when applying. |
 | `--details` | No | `false` | Include per-component, starter-selection, and retained-path records in agent output. The default agent response is a compact summary plus actionable changes and findings. |
 | `--quarantine-obsolete` | No | `false` | Moves obsolete CIS-managed artifacts whose content still matches the recorded applied hash to `.cis/quarantine/repository-init/<original-path>`. Edited or human-owned artifacts are retained. Preview with `--dry-run` and apply with `--yes`. |
 | `--format <format>` | No | `human` | Selects `human`, `json`, or `agent` output. Values are case-insensitive. |
 | `-?`, `-h`, `--help` | No | — | Shows command help and exits without initializing the repository. |
 
+## Local reference examples
+
+For declared or detected C#, initialization copies the bundled .NET reference solution to
+`.cis/local/examples/dotnet-engineering/`. No source is copied into your application, and no
+packages, tests or containers are started. The example includes native tests, instrumentation,
+readable Core/Persistence/CLI responsibilities and a portable replay skill. Read its `README.md`
+before running it explicitly. Other stack recipes are not automatically installed yet.
+
+The documentation root cannot overlap reserved `.cis/local/examples/` storage. Updates replace local directory entries rather than truncating hard-linked files. On Unix, safe regular-file inspection requires `/usr/bin/test` or `/bin/test`; it runs only a bounded metadata predicate, not example code. Windows is the qualified execution platform for this candidate.
+
+Local examples are Git-ignored and excluded from project classification, implementation graph
+inputs and execution identity. Generated engineering guidance and the .NET testing skill point
+to them. They do not select your project's framework or establish passing project evidence.
+Minimal metadata import does not install examples; normal `repo init` performs that step.
+
+Use `--dry-run` to inspect new files and updates. Reconciliation updates only files that still
+match their last-applied hash. Edited or preexisting unowned files are preserved with warnings;
+files removed from a later bundle are also retained. Their retired identities and warnings persist while those files exist; reintroduced unchanged files can update. The local manifest records the available
+bundle's content digest as its version and each file's last-applied hash. An updated bundle
+digest does not mean every customized local file was upgraded or tested.
+
+```powershell
+cis repo init --repo <project> --root docs/cis --stack csharp --dry-run
+cis repo init --repo <project> --root docs/cis --stack csharp --yes
+cis repo init --repo <project> --root docs/cis --examples off --dry-run
+cis repo init --repo <project> --root docs/cis --examples off --yes
+```
+
+`off` persists in `.cis/example-settings.json` and preserves existing copies. Use `--examples auto`
+to re-enable installation and updates, with the same preview/review process.
+
+If planning reports an error, inspect `.cis/example-settings.json` (schemaVersion 1, mode `auto`
+or `off`) and `.cis/local/examples/manifest.json`. Back up those files and local examples before
+repairing metadata. Restore a known valid manifest when available. If none can be recovered,
+move only the manifest to a new backup name: the next initialization preserves existing files
+as unowned, including files identical to the bundle. Never invent applied hashes to force an overwrite.
+`--examples off` bypasses bundle and example-manifest inspection, but malformed settings still
+need correction before the saved preference can be read or changed.
+
+For missing or invalid bundled files, repair/reinstall the selected CIS distribution first;
+manual export uses that same bundle and cannot repair it. With a valid distribution, compare a
+customized copy using `cis repo example --repo <project> --destination .cis/local/example-comparison`.
+The new destination is relative to the selected project and must not already exist.
+
 ## Operation and effects
+
+Routine reconciliation of an existing repository does not add the engineering policy unless explicitly requested. `--stack csharp` selects guidance but does not imply adoption. Once CIS manages the policy, deleting it or editing `requireTaskCompletion` to false produces a blocking diagnostic. Existing custom policies and files remain subject to the usual preservation and collision checks.
+
+Static .NET discovery reads literal test package references, inherited build properties, and the nearest `global.json` test runner. Microsoft.Testing.Platform and conditional or update-only test references produce a visible qualification warning; CIS does not fabricate VSTest commands for them. Resolve the runner and native evidence binding through the configuration-review gate.
 
 The command performs these steps in order:
 
@@ -180,8 +231,10 @@ choices but never installs or migrates UI packages.
 Confirmation is required when a non-dry-run plan has changes and at least one of these conditions applies:
 
 - the documentation root already contains content;
-- classification selected starter artifacts; or
+- classification detected implementation components; or
 - an existing file must be updated.
+
+An empty repository with only a declared C# stack can initialize without `--yes`; declaration alone is not a detected component.
 
 Run first with `--dry-run` to inspect the plan, then repeat with `--yes` to apply it. `--yes` does not override validation errors or collisions. For a reviewed collision whose current file is the intended canonical version, rerun with `--accept-current --yes`.
 

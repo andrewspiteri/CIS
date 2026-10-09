@@ -5,13 +5,19 @@ status: Draft
 version: "0.1"
 scope: "Product:ChangeImpactStudio"
 owner: "Andrew Spiteri"
-last_reviewed: "2026-10-05"
+last_reviewed: "2026-10-09"
 review_cadence: "before implementation and at each milestone"
 cis:
   stable_id: change-impact-studio:plan:code-quality-architecture
 ---
 
 # Code quality and architecture quality plan
+
+Execution sequencing and .NET trial readiness are defined by the [consolidated implementation plan](engineering-defaults-implementation-plan.md). This document retains the quality/architecture design; its task labels are cross-references, not a duplicate execution ledger.
+
+## Implementation disposition — 9 October 2026
+
+The Windows .NET milestone now provides quality/architecture standards, native lint and boundary checks, readable examples and independent review. Optional shared-library adoption and production refactoring remain project decisions. See the [completed milestone and evidence](../../planning/engineering-defaults-trial-readiness.md) and [trial guide](../../planning/engineering-defaults-dotnet-trial-guide.md). The detailed proposal below retains design rationale and later scope; its Draft metadata is not changed into policy or product approval.
 
 ## Recommendation and scope
 
@@ -25,6 +31,8 @@ Public qualification examples must be synthetic and reproducible from CIS fixtur
 
 ## 1. Three levels of guidance
 
+The companion [agent-facing CLI and skills defaults plan](agent-interface-defaults-plan.md) proposes CLI access and maintained skills as a default for supported application workflows. Its command adapters should reuse the application boundaries defined here, with one implementation of business behavior and provider-neutral workflow guidance.
+
 | Level | Proposed content | Adoption behavior |
 | --- | --- | --- |
 | Common quality baseline | Naming, readable control flow, cohesion, explicit dependencies, side-effect ownership, failure handling, navigability and review evidence. | Offer to every implementation component. Translate checks to the language; disclose unsupported automated checks. |
@@ -35,6 +43,8 @@ Discovery must not silently bless poor existing code. Report both the observed s
 
 Reassess applicability when an empty repository gains source or a new component/language appears. Share this reconciliation with the testing plan rather than build a second classification mechanism. Upgrades should show proposed additions and conflicts without overwriting human-owned guidance.
 
+The [iteration alignment plan](iteration-alignment-plan.md) places this shared reassessment in the closing instructions for every task: rebuild the graph, reconcile CIS dependencies, review alignment and refresh affected evidence before completion.
+
 ## 2. Existing foundations and the remaining gap
 
 PARR's C# guidance covers explicit, maintainable code, cohesive classes, constructor injection, meaningful names, lifetime ownership and module boundaries. Its [C# instructions](C:/miscwork/portfolio/PARR/.github/instructions/csharp.instructions.md) are a useful adaptation source. Its [solution implementation standard](C:/miscwork/portfolio/PARR/docs/generic/standards/csharp-solution-implementation-standard.md) also includes a four-project module structure and specific persistence choices. Those heavier choices should remain selectable recipes rather than universal CIS requirements.
@@ -43,7 +53,11 @@ CIS already has a [standard registry](../../src/Cis.Modules.Repository/DefaultSt
 
 Sampled [generated C# guidance](../../.github/instructions/cis-host-csharp.instructions.md) concentrates on builds, warnings and source inspection. The improvement is to connect a coherent quality baseline to applicability, implementation steering, examples and review evidence. Passing compilation or prose-readability checks cannot establish code readability.
 
+PARR also supplies concrete linting and static-analysis examples. Its [backend build properties](C:/miscwork/portfolio/PARR/src/backend/Directory.Build.props) enable .NET analyzers, recommended analysis mode and code-style enforcement in builds, and reference `SonarAnalyzer.CSharp`. Its [central package manifest](C:/miscwork/portfolio/PARR/src/backend/Directory.Packages.props) pins the analyzer version, while [backend EditorConfig](C:/miscwork/portfolio/PARR/src/backend/.editorconfig) contains scoped diagnostic exclusions. Its [frontend ESLint configuration](C:/miscwork/portfolio/PARR/src/frontend/eslint.config.mjs) selects Next.js Core Web Vitals and TypeScript rules, and [package scripts](C:/miscwork/portfolio/PARR/src/frontend/package.json) expose `lint`. The [release workflow](C:/miscwork/portfolio/PARR/.github/workflows/release-validation-and-artifacts.yml) includes frontend lint execution. These are inspected configuration facts, not a claim that a fresh lint run passed. Backend properties set both `TreatWarningsAsErrors` and `CodeAnalysisTreatWarningsAsErrors` to false; an installed analyzer is not evidence that every diagnostic blocks delivery.
+
 This is targeted source and documentation review, not a complete implementation audit. No application tests, package qualification or graph-wide impact analysis were performed for this proposal.
+
+CIS already defines [independent assurance](independent-assurance-task-type.md), including second-agent challenge. The [story execution workflow](../../src/Cis.Modules.Agent/AgentService.StoryTasks.cs) uses separate configurable implementation and review providers, frozen candidate snapshots, structured findings and bounded correction/review rounds. Its [review context builder](../../src/Cis.Modules.Agent/AgentService.StoryReviewContext.cs) retains complete candidate diffs, splitting large evidence into indexed parts. Reuse and qualify these capabilities for code-logic review instead of introducing a parallel review orchestrator. Source inspection does not establish that a provider is authenticated or available in every installation, or that every implementation path already invokes this workflow.
 
 ## 3. Proposed code-quality baseline
 
@@ -116,17 +130,76 @@ Also provide a short before/after example of dense orchestration decomposed into
 
 | Check | Role | Proposed enforcement |
 | --- | --- | --- |
-| Formatting, compiler diagnostics and selected native analyzers | Repeatable syntax/style/correctness checks. | Gate new violations of adopted rules. Preserve deliberate, narrow suppressions and report their rationale. |
+| Formatting checks | Consistent source layout. | Run the adopted formatter in check mode; formatting success does not establish lint or architecture compliance. |
+| Code-quality linting, compiler diagnostics and static analyzers | Detect rule violations, suspicious code and maintainability issues beyond formatting. | Run the selected native tools locally and in CI. Gate adopted severities and new violations; preserve deliberate, narrow suppressions with rationale. |
 | Project/module dependency, visibility and cycle rules | Protect the adopted architecture's ownership boundaries. | Deterministic native architecture tests, qualified against a deliberate violation. Use the testing plan's selected framework. |
 | Composition, lifecycle and replacement tests | Verify real wiring, scopes and disposal behavior. | Run focused integration checks appropriate to the host; do not equate container validation with all runtime behavior. |
 | Complexity, concentration and coupling signals | Locate code that deserves closer review. | Advisory initially; repository-calibrated budgets only after qualification and adoption. Report complete symbols and scope. |
 | Source-aware readability and responsibility review | Assess comprehensibility and design tradeoffs. | Record concrete findings and dispositions. Model feedback remains advisory, not automatic approval. |
+| Independent secondary-agent logic review | Challenge behavior, assumptions and missed failure paths using a separate reviewer run. | Use the existing independent-assurance workflow, bind findings to actual source and resolve required findings before completion. The review complements automated checks. |
 
-For .NET, qualify SDK analyzers and repository formatting configuration before adding more tooling; [Microsoft's code analysis documentation](https://learn.microsoft.com/en-us/dotnet/fundamentals/code-analysis/overview) describes available mechanisms. Reuse the test-harness plan's architecture tooling instead of writing another analysis or test framework. Add narrowly scoped custom analysis only for a demonstrated rule that existing tools cannot enforce.
+### 7.1. Explicit linting defaults and qualification
+
+Linting is a first-class quality capability, distinct from formatting, runtime tests and architecture tests. It covers code smells, suspicious constructs, naming/style rules, maintainability diagnostics and relevant framework usage. Security analyzers can share execution infrastructure, but ordinary lint success cannot stand in for the security testing plan.
+
+| Language/component | Proposed starting profile when no suitable choice exists | Qualification and adaptation |
+| --- | --- | --- |
+| C# / .NET | SDK analyzers plus `SonarAnalyzer.CSharp`, repository-owned EditorConfig severities and a separate formatting check. | Adapt the PARR approach; pin a compatible analyzer/SDK combination and a curated rule set. Assess overlapping diagnostics and false positives. Do not copy PARR's exclusions or warning policy blindly. |
+| TypeScript / JavaScript | ESLint with appropriate language rules and framework plugins; separate formatting and type checking where applicable. | Preserve existing supported lint tools. Apply Next.js rules only to Next.js components; qualify type-aware rules against actual project configuration. |
+| Python | Ruff linting and formatter checks as the initial proposed recipe; preserve adopted equivalents. | Define selected rules and exclusions. Keep type checking separate where required; Ruff alone does not establish type correctness. This recipe needs qualification before being advertised as supported. |
+| Other detected languages and configuration | Existing native lint tools and component-specific recipes. | Record an explicit coverage gap when no qualified recipe exists; do not invent a generic replacement linter. Infrastructure and workflow linting retain their own scope. |
+
+Native capabilities are documented in [Microsoft code analysis](https://learn.microsoft.com/en-us/dotnet/fundamentals/code-analysis/overview), [Sonar's .NET analyzer repository](https://github.com/SonarSource/sonar-dotnet), [ESLint's CLI reference](https://eslint.org/docs/latest/use/command-line-interface) and [Ruff documentation](https://docs.astral.sh/ruff/). These references were checked on 5 October 2026. They support tool selection, not proof of a compatible CIS recipe. The proposed .NET recipe uses the analyzer package; a hosted Sonar service is not a prerequisite.
+
+Each lint profile should declare its tool/version, effective rule configuration, component scope, exclusions, command, severity policy and report format. Discover inherited build properties, nested configuration and package scripts so the reported profile reflects what executes. Registration, successful execution and policy compliance must remain separate states.
+
+Local and CI checks should use equivalent versions, rules and scope. Use native commands and reports through the existing CIS workflow/evidence mechanisms. Verification runs in check mode; fixes are a separate editing action followed by review and rerun. Do not generate a bespoke lint framework or silently rewrite source during verification.
+
+Required lint must not pass because a script is absent, an optional invocation skipped it, all inputs were ignored, compilation analysis was skipped, or a report is missing. Capture command outcome, tool/rule-configuration identity, source revision, analyzed scope and findings by rule/severity, with native artifacts where supported. Tool/configuration errors and incomplete analysis need their own failure status. For build-integrated analyzers, qualify how incremental builds and cached results establish current evidence.
+
+For new code, gate the repository's adopted error severities and warning budget. For existing repositories, use an explicit baseline of known findings and prevent new violations; retain an owner and disposition for existing debt. Baseline identity must survive file moves where practical and expose configuration changes that disable checks. Blanket suppressions, raising limits or accepting a new baseline solely to turn a check green do not resolve findings.
+
+Rule selection should include maintainability concerns relevant to the initial quality gaps, such as excessive nesting, confusing control flow and oversized parameter lists where supported. Complexity thresholds remain calibrated review signals unless explicitly adopted as gates. A deliberate lint violation must fail the qualified recipe; a scoped justified suppression and a legitimate complex implementation must also be tested to demonstrate intended policy behavior.
+
+### 7.2. Architecture and source review
+
+Reuse the test-harness plan's architecture tooling instead of writing another analysis or test framework. Add narrowly scoped custom analysis only for a demonstrated rule that existing tools cannot enforce.
 
 Source-based checks should consume compiler-resolved information where available. Missing or stale graph capability produces an explicit unavailable/incomplete result, not a guessed success. Retain the [existing graph and inference limits](standard-pattern-catalogue-and-inference-spec.md): bounded static evidence does not prove branch, interprocedural or runtime semantics. CIS must not load target assemblies as plugins; native tests run through authorized repository commands.
 
 Review a representative flow from entry point through policy and external effects, including callers and failure paths. Ask where a maintainer would change a rule, replace an adapter or diagnose a failure, and whether doing so requires unrelated code changes. A clean formatter, high coverage or green architecture test cannot answer those questions alone.
+
+### 7.3. Independent secondary-agent logic review
+
+Make a separate agent review the recommended default for substantive agent-authored implementation and refactoring. Under the proposed adopted profile, require it for changes to business invariants, authorization, calculations, persistence/transactions, concurrency, lifecycle behavior or architecture boundaries. Trivial mechanical edits can use a proportionate review path with recorded applicability. This is a proposed policy, not a claim that every current CIS task requires a model review.
+
+Keep reviewer selection tool-, model- and provider-neutral. Configure implementation and review roles separately using the existing provider mechanism; select by review capabilities, availability, repository authorization, data handling, cost and execution limits. Do not hardcode a vendor, executable or model into quality policy, templates or completion gates. Provider adapters should translate native output into a common review-result contract, allowing compatible CLI, API or local-model integrations to participate after qualification.
+
+Prefer an authorized reviewer using a different model or provider from the implementer when available. A different model may offer a different perspective but does not guarantee independence or correctness. Always use a distinct review run with fresh context; record author and reviewer provider/model identities and disclose when the same model was used in separate sessions. Preserve any stronger existing separation rule. Qualify at least two interchangeable provider adapters and an unavailable-provider case before claiming the review workflow is portable; do not claim unsupported integrations already work.
+
+Give the reviewer the requirements, relevant invariants and architecture decisions, exact baseline/candidate identities, actual diff and source, important callers/callees and contracts, applicable tests/results, and known failures. The implementer's explanation may supply context but is not evidence of correctness. Reviewers should derive behavior from source and challenge whether the tests could pass while the implementation is wrong. Missing source, truncated evidence or inaccessible dependencies must be reported as limits; they cannot silently support an unqualified readiness recommendation.
+
+The assigned task reviewer should also double-check the [iteration closing sequence](iteration-alignment-plan.md#assigned-task-reviewer): final graph freshness, CIS dependency updates and standards/skills/check alignment, using underlying evidence rather than the implementer's completion statement.
+
+The review checklist should cover:
+
+- Incorrect assumptions, boundary values, numerical behavior and inconsistent state transitions.
+- Transactionality, idempotency, ordering, races, retries, cancellation, resource lifetime and error propagation where applicable.
+- Authorization, data exposure and trust boundaries alongside the separate security checks.
+- Contract compatibility, affected callers and operational consequences outside the immediate diff.
+- Tests that miss important cases or repeat the implementation's mistake, plus source-level readability and responsibility problems that linting cannot decide.
+
+Keep the reviewer read-only against the reviewed snapshot. Suggested fixes and regression cases are findings for the implementation stage, not permission for the reviewer to change code or expand scope. Use supported isolated verification when needed, preserving exact commands and results separately from reasoning-only claims.
+
+Each actionable finding needs an identity, severity, source location, triggering condition, expected versus actual behavior, evidence and proposed verification. Distinguish a demonstrated defect from a hypothesis or preference. Reconcile findings against source and tests rather than accepting or dismissing them solely because a model produced them. The implementer can fix a confirmed problem within authorized scope; risk acceptance, deferral and policy exceptions retain existing human authority.
+
+After fixes, rerun affected automated checks and review the corrected snapshot, including adjacent behavior affected by the correction. Record each finding's disposition and supporting evidence. Later source changes invalidate review for the affected scope. Reuse the existing bounded correction/review loop; exhausting its budget leaves unresolved findings visible and does not produce an automatic pass. Disagreement should be resolved with source evidence, a focused reproduction or the responsible maintainer, not repeated prompting until a reviewer agrees.
+
+If the selected provider is unavailable, use a previously authorized alternative where allowed. Record reduced independence, incomplete review or the applicable human-review alternative explicitly. A required review cannot disappear or become the implementer's self-review. Provider authorization and repository data policy still apply; a CLI running locally may use a remote model. This proposal does not authorize transmitting source to a new provider.
+
+Retain review provenance: baseline/candidate digest, scope and evidence inventory, author/reviewer identities, model/version when available, prompt/profile version, run result, findings, dispositions, re-verification and limitations. A successful process exit, empty findings array or a `ready` label alone is insufficient without valid scope and evidence. Reviewer recommendations do not approve delivery or replace linting, mutation, architecture, security or regression requirements.
+
+Qualify the review workflow with public synthetic changes containing known logic defects, a correct change, misleading implementation summaries and omitted-caller cases. Verify stale-snapshot rejection, malformed/partial output, reviewer mutation attempts, provider unavailability and finding-disposition handling deterministically. Separately assess actual reviewer usefulness on seeded cases and record misses and false positives; a stochastic model's perfect defect detection is not a deterministic CI guarantee. Measure usefulness through confirmed findings and resolved defects, not the number of comments produced.
 
 ## 8. Existing repositories and bounded refactoring
 
@@ -153,9 +226,11 @@ All tasks are proposed and not started. Task names are planning labels; formal d
 | QA-01: portable quality contract | — | Map PARR's reusable C# guidance to common outcomes; define the initial C# profile, architecture-map content, policy precedence and review signals. | Examples distinguish policy from convention, small applications from modular systems, and generated from handwritten code. No universal container or layout requirement. |
 | QA-02: discovery and propagation | QA-01; testing TH-02/TH-03 classification work | Wire quality guidance into initialization, import, source-growth reconciliation and relevant implementation skills/instructions. | Empty-to-source, existing architecture, edited guidance and multi-component fixtures; repeat runs preserve choices and expose conflicts. |
 | QA-03: deterministic checks | QA-01; testing TH-01/TH-04 contracts | Map adopted quality and architecture rules onto native analyzers/tests and existing conformance/evidence handling. | Positive and negative fixtures, partial-type aggregation, zero-match detection, stale analysis, missing tooling and bounded exceptions. No synthetic quality pass. |
-| QA-04: reference example | QA-01, QA-03; testing TH-05 and TH-12b | Deliver minimal and extended .NET examples with composition, replacement, native tests and test instrumentation. | Clean restore/build, expected failures detected, useful failure evidence and documented ownership. Split buffering/performance qualification into a follow-up slice. |
+| QA-03a: lint profiles and gates | QA-01, QA-02 | Qualify the .NET lint profile, native commands/reports, severity and baseline policy, local/CI equivalence and readiness diagnostics. Extend through QA-07 for other languages. | Deliberate violations fail; missing scripts, ignored-all scope, stale reports, skipped analysis and tool errors cannot pass. Scoped suppressions, inherited configuration and legitimate alternatives work as declared. |
+| QA-04: reference example | QA-01, QA-03, QA-03a; testing TH-05 and TH-12b | Deliver minimal and extended .NET examples with composition, replacement, linting, native tests and test instrumentation. | Clean restore/build/lint, expected failures detected, useful failure evidence and documented ownership. Split buffering/performance qualification into a follow-up slice. |
 | QA-05: implementation and review steering | QA-02, QA-03, QA-04 | Require an appropriate responsibility map before complex implementation and evidence-based quality review before completion; reuse existing planning/review workflow. | Fixtures where an overloaded type, partial-file split or broad suppression cannot be reported as resolved merely because checks pass. Simple changes retain lightweight handling. |
-| QA-06: bounded refactoring pilot | QA-05; applicable testing TH-10 migration and baseline evidence | Refactor one selected responsibility under a separate application implementation scope. | Behavior/contract parity, boundaries, diagnostics, comparable performance and a source review; precise before/after findings rather than a class-count claim. |
+| QA-05a: independent logic-review profile | QA-01, QA-05 | Reuse the existing secondary-agent review stages for substantive implementation/refactoring, with risk-based applicability, configurable provider adapters, a common result contract, source context, provenance and finding closure. | At least two interchangeable qualified adapters; seeded logic-defect and correct-change evaluations; deterministic checks for separate runs, omitted context, stale snapshots, invalid output, unavailable providers and unresolved findings. No claim that a model catches every defect. |
+| QA-06: bounded refactoring pilot | QA-05, QA-05a; applicable testing TH-10 migration and baseline evidence | Refactor one selected responsibility under a separate application implementation scope. | Behavior/contract parity, boundaries, diagnostics, comparable performance and independent logic review with finding dispositions; precise before/after findings rather than a class-count claim. |
 | QA-07: broader language recipes | QA-01 through QA-05; relevant testing TH-06/TH-07 | Qualify TypeScript/JavaScript and Python recipes using their own idioms and adopted tools. | Equivalent outcomes demonstrated without forced C# structure; unsupported analysis remains explicit. |
 | QA-08: optional shared capability assessment | QA-04; consumer evidence | Inventory repeated needs and evaluate ecosystem reuse versus narrow extraction. | A justified package proposal or documented decision to keep code local. Package delivery, if chosen, gets its own plan. |
 
@@ -165,7 +240,7 @@ Deliver QA-01 as the first bounded code-quality change after this proposal is re
 
 ## Proposed decisions and review limits
 
-The recommended decisions are: common quality outcomes; adaptable architecture recipes; C# first; ecosystem reuse before custom infrastructure; optional focused shared packages; explicit dependencies without mandatory containers; aggregate partial types; deterministic enforcement for adopted structural rules; advisory complexity analysis plus source review; gradual improvement in existing repositories; test and instrumentation evidence before production refactoring.
+The recommended decisions are: common quality outcomes; adaptable architecture recipes; C# first; ecosystem reuse before custom infrastructure; optional focused shared packages; explicit dependencies without mandatory containers; aggregate partial types; explicit native lint profiles and local/CI gates; deterministic enforcement for adopted structural rules; advisory complexity analysis plus source review; separate-agent logic review with evidence and finding closure; gradual improvement in existing repositories; test and instrumentation evidence before production refactoring.
 
 Rule severity, numeric thresholds, exact analyzer configuration and any shared package remain implementation-stage choices that need qualification and repository adoption. No such decision is marked approved here.
 

@@ -16,7 +16,7 @@ using System.Text.RegularExpressions;
 
 namespace Cis.Modules.Delivery.Tests;
 
-public sealed class DeliveryWorkflowTests
+public sealed partial class DeliveryWorkflowTests
 {
     [Theory]
     [InlineData("Approved", "wireframe", true)]
@@ -570,6 +570,13 @@ status: Draft
         Assert.Equal(0, imported.ExitCode);
         Assert.Equal("approved", services.Plans.Approve(repository.Path, change.Id).Status);
 
+        var taskRoot = Path.Combine(Path.GetDirectoryName(services.Changes.DossierFile(change, "plan.md"))!, "agent-tasks");
+        var taskPaths = Directory.GetFiles(taskRoot, "*.md");
+        Assert.NotEmpty(taskPaths);
+        foreach (var taskPath in taskPaths)
+            File.AppendAllText(taskPath, "\r\n## Maintainer handoff\r\nPreserve this reviewed implementation context.\r\n");
+        var taskBytes = taskPaths.ToDictionary(path => path, File.ReadAllBytes);
+        var planBytes = File.ReadAllBytes(services.Changes.DossierFile(change, "plan.md"));
         readiness.Ready = false;
         repository.Write("tests/approved-refresh.test.ts",
             "test('TC-REFRESH-001-001 records the approved outcome', () => {});");
@@ -579,6 +586,12 @@ status: Draft
         Assert.Equal("Approved", refreshed.PlanStatus);
         Assert.Contains("automated_test_case_count: 1",
             File.ReadAllText(services.Changes.DossierFile(change, "test-cases.md")), StringComparison.Ordinal);
+
+        foreach (var task in taskBytes) Assert.Equal(task.Value, File.ReadAllBytes(task.Key));
+        Assert.Equal(planBytes, File.ReadAllBytes(services.Changes.DossierFile(change, "plan.md")));
+        var repeated = services.Plans.ImportSpec(new FeatureSpecImportRequest(repository.Path, change.Id, featurePath));
+        Assert.Equal(0, repeated.ExitCode);
+        Assert.False(repeated.Applied);
 
         repository.Write(featurePath, File.ReadAllText(Path.Combine(repository.Path, featurePath)) + "\nRevised scope.\n");
         var revised = services.Plans.ImportSpec(new FeatureSpecImportRequest(repository.Path, change.Id, featurePath));
@@ -1140,6 +1153,9 @@ feature_spec_sha256: "{featureSha}"
     public void TaskCompletion_SnapshotsSanitizedToolUsageAndPossibleSavingsIntoEvidence()
     {
         using var repository = TemporaryRepository.Create();
+        // This pre-existing lifecycle test explicitly disables the new completion policy.
+        // Dedicated EngineeringCompletionTests exercise the new receipt contract and negative gate states.
+        File.WriteAllText(Path.Combine(repository.Path, ".cis/engineering-defaults.json"), "{\"schemaVersion\":1,\"requireTaskCompletion\":false,\"additionalGates\":[]}");
         var services = CreateServices();
         var change = Assert.IsType<ChangeDossier>(services.Changes.Create(new ChangeCreateRequest(
             repository.Path, "Document order policy", "The governed order policy is current.",
@@ -2076,10 +2092,13 @@ status: Draft
         Assert.Equal(0, application.Invoke(["plan", "import-spec", "--help"]));
         Assert.Equal(0, application.Invoke(["plan", "derive", "--help"]));
         Assert.Equal(0, application.Invoke(["plan", "validate", "--help"]));
+        Assert.Equal(0, application.Invoke(["plan", "performance-check", "--help"]));
+        Assert.Equal(4, application.Invoke(["plan", "performance-check", "--candidate", "missing.json", "--workflow", "missing.json", "--repo", "missing-repository", "--format", "json"]));
         Assert.Equal(0, application.Invoke(["plan", "approve", "--help"]));
         Assert.Equal(0, application.Invoke(["plan", "capability", "status", "--help"]));
         Assert.Equal(0, application.Invoke(["plan", "capability", "select", "--help"]));
         Assert.Equal(0, application.Invoke(["plan", "task", "transition", "--help"]));
+        Assert.Equal(0, application.Invoke(["plan", "task", "completion-context", "--target", "application", "--help"]));
         Assert.Equal(0, application.Invoke(["plan", "task", "migrate-type", "--help"]));
         Assert.Equal(0, application.Invoke(["design", "templates", "--help"]));
         Assert.Equal(0, application.Invoke(["design", "scaffold", "--help"]));
@@ -2177,6 +2196,29 @@ status: Draft
         var providerRemoved = CreateServices().Plans.CapabilityStatus(repository.Path);
         Assert.Equal(2, providerRemoved.ExitCode);
         Assert.Contains(providerRemoved.Errors, error => error.Contains("unavailable task type", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void ApprovedCatalogueRefreshRejectsChangedProviderBeforeWriting()
+    {
+        using var repository = TemporaryRepository.Create();
+        var services = CreateServices(taskTypes: CreateSearchRegistry());
+        var change = PrepareSearchChange(repository, services);
+        Assert.Equal(0, services.Plans.SelectCapability(new TaskTypeCapabilitySelectRequest(
+            repository.Path, "parr.search", "parr.search.legacy", [], "architect", "Use the reviewed provider.")).ExitCode);
+        var request = new FeatureSpecImportRequest(repository.Path, change.Id, "docs/cis/specs/search-feature-spec.md");
+        Assert.Equal(0, services.Plans.ImportSpec(request).ExitCode);
+        Assert.Equal("approved", services.Plans.Approve(repository.Path, change.Id).Status);
+        var docs = Path.Combine(repository.Path, "docs");
+        var before = Directory.GetFiles(docs, "*", SearchOption.AllDirectories).ToDictionary(path => path, File.ReadAllBytes);
+
+        var result = CreateServices(taskTypes: CreateSearchRegistry("1.1")).Plans.ImportSpec(request);
+
+        Assert.NotEqual(0, result.ExitCode);
+        Assert.False(result.Applied);
+        Assert.Contains(result.Errors, error => error.Contains("replan", StringComparison.Ordinal));
+        Assert.Equal(before.Keys.Order(), Directory.GetFiles(docs, "*", SearchOption.AllDirectories).Order());
+        foreach (var file in before) Assert.Equal(file.Value, File.ReadAllBytes(file.Key));
     }
 
     [Fact]
@@ -2284,7 +2326,8 @@ status: Draft
         IDesignProcessRunner? designRunner = null,
         TaskTypeRegistry? taskTypes = null,
         IEnumerable<ICisFeatureApprovalAuthority>? featureAuthorities = null,
-        IEnumerable<IChangeReadinessCheck>? readinessChecks = null)
+        IEnumerable<IChangeReadinessCheck>? readinessChecks = null,
+        bool engineering = false)
     {
         var resolver = new CisRepositoryContextResolver();
         var reader = new DocumentationCatalogReader();
@@ -2301,19 +2344,22 @@ status: Draft
         var plans = new PlanningService(changes, impacts, decisions, resolver,
             taskTypes: taskTypes, toolUsage: usage, capabilities: capabilityStore,
             featureAuthorities: featureAuthorities, readinessChecks: readinessChecks,
-            workspaceRegistry: new WorkspaceRegistry(resolver));
+            workspaceRegistry: new WorkspaceRegistry(resolver),
+            engineering: engineering ? new EngineeringAssessmentService() : null,
+            graphReader: engineering ? new GraphSnapshotReader(resolver) : null,
+            repositoryChecks: engineering ? [new EngineeringAlignmentDoctorCheck()] : []);
         var designs = new DesignService(changes, new DesignTemplateCatalog(), featureAuthorities ?? [],
             () => DateTimeOffset.Parse("2026-08-09T10:00:00Z"), designRunner);
         return new Services(changes, decisions, impacts, plans, designs, usage, graph, docsValidation);
     }
 
-    private static TaskTypeRegistry CreateSearchRegistry()
+    private static TaskTypeRegistry CreateSearchRegistry(string legacyVersion = "1.0")
         => new(new ICisTaskTypeProvider[]
         {
             new CoreTaskTypeProvider(),
             new TestTaskTypeProvider("parr.search.legacy-provider",
                 new CisTaskTypeDefinition(
-                    "parr.search.legacy", "1.0", "search", "Build legacy search projection", 95,
+                    "parr.search.legacy", legacyVersion, "search", "Build legacy search projection", 95,
                     "conditional", ["search"], [], "medium", "Build the selected search projection.",
                     "The projection is queryable and respects visibility.", "Run legacy projection and retrieval tests.",
                     CapabilityKey: "parr.search", ConflictsWithTypeKeys: ["parr.search.projection"])),
@@ -2524,7 +2570,7 @@ authority: human-reviewed
 
         public string Path { get; }
 
-        public static TemporaryRepository Create()
+        public static TemporaryRepository Create(bool buildGraph = true)
         {
             var path = System.IO.Path.Combine(
                 System.IO.Path.GetTempPath(),
@@ -2540,8 +2586,11 @@ authority: human-reviewed
                 "var builder = WebApplication.CreateBuilder(args); var app = builder.Build(); app.MapGet(\"/orders/{id}\", () => Results.Ok()); app.Run();");
             var init = new RepositoryInitializer().Initialize(new RepositoryInitRequest(path, "docs/cis", false, true));
             Assert.Equal(0, init.ExitCode);
-            var services = CreateServices();
-            Assert.Equal(0, services.Graph.Build(path).ExitCode);
+            if (buildGraph)
+            {
+                var services = CreateServices();
+                Assert.Equal(0, services.Graph.Build(path).ExitCode);
+            }
             return repository;
         }
 

@@ -11,6 +11,8 @@
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <RepositoryUrl>https://github.com/andrewspiteri/CIS</RepositoryUrl>
     <PackageTags>change-impact;architecture;ai-delivery;cli</PackageTags>
+    <!-- Explicitly selected recipe files include .editorconfig, .gitignore and portable skill/tool folders. -->
+    <NoDefaultExcludes>true</NoDefaultExcludes>
   </PropertyGroup>
   <PropertyGroup Condition="'$(CisStandalone)' == 'true'">
     <PackAsTool>false</PackAsTool>
@@ -74,4 +76,5 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <PackageReference Include="System.CommandLine" />
   </ItemGroup>
+  <Import Project="ExampleRecipe.props" />
 </Project>

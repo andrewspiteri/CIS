@@ -3,7 +3,7 @@ title: "cis agent resume"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-28"
+last_reviewed: "2026-10-09"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-agent-resume
@@ -20,10 +20,10 @@ architecture bundle and immutable evidence. The original overall design, compone
 BRD, technical intent, questionnaire and snapshots must still match. CIS rechecks coverage,
 component identities, human notes, lifecycle and diagram validity before applying the pair.
 
-Create a new retained attempt using a provider session from a terminal run.
+Create a new retained continuation attempt from a terminal run. Session reuse is subject to the restart rules below.
 
 ```text
-cis agent resume <run-id> --actor <identity> --reason <rationale> [--message <continuation>] [--approve-requests] [--repo <path>] [--format <human|json|agent>]
+cis agent resume <run-id> --actor <identity> --reason <rationale> [--message <continuation>] [--approve-requests] [--allow-command <command>] [--repo <path>] [--format <human|json|agent>]
 ```
 
 The provider must support resumption, the original worktree and unchanged envelope must remain available, and the prior run must be terminal. CIS sends the complete digest-bound task contract and artifact route on every attempt, followed by the optional continuation, so a failed pre-session attempt cannot resume with an unbounded or context-free prompt. The next attempt appends provenance and never erases the first result. Ctrl+C follows the same bounded cancellation behavior as `cis agent run`.
@@ -36,3 +36,11 @@ the BRD. Use a bounded continuation explaining the exact correction. The new att
 the same provider session and snapshots, then passes through every normal BRD copy-back
 check. It cannot overwrite a changed canonical document or expand the evidence selection.
 Other product-document tasks continue through their dedicated governed commands.
+
+For task implementations, `--allow-command` can authorize individual commands for this attempt
+with a supporting provider. Previous lists are not reused. If this or the previous attempt has
+an explicit command list, CIS starts fresh native session context while retaining the task
+contract and continuation evidence. This option is unavailable for product-document authoring,
+read-only runs and providers without the capability. See [command permissions](cis_agent_run.md#explicit-command-permissions).
+
+Claude review sessions are nonpersistent. Resuming a review starts a fresh native session with the complete bound task context; it does not send `--resume` for the earlier review session. The retained envelope, worktree and authority checks still apply.

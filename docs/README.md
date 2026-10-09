@@ -3,7 +3,7 @@ title: "Change Impact Studio Documentation"
 type: navigation
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-25"
+last_reviewed: "2026-10-09"
 review_cadence: on documentation structure change
 cis:
   stable_id: change-impact-studio:docs:root
@@ -32,8 +32,14 @@ Reader entry points:
 
 Canonical starting points:
 
-- [Code quality and architecture plan](specs/code-quality-architecture-plan.md) — proposed readability rules, adaptable architecture recipes, optional shared libraries and bounded refactoring; planning only
-- [Testing harness defaults plan](specs/testing-harness-defaults-plan.md) — proposed language defaults, complete test layers, examples and staged harness migration; planning only
+- [Windows .NET/C# trial guide](../planning/engineering-defaults-dotnet-trial-guide.md) — current isolated candidate and complete next-project workflow
+- [Engineering defaults readiness](../planning/engineering-defaults-trial-readiness.md) — completed IP/EQ/SC mapping, exact artifact, native evidence and limitations
+
+- [Engineering defaults implementation plan](specs/engineering-defaults-implementation-plan.md) — completed Windows .NET milestone, qualification scenarios and evidence-linked checklist
+- [Iteration completion and standards alignment plan](specs/iteration-alignment-plan.md) — design rationale for implemented adopted completion gates and final-state alignment checks
+- [Agent-facing CLI and skills defaults plan](specs/agent-interface-defaults-plan.md) — design rationale for qualified CLI/skills defaults, application-specific scope and incremental adoption
+- [Code quality and architecture plan](specs/code-quality-architecture-plan.md) — qualified .NET quality/architecture baseline and separately scoped shared-library or refactoring options
+- [Testing harness defaults plan](specs/testing-harness-defaults-plan.md) — qualified .NET harness design and later language/migration scope
 - [Engineering assurance coverage](references/engineering-assurance-coverage.md) — portable security, testing, browser, contract and tooling safeguards, with verification limits
 
 - `standards/documentation-governance-standard.md` — required structure, stable rules, lifecycle, exceptions, and evidence boundaries for standards

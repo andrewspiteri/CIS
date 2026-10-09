@@ -44,7 +44,10 @@ public sealed record CisAgentProviderDescriptor(
     IReadOnlyList<string> Permissions,
     bool SupportsResume,
     bool SupportsInteractivePermissions,
-    string Description);
+    string Description)
+{
+    public bool SupportsExplicitCommands { get; init; }
+}
 
 public sealed record CisAgentProviderDiagnosis(
     string Provider,
@@ -90,6 +93,7 @@ public sealed record CisAgentExecutionRequest(
 {
     public string? Model { get; init; }
     public bool TaskReview { get; init; }
+    public IReadOnlyList<string> AllowedCommands { get; init; } = [];
     // Controller-created evidence only; never participant repository roots. Providers that
     // restrict reads to working directories must include these in the execution context.
     public IReadOnlyList<string> EvidenceDirectories { get; init; } = [];
@@ -225,20 +229,24 @@ public static class CisAgentProcessRunner
 
         var stdout = ReadLines(process.StandardOutput, onOutputLine, false);
         var stderr = ReadLines(process.StandardError, onErrorLine ?? (_ => { }), true);
-        if (!string.IsNullOrEmpty(standardInput)) process.StandardInput.Write(standardInput);
-        process.StandardInput.Close();
-
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(
             totalSource.Token, startupSource.Token, idleSource.Token, cancellationToken);
         var cancelled = false;
         try
         {
+            if (!string.IsNullOrEmpty(standardInput)) CisAgentInputDelivery.Write(process, standardInput, linked.Token);
+            process.StandardInput.Close();
             process.WaitForExitAsync(linked.Token).GetAwaiter().GetResult();
         }
         catch (OperationCanceledException)
         {
             cancelled = cancellationToken.IsCancellationRequested;
             TryKill(process);
+        }
+        catch (Exception error) when (error is IOException or InvalidOperationException)
+        {
+            TryKill(process);
+            throw;
         }
         Task.WhenAll(stdout, stderr).Wait(TimeSpan.FromSeconds(5));
 

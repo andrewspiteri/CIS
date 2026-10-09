@@ -9,6 +9,49 @@ namespace Cis.Modules.Security.Tests;
 
 public sealed class SecurityServiceTests
 {
+    [Theory]
+    [InlineData("none", "recommendation", null, "low")]
+    [InlineData(null, "recommendation", null, "low")]
+    [InlineData("warning", "recommendation", null, "medium")]
+    [InlineData("none", "recommendation", "9.1", "critical")]
+    public void SarifValidInformationalLevelsRetainSecuritySeverityPrecedence(string? level, string problem, string? security, string expected)
+    {
+        using var repository = TestRepository.Create();
+        const string path = ".cis/local/security/results/sarif.json";
+        var metadata = new Dictionary<string, string> { ["problem.severity"] = problem };
+        if (security is not null) metadata["security-severity"] = security;
+        repository.Write(path, JsonSerializer.Serialize(new { runs = new[] { new
+        {
+            tool = new { driver = new { name = "CodeQL", rules = new[] { new { id = "fixture", properties = metadata } } } },
+            results = new[] { new { ruleId = "fixture", level, message = new { text = "Synthetic severity protocol" } } }
+        } } }));
+        var execution = new SarifSecurityResultAdapter().Read(new(repository.Path, Suite("sarif"), Path.Combine(repository.Path, path)));
+        Assert.Equal(expected, Assert.Single(execution.Findings).Severity);
+        Assert.NotEqual(SecurityFailureKind.InvalidEvidence, execution.FailureKind);
+    }
+
+    [Fact]
+    public void AdoptedScannerExitOneRetainsFreshFindingsAndFailure()
+    {
+        using var repository = TestRepository.Create();
+        const string report = ".cis/local/security/results/semgrep.json";
+        repository.Write(".cis/engineering-defaults.json", """{"schemaVersion":1,"requireTaskCompletion":true,"additionalGates":[]}""");
+        repository.Write("docs/cis/references/security-suite-profile.md", Profile("semgrep-json", report));
+        repository.Write("docs/cis/references/accepted-security-findings.md", Acceptances());
+        repository.Write("scanner.ps1", """
+            New-Item -ItemType Directory -Force .cis/local/security/results | Out-Null
+            Set-Content .cis/local/security/results/semgrep.json '{"results":[{"check_id":"fixture.rule","path":"src/app.ts","start":{"line":1},"extra":{"severity":"ERROR","message":"Synthetic finding"}}]}'
+            exit 1
+            """);
+        repository.Write("docs/cis/workflows/security-verification.md", Workflow().Replace("dotnet --version", "pwsh -NoProfile -File scanner.ps1", StringComparison.Ordinal));
+        var run = new WorkflowService(new CisRepositoryContextResolver()).Run(repository.Path, "security-verification", "SEC-FINDING");
+        var result = Service().Reconcile(repository.Path, run.RunId!);
+        var suite = Assert.Single(result.Manifest!.Suites);
+        Assert.Equal("high", Assert.Single(suite.Findings).Severity);
+        Assert.NotEqual(SecurityFailureKind.InvalidEvidence, suite.FailureKind);
+        Assert.Equal("failed", result.Manifest.Status);
+    }
+
     [Fact]
     public void Inventory_ParsesAndPersistsProfile()
     {
@@ -102,6 +145,47 @@ public sealed class SecurityServiceTests
         Assert.Equal("Missing header", Assert.Single(zap.Findings).Message);
     }
 
+    [Theory]
+    [InlineData("UNKNOWN")]
+    [InlineData("")]
+    [InlineData("NaN")]
+    [InlineData("-1")]
+    [InlineData("11")]
+    public void UnclassifiedScannerSeverityCannotBecomeAnAllowedFinding(string severity)
+    {
+        using var repository = TestRepository.Create();
+        const string report = ".cis/local/security/results/trivy.json";
+        repository.Write(report, JsonSerializer.Serialize(new
+        {
+            Results = new[] { new { Target = "fixture",
+            Vulnerabilities = new[] { new { VulnerabilityID = "TEST-ONLY", Severity = severity, Title = "Synthetic severity protocol" } } } }
+        }));
+        var execution = new TrivyJsonSecurityResultAdapter().Read(new(repository.Path, Suite("trivy-json", "dependency", "trivy"), Path.Combine(repository.Path, report)));
+        Assert.Equal("unclassified", Assert.Single(execution.Findings).Severity);
+        Assert.Equal("invalid-evidence", execution.Status);
+        Assert.Equal(SecurityFailureKind.InvalidEvidence, execution.FailureKind);
+    }
+
+    [Theory]
+    [InlineData("4")]
+    [InlineData("-1")]
+    [InlineData("")]
+    [InlineData("unknown")]
+    [InlineData(null)]
+    public void UnknownZapRiskCannotBecomeInformational(string? risk)
+    {
+        using var repository = TestRepository.Create();
+        const string report = ".cis/local/security/results/zap.json";
+        repository.Write(report, JsonSerializer.Serialize(new
+        {
+            site = new[] { new { alerts = new[] { new { pluginid = "TEST-ONLY", riskcode = risk, name = "Synthetic risk protocol" } } } }
+        }));
+        var execution = new ZapJsonSecurityResultAdapter().Read(new(repository.Path, Suite("zap-json", "dast", "zap"), Path.Combine(repository.Path, report)));
+        Assert.Equal("unclassified", Assert.Single(execution.Findings).Severity);
+        Assert.Equal("invalid-evidence", execution.Status);
+        Assert.Equal(SecurityFailureKind.InvalidEvidence, execution.FailureKind);
+    }
+
     [Fact]
     public void Reconcile_ProcessSuccessWithoutDeclaredResult_IsInvalidEvidenceAndRetainsLog()
     {
@@ -121,14 +205,19 @@ public sealed class SecurityServiceTests
         Assert.Contains(suite.Artifacts, artifact => artifact.Kind == "workflow-log" && artifact.Attempt == 1);
     }
 
-    [Fact]
-    public void Reconcile_MalformedDeclaredResult_IsInvalidEvidence()
+    [Theory]
+    [InlineData("{not-json")]
+    [InlineData("{\"results\":[{\"check_id\":\"rule\"}]}")]
+    [InlineData("{\"results\":[{\"check_id\":\"rule\",\"extra\":{\"severity\":7}}]}")]
+    [InlineData("{\"results\":[{\"check_id\":{},\"extra\":{\"severity\":\"ERROR\"}}]}")]
+    [InlineData("{\"results\":[{\"check_id\":\"rule\",\"extra\":{}}]}")]
+    public void Reconcile_MalformedDeclaredResult_IsInvalidEvidence(string report)
     {
         using var repository = TestRepository.Create();
         repository.Write("docs/cis/references/security-suite-profile.md", Profile("semgrep-json", ".cis/local/security/results/semgrep.json"));
         repository.Write("docs/cis/references/accepted-security-findings.md", Acceptances());
         repository.Write("docs/cis/workflows/security-verification.md", Workflow());
-        repository.Write(".cis/local/security/results/semgrep.json", "{not-json");
+        repository.Write(".cis/local/security/results/semgrep.json", report);
         var resolver = new CisRepositoryContextResolver();
         var run = new WorkflowService(resolver).Run(repository.Path, "security-verification", "SEC-MALFORMED");
 
@@ -136,6 +225,51 @@ public sealed class SecurityServiceTests
 
         Assert.Equal("failed", result.Manifest!.Status);
         Assert.Equal("invalid-evidence", Assert.Single(result.Manifest.Suites).Status);
+    }
+
+    [Fact]
+    public void AdoptedReconcileKeepsExecutionIdentityAndRejectsPreexistingScannerReport()
+    {
+        using var repository = TestRepository.Create();
+        VerifyStaleAdoptedReport(repository);
+    }
+
+    [Fact]
+    public void ReconcileRetainsThresholdAndAcceptanceProvenance()
+    {
+        using var repository = TestRepository.Create();
+        const string report = ".cis/local/security/results/semgrep.json";
+        repository.Write("docs/cis/references/security-suite-profile.md", Profile("semgrep-json", report));
+        repository.Write(report, """{"results":[{"check_id":"fixture.rule","path":"src/app.ts","start":{"line":1},"extra":{"severity":"ERROR","message":"Synthetic protocol finding"}}]}""");
+        var finding = Assert.Single(new SemgrepJsonSecurityResultAdapter().Read(
+            new(repository.Path, Suite("semgrep-json"), Path.Combine(repository.Path, report))).Findings);
+        var expiry = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(1).ToString("yyyy-MM-dd");
+        repository.Write("docs/cis/references/accepted-security-findings.md", Acceptances()
+            + $"\n| SEC-TEST | {finding.Scanner} | {finding.Fingerprint} | false-positive | Synthetic test only | {expiry} | fixture | fixture | synthetic-only |\n");
+        repository.Write("docs/cis/workflows/security-verification.md", Workflow());
+        var run = new WorkflowService(new CisRepositoryContextResolver()).Run(repository.Path, "security-verification", "SEC-ACCEPTED");
+        var result = Service().Reconcile(repository.Path, run.RunId!);
+        Assert.Equal("passed-with-findings", result.Manifest!.Status);
+        Assert.Equal("SEC-TEST", Assert.Single(result.Manifest.Acceptances!).Id);
+        var suite = Assert.Single(result.Manifest.Suites);
+        Assert.Equal(["critical", "high"], suite.BlockingSeverities);
+        Assert.Equal("SEC-TEST", Assert.Single(suite.Findings).AcceptanceId);
+    }
+
+    private static void VerifyStaleAdoptedReport(TestRepository repository)
+    {
+        repository.Write(".cis/engineering-defaults.json", """{"schemaVersion":1,"requireTaskCompletion":true,"additionalGates":[]}""");
+        repository.Write("docs/cis/references/security-suite-profile.md", Profile("semgrep-json", ".cis/local/security/results/semgrep.json"));
+        repository.Write("docs/cis/references/accepted-security-findings.md", Acceptances());
+        repository.Write("docs/cis/workflows/security-verification.md", Workflow());
+        repository.Write(".cis/local/security/results/semgrep.json", """{"results":[]}""");
+        File.SetLastWriteTimeUtc(Path.Combine(repository.Path, ".cis/local/security/results/semgrep.json"), DateTime.UtcNow.AddHours(-1));
+        var run = new WorkflowService(new CisRepositoryContextResolver()).Run(repository.Path, "security-verification", "SEC-STALE");
+        var result = Service().Reconcile(repository.Path, run.RunId!);
+        Assert.NotNull(run.Run!.InputDigest);
+        Assert.Equal(run.Run.InputDigest, result.Manifest!.InputDigest);
+        Assert.Equal("invalid-evidence", Assert.Single(result.Manifest.Suites).Status);
+        Assert.Equal("failed", result.Manifest.Status);
     }
 
     [Fact]

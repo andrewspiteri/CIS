@@ -17,6 +17,7 @@ public sealed record CisFeatureStoryResult(string Status, string Slug, string St
     public string? ApprovedBy { get; init; }
     public IReadOnlyList<CisFeatureStoryTaskProgress> TaskProgress { get; init; } = [];
     public CisStoryExecutionPlan? ExecutionPlan { get; init; }
+    public IReadOnlyList<CisStoryCompletionContext> CompletionContexts { get; init; } = [];
     public int ExitCode => Errors.Count == 0 ? 0 : 5;
 }
 

@@ -17,7 +17,7 @@ public sealed record WorkflowStepState(string Id, string Status, int? ExitCode, 
     long DurationMilliseconds, string OutputPath, string? Error, int Attempt = 1, string FailureKind = "none",
     long OutputBytes = 0, bool OutputTruncated = false);
 public sealed record WorkflowRunState(int SchemaVersion, string RunId, string WorkflowId, string WorkflowDigest, string Status,
-    string CreatedAtUtc, string UpdatedAtUtc, IReadOnlyList<WorkflowStepState> Steps);
+    string CreatedAtUtc, string UpdatedAtUtc, IReadOnlyList<WorkflowStepState> Steps, string? InputDigest = null);
 public sealed record WorkflowResult(string Status, string? RepositoryPath, string? RunId, WorkflowDefinition? Workflow,
     WorkflowRunState? Run, IReadOnlyList<WorkflowDefinition> Workflows, IReadOnlyList<string> Diagnostics, bool Applied)
 {
@@ -45,10 +45,17 @@ public sealed class WorkflowService
         if (d.Count > 0) return New(context, "invalid", runId, workflow, null, described.Workflows, d, false);
         var runDirectory = Path.Combine(context.RepositoryPath, RunsPath.Replace('/', Path.DirectorySeparatorChar), runId!); Directory.CreateDirectory(runDirectory);
         var statePath = Path.Combine(runDirectory, "state.json"); var now = _clock().ToUniversalTime().ToString("O");
-        var state = File.Exists(statePath) ? ReadState(statePath, d) : new WorkflowRunState(2, runId!, workflow.Id, workflow.Digest, "running", now, now, []);
+        string? inputDigest;
+        try { inputDigest = CisExecutionIdentity.CaptureIfAdopted(context); }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
+        { return New(context, "invalid-inputs", runId, workflow, null, described.Workflows, [$"ERROR: Execution inputs could not be identified: {exception.Message}"], false); }
+        var state = File.Exists(statePath) ? ReadState(statePath, d) : new WorkflowRunState(2, runId!, workflow.Id, workflow.Digest, "running", now, now, [], inputDigest);
         if (state is null || d.Count > 0) return New(context, "invalid-state", runId, workflow, state, described.Workflows, d, false);
         if (state.WorkflowDigest != workflow.Digest) return New(context, "definition-changed", runId, workflow, state, described.Workflows,
             ["ERROR: Workflow changed after this run began; start a new run ID."], false);
+        if (inputDigest is not null && state.InputDigest != inputDigest)
+            return New(context, "inputs-changed", runId, workflow, state, described.Workflows,
+                ["ERROR: Execution inputs changed after this run began; preserve the first attempt and use a new run ID."], false);
         var states = state.Steps.ToDictionary(x => x.Id, StringComparer.OrdinalIgnoreCase); var applied = false;
         foreach (var step in workflow.Steps)
         {
@@ -151,14 +158,36 @@ public sealed class WorkflowService
     {
         var text = File.ReadAllText(path); var steps = new List<WorkflowStep>(); Dictionary<string, int>? columns = null;
         foreach (var line in text.Split('\n'))
-        { if (!line.TrimStart().StartsWith('|')) continue; var c = line.Trim().Trim('|').Split('|').Select(x => x.Trim()).ToArray();
-          if (c.Length < 5) continue;
-          if (c[0].Equals("Step", StringComparison.OrdinalIgnoreCase)) { columns = c.Select((value,index)=>(value,index)).ToDictionary(item=>item.value,item=>item.index,StringComparer.OrdinalIgnoreCase); continue; }
-          if (c.All(x => x.All(ch => ch is '-' or ':' or ' '))) continue;
-          columns ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase) { ["Step"]=0,["Command"]=1,["Depends on"]=2,["Continue on failure"]=3,["Timeout seconds"]=4 };
-          string Value(string name, string fallback="") => columns.TryGetValue(name, out var index) && index < c.Length ? c[index] : fallback;
-          var id=Value("Step"); var tokens = Tokenize(Value("Command")); if (tokens.Count == 0) throw new InvalidOperationException($"Step '{id}' has no command.");
-          steps.Add(new(id, tokens[0], tokens.Skip(1).ToArray(), Split(Value("Depends on")), Value("Continue on failure").Equals("yes", StringComparison.OrdinalIgnoreCase), int.TryParse(Value("Timeout seconds"), out var timeout) ? Math.Clamp(timeout, 1, 3600) : 600, Value("Working directory", "."), Split(Value("Test suites")))); }
+        {
+            if (!line.TrimStart().StartsWith('|')) continue; var c = line.Trim().Trim('|').Split('|').Select(x => x.Trim()).ToArray();
+            if (c[0].Equals("Step", StringComparison.OrdinalIgnoreCase))
+            {
+                if (c.Distinct(StringComparer.OrdinalIgnoreCase).Count() != c.Length)
+                    throw new InvalidOperationException("Workflow column names must be unique.");
+                string[] required = ["Step", "Command", "Depends on", "Continue on failure", "Timeout seconds"];
+                if (required.Any(name => !c.Contains(name, StringComparer.OrdinalIgnoreCase)))
+                    throw new InvalidOperationException("Workflow table is missing required columns.");
+                columns = c.Select((value, index) => (value, index)).ToDictionary(item => item.value, item => item.index, StringComparer.OrdinalIgnoreCase);
+                continue;
+            }
+            if (columns is null && c.Length < 5) continue;
+            if (c.Length != (columns?.Count ?? 5))
+                throw new InvalidOperationException($"Workflow row '{c[0]}' has an unexpected number of cells.");
+            if (c.All(x => x.All(ch => ch is '-' or ':' or ' '))) continue;
+            columns ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase) { ["Step"] = 0, ["Command"] = 1, ["Depends on"] = 2, ["Continue on failure"] = 3, ["Timeout seconds"] = 4 };
+            string Value(string name, string fallback = "") => columns.TryGetValue(name, out var index) && index < c.Length ? c[index] : fallback;
+            var id = Value("Step");
+            if (!Regex.IsMatch(id, @"\A[A-Za-z0-9][A-Za-z0-9._-]{0,127}\z", RegexOptions.CultureInvariant))
+                throw new InvalidOperationException("Workflow step IDs must be path-safe identifiers of at most 128 characters.");
+            var policy = Value("Continue on failure");
+            if (!policy.Equals("yes", StringComparison.OrdinalIgnoreCase) && !policy.Equals("no", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"Step '{id}' continue-on-failure must be yes or no.");
+            if (!int.TryParse(Value("Timeout seconds"), out var timeout) || timeout is < 1 or > 3600)
+                throw new InvalidOperationException($"Step '{id}' timeout must be an integer between 1 and 3600 seconds.");
+            var tokens = Tokenize(Value("Command"));
+            if (tokens.Count == 0) throw new InvalidOperationException($"Step '{id}' has no command.");
+            steps.Add(new(id, tokens[0], tokens.Skip(1).ToArray(), Split(Value("Depends on")), policy.Equals("yes", StringComparison.OrdinalIgnoreCase), timeout, Value("Working directory", "."), Split(Value("Test suites"))));
+        }
         return new(Path.GetFileNameWithoutExtension(path), Path.GetRelativePath(context.RepositoryPath, path).Replace(Path.DirectorySeparatorChar, '/'), Sha(text), steps);
     }
     private static IReadOnlyList<string> Tokenize(string value)

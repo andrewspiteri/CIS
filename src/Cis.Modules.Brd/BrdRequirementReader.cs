@@ -13,6 +13,9 @@ internal static class BrdRequirementReader
 
     internal static Result Read(string content, string heading)
     {
+        var layoutErrors = BrdDocumentLayout.Validate(content);
+        if (layoutErrors.Count > 0) return new([], layoutErrors);
+        content = BrdService.ExtractRecognizedSection(content, heading);
         var visible = new StringBuilder();
         var fence = '\0'; var fenceLength = 0;
         foreach (var line in Regex.Replace(content, @"<!--.*?-->", "", RegexOptions.Singleline, TimeSpan.FromSeconds(1)).Split('\n'))
@@ -27,7 +30,7 @@ internal static class BrdRequirementReader
             }
             if (fence == '\0') visible.AppendLine(line.TrimEnd('\r'));
         }
-        var section = BrdService.ExtractRecognizedSection(visible.ToString(), heading);
+        var section = visible.ToString();
         var requirements = new List<Requirement>(); var errors = new List<string>();
         string? id = null; string? outcome = null; var body = new StringBuilder();
         void Flush()
@@ -40,7 +43,7 @@ internal static class BrdRequirementReader
         }
         foreach (var line in section.Split('\n'))
         {
-            var narrative = Regex.Match(line, $@"^\s*(?:[-*+]\s+)?\*\*(?<id>{Identity})(?:\s+(?:—|–|-)\s+(?<title>.*?))?[:.]?\*\*\s*:?[ \t]*(?<body>.*)$",
+            var narrative = Regex.Match(line, $@"^\s*(?:[-*+]\s+)?\*\*(?<id>{Identity})(?:\s+(?:(?:—|–|-)\s+)?(?<title>[^*]+?))?[:.]?\*\*\s*:?[ \t]*(?<body>.*)$",
                 RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
             if (narrative.Success)
             {
@@ -51,7 +54,9 @@ internal static class BrdRequirementReader
             if (line.TrimStart().StartsWith('|'))
             {
                 var cells = Regex.Split(line.Trim().Trim('|'), @"(?<!\\)\|").Select(cell => cell.Trim().Trim('`').Replace("\\|", "|", StringComparison.Ordinal)).ToArray();
-                if (cells.Length >= 2 && Regex.IsMatch(cells[0], $@"\A{Identity}\z", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
+                if (cells.Length >= 2 && cells[0].Equals("ID", StringComparison.OrdinalIgnoreCase)
+                    && cells[1].Equals("Requirement", StringComparison.OrdinalIgnoreCase)) Flush();
+                if (id is null && cells.Length >= 2 && Regex.IsMatch(cells[0], $@"\A{Identity}\z", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
                 {
                     Flush();
                     if (string.IsNullOrWhiteSpace(cells[1])) errors.Add($"BRD requirement {cells[0]} has no requirement text.");

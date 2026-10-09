@@ -34,7 +34,7 @@ public sealed partial class TestingService
     private static readonly HashSet<string> Layers = new(StringComparer.OrdinalIgnoreCase)
     {
         "unit", "architecture", "component", "integration", "business", "frontend-component",
-        "browser", "security", "coverage", "mutation", "operational",
+        "browser", "security", "coverage", "mutation", "operational", "regression", "api-compatibility",
     };
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private readonly ICisRepositoryContextResolver _resolver;
@@ -121,14 +121,35 @@ public sealed partial class TestingService
                 executions.Add(Failed(suite, failedState));
                 continue;
             }
+            if (states.Length != steps.Length || states.Any(state => state.Status != "succeeded"))
+            {
+                executions.Add(Unavailable(suite, "Every bound workflow step must finish successfully before its reports can be reconciled."));
+                continue;
+            }
 
             var resultPath = SafePath(context.RepositoryPath, suite.ResultPath, diagnostics, suite.Id, required: true);
-            var coveragePath = SafePath(context.RepositoryPath, suite.CoveragePath, diagnostics, suite.Id, required: false);
+            var beforePaths = diagnostics.Count;
+            var coveragePath = CoveragePath(context.RepositoryPath, suite.CoveragePath, diagnostics, suite.Id, resolve: true);
             var mutationPath = SafePath(context.RepositoryPath, suite.MutationPath, diagnostics, suite.Id, required: false);
+            if (diagnostics.Count > beforePaths)
+            {
+                executions.Add(InvalidEvidence(suite, "Declared native report selection is unsafe, missing or ambiguous."));
+                continue;
+            }
             if (resultPath is null || !File.Exists(resultPath))
             {
                 executions.Add(InvalidEvidence(suite, "Workflow succeeded but the declared result file is missing."));
                 continue;
+            }
+            if (workflow.Run.InputDigest is not null)
+            {
+                var started = states.Select(state => DateTimeOffset.TryParse(state.StartedAtUtc, out var value) ? value : DateTimeOffset.MaxValue).Min();
+                var reports = new[] { resultPath, coveragePath, mutationPath }.Where(path => path is not null).ToArray();
+                if (reports.Any(path => !File.Exists(path) || File.GetLastWriteTimeUtc(path!) < started.UtcDateTime))
+                {
+                    executions.Add(InvalidEvidence(suite, "A declared native report is missing or predates this execution; use retained per-run output paths."));
+                    continue;
+                }
             }
             if (!_adapters.TryGetValue(suite.ResultFormat, out var adapter))
             {
@@ -181,7 +202,7 @@ public sealed partial class TestingService
             workflow.Run.CreatedAtUtc, workflow.Run.UpdatedAtUtc, status, executions, allArtifacts,
             Environment.GetEnvironmentVariable("CIS_IMPLEMENTER"),
             Environment.GetEnvironmentVariable("CIS_ASSURER"),
-            Environment.GetEnvironmentVariable("CIS_ASSURANCE_TECHNIQUE"));
+            Environment.GetEnvironmentVariable("CIS_ASSURANCE_TECHNIQUE"), workflow.Run.InputDigest);
         var runRoot = Path.Combine(context.RepositoryPath, LocalRoot.Replace('/', Path.DirectorySeparatorChar), "runs", runId);
         Directory.CreateDirectory(runRoot);
         Write(Path.Combine(runRoot, "manifest.json"), JsonSerializer.Serialize(manifest, JsonOptions));
@@ -322,7 +343,8 @@ public sealed partial class TestingService
             Status = manifests.Any(item => item.Status is "failed" or "invalid-evidence") ? "failed"
                 : manifests.Any(item => item.Status == "incomplete") ? "incomplete" : "passed",
         };
-        return Result(context, changeId, runId, ReadProfile(context, diagnostics), combined, trace,
+        var profiles = ReadTraceProfiles(context, manifests, diagnostics);
+        return Result(context, changeId, runId, profiles, combined, trace,
             diagnostics, false, diagnostics.Any(IsError) ? "incomplete" : "traced");
     }
 
@@ -358,7 +380,12 @@ public sealed partial class TestingService
             try
             {
                 var manifest = JsonSerializer.Deserialize<TestRunManifest>(File.ReadAllText(path), JsonOptions);
-                if (manifest is not null) manifests.Add(manifest);
+                if (manifest is not null)
+                {
+                    if (!string.Equals(manifest.RepositoryId, repository.Id, StringComparison.Ordinal))
+                        diagnostics.Add($"ERROR: Test manifest repository '{manifest.RepositoryId}' does not match its registered owner '{repository.Id}'.");
+                    else manifests.Add(manifest);
+                }
             }
             catch (JsonException exception)
             {
@@ -417,7 +444,7 @@ public sealed partial class TestingService
                 if (!CisPathSafety.IsUnderRoot(local, result, allowRoot: false))
                     diagnostics.Add($"ERROR: Test suite '{suite.Id}' result path must remain under .cis/local/.");
             }
-            SafePath(context.RepositoryPath, suite.CoveragePath, diagnostics, suite.Id, required: false);
+            CoveragePath(context.RepositoryPath, suite.CoveragePath, diagnostics, suite.Id, resolve: false);
             SafePath(context.RepositoryPath, suite.MutationPath, diagnostics, suite.Id, required: false);
         }
     }

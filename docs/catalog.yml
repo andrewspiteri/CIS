@@ -1,6 +1,36 @@
 schema_version: 1
 repository: change-impact-studio
 documents:
+  - id: change-impact-studio:manual:cis-plan-performance-check
+    path: docs/manual/cis_plan_performance_check.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-repo-example
+    path: docs/manual/cis_repo_example.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-plan-task-completion-context
+    path: docs/manual/cis_plan_task_completion_context.md
+    type: command-reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:plan:engineering-defaults-implementation
+    path: docs/specs/engineering-defaults-implementation-plan.md
+    type: implementation-plan
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:plan:iteration-alignment
+    path: docs/specs/iteration-alignment-plan.md
+    type: implementation-plan
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:plan:agent-interface-defaults
+    path: docs/specs/agent-interface-defaults-plan.md
+    type: implementation-plan
+    status: draft
+    authority: canonical
   - id: change-impact-studio:plan:code-quality-architecture
     path: docs/specs/code-quality-architecture-plan.md
     type: implementation-plan
@@ -2473,6 +2503,137 @@ documents:
     authority: canonical
   - id: change-impact-studio:manual:cis-brd-sections
     path: docs/manual/cis_brd_sections.md
+    type: command-reference
+    status: active
+    authority: canonical
+
+  - id: change-impact-studio:reference:api-dictionary
+    path: docs/references/api-dictionary.md
+    type: contract-reference
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:reference:business-invariant-catalogue
+    path: docs/references/business-invariant-catalogue.md
+    type: domain-behaviour-reference
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:reference:command-dictionary
+    path: docs/references/command-dictionary.md
+    type: domain-behaviour-reference
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:reference:data-dictionary
+    path: docs/references/data-dictionary.md
+    type: contract-reference
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:reference:engineering-defaults
+    path: docs/references/engineering-defaults.md
+    type: reference
+    status: active
+    authority: canonical
+  - id: change-impact-studio:reference:event-dictionary
+    path: docs/references/event-dictionary.md
+    type: domain-behaviour-reference
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:reference:problem-details-catalogue
+    path: docs/references/problem-details-catalogue.md
+    type: domain-behaviour-reference
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:reference:projection-dictionary
+    path: docs/references/projection-dictionary.md
+    type: domain-behaviour-reference
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:reference:source-evidence
+    path: docs/references/source-evidence.md
+    type: source-evidence-registry
+    status: active
+    authority: canonical
+  - id: change-impact-studio:reference:workflow-state-dictionary
+    path: docs/references/workflow-state-dictionary.md
+    type: domain-behaviour-reference
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:spec:api-dictionary
+    path: docs/specs/api-dictionary-spec.md
+    type: contract-governance-specification
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:spec:business-invariant-catalogue
+    path: docs/specs/business-invariant-catalogue-spec.md
+    type: domain-behaviour-governance-specification
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:spec:command-dictionary
+    path: docs/specs/command-dictionary-spec.md
+    type: domain-behaviour-governance-specification
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:spec:data-dictionary
+    path: docs/specs/data-dictionary-spec.md
+    type: contract-governance-specification
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:spec:event-dictionary
+    path: docs/specs/event-dictionary-spec.md
+    type: domain-behaviour-governance-specification
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:spec:problem-details-catalogue
+    path: docs/specs/problem-details-catalogue-spec.md
+    type: domain-behaviour-governance-specification
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:spec:projection-dictionary
+    path: docs/specs/projection-dictionary-spec.md
+    type: domain-behaviour-governance-specification
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:spec:workflow-state-dictionary
+    path: docs/specs/workflow-state-dictionary-spec.md
+    type: domain-behaviour-governance-specification
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:standard:agent-interface
+    path: docs/standards/agent-interface-standard.md
+    type: standard
+    status: active
+    authority: canonical
+  - id: change-impact-studio:standard:api-controller
+    path: docs/standards/api-controller-standard.md
+    type: standard
+    status: active
+    authority: canonical
+  - id: change-impact-studio:standard:code-quality
+    path: docs/standards/code-quality-standard.md
+    type: standard
+    status: active
+    authority: canonical
+  - id: change-impact-studio:standard:edge-security-header
+    path: docs/standards/edge-security-header-standard.md
+    type: standard
+    status: active
+    authority: canonical
+  - id: change-impact-studio:standard:iteration-completion
+    path: docs/standards/iteration-completion-standard.md
+    type: standard
+    status: active
+    authority: canonical
+  - id: change-impact-studio:standard:observability
+    path: docs/standards/observability-standard.md
+    type: standard
+    status: active
+    authority: canonical
+  - id: change-impact-studio:manual:cis-brd-feature-reconcile
+    path: docs/manual/cis_brd_feature_reconcile.md
+    type: command-reference
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:manual:cis-brd-layout
+    path: docs/manual/cis_brd_layout.md
     type: command-reference
     status: active
     authority: canonical

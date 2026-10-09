@@ -4,11 +4,38 @@ using Cis.Modules.Repository;
 using Cis.Abstractions;
 using System.IO.Compression;
 using System.Text;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Cis.Modules.References.Tests;
 
 public sealed class ReferenceGovernanceTests
 {
+    [Theory]
+    [InlineData("Directory.Build.props", "directory-build")]
+    [InlineData("build/Analyzers.targets", "analyzers")]
+    public void SharedBuildPackageDeclarationsAreDiscoveredAndValidated(string path, string component)
+    {
+        using var repository = ReferenceRepository.Create(aligned: true);
+        repository.Replace(path, "<Project><ItemGroup><PackageReference Include=\"Example.Analyzer\" PrivateAssets=\"all\" /></ItemGroup></Project>");
+        repository.Replace("Directory.Packages.props", "<Project><ItemGroup><PackageVersion Include=\"Unused.Optional\" Version=\"1.0.0\" /></ItemGroup></Project>");
+        repository.Replace("docs/cis/references/package-catalogue.md", ReferenceRepository.Table("Package Catalogue",
+            "Package | Component | Status | Evidence", $"Example.Analyzer | {component} | Verified | {path}"));
+        var services = new ServiceCollection();
+        new ReferencesModule().RegisterServices(services);
+        using var provider = services.BuildServiceProvider();
+        var service = new ReferenceGovernanceService(new CisRepositoryContextResolver(),
+            provider.GetServices<ICisReferenceProvider>().Where(item => item.Kind == "package-catalogue"));
+        var validation = service.Validate(repository.Path, strict: true);
+        Assert.True(validation.ExitCode == 0, System.Text.Json.JsonSerializer.Serialize(validation.Diagnostics));
+        var state = File.ReadAllText(System.IO.Path.Combine(repository.Path, ".cis", "local", "references", "inventory.json"));
+        Assert.Contains($"Example.Analyzer@{component}", state, StringComparison.Ordinal);
+        Assert.DoesNotContain("Unused.Optional", state, StringComparison.Ordinal);
+        repository.Replace("docs/cis/references/package-catalogue.md", ReferenceRepository.Table("Package Catalogue",
+            "Package | Component | Status | Evidence", "TODO | | Draft |"));
+        Assert.Contains(service.Validate(repository.Path, strict: true).Diagnostics,
+            diagnostic => diagnostic.Code == "CIS-REF-DRIFT-001" && diagnostic.Message.Contains("Example.Analyzer", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void Commands_AreRegistered()
     {

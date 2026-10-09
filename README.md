@@ -31,13 +31,27 @@ Establish intent
 
 Canonical meaning remains in repository-owned Markdown and structured files. Local
 indexes, graphs, workflow state, caches, model output, and diagnostic analysis remain
-derived and rebuildable.
+derived. Graphs and indexes can be rebuilt; retain native results, transcripts and receipts
+while they support verification or review. Rebuilding context does not recreate a past run.
 
 > AI and coding agents may discover, propose, analyse, draft, and implement. Humans
 > confirm meaning, resolve material decisions, accept risk, and accept completion.
 
 CIS complements Git, GitHub, Jira, editors, coding agents, and CI/CD. It does not
 replace them or silently perform commits, pushes, merges, releases, or approvals.
+
+## Engineering defaults: current trial
+
+The isolated Windows .NET/C# candidate is ready for a new-project trial. Start with the
+[trial guide](planning/engineering-defaults-dotnet-trial-guide.md); the
+[readiness record](planning/engineering-defaults-trial-readiness.md) identifies its exact package,
+qualification evidence and limits. This development candidate is separate from a published release.
+
+Declared or detected C# initialization installs reference code under ignored
+`.cis/local/examples/dotnet-engineering/`. It supplies native test layers, test-mode diagnostics,
+quality/architecture examples and a portable CLI skill. It does not add application code or execute
+its tests automatically. Adopted completion checks reassess required gates and source/review identity;
+passing configured commands alone does not establish task completion.
 
 ## 2. Quick start
 
@@ -281,7 +295,7 @@ contains:
 │   ├── workspace.yml                 # workspace authority or participant registry, when used
 │   ├── starter-manifest.yml
 │   ├── .gitignore
-│   └── local/                        # derived, disposable state
+│   └── local/                        # local caches and retained run evidence
 │       ├── api/
 │       ├── feedback/
 │       ├── graph/
@@ -307,8 +321,10 @@ The important boundary is:
 
 - Canonical documentation, configuration, decisions, plans, and acceptance evidence are
   reviewable repository files.
-- `.cis/local/` contains rebuildable indexes, graphs, caches, runs, feedback, envelopes,
-  and analysis. Deleting it must not remove durable product meaning.
+- `.cis/local/` contains rebuildable indexes, graphs and caches alongside native results,
+  run transcripts and execution receipts. Preserve evidence while it supports verification;
+  refreshing context cannot recreate a past execution. Retain durable product decisions and
+  acceptance records in canonical documentation.
 - Generated or discovered documents remain in their declared lifecycle state until a
   human reviews them.
 - Initialization is idempotent and collision-aware. It preserves divergent human edits
@@ -516,8 +532,12 @@ cis agent run CIS-0002 WORK-090 --provider codex --transport app-server `
 ```
 
 Workspace-write runs use isolated Git worktrees by default. Provider credentials remain
-provider-native, network escalation is denied, run events are streamed and retained under
-`.cis/local/agents/runs/`, and results require explicit import before becoming canonical evidence.
+provider-native. Codex permission escalation is limited by its declared ceiling; Claude uses native
+permission rules. Optional `--allow-command` entries preauthorize reviewed literal commands for one
+Claude implementation attempt. They do not create a shell or filesystem sandbox. See
+[agent run](docs/manual/cis_agent_run.md) for native permissions, denied-command results and
+[resume](docs/manual/cis_agent_resume.md) for fresh authorization. Events are retained under
+`.cis/local/agents/runs/`; importing results does not approve or complete work.
 
 ### Versioning, releases, and validation
 

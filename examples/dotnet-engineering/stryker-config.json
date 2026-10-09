@@ -1,0 +1,13 @@
+{
+  "stryker-config": {
+    "solution": "NativeHarness.Unit.slnx",
+    "project": "Example.Core.csproj",
+    "test-projects": ["tests/unit/Example.UnitTests.csproj"],
+    "mutate": ["**/Reading.cs"],
+    "coverage-analysis": "off",
+    "test-runner": "mtp",
+    "reporters": ["progress", "json"],
+    "thresholds": { "high": 85, "low": 80, "break": 80 },
+    "concurrency": 2
+  }
+}

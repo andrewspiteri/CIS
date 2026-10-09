@@ -28,7 +28,11 @@ cis brd questions answer <BRD-Q-NNN> --answer <text> --actor <human>
 
 `list` recognizes the governed question table and numbered or bulleted lines ending in a
 question mark. A numbered draft receives deterministic IDs in document order. `None` and
-`No open questions` represent an empty question set.
+`No open questions` represent an empty question set. HTML comments, fenced examples and
+managed CIS evidence are excluded from question discovery. Answering preserves trailing
+managed evidence. If managed evidence is followed by more visible content inside the
+question section, CIS rejects the write without changing the document; place the question
+content before that evidence and retry.
 
 `guidance` returns every question with up to three deterministic excerpts selected from
 the canonical BRD. It also projects current advisory answer suggestions from
@@ -76,9 +80,14 @@ freshness` recognizes only the governed answer, actor, and timestamp fields as a
 intermediate change while questions remain. When every question is answered, run `cis agent
 incorporate brd-questions`: it performs a bounded one-file revision that reflects those
 decisions in the relevant business sections. That substantive revision always requires a
-fresh independent review before validation and approval. Changing a question identity or
-wording, adding or removing a question, or editing any other BRD content also supersedes the
-earlier review.
+fresh independent review before validation and approval. Imported BRD filenames may contain
+spaces or Unicode characters. If copy-back was rejected, a repeat can reuse a retained
+successful provider result only when it matches the current answered-question set and BRD
+baseline, and CIS checks the current one-file scope and protected content again. An unreadable file inventory blocks copy-back; it is not evidence of an
+unchanged workspace. Changing a question identity or wording, adding or removing a question,
+or editing BRD content beyond the governed answer, actor and timestamp fields supersedes the
+earlier review immediately. The answer-only exception delays the repeated review; it does
+not remove the review required after incorporation.
 
 The VS Code command **CIS: Answer BRD Open Questions** opens one editor page containing
 the complete question list, relevant BRD context, current answers, and advisory suggestions.

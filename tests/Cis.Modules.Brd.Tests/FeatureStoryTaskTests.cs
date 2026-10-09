@@ -8,6 +8,95 @@ public sealed partial class FeatureIntakeTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public void ChangedParticipantRegistrationBlocksStoryClosingWithoutThrowing(bool dependency)
+    {
+        using var f = new Fixture();
+        File.WriteAllText(f.Request.SourcePath, PrivacyStory);
+        AddDeliveryCode(f, "backend", "archive.ts", "export class Archive { getDocumentVersion() {} }");
+        AddDeliveryCode(f, "customer-ui", "privacy.ts", "export class Privacy { acknowledgeDocumentVersion() {} }");
+        CreateIntake(f);
+        var service = DeliveryService(f, new StoryTaskGeneration(), completion: new StoryClosingGate());
+        var id = service.Navigation(f.Authority).Features.Single().Stories.Single().Id;
+        var read = service.Story(f.Authority, "referrals", id, false);
+        var plan = service.Story(f.Authority, "referrals", id, true, read.InputHash);
+        var approved = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "approve", plan.PlanHash!, plan.Revision!, "Fixture", "Synthetic reviewed scope");
+        var started = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "start", approved.PlanHash!, approved.Revision!, "Fixture", taskId: "T1");
+        Assert.Empty(started.Errors);
+        var selected = started.Tasks.First(task => task.RepositoryIds.Count > 0);
+        var participant = selected.RepositoryIds[0];
+        var workspace = f.Registry.Resolve(f.Authority).Workspace!;
+        File.WriteAllText(workspace.ConfigurationPath, JsonSerializer.Serialize(new
+        {
+            schema_version = 2,
+            ecosystem = new { id = workspace.Ecosystem!.Id, name = workspace.Ecosystem.Name },
+            product = new { id = workspace.Product!.Id, name = workspace.Product.Name },
+            repositories = workspace.Repositories.Where(repo => dependency || repo.Id != participant).Select(repo => new
+            {
+                id = repo.Id,
+                path = repo.RepositoryPath,
+                documentation_root = repo.DocumentationRoot,
+                role = repo.Role,
+                participation = repo.Id == participant ? "dependency" : repo.Participation,
+                relationship = repo.Id == participant ? "producer" : repo.Relationship,
+                components = repo.Components
+            })
+        }));
+        var result = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "completion-context",
+            started.PlanHash!, started.Revision!, "Fixture", taskId: selected.Id);
+        Assert.NotEmpty(result.Errors.Concat(result.CompletionContexts.SelectMany(context => context.Errors)));
+    }
+
+    [Fact]
+    public void StoryManualCriteriaCannotBypassEngineeringCompletionAndPreviewDoesNotMutate()
+    {
+        using var f = new Fixture(); File.WriteAllText(f.Request.SourcePath, PrivacyStory);
+        AddDeliveryCode(f, "backend", "archive.ts", "export class Archive { getDocumentVersion() {} }");
+        AddDeliveryCode(f, "customer-ui", "privacy.ts", "export class Privacy { acknowledgeDocumentVersion() {} }");
+        CreateIntake(f);
+        var closing = new StoryClosingGate();
+        var service = DeliveryService(f, new StoryTaskGeneration(), completion: closing);
+        var id = service.Navigation(f.Authority).Features.Single().Stories.Single().Id;
+        var read = service.Story(f.Authority, "referrals", id, false);
+        var plan = service.Story(f.Authority, "referrals", id, true, read.InputHash);
+        var approved = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "approve", plan.PlanHash!, plan.Revision!, "Reviewer", "Synthetic reviewed scope");
+        var started = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "start", approved.PlanHash!, approved.Revision!, "Reviewer", taskId: "T1");
+        Assert.Empty(started.Errors);
+        var preview = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "completion-context", started.PlanHash!, started.Revision!, "Reviewer", taskId: "T1");
+        Assert.Equal(started.Revision, preview.Revision);
+        Assert.Single(preview.CompletionContexts);
+        var blocked = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "complete", started.PlanHash!, started.Revision!, "Reviewer",
+            taskId: "T1", evidence: "Manual claim that checks passed.", criteriaVerified: true);
+        Assert.Contains(blocked.Errors, error => error.Contains("missing native evidence", StringComparison.Ordinal));
+        Assert.Equal("InProgress", service.Story(f.Authority, "referrals", id, false).TaskProgress[0].Status);
+        closing.OmitContext = true;
+        var omitted = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "complete", started.PlanHash!, started.Revision!, "Reviewer",
+            taskId: "T1", evidence: "Synthetic empty service result.", criteriaVerified: true);
+        Assert.Contains(omitted.Errors, error => error.Contains("every declared participant", StringComparison.Ordinal));
+        closing.OmitContext = false;
+        closing.Ready = true;
+        var completed = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "complete", started.PlanHash!, started.Revision!, "Reviewer",
+            taskId: "T1", evidence: "Protocol fixture verifies the completed closure assessment.", criteriaVerified: true);
+        Assert.Empty(completed.Errors);
+        Assert.Equal("Complete", completed.TaskProgress[0].Status);
+        Assert.Single(completed.CompletionContexts);
+    }
+
+    private sealed class StoryClosingGate : ICisStoryEngineeringCompletion
+    {
+        public bool Ready { get; set; }
+        public bool OmitContext { get; set; }
+        public IReadOnlyList<CisStoryCompletionContext> Assess(CisStoryTaskWork work, bool prepare)
+        {
+            Assert.NotEmpty(work.Repositories);
+            Assert.NotEmpty(work.StoryCriteria);
+            return OmitContext ? [] : work.Repositories.Select(repository => new CisStoryCompletionContext(repository.Id,
+                ".cis/local/fixture.json", prepare ? "{}" : null, prepare || Ready ? [] : ["missing native evidence"])).ToArray();
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public void StoryExecutionRequiresApprovedCurrentPlanAndReviewBeforeHumanCompletion(bool previouslyStarted)
     {
         using var f = new Fixture(); File.WriteAllText(f.Request.SourcePath, PrivacyStory);

@@ -214,9 +214,11 @@ public sealed class StandardsGovernanceTests
 
             Assert.Equal(0, initialized.ExitCode);
             Assert.Equal(0, validated.ExitCode);
-            Assert.Equal(9, validated.Standards);
-            Assert.Equal(78, validated.Rules);
-            Assert.Equal(78, validated.ConformanceEntries);
+            Assert.Equal(12, validated.Standards);
+            Assert.Equal(92, validated.Rules);
+            Assert.Equal(92, validated.ConformanceEntries);
+            Assert.Contains("source_repository: ChangeImpactStudio",
+                File.ReadAllText(System.IO.Path.Combine(root, "docs", "cis", "standards", "code-quality-standard.md")), StringComparison.Ordinal);
             Assert.True(File.Exists(System.IO.Path.Combine(root, "docs", "cis", "standards", "api-controller-standard.md")));
             Assert.False(File.Exists(System.IO.Path.Combine(root, "docs", "cis", "standards", "frontend-interaction-standard.md")));
             Assert.Contains(
@@ -455,12 +457,12 @@ public sealed class StandardsGovernanceTests
     {
         using var output = new MemoryStream();
         using (var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
-        foreach (var file in files)
-        {
-            var entry = archive.CreateEntry(file.Key);
-            using var writer = new StreamWriter(entry.Open());
-            writer.Write(file.Value);
-        }
+            foreach (var file in files)
+            {
+                var entry = archive.CreateEntry(file.Key);
+                using var writer = new StreamWriter(entry.Open());
+                writer.Write(file.Value);
+            }
         return output.ToArray();
     }
 

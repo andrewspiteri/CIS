@@ -14,7 +14,10 @@ public sealed record RepositoryInitRequest(
     string? ExpectedGuidanceMergeHash = null,
     IReadOnlyDictionary<string, string>? ReviewedGuidanceContents = null,
     IReadOnlySet<string>? RetiredGuidancePaths = null,
-    bool MinimalImport = false);
+    bool MinimalImport = false,
+    string? DeclaredStack = null,
+    bool AdoptEngineeringDefaults = false,
+    string? Examples = null);
 
 public sealed record RepositoryReferenceSeedResult(
     string Status,

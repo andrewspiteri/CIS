@@ -12,7 +12,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Cis.Modules.Graph.Tests;
 
-public sealed class GraphBuilderTests
+public sealed partial class GraphBuilderTests
 {
     [Fact]
     public async Task ConcurrentBuildsReusePublishedStateAndDocumentationEditsReuseCompilerAnalysis()

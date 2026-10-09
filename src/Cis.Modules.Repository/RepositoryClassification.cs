@@ -3,7 +3,8 @@ namespace Cis.Modules.Repository;
 public sealed record RepositoryClassification(
     string Shape,
     IReadOnlyList<RepositoryComponentClassification> Components,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings,
+    string? DeclaredStack = null);
 
 public sealed record RepositoryComponentClassification(
     string Id,

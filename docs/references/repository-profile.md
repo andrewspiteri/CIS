@@ -731,4 +731,232 @@ Repository shape: **monorepo**.
   - vscode-extension/package.json
   - vscode-extension package dependency
 
+### example-cli
+
+- Root: `examples/dotnet-engineering/src/Example.Cli`
+- Languages: csharp
+- Frameworks: dotnet
+- Roles: tooling
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - examples/dotnet-engineering/src/Example.Cli/Example.Cli.csproj
+
+### example-core
+
+- Root: `examples/dotnet-engineering/src/Example.Core`
+- Languages: csharp
+- Frameworks: dotnet
+- Roles: shared-library
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - examples/dotnet-engineering/src/Example.Core/Example.Core.csproj
+
+### example-persistence
+
+- Root: `examples/dotnet-engineering/src/Example.Persistence`
+- Languages: csharp
+- Frameworks: dotnet
+- Roles: shared-library
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - examples/dotnet-engineering/src/Example.Persistence/Example.Persistence.csproj
+
+### example-web
+
+- Root: `examples/dotnet-engineering/src/Example.Web`
+- Languages: csharp
+- Frameworks: aspnet-core
+- Roles: backend-api-producer
+- Capabilities: authorization, configuration, openapi
+- Confidence: high
+- Evidence:
+  - examples/dotnet-engineering/src/Example.Web/Example.Web.csproj
+  - ASP.NET Core Web SDK or host markers
+  - OpenAPI or Swagger markers
+  - authorization or permission markers
+
+### example-businesstests
+
+- Root: `examples/dotnet-engineering/tests/business`
+- Languages: csharp
+- Frameworks: dotnet-test, xunit
+- Roles: test-automation
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - examples/dotnet-engineering/tests/business/Example.BusinessTests.csproj
+  - examples/dotnet-engineering/Directory.Build.props
+  - Literal .NET test declarations; execution and result production are unverified
+
+### example-migrationtests
+
+- Root: `examples/dotnet-engineering/tests/migration`
+- Languages: csharp
+- Frameworks: dotnet-test, xunit
+- Roles: test-automation
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - examples/dotnet-engineering/tests/migration/Example.MigrationTests.csproj
+  - examples/dotnet-engineering/Directory.Build.props
+  - Literal .NET test declarations; execution and result production are unverified
+
+### example-performance
+
+- Root: `examples/dotnet-engineering/tests/performance`
+- Languages: csharp
+- Frameworks: dotnet
+- Roles: tooling
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - examples/dotnet-engineering/tests/performance/Example.Performance.csproj
+
+### examples-dotnet-engineering-tests-support-test-automation
+
+- Root: `examples/dotnet-engineering/tests/support`
+- Languages: csharp
+- Frameworks: dotnet
+- Roles: test-automation
+- Capabilities:
+- Confidence: medium
+- Evidence:
+  - examples/dotnet-engineering/tests/support/TestSignalJournal.cs
+  - examples/dotnet-engineering/tests/support/TestSignals.cs
+
+### example-unittests
+
+- Root: `examples/dotnet-engineering/tests/unit`
+- Languages: csharp
+- Frameworks: dotnet-test, microsoft-testing-platform, xunit
+- Roles: test-automation
+- Capabilities: configuration, coverage-collector
+- Confidence: high
+- Evidence:
+  - examples/dotnet-engineering/tests/unit/Example.UnitTests.csproj
+  - examples/dotnet-engineering/Directory.Build.props
+  - Literal .NET test declarations; execution and result production are unverified
+
+### example-webtests
+
+- Root: `examples/dotnet-engineering/tests/web`
+- Languages: csharp
+- Frameworks: dotnet-test, playwright-dotnet, xunit
+- Roles: test-automation
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - examples/dotnet-engineering/tests/web/Example.WebTests.csproj
+  - examples/dotnet-engineering/Directory.Build.props
+  - Microsoft.Playwright package in .NET test project
+  - Literal .NET test declarations; execution and result production are unverified
+
+### cis-modules-definition
+
+- Root: `src/Cis.Modules.Definition`
+- Languages: csharp
+- Frameworks: dotnet
+- Roles: shared-library
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - src/Cis.Modules.Definition/Cis.Modules.Definition.csproj
+
+### cis-modules-solutiondesign
+
+- Root: `src/Cis.Modules.SolutionDesign`
+- Languages: csharp
+- Frameworks: dotnet
+- Roles: shared-library
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - src/Cis.Modules.SolutionDesign/Cis.Modules.SolutionDesign.csproj
+
+### cis-modules-uidirection
+
+- Root: `src/Cis.Modules.UiDirection`
+- Languages: csharp
+- Frameworks: dotnet
+- Roles: shared-library
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - src/Cis.Modules.UiDirection/Cis.Modules.UiDirection.csproj
+
+### cis-modules-definition-tests
+
+- Root: `tests/Cis.Modules.Definition.Tests`
+- Languages: csharp
+- Frameworks: dotnet-test, xunit
+- Roles: test-automation
+- Capabilities: configuration, coverage-collector
+- Confidence: high
+- Evidence:
+  - tests/Cis.Modules.Definition.Tests/Cis.Modules.Definition.Tests.csproj
+  - tests/Directory.Build.props
+  - Literal .NET test declarations; execution and result production are unverified
+
+### cis-modules-solutiondesign-tests
+
+- Root: `tests/Cis.Modules.SolutionDesign.Tests`
+- Languages: csharp
+- Frameworks: dotnet-test, xunit
+- Roles: test-automation
+- Capabilities: configuration, coverage-collector
+- Confidence: high
+- Evidence:
+  - tests/Cis.Modules.SolutionDesign.Tests/Cis.Modules.SolutionDesign.Tests.csproj
+  - tests/Directory.Build.props
+  - Literal .NET test declarations; execution and result production are unverified
+
+### cis-modules-uidirection-tests
+
+- Root: `tests/Cis.Modules.UiDirection.Tests`
+- Languages: csharp
+- Frameworks: dotnet-test, xunit
+- Roles: test-automation
+- Capabilities: configuration, coverage-collector
+- Confidence: high
+- Evidence:
+  - tests/Cis.Modules.UiDirection.Tests/Cis.Modules.UiDirection.Tests.csproj
+  - tests/Directory.Build.props
+  - Literal .NET test declarations; execution and result production are unverified
+
+### fixture
+
+- Root: `tools/function-profiler/Fixture`
+- Languages: csharp
+- Frameworks: dotnet
+- Roles: tooling
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - tools/function-profiler/Fixture/Fixture.csproj
+
+### runtime
+
+- Root: `tools/function-profiler/Runtime`
+- Languages: csharp
+- Frameworks: dotnet
+- Roles: shared-library
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - tools/function-profiler/Runtime/Runtime.csproj
+
+### weaver
+
+- Root: `tools/function-profiler/Weaver`
+- Languages: csharp
+- Frameworks: dotnet
+- Roles: tooling
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - tools/function-profiler/Weaver/Weaver.csproj
+
 This profile was deterministically classified by `cis repo init`. Review classification changes before applying them.

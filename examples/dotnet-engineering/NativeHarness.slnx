@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="src/Example.Core/Example.Core.csproj" />
+  <Project Path="src/Example.Persistence/Example.Persistence.csproj" />
+  <Project Path="src/Example.Cli/Example.Cli.csproj" />
+  <Project Path="tests/unit/Example.UnitTests.csproj" />
+  <Project Path="tests/business/Example.BusinessTests.csproj" />
+</Solution>

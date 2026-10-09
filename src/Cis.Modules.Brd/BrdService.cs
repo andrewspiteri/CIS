@@ -17,7 +17,7 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
     private const string FeatureTraceabilityStart = "<!-- cis:feature-traceability:start -->";
     private const string FeatureTraceabilityEnd = "<!-- cis:feature-traceability:end -->";
 
-    private static readonly string[] RequiredSections =
+    internal static readonly string[] RequiredSections =
     [
         "Executive summary",
         "Business outcomes",
@@ -454,6 +454,8 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
         var path = CanonicalPath(authority);
         var content = File.ReadAllText(path);
         var next = ReplaceSectionContent(content, "Open questions", RenderQuestions(nextQuestions));
+        if (next is null)
+            return current with { Status = "invalid", Errors = ["Open questions contains managed evidence followed by visible content. Move the question content before the managed evidence before answering."] };
         next = ClearApproval(next);
         if (Equivalent(content, next))
             return current with { Status = current.UnansweredCount == 0 ? "answered" : "unanswered" };
@@ -515,6 +517,7 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
             .Where(baseline => baseline.Role == "participant")
             .ToArray();
         content = ReplaceBlock(content, BaselineStart, BaselineEnd, RenderBaselines(participants));
+        content = CisBrdPresentation.HideManagedEvidence(content);
         content = ReplaceNestedFrontMatter(content, "approved_content_hash", JsonSerializer.Serialize(ContentDigest(content)));
         Write(path, content);
         var stableId = $"{authority.Id}:spec:business-requirements";
@@ -563,6 +566,7 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
         var content = File.ReadAllText(path);
         var errors = new List<string>();
         var warnings = new List<string>(discovery.Warnings);
+        errors.AddRange(BrdDocumentLayout.Validate(content));
         var stableId = $"{authority.Id}:spec:business-requirements";
         if (!content.Contains($"stable_id: {stableId}", StringComparison.Ordinal))
         {
@@ -856,7 +860,7 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
 
         if (candidates.Count == 0)
         {
-            builder.AppendLine("| none | none | none | No BRD or feature-specification evidence was discovered | none | Not Applicable | No source evidence exists |");
+            builder.AppendLine("| none | none | none | No additional non-canonical BRD or feature-specification evidence was discovered | none | Not Applicable | The canonical BRD is not assessed as its own source |");
         }
 
         return builder.ToString();
@@ -1221,6 +1225,7 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
 
     private static IReadOnlyList<BrdQuestion> ParseQuestions(string section, List<string>? errors = null)
     {
+        section = BrdDocumentLayout.Visible(section);
         if (string.IsNullOrWhiteSpace(section) || Regex.IsMatch(section.Trim(),
                 @"(?i)^(?:none|none\.|no open questions\.?|not applicable\.?)$", RegexOptions.CultureInvariant,
                 TimeSpan.FromSeconds(1))) return [];
@@ -1268,16 +1273,14 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
     internal static string IndependentReviewSurface(string content)
     {
         var normalized = content.Replace("\r\n", "\n", StringComparison.Ordinal);
-        var match = Regex.Match(normalized,
-            "(?ms)^## Open questions[ \\t]*$\\n(?<body>.*?)(?=^## |\\z)",
-            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-        if (!match.Success) return normalized;
+        if (FindSectionBounds(normalized, "Open questions") is not { } section) return normalized;
         var errors = new List<string>();
-        var questions = ParseQuestions(match.Groups["body"].Value.Trim(), errors);
+        var questions = ParseQuestions(normalized[section.Start..section.End], errors);
         if (errors.Count > 0) return normalized;
-        var surface = "## Open questions\n\n" + string.Join("\n", questions.OrderBy(item => item.Ordinal)
-            .Select(item => item.Id + " | " + item.Question)) + "\n\n";
-        return normalized[..match.Index] + surface + normalized[(match.Index + match.Length)..];
+        var surface = string.Join("\n", questions.OrderBy(item => item.Ordinal)
+            .Select(item => item.Id + " | " + item.Question));
+        // Evidence changes must supersede review even when they follow the final question table.
+        return ReplaceSectionContent(normalized, "Open questions", surface) ?? normalized;
     }
 
     private static string RenderQuestions(IReadOnlyList<BrdQuestion> questions)
@@ -1288,14 +1291,6 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
         foreach (var question in questions.OrderBy(item => item.Ordinal))
             builder.AppendLine($"| {Cell(question.Id)} | {Cell(question.Question)} | {Cell(question.Answer ?? "Unanswered")} | {Cell(question.AnsweredBy ?? "-")} | {Cell(question.AnsweredAtUtc ?? "-")} |");
         return builder.ToString().TrimEnd();
-    }
-
-    private static string ReplaceSectionContent(string content, string heading, string body)
-    {
-        var bounds = FindSectionBounds(content, heading);
-        return bounds is { } section
-            ? content[..section.Start] + "\n" + body.TrimEnd() + "\n\n" + content[section.End..]
-            : content;
     }
 
     private static string ReplaceBlock(string content, string start, string end, string replacement)

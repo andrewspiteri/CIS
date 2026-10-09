@@ -29,7 +29,7 @@ public sealed class ClaudeAgentProvider : ICisAgentProvider, ICisAgentProviderAu
         [CisAgentRunModes.Plan, CisAgentRunModes.Implement, CisAgentRunModes.Review],
         [CisAgentPermissions.ReadOnly, CisAgentPermissions.WorkspaceWrite],
         true, false,
-        "Uses Claude Code print mode with structured streaming JSON and an explicit predeclared permission mode.");
+        "Uses Claude Code print mode with structured streaming JSON and an explicit predeclared permission mode.") { SupportsExplicitCommands = true };
 
     public CisAgentProviderDiagnosis Diagnose(string repositoryPath)
     {
@@ -116,7 +116,8 @@ public sealed class ClaudeAgentProvider : ICisAgentProvider, ICisAgentProviderAu
         if (request.Transport != "stream-json") return Failure("unsupported-transport", $"Claude transport '{request.Transport}' is unsupported.");
         var start = CreateStartInfo(_executable, request.WorkingDirectory);
         ConfigureExecutionArguments(start, request);
-        if (request.ResumeSessionId is not null) { start.ArgumentList.Add("--resume"); start.ArgumentList.Add(request.ResumeSessionId); }
+        if (request.ResumeSessionId is not null && request.Mode == CisAgentRunModes.Review)
+            onEvent(new("review-restarted", "Nonpersistent review restarted with the complete current task context; no provider session was resumed."));
         start.Environment.Clear();
         foreach (var pair in request.Environment) start.Environment[pair.Key] = pair.Value;
 
@@ -126,6 +127,7 @@ public sealed class ClaudeAgentProvider : ICisAgentProvider, ICisAgentProviderAu
         decimal? cost = null;
         var diagnostics = new List<string>();
         var invalid = false;
+        var permissionDenied = false;
         string? providerFailure = null;
         CisAgentProcessResult process;
         try
@@ -134,6 +136,7 @@ public sealed class ClaudeAgentProvider : ICisAgentProvider, ICisAgentProviderAu
             {
                 var parsed = ParseEvent(line, ref session, summary, ref input, ref output, ref cost);
                 if (parsed.Kind == "invalid-provider-event") invalid = true;
+                if (parsed.Kind == "provider-permission-denied") { permissionDenied = true; diagnostics.Add(parsed.Message); }
                 if (parsed.Kind == "provider-error") { providerFailure = parsed.Message; diagnostics.Add(parsed.Message); }
                 onEvent(parsed);
             }, line => onEvent(new("provider-stderr", Redact(line))), cancellationToken,
@@ -144,21 +147,21 @@ public sealed class ClaudeAgentProvider : ICisAgentProvider, ICisAgentProviderAu
 
         if (process.OutputTruncated) diagnostics.Add("Provider output exceeded the configured bound.");
         if (!string.IsNullOrWhiteSpace(process.StandardError)) diagnostics.Add(Redact(process.StandardError));
-        var completion = ClassifyCompletion(process, invalid, providerFailure);
+        var completion = ClassifyCompletion(process, invalid, providerFailure, permissionDenied);
         return new(completion.Status, process.ExitCode, session, summary.ToString().Trim(), [], [], [], input, output, cost,
             completion.FailureKind, diagnostics);
     }
 
-    internal static (string Status, string? FailureKind) ClassifyCompletion(CisAgentProcessResult process, bool invalid, string? providerFailure)
+    internal static (string Status, string? FailureKind) ClassifyCompletion(CisAgentProcessResult process, bool invalid, string? providerFailure, bool permissionDenied = false)
     {
         var status = process.Cancelled ? CisAgentRunStates.Cancelled
             : process.TimedOut ? CisAgentRunStates.TimedOut
             : process.OutputTruncated || invalid ? CisAgentRunStates.InvalidEvidence
-            : providerFailure is not null ? CisAgentRunStates.Failed
+            : permissionDenied || providerFailure is not null ? CisAgentRunStates.Failed
             : process.ExitCode == 0 ? CisAgentRunStates.Succeeded : CisAgentRunStates.Failed;
         return (status,
             process.Cancelled ? "cancellation" : process.TimedOut ? process.TimeoutKind ?? "timeout" : process.OutputTruncated || invalid ? "invalid-evidence"
-                : IsAuthenticationFailure(providerFailure) ? "authentication-required"
+                : permissionDenied ? "permission-required" : IsAuthenticationFailure(providerFailure) ? "authentication-required"
                 : providerFailure is not null ? "provider-failure" : process.ExitCode == 0 ? null
                 : process.StandardError.Contains("permission", StringComparison.OrdinalIgnoreCase) || process.StandardError.Contains("approval", StringComparison.OrdinalIgnoreCase)
                     ? "permission-required" : "provider-failure");
@@ -183,6 +186,8 @@ public sealed class ClaudeAgentProvider : ICisAgentProvider, ICisAgentProviderAu
             }
             if (root.TryGetProperty("total_cost_usd", out var total) && total.TryGetDecimal(out var amount)) cost = amount;
             var failure = type == "result" && (Boolean(root, "is_error") || subtype?.StartsWith("error", StringComparison.OrdinalIgnoreCase) == true);
+            var permissionDenied = type == "result" && root.TryGetProperty("permission_denials", out var denials)
+                && denials.ValueKind == JsonValueKind.Array && denials.GetArrayLength() > 0;
             if (type == "result")
             {
                 var result = root.TryGetProperty("structured_output", out var structured)
@@ -204,13 +209,14 @@ public sealed class ClaudeAgentProvider : ICisAgentProvider, ICisAgentProviderAu
                     if (Text(item, "type") == "text" && Text(item, "text") is { Length: > 0 } text)
                     { if (summary.Length > 0) summary.AppendLine(); summary.Append(text); }
             }
-            var eventKind = failure ? "provider-error" : type == "system" && subtype == "thinking_tokens" ? "provider-heartbeat" : "provider-event";
+            var eventKind = permissionDenied ? "provider-permission-denied" : failure ? "provider-error" : type == "system" && subtype == "thinking_tokens" ? "provider-heartbeat" : "provider-event";
             var eventMessage = type switch
             {
                 "rate_limit_event" => DescribeRateLimit(root),
                 "system" when subtype == "thinking_tokens" => DescribeThinking(root),
                 "assistant" => "Claude produced assistant output.",
                 "user" => "Claude tool result received.",
+                "result" when permissionDenied => "Claude reported denied tool permissions. Required command execution must be approved and rerun before qualification can pass.",
                 "result" when failure => "Claude request failed: " + summary + (IsAuthenticationFailure(summary.ToString())
                     ? " Sign in again using CIS: Authenticate Agent Provider, then retry." : ""),
                 "result" => "Claude completed the request.",
@@ -238,7 +244,14 @@ public sealed class ClaudeAgentProvider : ICisAgentProvider, ICisAgentProviderAu
 
     internal static void ConfigureExecutionArguments(ProcessStartInfo start, CisAgentExecutionRequest request)
     {
+        var commandError = CisAgentCommandPermissions.Validate(request.AllowedCommands, request.Mode, request.Permission);
+        if (commandError is not null) throw new ArgumentException(commandError, nameof(request));
         start.ArgumentList.Add("-p");
+        if (request.ResumeSessionId is not null && request.Mode != CisAgentRunModes.Review && request.AllowedCommands.Count == 0)
+        {
+            start.ArgumentList.Add("--resume");
+            start.ArgumentList.Add(request.ResumeSessionId);
+        }
         foreach (var directory in request.EvidenceDirectories.Distinct(StringComparer.Ordinal))
         {
             if (!Path.IsPathFullyQualified(directory)) throw new ArgumentException("Evidence directories must be absolute controller-created paths.");
@@ -250,6 +263,12 @@ public sealed class ClaudeAgentProvider : ICisAgentProvider, ICisAgentProviderAu
         start.ArgumentList.Add("--verbose");
         start.ArgumentList.Add("--permission-mode");
         start.ArgumentList.Add(request.Permission == CisAgentPermissions.WorkspaceWrite ? "acceptEdits" : "dontAsk");
+        if (request.AllowedCommands.Count > 0)
+        {
+            start.ArgumentList.Add("--allowedTools");
+            start.ArgumentList.Add(string.Join(",", request.AllowedCommands.SelectMany(command =>
+                new[] { "Bash(" + command + ")", "PowerShell(" + command + ")" })));
+        }
         if (request.Permission == CisAgentPermissions.ReadOnly)
         {
             start.ArgumentList.Add("--safe-mode");

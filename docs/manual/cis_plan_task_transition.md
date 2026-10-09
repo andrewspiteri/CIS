@@ -24,6 +24,15 @@ until `design.md` has `gate_status: Approved`. Every transition appends an audit
 Completion also snapshots sanitized CLI-usage counts, failures, possible token savings,
 and a ledger digest into the task and `verification.md` when local usage exists.
 
+Repositories that adopt `.cis/engineering-defaults.json` schema 1 also require current
+closing evidence at `verification/<task-id>.json` in the change dossier. Prepare its
+required-gate inventory using [`cis plan task completion-context`](cis_plan_task_completion_context.md).
+The transition checks alignment, task/source/policy/graph identities, exact scoped
+requirements, artifact integrity, native evidence and distinct review runs before
+writing completion. Failed, missing, stale and skipped required gates block; justified
+inapplicability is separate. Deleting an adopted policy does not remove its obligations.
+Repositories without adoption retain their earlier lifecycle.
+
 For imported plans, every transition first verifies that the canonical feature file
 still matches the digest recorded in `plan.md`. Source drift blocks all task movement;
 rerun same-path `cis plan import-spec` to generate a revised Draft before continuing.

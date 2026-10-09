@@ -44,6 +44,7 @@ public sealed partial class BrdModule : ICisModule
         var brd = new Command(Name, Description);
         brd.Subcommands.Add(CreateDiscoverCommand(service));
         brd.Subcommands.Add(CreateInitCommand(service));
+        brd.Subcommands.Add(CreateLayoutCommand(service));
         brd.Subcommands.Add(CreateSimpleCommand(
             "reconcile",
             "Reconcile new or changed BRD and feature-specification evidence into the canonical BRD review workflow.",
@@ -252,6 +253,7 @@ public sealed partial class BrdModule : ICisModule
         feature.Subcommands.Add(CreateFeatureSimpleCommand("validate", "Validate feature structure, traceability, scope, and lifecycle readiness.", service.ValidateFeature));
         feature.Subcommands.Add(CreateFeatureSimpleCommand("status", "Report feature-specification lifecycle and backlog-item currency.", service.FeatureStatus));
         feature.Subcommands.Add(CreateFeatureApproveCommand(service));
+        feature.Subcommands.Add(CreateFeatureReconcileCommand(service));
         return feature;
     }
 

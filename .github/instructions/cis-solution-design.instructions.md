@@ -11,7 +11,7 @@ applyTo: "docs/{architecture/overall-solution-design.md,references/component-she
 - Cover context, topology, data consistency, integrations, security, operations/recovery, verification, traceability, and the UI-design handoff.
 - Do not add business requirements or contradict the Active technical intent. Promote durable changes through technical intent or an ADR first.
 - Run `cis solution-design validate` before asking for one whole-bundle approval. Agents may not approve on the user's behalf.
-- An upstream or bundle-content change makes both artifacts stale; rerun `cis solution-design init`, review the delta, and renew the one bundle approval.
+- An upstream or bundle-content change makes both artifacts stale. Review the delta; use `cis solution-design reconcile` with reviewed file hashes and source version when retaining an unchanged design, or the authoring workflow for revisions. Validate and renew the one bundle approval. Reconciliation itself grants no approval.
 - After approval, use `cis ui-direction questions init` and `cis ui-direction init` to establish shared experience direction before backlog or feature design.
 
 For human-facing prose, also apply `docs/standards/human-readable-content-standard.md` and route through `.github/instructions/cis-human-readable-content.instructions.md`. Preserve the stronger domain rules above, including protected evidence and approval boundaries.

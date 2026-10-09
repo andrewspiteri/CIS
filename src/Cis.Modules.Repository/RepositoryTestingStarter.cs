@@ -16,7 +16,7 @@ internal static class RepositoryTestingStarter
     {
         var suites = new List<Suite>();
         var steps = new List<Step>();
-        AddDotNet(repositoryPath, classification, suites, steps, import: true);
+        AddDotNet(repositoryPath, classification, suites, steps);
         AddNode(repositoryPath, classification, suites, steps);
         // An empty repository must not acquire a fictitious documentation test runner.
         return suites.Count == 0 ? null : CreateProfile(suites.Select(suite => suite with { CoveragePath = "-", MutationPath = "-" }))
@@ -38,20 +38,16 @@ internal static class RepositoryTestingStarter
         var browserIds = suites.Where(suite => suite.Layer == "browser").Select(suite => suite.Id).ToHashSet(StringComparer.Ordinal);
         var preceding = steps.Where(step => suites.Any(suite => suite.Id == step.Suites && suite.Layer != "browser")
             || step.Id == "build" || step.Id.EndsWith("-build", StringComparison.Ordinal)).Select(step => step.Id).ToArray();
-        steps = steps.Select(step => browserIds.Contains(step.Suites) ? step with { DependsOn = string.Join(",",
+        steps = steps.Select(step => browserIds.Contains(step.Suites) ? step with
+        {
+            DependsOn = string.Join(",",
                 preceding.Concat(step.DependsOn.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
-                    .Where(id => id != "-").Distinct(StringComparer.Ordinal)) } : step)
+                    .Where(id => id != "-").Distinct(StringComparer.Ordinal))
+        } : step)
             .OrderBy(step => browserIds.Contains(step.Suites) ? 1 : 0).ToList();
         var security = RepositorySecurityStarter.Create(repositoryPath, classification);
         foreach (var step in security.Steps)
             steps.Add(new(step.Id, step.Command, step.WorkingDirectory, step.SuiteId, step.DependsOn, "no", step.TimeoutSeconds));
-
-        if (suites.Count == 0)
-        {
-            suites.Add(new("documentation", "repository", "operational", "cis-docs", "cis docs validate --strict",
-                ".", "junit", ".cis/local/testing/results/documentation.xml", "-", "-",
-                "CIS CLI and a repository-owned JUnit export wrapper", "documentation changes", "pr", "retain-on-failure"));
-        }
 
         steps.Add(new("docs", "cis docs validate --repo . --strict", ".", "-", "-", "no", 600));
         return new(
@@ -63,34 +59,26 @@ internal static class RepositoryTestingStarter
     }
 
     private static void AddDotNet(string repositoryPath, RepositoryClassification classification,
-        ICollection<Suite> suites, ICollection<Step> steps, bool import = false)
+        ICollection<Suite> suites, ICollection<Step> steps)
     {
         var solution = Directory.EnumerateFiles(repositoryPath, "*.slnx", SearchOption.TopDirectoryOnly)
             .Concat(Directory.EnumerateFiles(repositoryPath, "*.sln", SearchOption.TopDirectoryOnly)).FirstOrDefault();
         var hasBrowser = classification.Components.Any(item => item.Frameworks.Contains("playwright-dotnet", StringComparer.Ordinal));
-        if (!import && solution is not null && !hasBrowser && classification.Components.Any(item => item.Frameworks.Contains("dotnet-test", StringComparer.Ordinal)))
-        {
-            const string id = "dotnet-tests";
-            const string result = ".cis/local/testing/results/dotnet-tests.trx";
-            var command = $"dotnet test {Quote(Path.GetFileName(solution))} --logger trx;LogFileName={id}.trx --results-directory .cis/local/testing/results";
-            suites.Add(new(id, "repository", "unit", "dotnet-test", command, ".", "trx", result,
-                "-", "-", ".NET SDK", "C# production changes", "pr", "retain-on-failure"));
-            steps.Add(new(id, command, ".", id, "build", "no", 3600));
-            steps.Add(new("build", $"dotnet build {Quote(Path.GetFileName(solution))} --no-restore", ".", "-", "-", "no", 1200));
-            return;
-        }
         foreach (var component in classification.Components.Where(item => item.Frameworks.Contains("dotnet-test", StringComparer.Ordinal)))
         {
+            // MTP requires its own qualified reporter extensions/options. Preserve adoption without
+            // emitting VSTest arguments that cannot run this harness.
+            if (component.Frameworks.Contains("microsoft-testing-platform", StringComparer.Ordinal)
+                || component.Frameworks.Contains("test-runner-unverified", StringComparer.Ordinal)) continue;
             var project = component.Evidence.FirstOrDefault(item => item.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase));
             if (project is null) continue;
             var browser = component.Frameworks.Contains("playwright-dotnet", StringComparer.Ordinal);
-            var layer = browser ? "browser" : import ? ImportTestLayer(project) : "unit";
+            var layer = browser ? "browser" : ImportTestLayer(project);
             var id = SafeId(component.Id + "-" + layer);
             var result = $".cis/local/testing/results/{id}.trx";
-            var command = $"dotnet test {Quote(project)} --logger trx;LogFileName={id}.trx --results-directory .cis/local/testing/results"
-                + (browser || import ? "" : " --collect XPlat Code Coverage");
+            var command = $"dotnet test {Quote(project)} --logger trx;LogFileName={id}.trx --results-directory .cis/local/testing/results";
             suites.Add(new(id, component.Id, layer, "dotnet-test", command, ".", "trx", result,
-                browser ? "-" : $".cis/local/testing/coverage/{id}/coverage.cobertura.xml", "-",
+                "-", "-",
                 browser ? ".NET SDK, matching Playwright browsers, approved app/container composition and isolated seeded data; review repository setup command" : ".NET SDK",
                 browser ? "critical frontend journeys" : "C# production changes", browser ? "release" : "pr", "retain-on-failure"));
             steps.Add(new(id, command, ".", id, "-", "no", browser ? 2400 : 1800));
@@ -115,7 +103,7 @@ internal static class RepositoryTestingStarter
     private static string ImportTestLayer(string project)
     {
         var segments = project.Replace('\\', '/').Split('/');
-        foreach (var layer in new[] { "business", "integration", "architecture", "component", "security", "unit" })
+        foreach (var layer in new[] { "business", "integration", "architecture", "component", "security", "unit", "regression", "api-compatibility" })
             if (segments.Contains(layer, StringComparer.OrdinalIgnoreCase)) return layer;
         return "operational"; // Unknown test purpose must not be advertised as unit-test coverage.
     }
@@ -141,10 +129,9 @@ internal static class RepositoryTestingStarter
                 var id = SafeId(component.Id + "-unit");
                 var result = $".cis/local/testing/results/{id}.json";
                 var output = Relative(root, Path.Combine(repositoryPath, result.Replace('/', Path.DirectorySeparatorChar)));
-                var coverage = $".cis/local/testing/coverage/{id}/coverage-summary.json";
                 var command = $"{prefix} run {testScript} -- --reporter=json --outputFile={output}";
                 suites.Add(new(id, component.Id, "unit", "vitest", command, component.Root, "vitest-json", result,
-                    coverage, "-", "Node.js and installed dependencies", "TypeScript or JavaScript production changes", "pr", "retain-on-failure"));
+                    "-", "-", "Node.js and installed dependencies", "TypeScript or JavaScript production changes", "pr", "retain-on-failure"));
                 steps.Add(new(id, command, component.Root, id, "-", "no", 1200));
             }
 
@@ -257,6 +244,11 @@ internal static class RepositoryTestingStarter
         ---
 
         # Test suite profile
+
+        Bindings are inferred, not execution evidence. An empty table means no native suite was discovered;
+        documentation validation remains a workflow check and does not stand in for application tests.
+        Review unknown purposes (provisionally `operational`), runner options and multi-target result paths before adoption.
+        Select and verify coverage/mutation collectors before declaring their actual report paths.
 
         Result, coverage, mutation, and retained artifact paths are derived state under `.cis/local/`.
         Suite-specific sanitized runtime evidence belongs under `.cis/local/testing/diagnostics/<suite-id>/<run-id>/attempt-<number>/` and is hash-correlated during `cis test reconcile`.

@@ -1,0 +1,2 @@
+# Preserve the original native benchmark fixture bytes, including reporter whitespace.
+tests/Cis.Modules.Delivery.Tests/Fixtures/benchmarkdotnet-0.15.8-native.json -text -whitespace

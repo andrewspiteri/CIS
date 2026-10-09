@@ -19,6 +19,12 @@ cis workflow run <workflow> [--run-id <id>] [--repo <path>] [--format <human|jso
 
 Commands execute without a shell. Successful steps are skipped on resume; definition drift requires a new run.
 
+For repositories that adopt engineering completion, new run state also retains a content
+digest of execution inputs, including uncommitted files. Changed inputs prevent reuse of the old
+run ID. Keep the first attempt and start a new run after restoring the intended final inputs.
+Test reconciliation carries the original input identity forward; it does not relabel old
+execution as having run against new source.
+
 Each attempt streams timestamped standard output and standard error into
 `.cis/local/workflows/<run-id>/<step>.log`; later attempts use
 `<step>.attempt-<number>.log`. CIS redacts common credential values before persistence,

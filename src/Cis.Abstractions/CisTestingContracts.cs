@@ -42,7 +42,12 @@ public sealed record TestCoverageSummary(
     double Functions,
     double Branches,
     string Scope,
-    string SourcePath);
+    string SourcePath,
+    int? MeasuredLines = null,
+    int? CoveredLines = null,
+    string? BaseRevision = null,
+    int? ChangedProductionLines = null,
+    int? UninstrumentedChangedFiles = null);
 
 public sealed record TestMutationSummary(
     double Score,
@@ -100,7 +105,8 @@ public sealed record TestRunManifest(
     IReadOnlyList<TestArtifact> Artifacts,
     string? Implementer = null,
     string? Assurer = null,
-    string? AssuranceTechnique = null);
+    string? AssuranceTechnique = null,
+    string? InputDigest = null);
 
 public sealed record TestResultAdapterContext(
     string RepositoryPath,

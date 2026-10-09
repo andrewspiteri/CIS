@@ -10,7 +10,7 @@ using Cis.Modules.Impact;
 
 namespace Cis.Modules.Plan;
 
-public sealed class PlanningService
+public sealed class PlanningService : ICisEngineeringTaskContractReader
 {
     private readonly ChangeDossierStore _changes;
     private readonly DecisionService _decisions;
@@ -24,6 +24,9 @@ public sealed class PlanningService
     private readonly ManualTestAutomationScanner _automationScanner;
     private readonly ICisWorkspaceRegistry? _workspaceRegistry;
     private readonly Func<DateTimeOffset> _clock;
+    private readonly ICisEngineeringAssessment? _engineering;
+    private readonly ICisGraphSnapshotReader? _graphReader;
+    private readonly IReadOnlyList<ICisRepositoryDoctorCheck> _repositoryChecks;
 
     public PlanningService(
         ChangeDossierStore changes,
@@ -36,7 +39,10 @@ public sealed class PlanningService
         IEnumerable<IChangeReadinessCheck>? readinessChecks = null,
         Func<DateTimeOffset>? clock = null,
         IEnumerable<ICisFeatureApprovalAuthority>? featureAuthorities = null,
-        ICisWorkspaceRegistry? workspaceRegistry = null)
+        ICisWorkspaceRegistry? workspaceRegistry = null,
+        ICisEngineeringAssessment? engineering = null,
+        ICisGraphSnapshotReader? graphReader = null,
+        IEnumerable<ICisRepositoryDoctorCheck>? repositoryChecks = null)
     {
         _changes = changes;
         _impacts = impacts;
@@ -50,6 +56,9 @@ public sealed class PlanningService
         _featureAuthorities = (featureAuthorities ?? []).ToArray();
         _workspaceRegistry = workspaceRegistry;
         _automationScanner = new ManualTestAutomationScanner(resolver, workspaceRegistry);
+        _engineering = engineering;
+        _graphReader = graphReader;
+        _repositoryChecks = (repositoryChecks ?? []).ToArray();
     }
 
     public PlanResult Build(string repositoryPath, string changeId)
@@ -164,8 +173,11 @@ public sealed class PlanningService
         var source = pack.Source;
         var planStatus = approvedPlan && !revisedApprovedSource ? "Approved" : "Draft";
         var content = RenderPlan(change, planStatus, workItems, source);
+        if (derivedOnlyRefresh && !string.Equals(content,
+            RenderPlan(change, existing.Status, existing.WorkItems, existing.Source), StringComparison.Ordinal))
+            return Error(change.Id, "Task generation inputs changed the approved plan. Review and replan before refreshing derived catalogues.");
         var path = _changes.DossierFile(change, "plan.md");
-        var applied = WriteIfChanged(path, content);
+        var applied = !derivedOnlyRefresh && WriteIfChanged(path, content);
         applied |= WriteIfChanged(_changes.DossierFile(change, "test-cases.md"), pack.ManualTestCasesMarkdown);
         applied |= WriteIfChanged(_changes.DossierFile(change, "test-cases.csv"), pack.ManualTestCasesCsv);
         var taskRoot = Path.Combine(Path.GetDirectoryName(path)!, "agent-tasks");
@@ -175,7 +187,9 @@ public sealed class PlanningService
             var taskPath = Path.Combine(Path.GetDirectoryName(path)!, task.Key.Replace('/', Path.DirectorySeparatorChar));
             var restored = RestoreRetiredTask(change, task.Key);
             applied |= restored;
-            applied |= WriteTaskPreservingEvidence(taskPath, task.Value, preserveStatus: !restored);
+            // An unchanged approved source refreshes derived test coverage, not authored task handoffs.
+            if (!derivedOnlyRefresh || restored || !File.Exists(taskPath))
+                applied |= WriteTaskPreservingEvidence(taskPath, task.Value, preserveStatus: !restored);
         }
         applied |= RetireObsoleteTasks(change, existing.WorkItems, workItems, source);
         applied |= RegisterFeatureSpecCatalogEntry(change, source);
@@ -240,7 +254,7 @@ public sealed class PlanningService
             originals = SnapshotTree(dossier);
             catalog = File.ReadAllBytes(context.CatalogPath);
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException)
         {
             return Error(change.Id, $"Could not snapshot the planning state before derivation: {exception.Message}");
         }
@@ -560,6 +574,11 @@ public sealed class PlanningService
         if (item is null) return Error(change.Id, $"Task was not found: {request.TaskId}");
         var target = CanonicalTaskStatus(request.Status);
         if (target is null) return Error(change.Id, $"Unsupported task status: {request.Status}");
+        if (target == "Complete")
+        {
+            var closingErrors = ReviewEngineeringCompletion(change, item);
+            if (closingErrors.Count > 0) return Error(change.Id, closingErrors.ToArray());
+        }
         var current = CanonicalTaskStatus(item.Status) ?? (item.Status.Equals("decomposed", StringComparison.OrdinalIgnoreCase) ? "Decomposed" : "Draft");
         if (current.Equals(target, StringComparison.Ordinal))
             return new PlanResult("unchanged", change.Id, plan.Status, plan.WorkItems, null, [], false, plan.Source);
@@ -630,8 +649,11 @@ public sealed class PlanningService
         }
         _changes.AppendEvent(change, "task-status-changed", new Dictionary<string, string>
         {
-            ["taskId"] = item.Id, ["from"] = current, ["to"] = target,
-            ["actor"] = request.Actor.Trim(), ["reason"] = request.Reason.Trim(),
+            ["taskId"] = item.Id,
+            ["from"] = current,
+            ["to"] = target,
+            ["actor"] = request.Actor.Trim(),
+            ["reason"] = request.Reason.Trim(),
         });
         var validation = ValidateInternal(change, updatedItems, plan.Status, plan.Source);
         return new PlanResult("task-transitioned", change.Id, plan.Status, updatedItems, validation, [], true, plan.Source);
@@ -646,15 +668,15 @@ public sealed class PlanningService
         var digestSource = string.Join('\n', ordered.Select(entry =>
             $"{entry.InvocationId}|{entry.StartedAtUtc:O}|{entry.Command}|{entry.ExitCode}|{entry.PossibleTokenSavings}"));
         var digest = "sha256:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(digestSource))).ToLowerInvariant();
-        var savings = ordered.Sum(entry => entry.PossibleTokenSavings);
+        var savings = ordered.Sum(entry => Math.Max(0L, entry.PossibleTokenSavings));
         var failed = ordered.Count(entry => entry.ExitCode != 0);
-        var snapshot = $"invocations={ordered.Length}; failed={failed}; possibleTokenSavings={savings}; ledgerDigest={digest}";
+        var snapshot = CisToolUsageSnapshot.FormatValues(ordered.Length, failed, savings, digest);
 
         var task = File.ReadAllText(taskPath);
         if (!task.Contains(digest, StringComparison.Ordinal))
         {
             task = AppendTableRow(task, "## Completion evidence",
-                $"| CIS tool-usage snapshot | `{ToolUsageStore.RelativeLedgerPath}` | Recorded | {snapshot} |");
+                CisToolUsageSnapshot.TaskRow(snapshot));
             File.WriteAllText(taskPath, task);
         }
 
@@ -663,7 +685,7 @@ public sealed class PlanningService
         if (!verification.Contains(digest, StringComparison.Ordinal))
         {
             verification = verification.TrimEnd() + Environment.NewLine
-                + $"| {Cell(item.Id)} | CIS tool-usage snapshot | `{ToolUsageStore.RelativeLedgerPath}` | Recorded | {snapshot} |"
+                + CisToolUsageSnapshot.VerificationRow(Cell(item.Id), snapshot)
                 + Environment.NewLine;
             File.WriteAllText(verificationPath, verification);
         }
@@ -675,10 +697,51 @@ public sealed class PlanningService
         if (start < 0) return content.TrimEnd() + Environment.NewLine + Environment.NewLine + heading + Environment.NewLine + Environment.NewLine + row + Environment.NewLine;
         var next = content.IndexOf("\n## ", start + heading.Length, StringComparison.Ordinal);
         if (next < 0) next = content.Length;
-        return content[..next].TrimEnd() + Environment.NewLine + row + Environment.NewLine + content[next..].TrimStart('\r', '\n');
+        // Insert bookkeeping without rewriting the surrounding task-contract whitespace.
+        var insertion = next;
+        while (insertion > start && content[insertion - 1] is '\r' or '\n') insertion--;
+        return content[..insertion] + Environment.NewLine + row + content[insertion..];
     }
 
     private static string Cell(string value) => value.Replace('|', '/').Replace("\r", " ").Replace("\n", " ").Trim();
+
+    public string ReadTaskDigest(string repositoryPath, string changeId, string taskId)
+    {
+        var change = _changes.Read(repositoryPath, changeId)
+            ?? throw new InvalidDataException("Change dossier was not found for task review.");
+        var task = ReadPlan(change).WorkItems.FirstOrDefault(item => item.Id == taskId)
+            ?? throw new InvalidDataException("Plan task was not found for task review.");
+        return EngineeringCompletionReview.TaskDigest(task, ReadTaskContract(change, task));
+    }
+
+    public (EngineeringCompletionReceipt? Template, IReadOnlyList<string> Errors) CompletionContext(string repositoryPath, string changeId, string taskId, string? target = null)
+    {
+        var change = _changes.Read(repositoryPath, changeId);
+        if (change is null) return (null, ["Change dossier was not found."]);
+        var plan = ReadPlan(change);
+        var task = plan.WorkItems.FirstOrDefault(item => item.Id == taskId);
+        if (task is null) return (null, ["Task was not found."]);
+        try { return Completion().Prepare(change, task, plan.Source?.Targets, ReadTaskContract(change, task), target); }
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException)
+        { return (null, [error.Message]); }
+    }
+
+    private IReadOnlyList<string> ReviewEngineeringCompletion(ChangeDossier change, PlanWorkItem task)
+        => Completion().Review(change, task, ReadPlan(change).Source?.Targets, () => ReadTaskContract(change, task),
+            () => ReadTaskDigest(change.RepositoryPath, change.Id, task.Id));
+
+    private TaskEngineeringCompletion Completion() => new(_resolver, _workspaceRegistry, _engineering, _graphReader, _repositoryChecks);
+
+    private string? ReadTaskContract(ChangeDossier change, PlanWorkItem task)
+    {
+        if (task.TaskPath is null) return null;
+        var root = Path.GetDirectoryName(_changes.DossierFile(change, "plan.md"))!;
+        if (!CisPathSafety.TryResolveUnderRoot(root, task.TaskPath, out var path)
+            || CisPathSafety.ContainsReparsePoint(change.RepositoryPath, path)
+            || !File.Exists(path) || new FileInfo(path).Length > 512 * 1024)
+            throw new InvalidDataException("Task contract must be an existing bounded document inside its dossier without linked paths.");
+        return File.ReadAllText(path);
+    }
 
     private static string? CanonicalTaskStatus(string value) => value.Trim().ToLowerInvariant() switch
     {

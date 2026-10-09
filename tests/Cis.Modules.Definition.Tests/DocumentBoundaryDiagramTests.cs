@@ -79,6 +79,8 @@ public sealed partial class DefinitionWizardTests
         var noUiRecord = File.ReadAllText(direction);
         var noUiHash = ProductDefinitionAuthority.ComputeBaselineHash(Path.Combine(repository.Path, "docs/cis"), out var absent);
         Assert.DoesNotContain(absent, path => path.Contains("ui-system-preview"));
+        Assert.DoesNotContain(new ProductDefinitionAuthority(new CisRepositoryContextResolver()).EvidencePaths(repository.Path),
+            path => path.Contains("ui-system-preview"));
         File.WriteAllText(direction, noUiRecord.Replace("  visual_ui: false\n", ""));
         var uiHash = ProductDefinitionAuthority.ComputeBaselineHash(Path.Combine(repository.Path, "docs/cis"), out absent);
         Assert.NotEqual(noUiHash, uiHash);

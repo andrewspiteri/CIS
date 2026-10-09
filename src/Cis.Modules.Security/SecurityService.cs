@@ -130,6 +130,17 @@ public sealed partial class SecurityService
                 executions.Add(Invalid(suite, "Scanner result exceeds the 50 MiB evidence limit."));
                 continue;
             }
+            if (workflow.Run.InputDigest is not null)
+            {
+                var started = states.Select(state => DateTimeOffset.TryParse(state.StartedAtUtc, out var value) ? value : DateTimeOffset.MaxValue).Min();
+                var completed = states.Select(state => DateTimeOffset.TryParse(state.CompletedAtUtc, out var value) ? value : DateTimeOffset.MinValue).Max();
+                var written = File.GetLastWriteTimeUtc(resultPath);
+                if (states.Any(state => state.Status is not ("succeeded" or "failed")) || written < started.UtcDateTime || written > completed.UtcDateTime)
+                {
+                    executions.Add(Invalid(suite, "Scanner report is not from this completed execution; retain a separate output for each attempt."));
+                    continue;
+                }
+            }
             if (!_adapters.TryGetValue(suite.ResultFormat, out var adapter))
             {
                 executions.Add(Invalid(suite, $"No security result adapter is registered for '{suite.ResultFormat}'."));
@@ -142,7 +153,8 @@ public sealed partial class SecurityService
                     parsed = parsed with { Status = "failed", FailureKind = ParseFailure(failed.FailureKind), Diagnostics = [.. parsed.Diagnostics, failed.Error ?? "Scanner command failed."] };
                 executions.Add(parsed);
             }
-            catch (Exception exception) when (exception is IOException or JsonException or InvalidDataException)
+            catch (Exception exception) when (exception is IOException or JsonException or InvalidDataException
+                or InvalidOperationException or KeyNotFoundException or FormatException or OverflowException)
             {
                 executions.Add(Invalid(suite, $"Scanner evidence is unreadable: {exception.Message}"));
             }
@@ -165,7 +177,8 @@ public sealed partial class SecurityService
             : executions.Any(item => item.Status == "passed-with-findings") ? "passed-with-findings" : "passed";
         var manifest = new SecurityRunManifest(1, runId, workflow.Run.WorkflowId, workflow.Run.WorkflowDigest,
             context.RepositoryId, revision, ProfileDigest(context), $"{RuntimeInformation.OSDescription}; {RuntimeInformation.ProcessArchitecture}",
-            workflow.Run.CreatedAtUtc, workflow.Run.UpdatedAtUtc, status, executions, allArtifacts);
+            workflow.Run.CreatedAtUtc, workflow.Run.UpdatedAtUtc, status, executions, allArtifacts, workflow.Run.InputDigest, validation.Acceptances,
+            Path.GetRelativePath(context.RepositoryPath, ProfilePath(context)).Replace('\\', '/'));
         var runRoot = Path.Combine(LocalPath(context.RepositoryPath), "runs", runId);
         Directory.CreateDirectory(runRoot);
         Write(Path.Combine(runRoot, "manifest.json"), JsonSerializer.Serialize(manifest, JsonOptions));
@@ -227,9 +240,16 @@ public sealed partial class SecurityService
         Write(summaryPath, output);
         Write(Path.Combine(root, "summary-metadata.json"), JsonSerializer.Serialize(new
         {
-            schemaVersion = 1, runId, generationStatus, provider, model,
-            localOnly = true, promptDigest = "sha256:" + Hash(prompt), manifestDigest = "sha256:" + Hash(JsonSerializer.Serialize(status.Manifest)),
-            generatedAtUtc = DateTimeOffset.UtcNow.ToString("O"), deterministicVerdictPreserved = true,
+            schemaVersion = 1,
+            runId,
+            generationStatus,
+            provider,
+            model,
+            localOnly = true,
+            promptDigest = "sha256:" + Hash(prompt),
+            manifestDigest = "sha256:" + Hash(JsonSerializer.Serialize(status.Manifest)),
+            generatedAtUtc = DateTimeOffset.UtcNow.ToString("O"),
+            deterministicVerdictPreserved = true,
         }, JsonOptions));
         return status with { Status = "summarised", SummaryPath = Path.GetRelativePath(status.RepositoryPath, summaryPath).Replace('\\', '/'), Diagnostics = diagnostics, Applied = true };
     }
@@ -237,6 +257,7 @@ public sealed partial class SecurityService
     private static SecuritySuiteExecution ApplyAcceptances(SecuritySuiteExecution execution, SecuritySuiteProfile suite,
         IReadOnlyList<AcceptedSecurityFinding> acceptances)
     {
+        if (execution.FailureKind == SecurityFailureKind.InvalidEvidence) return execution;
         var findings = execution.Findings.Select(finding =>
         {
             var accepted = acceptances.FirstOrDefault(item => item.Scanner.Equals(finding.Scanner, StringComparison.OrdinalIgnoreCase)
@@ -249,7 +270,9 @@ public sealed partial class SecurityService
         {
             Status = blocking ? "findings" : findings.Length > 0 ? "passed-with-findings" : "passed",
             FailureKind = blocking ? SecurityFailureKind.Finding : SecurityFailureKind.None,
-            Accepted = findings.Count(item => item.Status == "accepted"), Findings = findings,
+            Accepted = findings.Count(item => item.Status == "accepted"),
+            Findings = findings,
+            BlockingSeverities = fail.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
         };
     }
 
@@ -332,7 +355,8 @@ public sealed partial class SecurityService
             string Value(string name) => columns.TryGetValue(name, out var index) && index < cells.Length ? cells[index] : string.Empty;
             var id = Value("Finding ID"); if (string.IsNullOrWhiteSpace(id) || id == "-") continue;
             var expiryText = Value("Accepted until");
-            if (!DateOnly.TryParseExact(expiryText, "yyyy-MM-dd", out var expiry)) { diagnostics.Add($"ERROR: Acceptance '{id}' has invalid Accepted until date."); continue; }
+            if (!DateOnly.TryParseExact(expiryText, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var expiry)) { diagnostics.Add($"ERROR: Acceptance '{id}' has invalid Accepted until date."); continue; }
             var entry = new AcceptedSecurityFinding(id, Value("Scanner"), Value("Fingerprint"), Value("Classification"), Value("Reason"), expiry,
                 Value("Owner"), Value("Approved by"), Value("Approval reference"));
             if (!SafeId().IsMatch(id)) diagnostics.Add($"ERROR: Acceptance ID is invalid: {id}");
@@ -352,11 +376,11 @@ public sealed partial class SecurityService
         if (!Directory.Exists(root)) return [];
         var artifacts = new List<SecurityArtifact>();
         foreach (var state in states)
-        foreach (var path in Directory.EnumerateFiles(root, "*.log", SearchOption.TopDirectoryOnly).Where(path => AttemptLog(Path.GetFileName(path), state.Id)))
-        {
-            if (new FileInfo(path).Length > MaximumArtifactBytes) { diagnostics.Add($"ERROR: Security workflow log exceeds the 50 MiB limit: {path}"); continue; }
-            artifacts.Add(Correlate(SecurityEvidence.Artifact(repository, "workflow-log", path), runId, Attempt(Path.GetFileName(path), state.Id) ?? state.Attempt, suite, revision));
-        }
+            foreach (var path in Directory.EnumerateFiles(root, "*.log", SearchOption.TopDirectoryOnly).Where(path => AttemptLog(Path.GetFileName(path), state.Id)))
+            {
+                if (new FileInfo(path).Length > MaximumArtifactBytes) { diagnostics.Add($"ERROR: Security workflow log exceeds the 50 MiB limit: {path}"); continue; }
+                artifacts.Add(Correlate(SecurityEvidence.Artifact(repository, "workflow-log", path), runId, Attempt(Path.GetFileName(path), state.Id) ?? state.Attempt, suite, revision));
+            }
         return artifacts;
     }
 

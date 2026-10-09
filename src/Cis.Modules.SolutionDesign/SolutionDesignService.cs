@@ -58,8 +58,13 @@ public sealed partial class SolutionDesignService : IChangeReadinessCheck, ICisS
 
         var generatedDesign = RenderDesign(state, designStableId);
         var generatedComponents = RenderComponentSheet(state, componentsStableId);
-        var nextDesign = ReconcileExisting(state.DesignPath!, generatedDesign, designStableId, ManagedStart, ManagedEnd, existingDraft);
-        var nextComponents = ReconcileExisting(state.ComponentSheetPath!, generatedComponents, componentsStableId, ComponentsStart, ComponentsEnd, existingDraft);
+        // An explicitly supplied diagram model belongs to the reviewed bundle even when
+        // no inference provider authored it. Preparation must not erase its display or
+        // silently reconcile only the component sheet against different source intent.
+        var explicitDiagramBundle = File.Exists(state.DesignPath!)
+            && File.ReadAllText(state.DesignPath!).Contains(ArchitectureDiagramModel.Marker, StringComparison.Ordinal);
+        var nextDesign = ReconcileExisting(state.DesignPath!, generatedDesign, designStableId, ManagedStart, ManagedEnd, existingDraft, explicitDiagramBundle);
+        var nextComponents = ReconcileExisting(state.ComponentSheetPath!, generatedComponents, componentsStableId, ComponentsStart, ComponentsEnd, existingDraft, explicitDiagramBundle);
         if (nextDesign is null || nextComponents is null)
             return Error("collision", state, ["A canonical solution-design path contains a document with a different stable identity."]);
 
@@ -200,10 +205,11 @@ public sealed partial class SolutionDesignService : IChangeReadinessCheck, ICisS
             && ReadNested(components, "technical_intent_hash") == state.TechnicalIntentVersion;
         var reconciliationRequired = design.Contains(ReconciliationPendingMarker, StringComparison.Ordinal)
             || components.Contains(ReconciliationPendingMarker, StringComparison.Ordinal)
-            || !sourceCurrent && (design.Contains(InferredMarker, StringComparison.Ordinal) || components.Contains(InferredMarker, StringComparison.Ordinal));
+            || !sourceCurrent && (design.Contains(InferredMarker, StringComparison.Ordinal) || components.Contains(InferredMarker, StringComparison.Ordinal)
+                || design.Contains(ArchitectureDiagramModel.Marker, StringComparison.Ordinal));
         var current = state.ReadinessErrors.Count == 0 && sourceCurrent && !reconciliationRequired;
         if (!current) warnings.Add("The solution-design bundle differs from the current Active technical intent.");
-        if (reconciliationRequired) warnings.Add("The inferred architecture needs reconciliation with the updated technical direction. Use Reconcile architecture with technical direction in the wizard, or run cis agent author solution-design. Prepare only refreshes diagrams after reconciliation.");
+        if (reconciliationRequired) warnings.Add("The architecture bundle needs reconciliation with the updated technical direction. Use cis solution-design reconcile after reviewing an unchanged design, or cis agent author solution-design to infer revisions from implementation. Prepare only refreshes diagrams after reconciliation.");
         var designStatus = ReadFrontMatter(design, "status") ?? "Unknown";
         var componentStatus = ReadFrontMatter(components, "status") ?? "Unknown";
         if (!designStatus.Equals(componentStatus, StringComparison.OrdinalIgnoreCase))
@@ -396,13 +402,14 @@ This document is one half of the governed overall solution-design bundle. The ov
 {tail}
 """;
 
-    private static string? ReconcileExisting(string path, string generated, string stableId, string start, string end, bool existingDraft = false)
+    private static string? ReconcileExisting(string path, string generated, string stableId, string start, string end, bool existingDraft = false, bool explicitDiagramBundle = false)
     {
         if (!File.Exists(path)) return generated;
         var existing = File.ReadAllText(path);
         if (!existing.Contains($"stable_id: {stableId}", StringComparison.Ordinal)) return null;
-        // Inference owns the narrative. Ordinary preparation must preserve it and expose source drift.
-        if (existing.Contains(InferredMarker, StringComparison.Ordinal))
+        // Authored narratives and explicit diagram bundles retain their source baseline
+        // until deliberate reconciliation. This does not invent inference provenance.
+        if (explicitDiagramBundle || existing.Contains(InferredMarker, StringComparison.Ordinal))
             return existingDraft && ReadNested(existing, "technical_intent_hash") != ReadNested(generated, "technical_intent_hash")
                 ? ResetApproval(ReplaceNested(existing, "technical_intent_hash", ReadNested(generated, "technical_intent_hash")!))
                     + (existing.Contains(ReconciliationPendingMarker, StringComparison.Ordinal) ? "" : "\n" + ReconciliationPendingMarker + "\n")
@@ -555,11 +562,9 @@ This document is one half of the governed overall solution-design bundle. The ov
     {
         var normalized = content.Replace("\r\n", "\n", StringComparison.Ordinal);
         foreach (var key in new[] { "status", "last_reviewed" })
-            normalized = Regex.Replace(normalized, $@"(?m)^{key}:.*$", $"{key}: <approval-metadata>",
-                RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+            normalized = ReplaceFrontMatter(normalized, key, "<approval-metadata>");
         foreach (var key in new[] { "approved_by", "approved_at", "approval_reason", "approved_content_hash" })
-            normalized = Regex.Replace(normalized, $@"(?m)^  {key}:.*$", $"  {key}: <approval-metadata>",
-                RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+            normalized = ReplaceNested(normalized, key, "<approval-metadata>");
         normalized = Regex.Replace(normalized,
             Regex.Escape("<!-- cis:technical-intent-baseline:start -->") + ".*?" + Regex.Escape("<!-- cis:technical-intent-baseline:end -->"),
             "<managed-technical-intent-baseline>", RegexOptions.Singleline | RegexOptions.CultureInvariant,
@@ -569,21 +574,32 @@ This document is one half of the governed overall solution-design bundle. The ov
 
     private static string? ReadFrontMatter(string content, string key)
     {
-        var match = Regex.Match(content, $@"(?m)^{Regex.Escape(key)}:\s*(?<value>.+?)\s*$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        var match = Regex.Match(FrontMatterBlock(content), $@"(?m)^{Regex.Escape(key)}:[ \t]*(?<value>[^\r\n]*)", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
         return match.Success ? Unquote(match.Groups["value"].Value) : null;
     }
 
     private static string? ReadNested(string content, string key)
     {
-        var match = Regex.Match(content, $@"(?m)^  {Regex.Escape(key)}:\s*(?<value>.*?)\s*$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        var mapping = Regex.Match(FrontMatterBlock(content), CisMetadataPattern, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)).Value;
+        var match = Regex.Match(mapping, $@"(?m)^  {Regex.Escape(key)}:[ \t]*(?<value>[^\r\n]*)", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
         return match.Success ? Unquote(match.Groups["value"].Value) : null;
     }
 
     private static string ReplaceFrontMatter(string content, string key, string value)
-        => Regex.Replace(content, $@"(?m)^{Regex.Escape(key)}:\s*.*$", $"{key}: {value}", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        => ReplaceMetadata(content, front => Regex.Replace(front, $@"(?m)^{Regex.Escape(key)}:[^\r\n]*", _ => $"{key}: {value}", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)));
 
     private static string ReplaceNested(string content, string key, string value)
-        => Regex.Replace(content, $@"(?m)^  {Regex.Escape(key)}:\s*.*$", $"  {key}: {value}", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        => ReplaceMetadata(content, front => Regex.Replace(front, CisMetadataPattern,
+            mapping => Regex.Replace(mapping.Value, $@"(?m)^  {Regex.Escape(key)}:[^\r\n]*", _ => $"  {key}: {value}",
+                RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)), RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)));
+
+    private const string CisMetadataPattern = @"(?m)^cis:[ \t]*\r?\n(?:[ \t]+[^\r\n]*(?:\r?\n|\z)|[ \t]*\r?\n)*";
+
+    private static string ReplaceMetadata(string content, Func<string, string> update)
+    {
+        var front = FrontMatterBlock(content);
+        return front.Length == 0 ? content : update(front) + content[front.Length..];
+    }
 
     private static string UpdateCatalogStatus(string catalog, string stableId, string status)
     {

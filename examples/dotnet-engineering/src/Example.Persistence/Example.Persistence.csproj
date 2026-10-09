@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Example.Core/Example.Core.csproj" />
+    <PackageReference Include="Npgsql" />
+  </ItemGroup>
+</Project>

@@ -143,7 +143,8 @@ public sealed partial class RepositoryClassifier
                     ? "application"
                     : "unclassified";
 
-        return new RepositoryClassification(shape, uniqueComponents, warnings);
+        var declaredStack = DeclaredEngineeringStack.Read(repositoryPath, warnings);
+        return new RepositoryClassification(shape, uniqueComponents, warnings, declaredStack);
     }
 
     private static bool IsComposeFile(string name)
@@ -185,13 +186,11 @@ public sealed partial class RepositoryClassifier
         var capabilities = new List<string> { "configuration" };
         var evidence = new List<string> { ToRepositoryPath(repositoryPath, projectPath) };
 
-        var isTest = ContainsAny(projectText, "Microsoft.NET.Test.Sdk", "<IsTestProject>true", "xunit", "NUnit");
+        var testConfiguration = DotNetTestConfiguration.Read(repositoryPath, projectPath, project, warnings);
+        var isTest = testConfiguration.IsTest;
         var isWorker = sdk.Contains("Microsoft.NET.Sdk.Worker", StringComparison.OrdinalIgnoreCase)
             || projectText.Contains("Microsoft.NET.Sdk.Worker", StringComparison.OrdinalIgnoreCase);
-        var packageReferences = project.Descendants()
-            .Where(element => element.Name.LocalName.Equals("PackageReference", StringComparison.OrdinalIgnoreCase))
-            .Select(element => element.Attribute("Include")?.Value ?? element.Attribute("Update")?.Value ?? string.Empty)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var packageReferences = testConfiguration.Packages;
         var isBlazorWebAssembly = sdk.Contains("Microsoft.NET.Sdk.BlazorWebAssembly", StringComparison.OrdinalIgnoreCase)
             || packageReferences.Contains("Microsoft.AspNetCore.Components.WebAssembly");
         var isWeb = sdk.Contains("Microsoft.NET.Sdk.Web", StringComparison.OrdinalIgnoreCase)
@@ -203,13 +202,16 @@ public sealed partial class RepositoryClassifier
         if (isTest)
         {
             frameworks.Add("dotnet-test");
+            frameworks.AddRange(testConfiguration.Frameworks);
+            evidence.AddRange(testConfiguration.Evidence);
+            if (packageReferences.Contains("coverlet.collector")) capabilities.Add("coverage-collector");
             if (packageReferences.Any(package => package.StartsWith("Microsoft.Playwright", StringComparison.OrdinalIgnoreCase)))
             {
                 frameworks.Add("playwright-dotnet");
                 evidence.Add("Microsoft.Playwright package in .NET test project");
             }
             roles.Add("test-automation");
-            evidence.Add(".NET test SDK markers");
+            evidence.Add("Literal .NET test declarations; execution and result production are unverified");
         }
         else if (isBlazorWebAssembly)
         {
@@ -1012,7 +1014,8 @@ public sealed partial class RepositoryClassifier
             {
                 entries = new DirectoryInfo(directory).EnumerateFileSystemInfos("*", new EnumerationOptions
                 {
-                    AttributesToSkip = FileAttributes.ReparsePoint, IgnoreInaccessible = false
+                    AttributesToSkip = FileAttributes.ReparsePoint,
+                    IgnoreInaccessible = false
                 }).ToArray();
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)

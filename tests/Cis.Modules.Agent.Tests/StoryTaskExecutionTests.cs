@@ -58,8 +58,14 @@ public sealed partial class AgentExecutionTests
     {
         using var repository = AgentRepository.Create(git: true);
         repository.Write("app.txt", "original"); repository.CommitAll("task baseline");
-        var provider = new StoryExecutionProvider { Findings = mode == "findings", Cancel = mode == "cancelled", MalformedReview = mode == "malformed-review", ReviewWrites = mode == "review-writes",
-            DuringReview = mode == "concurrent" ? () => repository.Write("app.txt", "user edit") : null };
+        var provider = new StoryExecutionProvider
+        {
+            Findings = mode == "findings",
+            Cancel = mode == "cancelled",
+            MalformedReview = mode == "malformed-review",
+            ReviewWrites = mode == "review-writes",
+            DuringReview = mode == "concurrent" ? () => repository.Write("app.txt", "user edit") : null
+        };
         var service = new AgentService(new CisRepositoryContextResolver(), [provider], textGeneration: new StoryExecutionModels());
         var work = StoryWork(repository.Path, true);
         var selection = service.SelectModels(work);
@@ -71,6 +77,8 @@ public sealed partial class AgentExecutionTests
         Assert.Equal("gpt-6-sol", provider.Requests[1].Model);
         Assert.Equal("workspace-write", provider.Requests[0].Permission);
         Assert.Equal("read-only", provider.Requests[1].Permission);
+        foreach (var run in result.Runs)
+            Assert.Equal(CisStoryEngineeringContract.Digest(work), service.Show(repository.Path, run.RunId).Run!.Manifest.TaskContractDigest);
         Assert.NotEqual(provider.Requests[0].WorkingDirectory, provider.Requests[1].WorkingDirectory);
         Assert.All(provider.Requests, request => Assert.NotEqual(repository.Path, request.WorkingDirectory));
         Assert.Equal(mode == "ready", result.Applied);
@@ -98,8 +106,12 @@ public sealed partial class AgentExecutionTests
         repository.Write("app.txt", "original"); repository.CommitAll("task baseline");
         var current = true;
         using var cancellation = new CancellationTokenSource();
-        var provider = new StoryExecutionProvider { ReviewFailures = 1, Blocked = outcome == "blocked",
-            DuringReview = () => { if (outcome == "stale") current = false; if (outcome == "cancelled") cancellation.Cancel(); } };
+        var provider = new StoryExecutionProvider
+        {
+            ReviewFailures = 1,
+            Blocked = outcome == "blocked",
+            DuringReview = () => { if (outcome == "stale") current = false; if (outcome == "cancelled") cancellation.Cancel(); }
+        };
         var service = new AgentService(new CisRepositoryContextResolver(), [provider], textGeneration: new StoryExecutionModels());
         var work = StoryWork(repository.Path, true) with { ReviewResponses = [new("finding", "Which existing behavior?", "Keep the existing archive and retain versions.", "Reviewer", "2026-09-29")] };
         var result = service.Execute(work, service.SelectModels(work), true, () => current, cancellation.Token, null);
@@ -150,8 +162,12 @@ public sealed partial class AgentExecutionTests
         using var second = AgentRepository.Create(git: true);
         foreach (var root in new[] { first, second }) { root.Write("app.txt", "original"); root.CommitAll("baseline"); }
         var work = StoryWork(first.Path, true) with { Repositories = [new("first", first.Path, "docs/cis", "authority"), new("second", second.Path, "docs/cis", "participant")] };
-        var provider = new StoryExecutionProvider { ReviewFailures = 1, DuringReview = () =>
-            { Assert.Equal("original", first.Read("app.txt")); Assert.Equal("original", second.Read("app.txt")); } };
+        var provider = new StoryExecutionProvider
+        {
+            ReviewFailures = 1,
+            DuringReview = () =>
+            { Assert.Equal("original", first.Read("app.txt")); Assert.Equal("original", second.Read("app.txt")); }
+        };
         var service = new AgentService(new CisRepositoryContextResolver(), [provider], textGeneration: new StoryExecutionModels());
         var result = service.Execute(work, service.SelectModels(work), true, () => true, TestContext.Current.CancellationToken, null);
         Assert.True(result.Applied, string.Join("; ", result.Errors));
@@ -206,7 +222,11 @@ public sealed partial class AgentExecutionTests
         var payload = string.Concat(Enumerable.Repeat("inventory <ownership> 😀\n", 4_000)) + "END-OF-INVENTORY";
         var work = StoryWork(first.Path, true) with { Repositories = [new("first", first.Path, "docs/cis", "authority"), new("second", second.Path, "docs/cis", "participant")] };
         var evidenceReads = 0;
-        var provider = new StoryExecutionProvider { LargeEvidence = payload, ReviewFailures = 1, InspectRequest = request =>
+        var provider = new StoryExecutionProvider
+        {
+            LargeEvidence = payload,
+            ReviewFailures = 1,
+            InspectRequest = request =>
         {
             if (request.Mode != "review" && !request.Prompt.Contains("<review-findings>")) return;
             evidenceReads++;
@@ -221,7 +241,8 @@ public sealed partial class AgentExecutionTests
                 Assert.Contains("END-OF-INVENTORY", packet.Text);
                 Assert.Contains(request.Prompt.Contains("earlier findings") && request.Prompt.Contains("Criterion not met") ? "+corrected" : "+implemented", packet.Text);
             }
-        } };
+        }
+        };
         var service = new AgentService(new CisRepositoryContextResolver(), [provider], textGeneration: new StoryExecutionModels());
         var result = service.Execute(work, service.SelectModels(work), true, () => true, TestContext.Current.CancellationToken, null);
         Assert.True(result.Applied, string.Join("; ", result.Errors));
@@ -238,7 +259,10 @@ public sealed partial class AgentExecutionTests
         using var repository = AgentRepository.Create(git: true);
         repository.Write("app.txt", "original"); repository.CommitAll("baseline");
         var tamper = true;
-        var provider = new StoryExecutionProvider { LargeEvidence = new string('x', 220_000), InspectRequest = request =>
+        var provider = new StoryExecutionProvider
+        {
+            LargeEvidence = new string('x', 220_000),
+            InspectRequest = request =>
         {
             if (request.Mode != "review") return;
             var packets = ReadStoryEvidencePackets(request);
@@ -246,7 +270,8 @@ public sealed partial class AgentExecutionTests
             if (!tamper) return;
             tamper = false;
             if (delete) File.Delete(packets[0].Paths[0]); else File.AppendAllText(packets[0].Paths[0], "modified");
-        } };
+        }
+        };
         var service = new AgentService(new CisRepositoryContextResolver(), [provider], textGeneration: new StoryExecutionModels());
         var work = StoryWork(repository.Path, true);
         var selection = service.SelectModels(work);
@@ -393,10 +418,19 @@ public sealed partial class AgentExecutionTests
             if (request.Mode == "implement" && LargeEvidence is not null) File.WriteAllText(Path.Combine(request.WorkingDirectory, "inventory.txt"), LargeEvidence);
             InspectRequest?.Invoke(request);
             var needsChanges = Findings || Blocked || Requests.Count(item => item.Mode == "review") <= ReviewFailures;
-            var completion = new { summary = request.Mode == "implement" ? "Implemented task." : "Reviewed actual implementation.",
-                changedFiles = request.Mode == "implement" ? LargeEvidence is null ? new[] { "app.txt" } : ["app.txt", "inventory.txt"] : [], validations = new[] { "Fixture validation passed." }, evidence = new[] { "app.txt" },
-                review = request.Mode == "review" ? new { recommendation = Blocked ? "blocked" : needsChanges ? "revise" : "ready", strengths = new[] { "Scoped change." },
-                    findings = needsChanges ? new[] { new { id = "TASK-REV-001", severity = "major", category = "acceptance", location = "app.txt", observation = "Criterion not met.", recommendation = "Correct the behavior." } } : [] } : null };
+            var completion = new
+            {
+                summary = request.Mode == "implement" ? "Implemented task." : "Reviewed actual implementation.",
+                changedFiles = request.Mode == "implement" ? LargeEvidence is null ? new[] { "app.txt" } : ["app.txt", "inventory.txt"] : [],
+                validations = new[] { "Fixture validation passed." },
+                evidence = new[] { "app.txt" },
+                review = request.Mode == "review" ? new
+                {
+                    recommendation = Blocked ? "blocked" : needsChanges ? "revise" : "ready",
+                    strengths = new[] { "Scoped change." },
+                    findings = needsChanges ? new[] { new { id = "TASK-REV-001", severity = "major", category = "acceptance", location = "app.txt", observation = "Criterion not met.", recommendation = "Correct the behavior." } } : []
+                } : null
+            };
             return new(CisAgentRunStates.Succeeded, 0, null, JsonSerializer.Serialize(completion), [], [], [], null, null, null, null, []);
         }
     }

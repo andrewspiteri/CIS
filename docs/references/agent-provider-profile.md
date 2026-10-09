@@ -3,7 +3,7 @@ title: "Agent Provider Profile"
 type: agent-provider-profile
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-28"
+last_reviewed: "2026-10-09"
 review_cadence: "on provider, permission, isolation, or retention-policy change"
 cis:
   stable_id: change-impact-studio:reference:agent-provider-profile
@@ -29,7 +29,7 @@ No direct provider is selected by default. A controller must select a discovered
 | Provider | Enabled | Preferred transport | Allowed modes | Maximum permission | Notes |
 |---|---|---|---|---|---|
 | codex | yes | app-server | plan, implement, review | workspace-write | `exec-json` is an explicit non-interactive fallback. Resolution checks `CIS_CODEX_EXECUTABLE`, process PATH, then the current Windows Codex Desktop installation. Inconclusive login status is advisory because ambient Desktop/App Server authentication can still execute. Explicit setup uses provider-native browser or device authentication through `cis agent provider authenticate codex`; CIS never receives credentials. Network escalation remains denied. |
-| claude | yes | stream-json | plan, implement, review | workspace-write | Headless execution uses predeclared permissions. |
+| claude | yes | stream-json | plan, implement, review | workspace-write | Headless execution does not relay interactive approvals. Implementation-only `--allow-command` adds literal native rules per attempt; denied commands fail. Native rules are not an OS sandbox. |
 | portable | yes | envelope | plan, implement, review | read-only | Preparation only; no direct execution. |
 
 ## Authority boundary
@@ -45,3 +45,5 @@ The task screen refreshes while a run is active and when reopened. It shows the 
 Under **Respond to review findings**, enter an answer for each finding that needs clarification. **Suggest answers with selected model** uses task, BRD and recorded execution context to propose answers with supporting source excerpts. Remote suggestions require explicit disclosure permission. Suggestions without matching source excerpts are rejected; an unanswered finding can remain without a suggestion. **Use suggested answer** copies one suggestion into your editable draft. **Save answers** records only your edited or explicitly selected responses, with your identity and the exact review finding. It does not close findings or approve work. **Retry implementation and review** then supplies saved answers to both models. Unsaved answers must be saved before retrying. A changed review rejects a stale save and retains the editor draft.
 
 Provider availability is not authorization. Direct execution requires accepted impacts, an approved current plan, an eligible task, and a satisfied global design barrier. Agent output is untrusted evidence until explicitly imported; only canonical CIS lifecycle commands and human decisions can approve, accept, transition, verify, or close work.
+
+See [agent run](../manual/cis_agent_run.md#explicit-command-permissions) for command-rule syntax and native matching limits. Command lists are recorded with actor/attempt and must be supplied again on resume; native session context restarts when either attempt uses a list. Availability and a model success message are not proof that required commands ran.

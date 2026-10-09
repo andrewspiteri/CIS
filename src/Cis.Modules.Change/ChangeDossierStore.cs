@@ -78,14 +78,18 @@ public sealed partial class ChangeDossierStore
             return Failure([$"Change dossier already exists: {id}"]);
         }
 
-        var baselineKind = string.IsNullOrWhiteSpace(manifest.Head) ? "graph" : "git";
-        var baseline = manifest.Head ?? manifest.BuildId;
+        var repositoryHead = ReadGitHead(context.RepositoryPath);
+        var baselineKind = repositoryHead is null ? "graph" : "git";
+        var baseline = repositoryHead ?? manifest.BuildId;
         var relativePath = NormalizePath(Path.GetRelativePath(context.RepositoryPath, dossierPath));
         var roots = request.Roots
             .Where(root => !string.IsNullOrWhiteSpace(root.Id))
             .DistinctBy(root => $"{root.Id}\u001f{root.Kind}", StringComparer.Ordinal)
             .ToArray();
-        var repositoryBaselines = CaptureRepositoryBaselines(context, baselineKind, baseline);
+        IReadOnlyList<ChangeRepositoryBaseline> repositoryBaselines;
+        try { repositoryBaselines = CaptureRepositoryBaselines(context, baselineKind, baseline); }
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException)
+        { return Failure([$"Cannot retain repository creation inputs: {error.Message}"]); }
         var change = new ChangeDossier(
             id,
             request.Title.Trim(),
@@ -272,10 +276,14 @@ public sealed partial class ChangeDossierStore
         var manifest = ReadGraphManifest(change.RepositoryPath);
         if (manifest is null)
             return Failure(["A built context graph is required. Run `cis graph build` first."]);
-        var baselineKind = string.IsNullOrWhiteSpace(manifest.Head) ? "graph" : "git";
-        var baseline = manifest.Head ?? manifest.BuildId;
+        var repositoryHead = ReadGitHead(change.RepositoryPath);
+        var baselineKind = repositoryHead is null ? "graph" : "git";
+        var baseline = repositoryHead ?? manifest.BuildId;
         var repositoryContext = _resolver.Resolve(change.RepositoryPath).Context!;
-        var repositoryBaselines = CaptureRepositoryBaselines(repositoryContext, baselineKind, baseline);
+        IReadOnlyList<ChangeRepositoryBaseline> repositoryBaselines;
+        try { repositoryBaselines = CaptureRepositoryBaselines(repositoryContext, baselineKind, baseline); }
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException)
+        { return Failure([$"Cannot retain repository creation inputs: {error.Message}"]); }
         if (string.Equals(change.BaselineKind, baselineKind, StringComparison.Ordinal)
             && string.Equals(change.Baseline, baseline, StringComparison.Ordinal)
             && string.Equals(change.GraphBuildId, manifest.BuildId, StringComparison.Ordinal))
@@ -440,11 +448,16 @@ public sealed partial class ChangeDossierStore
         string authorityBaselineKind,
         string authorityBaseline)
     {
-        var repositories = _workspaceRegistry?.Resolve(context.RepositoryPath).Workspace?.Repositories
+        var resolution = _workspaceRegistry?.Resolve(context.RepositoryPath);
+        if (resolution is { IsSuccess: false } && File.Exists(Path.Combine(context.RepositoryPath, ".cis/workspace.yml")))
+            throw new InvalidDataException("Cannot resolve creation scope: " + string.Join("; ", resolution.Errors));
+        var repositories = resolution?.Workspace?.Repositories
             ?? [new CisWorkspaceRepository(context.RepositoryId, context.RepositoryPath, context.DocumentationRoot, "authority")];
         var baselines = new List<ChangeRepositoryBaseline>();
-        foreach (var repository in repositories.OrderBy(item => item.Id, StringComparer.Ordinal))
+        foreach (var repository in repositories.Where(item => item.IsProductOwned).OrderBy(item => item.Id, StringComparer.Ordinal))
         {
+            var nestedRoots = repositories.Where(other => CisPathSafety.IsUnderRoot(repository.RepositoryPath, other.RepositoryPath))
+                .Select(other => other.RepositoryPath).ToArray();
             var head = ReadGitHead(repository.RepositoryPath);
             if (head is not null)
             {
@@ -452,34 +465,43 @@ public sealed partial class ChangeDossierStore
                     repository.Id,
                     "git",
                     head,
-                    CaptureWorkingTree(repository.RepositoryPath, head)));
+                    CaptureWorkingTree(repository.RepositoryPath, head, nestedRoots)));
                 continue;
             }
 
-            if (string.Equals(repository.Id, context.RepositoryId, StringComparison.Ordinal))
-                baselines.Add(new ChangeRepositoryBaseline(repository.Id, authorityBaselineKind, authorityBaseline));
+            var isAuthority = string.Equals(repository.Id, context.RepositoryId, StringComparison.Ordinal);
+            var graph = ReadGraphManifest(repository.RepositoryPath);
+            if (!isAuthority && graph is null)
+                throw new InvalidDataException($"Build the participant graph before creating a change: {repository.Id}");
+            var participantContext = _resolver.Resolve(repository.RepositoryPath).Context
+                ?? throw new InvalidDataException($"Repository context is unavailable: {repository.Id}");
+            baselines.Add(new ChangeRepositoryBaseline(repository.Id,
+                isAuthority ? authorityBaselineKind : "graph", isAuthority ? authorityBaseline : graph!.BuildId,
+                CreationInputs: CisExecutionIdentity.CaptureInputs(participantContext, includeDossiers: true, excludedRepositoryRoots: nestedRoots)));
         }
 
         return baselines;
     }
 
-    private static IReadOnlyList<ChangeRepositoryWorkingFile>? CaptureWorkingTree(string repositoryPath, string baseline)
+    private static IReadOnlyList<ChangeRepositoryWorkingFile> CaptureWorkingTree(string repositoryPath, string baseline, IReadOnlyList<string> nestedRoots)
     {
-        if (!TryGit(repositoryPath, ["diff", "--name-status", "--find-renames", baseline], out var tracked)
-            || !TryGit(repositoryPath, ["ls-files", "--others", "--exclude-standard"], out var untracked))
-            return null;
+        if (!TryGit(repositoryPath, ["diff", "--name-status", "--find-renames", "-z", baseline], out var tracked)
+            || !TryGit(repositoryPath, ["ls-files", "--others", "--exclude-standard", "-z"], out var untracked))
+            throw new InvalidDataException("Cannot retain a complete Git creation inventory.");
 
-        var files = tracked.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-            .Select(line => line.TrimEnd('\r').Split('\t'))
-            .Where(parts => parts.Length >= 2)
-            .Select(parts => WorkingFile(repositoryPath, parts[0], parts[^1]))
-            .Concat(untracked.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-                .Select(path => WorkingFile(repositoryPath, "??", path.TrimEnd('\r'))))
+        var files = CisGitChangeScope.Read(tracked, Included)
+            .Select(change => WorkingFile(repositoryPath, change.Status, change.Path))
+            .Concat(untracked.Split('\0', StringSplitOptions.RemoveEmptyEntries)
+                .Where(Included)
+                .Select(path => WorkingFile(repositoryPath, "??", path)))
             .Where(file => !file.Path.StartsWith(".cis/local/", StringComparison.OrdinalIgnoreCase))
             .DistinctBy(file => file.Path, StringComparer.OrdinalIgnoreCase)
             .OrderBy(file => file.Path, StringComparer.Ordinal)
             .ToArray();
         return files;
+
+        bool Included(string path) => !path.Replace('\\', '/').StartsWith(".cis/local/", StringComparison.OrdinalIgnoreCase)
+            && !nestedRoots.Any(nested => CisPathSafety.IsUnderRoot(nested, Path.Combine(repositoryPath, path), allowRoot: true));
     }
 
     private static ChangeRepositoryWorkingFile WorkingFile(string repositoryPath, string status, string path)
@@ -501,7 +523,7 @@ public sealed partial class ChangeDossierStore
             foreach (var argument in arguments) start.ArgumentList.Add(argument);
             var result = CisProcessSafety.Run(start, TimeSpan.FromSeconds(30));
             output = result.StandardOutput;
-            return !result.TimedOut && result.ExitCode == 0;
+            return !result.TimedOut && !result.OutputTruncated && result.ExitCode == 0;
         }
         catch (Exception exception) when (exception is IOException or System.ComponentModel.Win32Exception)
         {
@@ -511,6 +533,8 @@ public sealed partial class ChangeDossierStore
 
     private static string? ReadGitHead(string repositoryPath)
     {
+        if (!File.Exists(Path.Combine(repositoryPath, ".git")) && !Directory.Exists(Path.Combine(repositoryPath, ".git")))
+            return null;
         try
         {
             var start = new ProcessStartInfo("git") { WorkingDirectory = repositoryPath };

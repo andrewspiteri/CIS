@@ -8,6 +8,7 @@ public sealed partial class FeatureIntakeService
 {
     private sealed record StoryTaskEvent(string TaskId, string Status, string Actor, string At, string Evidence)
     {
+        public IReadOnlyList<CisStoryCompletionContext> CompletionContexts { get; init; } = [];
         public CisStoryExecutionResult? Execution { get; init; }
         [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
         public IReadOnlyList<CisStoryReviewFeedback>? Feedback { get; init; }
@@ -35,8 +36,15 @@ public sealed partial class FeatureIntakeService
     // Implementation edits are expected during delivery. Approval binds the feature's
     // saved scope and repository identities, while retaining the original evidence hash.
     private static string StoryScopeHash(WizardState state, DeliveryInput input, string storyId)
-        => Hash(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { state.Content, state.Binding, storyId,
-            input.Direction, input.Constraints, repositories = input.Repositories.Select(r => new { r.Id, r.RepositoryPath }) }, Json)));
+        => Hash(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
+        {
+            state.Content,
+            state.Binding,
+            storyId,
+            input.Direction,
+            input.Constraints,
+            repositories = input.Repositories.Select(r => new { r.Id, r.RepositoryPath })
+        }, Json)));
     private static string StoryTasksHash(CisFeatureStoryResult result)
         => Hash(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { result.InputHash, result.Tasks }, Json)));
     private static string StoryApprovalHash(string scopeHash, CisFeatureStoryResult result)
@@ -50,9 +58,16 @@ public sealed partial class FeatureIntakeService
         var approved = record is not null && record.ScopeHash == StoryScopeHash(state, input, result.StoryId);
         var historical = !approved && record is not null && result.Status != "current";
         if (historical)
-            result = result with { Status = "stale", Tasks = record!.Plan.Tasks, Story = record.Plan.Story,
-                Definition = record.Plan.Definition, Provider = record.Plan.Provider, Model = record.Plan.Model,
-                Warnings = result.Warnings.Append("The saved task plan belongs to an earlier feature scope or product baseline. Its work and review history remain visible; execution and completion are disabled until a current plan is reviewed.").ToArray() };
+            result = result with
+            {
+                Status = "stale",
+                Tasks = record!.Plan.Tasks,
+                Story = record.Plan.Story,
+                Definition = record.Plan.Definition,
+                Provider = record.Plan.Provider,
+                Model = record.Plan.Model,
+                Warnings = result.Warnings.Append("The saved task plan belongs to an earlier feature scope or product baseline. Its work and review history remain visible; execution and completion are disabled until a current plan is reviewed.").ToArray()
+            };
         if (approved)
         {
             var tasks = ValidateStoryTasks(record!.Plan.Tasks, input, result.Story!);
@@ -69,12 +84,20 @@ public sealed partial class FeatureIntakeService
             var execution = approved || historical ? record!.Events.LastOrDefault(item => item.TaskId == task.Id && item.Execution is not null)?.Execution : null;
             return new CisFeatureStoryTaskProgress(task.Id, status, approved && status == "Ready",
                 approved && status == "InProgress" && (execution is null || execution.Applied), reason, last?.Evidence)
-            { Execution = execution, ReviewFeedback = execution is null ? null : StoryFeedback(state, record!, task.Id, execution),
-                CanExecute = approved && (status is "Ready" or "InProgress") && remaining.Length == 0 && execution?.Applied != true };
+            {
+                Execution = execution,
+                ReviewFeedback = execution is null ? null : StoryFeedback(state, record!, task.Id, execution),
+                CanExecute = approved && (status is "Ready" or "InProgress") && remaining.Length == 0 && execution?.Applied != true
+            };
         }).ToArray();
-        return result with { PlanHash = approved ? StoryApprovalHash(record!.ScopeHash, record.Plan) : StoryApprovalHash(StoryScopeHash(state, input, result.StoryId), result), Revision = StoryRevision(record),
-            ApprovedBy = approved || historical ? record!.Actor : null, PlanState = historical ? "Needs review" : approved ? progress.All(task => task.Status == "Complete") ? "Complete" : "Approved" : "Proposed",
-            TaskProgress = progress };
+        return result with
+        {
+            PlanHash = approved ? StoryApprovalHash(record!.ScopeHash, record.Plan) : StoryApprovalHash(StoryScopeHash(state, input, result.StoryId), result),
+            Revision = StoryRevision(record),
+            ApprovedBy = approved || historical ? record!.Actor : null,
+            PlanState = historical ? "Needs review" : approved ? progress.All(task => task.Status == "Complete") ? "Complete" : "Approved" : "Proposed",
+            TaskProgress = progress
+        };
     }
 
     public CisFeatureStoryResult UpdateStoryWorkflow(string workspacePath, string slug, string storyId, string operation,
@@ -98,6 +121,7 @@ public sealed partial class FeatureIntakeService
             var input = ReadDeliveryInput(state, false);
             var record = ReadStoryRecord(state, storyId);
             var now = DateTimeOffset.UtcNow.ToString("O");
+            IReadOnlyList<CisStoryCompletionContext> completionContexts = [];
             if (operation == "approve")
             {
                 if (result.PlanState != "Proposed") throw new InvalidDataException("This task plan is already approved.");
@@ -111,14 +135,34 @@ public sealed partial class FeatureIntakeService
                 if (record is null || result.PlanState != "Approved") throw new InvalidDataException("Approve the current task plan before starting work.");
                 var progress = result.TaskProgress.SingleOrDefault(task => task.Id == taskId)
                     ?? throw new InvalidDataException("Select a task from this story.");
+                if (operation == "completion-context")
+                {
+                    var contexts = StoryCompletion(state, input, result, taskId!, true);
+                    return result with
+                    {
+                        CompletionContexts = contexts,
+                        Errors = contexts.SelectMany(item => item.Errors.Select(error => item.RepositoryId + ": " + error)).ToArray()
+                    };
+                }
                 if (operation == "start" && !progress.CanStart)
                     throw new InvalidDataException(progress.BlockedReason ?? "Only a ready task can be started.");
                 if (operation == "complete" && (!progress.CanComplete || !criteriaVerified || !SingleLine(evidence, 4000)))
                     throw new InvalidDataException("Complete an in-progress task only after verifying every completion criterion and recording the work and checks performed.");
+                if (operation == "complete")
+                {
+                    var contexts = StoryCompletion(state, input, result, taskId!, false);
+                    var closingErrors = contexts.SelectMany(item => item.Errors.Select(error => item.RepositoryId + ": " + error)).ToArray();
+                    if (closingErrors.Length > 0) return result with { CompletionContexts = contexts, Errors = closingErrors };
+                    completionContexts = contexts;
+                }
                 if (operation is not ("start" or "complete")) throw new InvalidDataException("Choose approve, start or complete.");
                 if (record.Events.Count >= 2000) throw new InvalidDataException("This story has reached its task history limit.");
-                record = record with { Events = record.Events.Append(new StoryTaskEvent(taskId!, operation == "start" ? "InProgress" : "Complete", actor.Trim(), now,
-                    operation == "complete" ? evidence!.Trim() : "")).ToArray() };
+                record = record with
+                {
+                    Events = record.Events.Append(new StoryTaskEvent(taskId!, operation == "start" ? "InProgress" : "Complete", actor.Trim(), now,
+                    operation == "complete" ? evidence!.Trim() : "")
+                    { CompletionContexts = completionContexts }).ToArray()
+                };
             }
             var checkedResult = Story(workspacePath, slug, storyId, false);
             if (checkedResult.Errors.Count > 0 || checkedResult.PlanHash != expectedPlanHash || checkedResult.Revision != expectedRevision
@@ -134,7 +178,7 @@ public sealed partial class FeatureIntakeService
             var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
             try { File.WriteAllText(temporary, JsonSerializer.Serialize(record, Json), new UTF8Encoding(false)); File.Move(temporary, path, true); }
             finally { if (File.Exists(temporary)) File.Delete(temporary); }
-            return Story(workspacePath, slug, storyId, false);
+            return Story(workspacePath, slug, storyId, false) with { CompletionContexts = completionContexts };
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException or JsonException or ArgumentException)
         { return new("failed", slug, storyId, null, "", "", null, [], [], [error.Message]); }

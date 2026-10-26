@@ -945,8 +945,9 @@ public sealed class RepositoryInitializerTests
 
         Assert.Equal(0, result.ExitCode);
         var skill = File.ReadAllText(Path.Combine(repository.Path, ".github", "skills", "cis-verification", "SKILL.md"));
-        Assert.Contains("independently observed command", skill, StringComparison.Ordinal);
-        Assert.Contains("never let a later successful command mask an earlier failure", skill, StringComparison.Ordinal);
+        var guidance = string.Join(" ", skill.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        Assert.Contains("Observe each gate separately or use fail-fast orchestration that preserves each exit status", guidance, StringComparison.Ordinal);
+        Assert.Contains("a later successful command must not mask an earlier failure", guidance, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -72,6 +72,18 @@ function Write-AtomicJson([string]$Path, $Value) {
         [Text.UTF8Encoding]::new($false))
     [IO.File]::Move($temporary, $Path, $true)
 }
+function Publish-MutationResult([IO.FileInfo]$Report, $Assessment, [string]$Destination) {
+    $temporary = "$Destination.$runId.tmp"
+    [IO.File]::Copy($Report.FullName, $temporary, $true)
+    [IO.File]::Move($temporary, $Destination, $true)
+    $copy = $Assessment | ConvertTo-Json -Depth 32 | ConvertFrom-Json
+    $relative = [IO.Path]::GetRelativePath($repoRoot, $Destination).Replace('\', '/')
+    if ($null -ne $copy.mutation) { $copy.mutation.sourcePath = $relative }
+    foreach ($artifact in $copy.artifacts) {
+        if ($artifact.kind -eq 'mutation-result') { $artifact.path = $relative }
+    }
+    Write-AtomicJson "$Destination.assessment.json" $copy
+}
 function Digest-Text([string]$Value) {
     return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.UTF8Encoding]::new($false).GetBytes($Value))).ToLowerInvariant()
 }
@@ -170,18 +182,15 @@ $assessmentExit = $LASTEXITCODE
 $assessment = ($assessmentJson -join [Environment]::NewLine) | ConvertFrom-Json
 Write-AtomicJson "$($report.FullName).assessment.json" $assessment
 $canonical = Join-Path $resolvedRoot 'cis-abstractions.json'
+if (-not $Canary) {
+    # Reconciliation reads the current attempt even when qualification fails.
+    # Its failed workflow state remains authoritative for execution health.
+    Publish-MutationResult $report $assessment (Join-Path $resolvedRoot 'latest-result.json')
+}
 # Preserve failed reports for diagnosis; a stopped process never replaces the
-# latest complete report or publishes a passing assessment.
+# last qualifying report or publishes a passing assessment.
 if (-not $Canary -and $execution.status -eq 'exited' -and $execution.exitCode -eq 0 -and $assessmentExit -eq 0 -and $sourceUnchanged) {
-    [IO.File]::Copy($report.FullName, "$canonical.$runId.tmp", $true)
-    [IO.File]::Move("$canonical.$runId.tmp", $canonical, $true)
-    $canonicalAssessment = $assessment | ConvertTo-Json -Depth 32 | ConvertFrom-Json
-    $canonicalRelative = [IO.Path]::GetRelativePath($repoRoot, $canonical).Replace('\', '/')
-    $canonicalAssessment.mutation.sourcePath = $canonicalRelative
-    foreach ($artifact in $canonicalAssessment.artifacts) {
-        if ($artifact.kind -eq 'mutation-result') { $artifact.path = $canonicalRelative }
-    }
-    Write-AtomicJson "$canonical.assessment.json" $canonicalAssessment
+    Publish-MutationResult $report $assessment $canonical
 }
 Write-Host "CIS mutation assessment: $($report.FullName).assessment.json"
 if ($execution.status -ne 'exited' -or $execution.exitCode -ne 0 -or $assessmentExit -ne 0 -or -not $sourceUnchanged) {

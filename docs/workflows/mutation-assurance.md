@@ -19,6 +19,10 @@ partial diagnostic result cannot satisfy that gate.
 This release-tier entry runs separately from ordinary pull-request verification.
 Native Stryker reports remain unchanged derived evidence under
 `.cis/local/testing/mutation/`; assessments and summaries are separate files.
+The suite reconciles `latest-result.json`, which retains the latest readable
+full-attempt report even when its gate fails. The failed workflow state remains
+failed. `cis-abstractions.json` separately retains the last qualifying full report;
+canaries replace neither file. Each copy has a hash-bound assessment sidecar.
 
 Build the current CLI with `dotnet build src/Cis.Host -c Release` before using the
 repository runner. `pwsh tools/run-mutation.ps1 -Canary` runs only the small native
@@ -87,11 +91,11 @@ limitations to shrink the denominator.
 
 Keep three results visible in the small checkpoint summary:
 
-| Result | Record |
-| --- | --- |
-| Native report | Distinct status counts, raw score, exact report and configuration hashes. |
-| Conservative assessment | The adopted interpretation, threshold, denominator and unresolved findings; explain any difference from native counts. |
-| Execution health | Baseline/canary result, expected bail, timeouts, crashes, cancellation, missing evidence and resource stops. |
+- Native report: distinct status counts, raw score, exact report and configuration hashes.
+- Conservative assessment: the adopted interpretation, threshold, denominator and
+  unresolved findings; explain any difference from native counts.
+- Execution health: baseline/canary result, expected bail, timeouts, crashes,
+  cancellation, missing evidence and resource stops.
 
 Ordinary native failed assertions and failed-test exceptions are sufficient native
 outcome evidence. Do not introduce bespoke exception whitelists, per-mutant

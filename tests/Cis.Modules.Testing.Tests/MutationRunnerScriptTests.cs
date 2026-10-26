@@ -2,12 +2,24 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using Cis.Abstractions;
+using Cis.Modules.Repository;
+using Cis.Modules.Workflow;
 using Xunit;
 
 namespace Cis.Modules.Testing.Tests;
 
 public sealed class MutationRunnerScriptTests
 {
+    [Fact]
+    public void CanonicalMutationWorkflowCanBeLoadedByTheRuntime()
+    {
+        var result = new WorkflowService(new CisRepositoryContextResolver()).Describe(RepositoryRoot(), "mutation-assurance");
+
+        Assert.Empty(result.Diagnostics);
+        Assert.NotNull(result.Workflow);
+        Assert.Single(result.Workflow.Steps);
+    }
+
     [Fact]
     public void TimeoutStopsTheNativeProcessAndRetainsItsFirstOutput()
     {

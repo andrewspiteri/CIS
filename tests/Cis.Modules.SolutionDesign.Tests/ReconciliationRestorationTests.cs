@@ -50,7 +50,7 @@ public sealed partial class SolutionDesignWorkflowTests
     public void Reconcile_ChangesOnlyCanonicalMetadataAndPreservesMatchingExampleAndCommentKeys()
     {
         using var fixture = ReconciliationFixture(false);
-        const string example = """
+        var example = """
 
             ## Human evidence examples
 
@@ -70,7 +70,7 @@ public sealed partial class SolutionDesignWorkflowTests
               technical_intent_hash: protected-source
               approved_bundle_hash: protected-hash
             -->
-            """;
+            """.ReplaceLineEndings("\n");
         foreach (var path in new[] { fixture.DesignPath, fixture.SheetPath })
         {
             File.AppendAllText(path, example);

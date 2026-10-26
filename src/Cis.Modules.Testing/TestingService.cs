@@ -171,10 +171,12 @@ public sealed partial class TestingService
                     if (execution.Mutation?.ReportSha256 != bound.ReportSha256 || artifact.Digest != bound.AssessmentSha256)
                         throw new InvalidDataException("Mutation report or assessment changed while it was being read.");
                     execution = execution with { Artifacts = execution.Artifacts.Concat([artifact]).ToArray() };
+                    if (bound.RunContext is { } runContext)
+                        execution = ApplyMutationRunContext(context.RepositoryPath, execution, runContext);
                 }
                 executions.Add(execution);
             }
-            catch (Exception exception) when (exception is IOException or InvalidDataException or JsonException or System.Xml.XmlException)
+            catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or JsonException or System.Xml.XmlException)
             {
                 executions.Add(InvalidEvidence(suite, $"Result evidence is unreadable: {exception.Message}"));
             }
@@ -236,7 +238,7 @@ public sealed partial class TestingService
         return Result(context, null, runId, validation.Suites, manifest, [], diagnostics, true, "reconciled");
     }
 
-    private static (double Threshold, string ReportSha256, string AssessmentSha256)? MutationAssessmentThreshold(string repository, string report)
+    private static (double Threshold, string ReportSha256, string AssessmentSha256, JsonElement? RunContext)? MutationAssessmentThreshold(string repository, string report)
     {
         var sidecar = report + ".assessment.json";
         if (!File.Exists(sidecar)) return null;
@@ -262,9 +264,10 @@ public sealed partial class TestingService
                 && artifact.TryGetProperty("path", out var path) && path.ValueKind == JsonValueKind.String && path.GetString() == TestResultEvidence.Relative(repository, report)
                 && artifact.TryGetProperty("digest", out var sha) && sha.ValueKind == JsonValueKind.String && sha.GetString() == digest))
             throw new InvalidDataException("Mutation assessment does not identify these exact raw report bytes.");
-        // Only the hash-bound threshold is reused. Scores, passed flags, and all
-        // native outcomes are recomputed from the original report by the adapter.
-        return (value, digest, Convert.ToHexStringLower(SHA256.HashData(bytes)));
+        // Recompute all scores and native outcomes. Run context can only restrict
+        // qualification; a stored qualified flag can never upgrade the report.
+        JsonElement? runContext = root.TryGetProperty("cisRun", out var run) ? run.Clone() : null;
+        return (value, digest, Convert.ToHexStringLower(SHA256.HashData(bytes)), runContext);
     }
 
     private static TestArtifact Correlate(TestArtifact artifact, string runId, int? attempt, TestSuiteProfile suite,

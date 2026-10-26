@@ -1,0 +1,48 @@
+<Project>
+  <!-- Explicit opt-in only. Prepare one owned overlay with the companion tool first. -->
+  <Target Name="CisCopyMSTestAdapterCompatibilityOverlay"
+          AfterTargets="Build"
+          Condition="'$(CisMSTestCompatOverlay)' != '' and '$(IsTestProject)' == 'true' and '$(IsCrossTargetingBuild)' != 'true'">
+    <Error Condition="'$(TargetFramework)' != 'net10.0'"
+           Text="The explicit MSTest compatibility overlay supports only net10.0 test projects. This target framework is unsupported." />
+    <Error Condition="!Exists('$(TargetDir)MSTestAdapter.PlatformServices.dll')"
+           Text="The explicit MSTest compatibility overlay was not applied because the test output has no MSTestAdapter.PlatformServices.dll." />
+    <PropertyGroup>
+      <_CisCompatAdapter>$(CisMSTestCompatOverlay)/MSTestAdapter.PlatformServices.dll</_CisCompatAdapter>
+      <_CisCompatRuntime>$(CisMSTestCompatOverlay)/Cis.MSTestAdapterCompat.Runtime.dll</_CisCompatRuntime>
+      <_CisCompatManifest>$(CisMSTestCompatOverlay)/compatibility-manifest.json</_CisCompatManifest>
+      <_CisCompatDotnetHost>$(CisMSTestCompatDotnetHost)</_CisCompatDotnetHost>
+      <_CisCompatDotnetHost Condition="'$(_CisCompatDotnetHost)' == ''">$(DotNetHostPath)</_CisCompatDotnetHost>
+      <_CisCompatDotnetHost Condition="'$(_CisCompatDotnetHost)' == ''">$(DOTNET_HOST_PATH)</_CisCompatDotnetHost>
+    </PropertyGroup>
+    <Error Condition="'$(_CisCompatDotnetHost)' == '' or !$([System.IO.Path]::IsPathFullyQualified('$(_CisCompatDotnetHost)')) or !Exists('$(_CisCompatDotnetHost)')"
+           Text="Compatibility verification requires an existing absolute dotnet host. Set CisMSTestCompatDotnetHost explicitly when the SDK does not supply DotNetHostPath or DOTNET_HOST_PATH." />
+    <Error Condition="!Exists('$(_CisCompatAdapter)') or !Exists('$(_CisCompatRuntime)') or !Exists('$(_CisCompatManifest)')"
+           Text="The explicit MSTest compatibility overlay must contain its adapter, runtime and provenance manifest." />
+    <Error Condition="'$(CisMSTestCompatTool)' == '' or !Exists('$(CisMSTestCompatTool)') or '$(CisMSTestCompatAdapterSha256)' == '' or '$(CisMSTestCompatRuntimeSha256)' == ''"
+           Text="Explicit compatibility use requires the current tool DLL and profile-pinned adapter/runtime SHA256 values." />
+    <ItemGroup>
+      <_CisCompatCurrentHash Remove="@(_CisCompatCurrentHash)" />
+      <_CisCompatOverlayHash Remove="@(_CisCompatOverlayHash)" />
+      <_CisCompatRuntimeHash Remove="@(_CisCompatRuntimeHash)" />
+    </ItemGroup>
+    <GetFileHash Files="$(TargetDir)MSTestAdapter.PlatformServices.dll" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="_CisCompatCurrentHash" />
+    </GetFileHash>
+    <GetFileHash Files="$(_CisCompatAdapter)" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="_CisCompatOverlayHash" />
+    </GetFileHash>
+    <GetFileHash Files="$(_CisCompatRuntime)" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="_CisCompatRuntimeHash" />
+    </GetFileHash>
+    <Error Condition="'@(_CisCompatOverlayHash->'%(FileHash)')' != '$(CisMSTestCompatAdapterSha256)' or '@(_CisCompatRuntimeHash->'%(FileHash)')' != '$(CisMSTestCompatRuntimeSha256)'"
+           Text="Compatibility overlay bytes do not match the explicit profile-pinned adapter/runtime SHA256 values." />
+    <Error Condition="'@(_CisCompatCurrentHash->'%(FileHash)')' != '74559C1C0FA199DC1CE53324A95B67B3084CA906DF9DDAC52FDB29BB2043C943' and '@(_CisCompatCurrentHash->'%(FileHash)')' != '@(_CisCompatOverlayHash->'%(FileHash)')'"
+           Text="Unsupported adapter output bytes. The optional compatibility overlay accepts only the exact official MSTest 4.5.1 net9.0 adapter or its current overlay output." />
+    <Exec Command="&quot;$(_CisCompatDotnetHost)&quot; &quot;$(CisMSTestCompatTool)&quot; --verify-overlay &quot;$(CisMSTestCompatOverlay)&quot;"
+          StandardOutputImportance="Low" />
+    <Copy SourceFiles="$(_CisCompatAdapter);$(_CisCompatRuntime);$(_CisCompatManifest)"
+          DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="Using explicit CIS MSTest compatibility overlay (unofficial modified adapter; see compatibility-manifest.json)." />
+  </Target>
+</Project>

@@ -44,6 +44,7 @@
     <Project Path="src/Cis.Modules.Verify/Cis.Modules.Verify.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Cis.MSTestAdapterCompat.Tests/Cis.MSTestAdapterCompat.Tests.csproj" />
     <Project Path="tests/Cis.Abstractions.Tests/Cis.Abstractions.Tests.csproj" />
     <Project Path="tests/Cis.Modules.Agent.Tests/Cis.Modules.Agent.Tests.csproj" />
     <Project Path="tests/Cis.Modules.Ci.Tests/Cis.Modules.Ci.Tests.csproj" />
@@ -70,5 +71,9 @@
     <Project Path="tests/Cis.Modules.Testing.Tests/Cis.Modules.Testing.Tests.csproj" />
     <Project Path="tests/Cis.Modules.UiDirection.Tests/Cis.Modules.UiDirection.Tests.csproj" />
     <Project Path="tests/Cis.Modules.Tracker.Tests/Cis.Modules.Tracker.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/Cis.MSTestAdapterCompat/Runtime/Cis.MSTestAdapterCompat.Runtime.csproj" />
+    <Project Path="tools/Cis.MSTestAdapterCompat/Tool/Cis.MSTestAdapterCompat.Tool.csproj" />
   </Folder>
 </Solution>

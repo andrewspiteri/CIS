@@ -81,7 +81,7 @@ public sealed class TestingModule : ICisModule
 
     private static Command Mutation()
     {
-        var mutation = new Command("mutation", "Assess native mutation reports without changing them.");
+        var mutation = new Command("mutation", "Run bounded native mutation profiles and assess their unchanged reports.");
         var assess = new Command("assess", "Calculate conservative and native scores for the reported mutants.");
         var repository = Repo(); var format = Format(); var report = Required("--report");
         var threshold = new Option<double>("--break") { Required = true, Description = "Conservative score required, from 0 through 100." };
@@ -89,7 +89,46 @@ public sealed class TestingModule : ICisModule
         assess.SetAction(parse => AssessMutation(parse.GetValue(repository)!, parse.GetValue(report)!,
             parse.GetValue(threshold), parse.GetValue(format)!));
         mutation.Subcommands.Add(assess);
+        var run = new Command("run", "Execute one reusable native mutation profile with time and storage limits.");
+        var runRepository = Repo(); var runFormat = Format(); var profile = Required("--profile");
+        var kind = new Option<string>("--kind")
+        {
+            DefaultValueFactory = _ => "diagnostic",
+            Description = "canary, diagnostic, or qualification; diagnostic results do not qualify the complete scope."
+        };
+        run.Options.Add(runRepository); run.Options.Add(runFormat); run.Options.Add(profile); run.Options.Add(kind);
+        run.SetAction(parse => RunMutation(new(parse.GetValue(runRepository)!, parse.GetValue(profile)!,
+            parse.GetValue(kind)!), parse.GetValue(runFormat)!));
+        mutation.Subcommands.Add(run);
         return mutation;
+    }
+
+    private static int RunMutation(MutationRunOptions options, string format)
+    {
+        if (format is not ("json" or "agent" or "human"))
+        {
+            Console.Error.WriteLine("Unsupported format. Use human, json, or agent.");
+            return 2;
+        }
+        var result = new MutationRunService().Run(options);
+        if (format == "json") Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+        else if (format == "agent")
+        {
+            Console.WriteLine($"status={result.Status};exitCode={result.ExitCode};profile={result.ProfileId ?? "none"};runId={result.RunId ?? "none"};kind={result.Kind};partial={result.Partial.ToString().ToLowerInvariant()};qualified={result.Qualified.ToString().ToLowerInvariant()}");
+            if (result.Assessment?.Mutation is { } mutation)
+                Console.WriteLine(FormattableString.Invariant($"conservativeScore={mutation.Score};nativeScore={mutation.NativeScore};killed={mutation.Killed};denominator={mutation.Denominator};report={result.ReportPath}"));
+            foreach (var diagnostic in result.Diagnostics) Console.WriteLine($"diagnostic={diagnostic.Replace(';', ',')}");
+        }
+        else
+        {
+            Console.WriteLine($"Mutation {result.Kind}: {result.Status} ({result.ProfileId ?? "invalid profile"}).");
+            if (result.Assessment?.Mutation is { } mutation)
+                Console.WriteLine(FormattableString.Invariant($"Conservative score: {mutation.Score:F6}% ({mutation.Killed}/{mutation.Denominator}); native score: {mutation.NativeScore:F6}%."));
+            if (result.SummaryPath is { } summary) Console.WriteLine($"Run summary: {summary}");
+            foreach (var diagnostic in result.Diagnostics) Console.WriteLine(diagnostic);
+            Console.WriteLine("Qualification applies to the declared profile scope; project release requirements remain separate.");
+        }
+        return result.ExitCode;
     }
 
     private static int AssessMutation(string repository, string report, double threshold, string format)

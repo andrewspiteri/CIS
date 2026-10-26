@@ -25,7 +25,7 @@ Rules apply only to immediate entries beneath the declared `.cis/local/` path. C
 | context | .cis/local/context | 30 | 20 | archive | |
 | workflows | .cis/local/workflows | 30 | 20 | archive | |
 | testing | .cis/local/testing/runs | 30 | 10 | archive | |
-| mutation-runs | .cis/local/testing/mutation/runs | 1 | 2 | delete | 536870912 |
+| mutation-runs | .cis/local/testing/mutation/cis-safety/runs | 1 | 2 | delete | 536870912 |
 | security | .cis/local/security/runs | 30 | 10 | archive | |
 | ci | .cis/local/ci | 14 | 20 | archive | |
 | diagnostics | .cis/local/diagnostics | 30 | 20 | archive | |
@@ -38,4 +38,19 @@ Rules apply only to immediate entries beneath the declared `.cis/local/` path. C
 
 Review `cis artifacts plan --family mutation-runs --format agent` after run writers finish. It reports the bytes eligible for removal and the projected live size. If the newest two runs alone exceed 512MiB, planning reports the unmet budget and blocks cleanup; review the protected allowance or budget explicitly. The profile does not cap writes or schedule deletion. Cleanup requires a separate `cis artifacts clean --family mutation-runs --yes` after plan review. A deletion leaves hashes, not recoverable content.
 
-Before cleaning mutation runs, retain the native report and a small assessment under the mutation evidence root outside `runs`. Full source/runtime snapshots and verbose diagnostics belong in bounded fault investigations when needed, not in an endless archive stream. Archive families remain reversible, but their ZIPs, manifests and retrieval copies consume disk. Output reports configured live bytes and artifact-management bytes separately; its total excludes unconfigured paths and scratch trees elsewhere. The byte budget applies only to the configured live family, not to the combined archive footprint.
+Diagnostic and iteration artifacts are transient. Keep a native failing report and
+only the context needed to investigate an open issue. Delete successful canary
+captures, duplicate reports and superseded attempts when they are no longer useful;
+delete the remaining diagnostic material when the issue is fixed. Keep a brief
+outcome and commit reference where useful. A current qualification or release
+record follows its explicit retention requirement; ordinary iterations do not
+become permanent release evidence.
+
+These lifecycle decisions require a reviewed cleanup after writers finish. The
+planner uses age, count and bytes; it does not infer whether an issue is resolved.
+Review the profile before removing a protected entry, and preserve evidence still
+needed by an open issue or current gate. Do not create archive bundles merely to
+retain completed diagnostics. Full source/runtime snapshots and verbose logs are
+reserved for bounded investigations.
+
+Archive families remain reversible, but their ZIPs, manifests and retrieval copies consume disk. Output reports configured live bytes and artifact-management bytes separately; its total excludes unconfigured paths and scratch trees elsewhere. The byte budget applies only to the configured live family, not to the combined archive footprint.

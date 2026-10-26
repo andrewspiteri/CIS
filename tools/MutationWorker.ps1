@@ -8,7 +8,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 # The parent owns these run-local files. No application process is created until
 # the parent has assigned this trusted worker to its job/session and opens the gate.
-$command = Get-Content -LiteralPath $InputPath -Raw | ConvertFrom-Json
+$command = Get-Content -LiteralPath $InputPath -Raw | ConvertFrom-Json -AsHashtable
 $watch = [Diagnostics.Stopwatch]::StartNew()
 while (-not [IO.File]::Exists($GatePath)) {
     if ($watch.Elapsed.TotalSeconds -ge $GateTimeoutSeconds) { throw 'Mutation launch gate was not released.' }
@@ -21,6 +21,11 @@ $info.CreateNoWindow = $true
 $info.RedirectStandardOutput = $true
 $info.RedirectStandardError = $true
 foreach ($argument in $command.Arguments) { $info.ArgumentList.Add([string]$argument) }
+if ($command.ContainsKey('Environment') -and $null -ne $command.Environment) {
+    foreach ($entry in $command.Environment.GetEnumerator()) {
+        $info.Environment[[string]$entry.Key] = [string]$entry.Value
+    }
+}
 $process = [Diagnostics.Process]::new()
 $process.StartInfo = $info
 try {

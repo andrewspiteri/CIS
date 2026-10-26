@@ -15,10 +15,18 @@ that the native mutation runner and fixtures can execute the selected scope.
 1. Read the adopted mutation profile, threshold and stronger evidence rules. Fix
    source/configuration/tool identities, scope, wall time, maximum diagnostic
    attempts, artifact budget and free-space reserve before execution.
+   Use `cis test mutation run --profile <path> --kind diagnostic` for a bounded
+   native iteration and `--kind qualification` for the complete declared profile.
+   Keep relevant tests/build/tool configuration in the profile's input pins; target
+   details belong in profiles rather than new mutation controllers.
 2. Qualify a small representative canary through the native mutation runner: healthy
    baseline passes; an intentional mutant produces the intended failed test. Include
-   a real child-process/transport path when relevant, with actual cleanup. Stop on a
-   failed prerequisite before any broad campaign.
+   a real child-process/transport path when relevant, with actual cleanup. Record
+   selected and executed case counts and elapsed time. Verify that early bail
+   reduces the remaining queued work; a stop request alone does not prove saved
+   work. If the adapter continues running queued cases, stop and repair test
+   selection or adapter behavior, then measure again before a broad campaign.
+   Stop on a failed prerequisite before any broad campaign.
 3. Use native early bail by default. Distinguish runner-recorded intentional bail
    from timeout, crash, cancellation and missing protocol evidence. Do not require
    every selected test to execute after a mutant has been detected.
@@ -43,6 +51,10 @@ versions, native report and hashes, distinct status counts, execution failures,
 unrun checks and residual risk. Keep native reports unchanged. Add bounded failure
 diagnostics only when needed; source/runtime copies and per-mutant controllers are
 not routine evidence.
+Successful captures are transient: discard them after assessment. Keep failed
+diagnostics only while useful for an unresolved issue, then remove resolved,
+superseded and duplicate attempts under the repository retention policy. A later
+failed or running attempt must not leave an older passing score looking current.
 
 ## Guardrails
 

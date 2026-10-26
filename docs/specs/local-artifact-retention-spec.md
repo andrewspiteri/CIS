@@ -41,7 +41,17 @@ Retrieval verifies the ZIP digest and extracts all or one retained entry into `.
 
 Delete cleanup creates a tombstone with the same entry metadata before removal. A tombstone proves what was removed but cannot recover its bytes.
 
-Mutation run directories use a small delete-policy budget by default. Keep the native report and compact assessment in the mutation evidence root outside transient `runs` before cleaning bulky execution diagnostics. Copying all diagnostics into archives forever is not the default retention strategy.
+Mutation run directories use a small delete-policy budget by default. Diagnostic
+and iteration artifacts are transient: retain a failing native report, assessment
+and necessary run context only while useful for an open issue or current gate.
+Remove successful canary captures, duplicate reports and superseded diagnostics;
+remove the remaining issue-specific artifacts after resolution. A brief outcome
+and commit reference can remain. Explicit qualification and release retention
+requirements still apply to their own records.
+
+The planner does not determine issue resolution. Review cleanup after writers
+finish and review the profile before removing protected entries. Copying completed
+diagnostics into permanent archive bundles is not the default retention strategy.
 
 ## Idempotence and failure
 

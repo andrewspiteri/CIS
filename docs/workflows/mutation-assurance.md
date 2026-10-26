@@ -16,34 +16,51 @@ a broad mutation campaign. Use bounded diagnostic iterations to improve tests or
 execution, then run the complete declared scope for the release gate. A canary or
 partial diagnostic result cannot satisfy that gate.
 
-This release-tier entry runs separately from ordinary pull-request verification.
-Native Stryker reports remain unchanged derived evidence under
-`.cis/local/testing/mutation/`; assessments and summaries are separate files.
-The suite reconciles `latest-result.json`, which retains the latest readable
-full-attempt report even when its gate fails. The failed workflow state remains
-failed. `cis-abstractions.json` separately retains the last qualifying full report;
-canaries replace neither file. Each copy has a hash-bound assessment sidecar.
+Use the shared [`cis test mutation run`](../manual/cis_test_mutation_run.md) command
+with a repository-owned JSON profile for any module. The profile declares native
+commands, exact production scope, relevant test/configuration inputs, threshold and
+limits. The default diagnostic kind exposes progress without claiming qualification.
+A qualification runs its separate canary first and stops on failure.
 
-Build the current CLI with `dotnet build src/Cis.Host -c Release` before using the
-repository runner. `pwsh tools/run-mutation.ps1 -Canary` runs only the small native
-canary. The normal entry runs that canary first and stops if it fails, before
-starting the complete configured scope. Canary reports never replace the full-scope
-report. Native SDK discovery and a healthy initial test run are prerequisites.
+CIS's own release-tier profile is `tools/mutation-profile.json`. Build the current
+CLI with `dotnet build src/Cis.Host -c Release`, then use
+`pwsh tools/run-mutation.ps1 -Canary` for its small native prerequisite or
+`pwsh tools/run-mutation.ps1` for its full declared scope. The wrapper uses the same
+shared service as other targets. Edit the reviewed profile to change scope or limits;
+the former wrapper-specific output and resource switches have been replaced by those
+profile fields. Preserve the adopted threshold when adapting the profile.
+The .NET profile also disables background build-worker reuse in its target process,
+so SDK workers do not outlive a completed native command. Other targets can declare
+their own environment in the same shared profile contract.
 
-`tools/run-mutation.ps1` defaults to a 1,200-second wall limit,
-512 MiB for one run, 1 GiB for the retained mutation subtree and a 1 GiB free-space
-reserve. Override these explicitly with `-TimeoutSeconds`, `-MaximumRunBytes`,
-`-MaximumRetainedBytes` and `-MinimumFreeBytes`. It samples storage once a second,
-so a fast writer can overshoot a limit between checks. These controls cover the
-declared mutation output; dependency caches and other build scratch remain outside
-that byte total. Resource stops fail qualification and preserve the small run record.
-The workflow table's 3,600-second timeout is an outer ceiling; the runner's earlier
-1,200-second full-run limit applies unless explicitly overridden. Its prerequisite
-canary is separately capped at 120 seconds and 128 MiB.
+Outputs are isolated beneath `.cis/local/testing/mutation/<profile-id>/`.
+`latest-run.json` records every attempted run, including failures without a report.
+`latest-result.json` retains the latest readable diagnostic or qualification report;
+`last-qualification.json` retains the last passing full profile report. Hash-bound
+sidecars preserve raw outcomes and run context. Reconciliation recomputes scores,
+checks input hashes and rejects an older result as current after a later attempt.
+Historical reports remain historical; a failed workflow remains failed.
 
-The retention profile separately plans the transient `runs` family against 512 MiB,
-protecting its two newest entries. It does not automatically delete them. If those
-entries exceed the policy, review the plan and storage decision before another run.
+The profile defaults to a 1,200-second wall limit per native command, 512 MiB for
+one run, 1 GiB for the aggregate mutation subtree and a 1 GiB free-space reserve.
+Storage sampling can overshoot between checks. Dependency caches and build output
+outside owned mutation storage are outside its aggregate byte total. Native resource stops,
+incomplete capture and cleanup failures hold qualification. The workflow table's
+3,600-second timeout is an outer ceiling over the prerequisite and full command.
+Native `TEMP`, `TMP` and `TMPDIR` default to a fresh, short owned directory beneath
+mutation storage. The guard counts its bytes toward the command's run limit and
+the aggregate retained limit; CIS removes it after execution. An explicit profile
+override can place temporary files outside this budget; review that choice.
+
+Successful attempts discard native scratch and capture, retaining a small summary
+and the current profile reports needed for assessment. Failed attempts retain bounded
+diagnostics until resolved or superseded. Failed-run native `logs/` capture keeps
+at most 32 complete text/log files and 16 MiB combined; larger or excess files are
+omitted without truncation. Temporary deployments and binary scratch are removed
+after execution. The retention profile plans this
+repository's `cis-safety/runs` family against 512 MiB, protecting its two newest
+entries; it neither schedules deletion nor infers issue closure. Review cleanup after
+writers finish. Additional profiles need their own reviewed retention-family paths.
 
 | Step | Command | Working directory | Test suites | Depends on | Continue on failure | Timeout seconds |
 |---|---|---|---|---|---|---:|
@@ -60,6 +77,10 @@ entries exceed the policy, review the plan and storage decision before another r
    intended failed test. Include a real child-process/transport path when the scope
    depends on it. Check selected tests, startup, reporting, cleanup and termination;
    a plain test-runner pass alone does not qualify the mutation runner.
+   Record selected and executed case counts and elapsed time. Verify that early
+   bail actually reduces the remaining queued work; a stop request alone does not
+   prove saved work. If the adapter continues running queued cases, stop and repair
+   test selection or adapter behavior before a broad campaign, then measure again.
 3. Stop on a failed canary or resource preflight. Diagnose the smallest failing
    selection before expanding scope. Do not start another broad campaign to
    investigate a runner or fixture that already fails this prerequisite.
@@ -111,10 +132,18 @@ recovered artifact into gate success.
 
 ## Compact evidence and storage
 
-Retain the source commit plus relevant dirty diff, exact command/configuration and
-tool versions, native report, hashes and a small outcome/limitations summary. Link
-existing artifacts instead of copying them into each task. A source hash alone
+Treat iteration artifacts as transient. While investigating an open issue, keep
+the failing native report, assessment, source commit plus relevant dirty diff,
+exact command/configuration, tool versions and a small outcome/limitations summary.
+Link existing artifacts instead of copying them into each task. A source hash alone
 does not preserve an unavailable dirty change, so retain that small diff when needed.
+
+Delete successful canary captures, duplicate reports and superseded diagnostic
+attempts when they are no longer useful. Once the issue is fixed, remove its
+remaining diagnostic artifacts; a brief outcome and commit reference can remain.
+Do not create a permanent evidence bundle for each iteration. Keep raw evidence
+for a current qualification or release only under its explicit retention requirement.
+Cleanup is reviewed after writers finish; the runner does not detect issue resolution.
 
 Full source/runtime copies, every host log and custom per-mutant proof packets are
 not the default. Capture additional material only for a specific unresolved failure,

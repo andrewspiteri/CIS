@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../../tools/Cis.MSTestAdapterCompat/Runtime/Cis.MSTestAdapterCompat.Runtime.csproj" />
+    <ProjectReference Include="../../tools/Cis.MSTestAdapterCompat/Tool/Cis.MSTestAdapterCompat.Tool.csproj" />
+    <PackageDownload Include="MSTest.TestAdapter" Version="[4.5.1]" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
+  </ItemGroup>
+  <Target Name="CopyPinnedAdapterTestInput" AfterTargets="Build">
+    <Copy SourceFiles="$(NuGetPackageRoot)mstest.testadapter/4.5.1/buildTransitive/net9.0/MSTestAdapter.PlatformServices.dll"
+          DestinationFolder="$(TargetDir)fixture-input" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

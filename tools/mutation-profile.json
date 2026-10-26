@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "id": "cis-safety",
+  "workingDirectory": "src/Cis.Abstractions",
+  "command": [
+    "dotnet",
+    "stryker",
+    "--config-file",
+    "stryker-config.json",
+    "--output",
+    "{output}"
+  ],
+  "canaryCommand": [
+    "dotnet",
+    "stryker",
+    "--config-file",
+    "stryker-config.json",
+    "--output",
+    "{output}",
+    "--mutate",
+    "CisPathSafety.cs{665..754}"
+  ],
+  "reportPath": "reports/cis-abstractions-hardening.json",
+  "breakThreshold": 80,
+  "sourceFiles": [
+    "src/Cis.Abstractions/CisPathSafety.cs",
+    "src/Cis.Abstractions/CisArchiveSafety.cs",
+    "src/Cis.Abstractions/CisProcessSafety.cs"
+  ],
+  "configFiles": [
+    "Directory.Build.props",
+    "Directory.Packages.props",
+    "global.json",
+    ".config/dotnet-tools.json",
+    "src/Cis.Abstractions/Cis.Abstractions.csproj",
+    "src/Cis.Abstractions/stryker-config.json",
+    "tests/Cis.Abstractions.Tests/Cis.Abstractions.Tests.csproj",
+    "tests/Cis.Abstractions.Tests/TechnicalIntentPresentationTests.cs",
+    "tests/Cis.Abstractions.Tests/PathAndArchiveSafetyTests.cs",
+    "tests/Cis.Abstractions.Tests/HumanReadableContentPolicyTests.cs",
+    "tests/Cis.Abstractions.Tests/GlobalUsings.cs",
+    "tests/Cis.Abstractions.Tests/CisFrontMatterTests.cs",
+    "tests/Cis.Abstractions.Tests/BrdReviewDispositionCodecTests.cs",
+    "tests/Cis.Abstractions.Tests/BrdPresentationTests.cs"
+  ],
+  "minimumCanaryKills": 1,
+  "timeoutSeconds": 1200,
+  "maxRunBytes": 536870912,
+  "maxRetainedBytes": 1073741824,
+  "minFreeBytes": 1073741824,
+  "environment": {
+    "MSBUILDDISABLENODEREUSE": "1",
+    "DOTNET_CLI_USE_MSBUILD_SERVER": "0"
+  }
+}

@@ -9,4 +9,8 @@
   <ItemGroup>
     <PackageReference Include="System.CommandLine" />
   </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="../../tools/MutationRunner.psm1" LogicalName="Cis.Modules.Testing.MutationRunner.psm1" />
+    <EmbeddedResource Include="../../tools/MutationWorker.ps1" LogicalName="Cis.Modules.Testing.MutationWorker.ps1" />
+  </ItemGroup>
 </Project>

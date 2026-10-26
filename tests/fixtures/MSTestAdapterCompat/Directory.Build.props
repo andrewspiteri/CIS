@@ -1,0 +1,17 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RuntimeFrameworkVersion>10.0.12</RuntimeFrameworkVersion>
+    <RollForward>Disable</RollForward>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <UseSharedCompilation>false</UseSharedCompilation>
+    <NuGetAudit>false</NuGetAudit>
+    <IsPackable>false</IsPackable>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <DefineConstants Condition="'$(CompatFixtureOmitAssemblyInit)' == 'true'">$(DefineConstants);COMPAT_OMIT_ASSEMBLY_INIT</DefineConstants>
+    <DefineConstants Condition="'$(CompatFixtureMethodParallel)' == 'true'">$(DefineConstants);COMPAT_METHOD_PARALLEL</DefineConstants>
+    <DefineConstants Condition="'$(CompatFixtureDependencies)' == 'true'">$(DefineConstants);COMPAT_DEPENDENCIES</DefineConstants>
+  </PropertyGroup>
+</Project>

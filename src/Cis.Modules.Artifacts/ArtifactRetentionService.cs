@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -30,7 +31,7 @@ public sealed class ArtifactRetentionService
         if (!string.IsNullOrWhiteSpace(family)) rules = rules.Where(rule => rule.Family.Equals(family, StringComparison.OrdinalIgnoreCase)).ToArray();
         if (rules.Count == 0 && !string.IsNullOrWhiteSpace(family)) errors.Add($"Artifact family is not configured: {family}");
         var entries = rules.SelectMany(rule => ReadEntries(context, rule, errors)).ToArray();
-        return Result(context, errors.Count == 0 ? "inventoried" : "invalid", rules, entries, ReadArchives(context), [], errors, false);
+        return Result(context, errors.Count == 0 ? "inventoried" : "invalid", rules, entries, ReadArchives(context), [], errors, false, reuseEntries: true);
     }
 
     public ArtifactOperationResult Plan(string repositoryPath, string? family = null)
@@ -49,7 +50,7 @@ public sealed class ArtifactRetentionService
         var candidates = new List<string>();
         foreach (var rule in rules)
         {
-            if (rule.Action == "preserve")
+            if (rule.Action == "preserve" && rule.MaximumBytes is null)
             {
                 _ = FullLocalPath(context, rule.Path, errors);
                 continue;
@@ -83,7 +84,7 @@ public sealed class ArtifactRetentionService
         var temporary = zipPath + ".tmp";
         using (var archive = ZipFile.Open(temporary, ZipArchiveMode.Create))
             foreach (var candidate in candidates) AddToArchive(context, archive, candidate);
-        VerifyArchive(context, temporary, candidates, errors);
+        VerifyArchive(temporary, candidates, errors);
         if (errors.Count > 0) { File.Delete(temporary); return Result(context, "failed", inventory.Rules, candidates, ReadArchives(context), [], errors, false); }
         File.Move(temporary, zipPath);
         var manifest = new ArtifactArchiveManifest(1, archiveId, _clock().ToUniversalTime().ToString("O"), family,
@@ -113,8 +114,14 @@ public sealed class ArtifactRetentionService
         var id = $"CLEAN-{_clock().ToUniversalTime():yyyyMMddHHmmss}-{ShortDigest(string.Join('\n', candidates.Select(item => item.Path)))}";
         var recordPath = Path.Combine(context.RepositoryPath, StateRoot.Replace('/', Path.DirectorySeparatorChar), "cleanup", id + ".json");
         Directory.CreateDirectory(Path.GetDirectoryName(recordPath)!);
-        File.WriteAllText(recordPath, JsonSerializer.Serialize(new { schemaVersion = 1, cleanupId = id,
-            createdUtc = _clock().ToUniversalTime().ToString("O"), family, entries = candidates }, JsonOptions) + Environment.NewLine);
+        File.WriteAllText(recordPath, JsonSerializer.Serialize(new
+        {
+            schemaVersion = 1,
+            cleanupId = id,
+            createdUtc = _clock().ToUniversalTime().ToString("O"),
+            family,
+            entries = candidates
+        }, JsonOptions) + Environment.NewLine);
         foreach (var candidate in candidates)
             try { DeleteEntry(context, candidate.Path); }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
@@ -137,7 +144,7 @@ public sealed class ArtifactRetentionService
         var zipPath = FullLocalPath(context, manifest.ZipPath, errors);
         if (zipPath is null || !File.Exists(zipPath)) errors.Add("Archive ZIP is missing.");
         else if (!Sha256File(zipPath).Equals(manifest.ZipDigest, StringComparison.OrdinalIgnoreCase)) errors.Add("Archive ZIP digest does not match its manifest.");
-        if (errors.Count == 0) ValidateArchive(zipPath!, manifest, errors);
+        if (errors.Count == 0) VerifyArchive(zipPath!, manifest.Entries, errors);
         if (errors.Count > 0) return Result(context, "failed", ReadRules(context, errors), [], ReadArchives(context), [], errors, false);
         var selected = SelectEntries(manifest, entry, errors);
         if (errors.Count > 0) return Result(context, "failed", ReadRules(context, errors), [], ReadArchives(context), [], errors, false);
@@ -156,7 +163,7 @@ public sealed class ArtifactRetentionService
         var zipPath = FullLocalPath(context, manifest.ZipPath, errors);
         if (zipPath is null || !File.Exists(zipPath)) errors.Add("Archive ZIP is missing.");
         else if (!Sha256File(zipPath).Equals(manifest.ZipDigest, StringComparison.OrdinalIgnoreCase)) errors.Add("Archive ZIP digest does not match its manifest.");
-        if (errors.Count == 0) ValidateArchive(zipPath!, manifest, errors);
+        if (errors.Count == 0) VerifyArchive(zipPath!, manifest.Entries, errors);
         foreach (var archived in manifest.Entries)
         {
             var target = FullLocalPath(context, archived.Path, errors);
@@ -194,14 +201,27 @@ public sealed class ArtifactRetentionService
             if (!line.TrimStart().StartsWith('|')) continue;
             var cells = line.Trim().Trim('|').Split('|').Select(cell => cell.Trim()).ToArray();
             if (cells.Length < 5 || cells[0].Equals("Family", StringComparison.OrdinalIgnoreCase) || cells.All(cell => cell.All(ch => ch is '-' or ':' or ' '))) continue;
+            long? maximumBytes = null;
+            if (cells.Length > 6 || cells.Length == 6 && cells[5].Length > 0
+                && (!long.TryParse(cells[5], NumberStyles.None, CultureInfo.InvariantCulture, out var parsedBudget) || parsedBudget < 0))
+            { errors.Add($"Invalid artifact byte budget: {line.Trim()}"); continue; }
+            if (cells.Length == 6 && cells[5].Length > 0) maximumBytes = long.Parse(cells[5], CultureInfo.InvariantCulture);
+            var familyPath = cells[1].Replace('\\', '/').TrimEnd('/');
             if (!int.TryParse(cells[2], out var days) || days < 0 || !int.TryParse(cells[3], out var latest) || latest < 0
-                || cells[1].Contains("..", StringComparison.Ordinal) || !cells[1].StartsWith(".cis/local/", StringComparison.Ordinal)
-                || cells[1].StartsWith(StateRoot + "/", StringComparison.OrdinalIgnoreCase)
+                || familyPath.Contains("..", StringComparison.Ordinal) || !familyPath.StartsWith(".cis/local/", StringComparison.Ordinal)
+                || familyPath.Equals(StateRoot, StringComparison.OrdinalIgnoreCase)
+                || familyPath.StartsWith(StateRoot + "/", StringComparison.OrdinalIgnoreCase)
                 || cells[4] is not ("preserve" or "archive" or "delete"))
             { errors.Add($"Invalid artifact retention row: {line.Trim()}"); continue; }
-            rules.Add(new(cells[0], cells[1].TrimEnd('/'), days, latest, cells[4]));
+            rules.Add(new(cells[0], familyPath, days, latest, cells[4], maximumBytes));
         }
         foreach (var conflict in rules.GroupBy(rule => rule.Family, StringComparer.OrdinalIgnoreCase).Where(group => group.Count() > 1)) errors.Add($"Duplicate artifact family: {conflict.Key}");
+        for (var index = 0; index < rules.Count; index++)
+            foreach (var other in rules.Skip(index + 1))
+                if (rules[index].Path.Equals(other.Path, StringComparison.OrdinalIgnoreCase)
+                    || rules[index].Path.StartsWith(other.Path + "/", StringComparison.OrdinalIgnoreCase)
+                    || other.Path.StartsWith(rules[index].Path + "/", StringComparison.OrdinalIgnoreCase))
+                    errors.Add($"Artifact families have overlapping paths: {rules[index].Family}, {other.Family}");
         return rules;
     }
 
@@ -220,20 +240,35 @@ public sealed class ArtifactRetentionService
             new DirectoryInfo(full).EnumerateFileSystemInfos("*", MetadataOptions(recursive: false)).ToArray();
         // If every entry is protected by KeepLatest, no age or size can make one eligible.
         // Doctor can avoid traversing large retained trees; explicit plans still report them.
-        if (candidatesOnly && children.Length <= rule.KeepLatest) return [];
+        if (candidatesOnly && rule.MaximumBytes is null && children.Length <= rule.KeepLatest) return [];
         var ranked = children.Select(ReadEntryMetadata).OrderByDescending(item => item.LastWrite)
             .ThenBy(item => item.Path, StringComparer.OrdinalIgnoreCase).ToArray();
         var cutoff = _clock().ToUniversalTime().AddDays(-rule.RetainDays);
-        return ranked.Select((item, index) => (item,
-            rule.Action != "preserve" && index >= rule.KeepLatest && item.LastWrite.ToUniversalTime() < cutoff)).ToArray();
+        var candidates = ranked.Select((item, index) =>
+            rule.Action != "preserve" && index >= rule.KeepLatest && item.LastWrite.ToUniversalTime() < cutoff).ToArray();
+        var remaining = ranked.Where((_, index) => !candidates[index]).Sum(item => item.Size);
+        if (rule.MaximumBytes is { } maximum)
+        {
+            for (var index = ranked.Length - 1; index >= rule.KeepLatest && remaining > maximum && rule.Action != "preserve"; index--)
+            {
+                if (candidates[index]) continue;
+                candidates[index] = true;
+                remaining -= ranked[index].Size;
+            }
+            if (remaining > maximum)
+                errors.Add($"Artifact family '{rule.Family}' exceeds its {maximum} byte budget: {remaining} protected bytes remain; review the retention policy or budget before cleanup.");
+        }
+        return ranked.Select((item, index) => (item, candidates[index])).ToArray();
     }
 
     private sealed record EntryMetadata(string Path, string Kind, long Size, DateTimeOffset LastWrite);
 
     private static EnumerationOptions MetadataOptions(bool recursive) => new()
     {
-        RecurseSubdirectories = recursive, IgnoreInaccessible = false,
-        AttributesToSkip = FileAttributes.ReparsePoint, ReturnSpecialDirectories = false
+        RecurseSubdirectories = recursive,
+        IgnoreInaccessible = false,
+        AttributesToSkip = FileAttributes.ReparsePoint,
+        ReturnSpecialDirectories = false
     };
 
     private static EntryMetadata ReadEntryMetadata(FileSystemInfo entry)
@@ -265,36 +300,62 @@ public sealed class ArtifactRetentionService
         }
     }
 
-    private static void VerifyArchive(CisRepositoryContext context, string zipPath, IReadOnlyList<LocalArtifactEntry> candidates, List<string> errors)
+    private static void VerifyArchive(string zipPath, IReadOnlyList<LocalArtifactEntry> candidates, List<string> errors)
     {
-        ValidateArchive(zipPath, new ArtifactArchiveManifest(1, "verification", "", "", "", "", candidates), errors);
-        if (errors.Count > 0) return;
-        using var archive = ZipFile.OpenRead(zipPath);
-        var root = Path.Combine(Path.GetTempPath(), "cis-artifact-verify", Guid.NewGuid().ToString("N"));
         try
         {
-            Directory.CreateDirectory(root);
-            foreach (var entry in archive.Entries)
-            {
-                var target = SafeExtractionPath(root, entry.FullName, errors);
-                if (target is null) continue;
-                if (string.IsNullOrEmpty(entry.Name)) { Directory.CreateDirectory(target); continue; }
-                Directory.CreateDirectory(Path.GetDirectoryName(target)!); ExtractBounded(entry, target, overwrite: false, errors);
-            }
+            using var archive = ZipFile.OpenRead(zipPath);
+            ValidateArchive(archive, new ArtifactArchiveManifest(1, "verification", "", "", "", "", candidates), errors);
+            if (errors.Count > 0) return;
+            var entries = archive.Entries.OrderBy(entry => entry.FullName, StringComparer.OrdinalIgnoreCase).ToArray();
+            var names = entries.Select(entry => entry.FullName).ToArray();
+            var byName = entries.ToDictionary(entry => entry.FullName, StringComparer.Ordinal);
+            var buffer = new byte[81920];
             foreach (var candidate in candidates)
             {
-                var extracted = Path.Combine(root, candidate.Path.Replace('/', Path.DirectorySeparatorChar));
-                if (!File.Exists(extracted) && !Directory.Exists(extracted) || !HashEntry(extracted).Equals(candidate.Digest, StringComparison.OrdinalIgnoreCase))
+                using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+                var prefix = candidate.Path.TrimEnd('/') + "/";
+                var selected = new List<ZipArchiveEntry>();
+                if (candidate.Kind == "file")
+                {
+                    if (byName.TryGetValue(candidate.Path, out var entry) && !entry.FullName.EndsWith('/')) selected.Add(entry);
+                }
+                else
+                {
+                    var start = Array.BinarySearch(names, prefix, StringComparer.OrdinalIgnoreCase);
+                    if (start < 0) start = ~start;
+                    for (var index = start; index < entries.Length && names[index].StartsWith(prefix, StringComparison.OrdinalIgnoreCase); index++)
+                        if (names[index].StartsWith(prefix, StringComparison.Ordinal)) selected.Add(entries[index]);
+                }
+                long size = 0;
+                foreach (var entry in selected)
+                {
+                    if (entry.FullName.EndsWith('/')) continue;
+                    if (candidate.Kind == "directory") hash.AppendData(Encoding.UTF8.GetBytes(entry.FullName[prefix.Length..] + "\n"));
+                    using var input = entry.Open();
+                    long readBytes = 0; int read;
+                    while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
+                    {
+                        if (read > entry.Length - readBytes || read > MaximumExpandedBytes - size)
+                            throw new InvalidDataException("Expanded entry exceeds its declared or configured size.");
+                        readBytes += read; size += read;
+                        hash.AppendData(buffer.AsSpan(0, read));
+                    }
+                    if (readBytes != entry.Length) throw new InvalidDataException("Expanded entry size does not match its declaration.");
+                }
+                if (selected.Count == 0 || size != candidate.SizeBytes
+                    || !Convert.ToHexString(hash.GetHashAndReset()).Equals(candidate.Digest, StringComparison.OrdinalIgnoreCase))
                     errors.Add($"Archive verification failed for {candidate.Path}");
             }
         }
-        finally { try { Directory.Delete(root, true); } catch { } }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException)
+        { errors.Add($"Could not verify archive: {exception.Message}"); }
     }
 
     private static IReadOnlyList<string> Extract(CisRepositoryContext context, string zipPath, string outputRoot,
         IReadOnlyList<LocalArtifactEntry> selected, bool overwrite, List<string> errors)
     {
-        if (CisPathSafety.ContainsReparsePoint(context.RepositoryPath, Path.GetDirectoryName(outputRoot) ?? context.RepositoryPath))
+        if (CisPathSafety.ContainsReparsePoint(context.RepositoryPath, outputRoot))
         { errors.Add("Artifact extraction root crosses a symbolic link."); return []; }
         Directory.CreateDirectory(outputRoot);
         var prefixes = selected.Select(item => item.Path.TrimEnd('/') + "/").ToArray();
@@ -350,8 +411,10 @@ public sealed class ArtifactRetentionService
 
     private static string? SafeExtractionPath(string root, string relative, List<string> errors)
     {
-        if (!CisPathSafety.TryResolveUnderRoot(root, relative.Replace('\\', '/'), out var target)
-            || CisPathSafety.ContainsReparsePoint(root, Path.GetDirectoryName(target) ?? root))
+        var normalized = relative.Replace('\\', '/');
+        if (normalized.EndsWith('/')) normalized = normalized[..^1];
+        if (!CisPathSafety.TryResolveUnderRoot(root, normalized, out var target)
+            || CisPathSafety.ContainsReparsePoint(root, target))
         { errors.Add($"Archive entry escapes its extraction root or crosses a symbolic link: {relative}"); return null; }
         return target;
     }
@@ -359,7 +422,12 @@ public sealed class ArtifactRetentionService
     private static void DeleteEntry(CisRepositoryContext context, string relative)
     {
         var errors = new List<string>(); var full = FullLocalPath(context, relative, errors) ?? throw new InvalidOperationException(string.Join("; ", errors));
-        if (File.Exists(full)) File.Delete(full); else if (Directory.Exists(full)) Directory.Delete(full, true);
+        if (File.Exists(full)) File.Delete(full);
+        else if (Directory.Exists(full))
+        {
+            if (CisPathSafety.ContainsReparsePointInTree(full)) throw new InvalidOperationException("Artifact directory crosses a symbolic link or cannot be safely inspected.");
+            Directory.Delete(full, true);
+        }
     }
     private static string HashEntry(string path)
     {
@@ -371,9 +439,8 @@ public sealed class ArtifactRetentionService
         }
         return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
     }
-    private static void ValidateArchive(string zipPath, ArtifactArchiveManifest manifest, List<string> errors)
+    private static void ValidateArchive(ZipArchive archive, ArtifactArchiveManifest manifest, List<string> errors)
     {
-        using var archive = ZipFile.OpenRead(zipPath);
         if (archive.Entries.Count > MaximumArchiveEntries)
         { errors.Add($"Archive exceeds the {MaximumArchiveEntries} entry limit."); return; }
         var exact = manifest.Entries.Where(item => item.Kind == "file").Select(item => item.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -390,6 +457,8 @@ public sealed class ArtifactRetentionService
             if (identity.Length == 0 || !identities.Add(identity)) { errors.Add($"Archive contains an empty or duplicate path: {entry.FullName}"); continue; }
             if (!CisPathSafety.TryResolveUnderRoot(validationRoot, identity, out _)) errors.Add($"Archive contains an invalid path: {entry.FullName}");
             if (IsSymbolicLink(entry)) errors.Add($"Archive contains a symbolic-link entry: {entry.FullName}");
+            if (entry.FullName.Contains('\\') || entry.FullName.EndsWith('/') && entry.Length != 0)
+                errors.Add($"Archive contains an invalid file or directory name: {entry.FullName}");
             if (!exact.Contains(normalized) && !prefixes.Any(prefix => normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
                 errors.Add($"Archive contains an entry not declared by its manifest: {entry.FullName}");
             if (entry.Length < 0 || entry.Length > MaximumExpandedBytes - expanded) errors.Add($"Archive exceeds the {MaximumExpandedBytes} byte expanded-size limit.");
@@ -439,9 +508,41 @@ public sealed class ArtifactRetentionService
         }
     }
     private CisRepositoryContext? Resolve(string path, out List<string> errors) { var result = _resolver.Resolve(path); errors = result.Errors.ToList(); return result.Context; }
-    private static ArtifactOperationResult Result(CisRepositoryContext context, string status, IReadOnlyList<ArtifactRetentionRule> rules,
+    private ArtifactOperationResult Result(CisRepositoryContext context, string status, IReadOnlyList<ArtifactRetentionRule> rules,
         IReadOnlyList<LocalArtifactEntry> entries, IReadOnlyList<ArtifactArchiveManifest> archives, IReadOnlyList<string> outputs,
-        IReadOnlyList<string> errors, bool applied) => new(status, context.RepositoryPath, rules, entries, archives, outputs, errors, applied);
+        IReadOnlyList<string> errors, bool applied, bool reuseEntries = false)
+    {
+        var storageErrors = errors.ToList();
+        var families = new List<ArtifactFamilyStorage>();
+        foreach (var rule in rules)
+        {
+            var ranked = reuseEntries
+                ? entries.Where(entry => entry.Family.Equals(rule.Family, StringComparison.OrdinalIgnoreCase))
+                    .Select(entry => (Size: entry.SizeBytes, entry.Candidate)).ToArray()
+                : RankEntries(context, rule, storageErrors).Select(entry => (entry.Metadata.Size, entry.Candidate)).ToArray();
+            long live = ranked.Sum(item => item.Size);
+            long candidates = ranked.Where(item => item.Candidate).Sum(item => item.Size);
+            long protectedBytes = rule.Action == "preserve" ? live : ranked.Take(rule.KeepLatest).Sum(item => item.Size);
+            families.Add(new(rule.Family, live, protectedBytes, candidates, live - candidates, rule.MaximumBytes,
+                rule.MaximumBytes is { } maximum && live > maximum,
+                rule.MaximumBytes is { } limit && live - candidates > limit));
+        }
+        long management = 0, archiveBytes = 0;
+        var root = FullLocalPath(context, StateRoot, storageErrors);
+        if (root is not null && Directory.Exists(root))
+        {
+            management = ReadEntryMetadata(new DirectoryInfo(root)).Size;
+            var archiveRoot = Path.Combine(root, "archive");
+            if (Directory.Exists(archiveRoot))
+                archiveBytes = new DirectoryInfo(archiveRoot).EnumerateFiles("*.zip", MetadataOptions(recursive: false)).Sum(file => file.Length);
+        }
+        long configured = families.Sum(family => family.LiveBytes);
+        return new(status, context.RepositoryPath, rules, entries, archives, outputs, storageErrors.Distinct(StringComparer.Ordinal).ToArray(), applied)
+        {
+            FamilyStorage = families,
+            Storage = new(configured, archiveBytes, management, checked(configured + management))
+        };
+    }
     private static ArtifactOperationResult Failed(IReadOnlyList<string> errors) => new("failed", null, [], [], [], [], errors, false);
     private static string Relative(CisRepositoryContext context, string path) => Path.GetRelativePath(context.RepositoryPath, path).Replace('\\', '/');
     private static string Sha256(byte[] value) => Convert.ToHexString(SHA256.HashData(value)).ToLowerInvariant();

@@ -5,7 +5,24 @@ public sealed record ArtifactRetentionRule(
     string Path,
     int RetainDays,
     int KeepLatest,
-    string Action);
+    string Action,
+    long? MaximumBytes = null);
+
+public sealed record ArtifactFamilyStorage(
+    string Family,
+    long LiveBytes,
+    long ProtectedBytes,
+    long CandidateBytes,
+    long PlannedLiveBytes,
+    long? MaximumBytes,
+    bool BudgetExceeded,
+    bool BudgetBlocked);
+
+public sealed record ArtifactStorageTotals(
+    long ConfiguredLiveBytes,
+    long ArchiveBytes,
+    long ManagementBytes,
+    long TotalReportedBytes);
 
 public sealed record LocalArtifactEntry(
     string Family,
@@ -36,5 +53,7 @@ public sealed record ArtifactOperationResult(
     IReadOnlyList<string> Errors,
     bool Applied)
 {
+    public IReadOnlyList<ArtifactFamilyStorage> FamilyStorage { get; init; } = [];
+    public ArtifactStorageTotals? Storage { get; init; }
     public int ExitCode => Errors.Count > 0 ? 4 : 0;
 }

@@ -223,10 +223,302 @@ public sealed class ArtifactRetentionTests
         Assert.Contains(secondResult.Archives, item => item.ArchiveId.EndsWith("-2", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void Plan_BytePressureSelectsOnlyOldestUnprotectedRecentEntries()
+    {
+        using var repository = Fixture.Create();
+        repository.Write("docs/cis/references/local-artifact-retention.md", """
+            | Family | Path | Retain days | Keep latest | Action | Maximum bytes |
+            |---|---|---:|---:|---|---:|
+            | runs | .cis/local/runs | 30 | 1 | delete | 8 |
+            """);
+        foreach (var (name, day) in new[] { ("old", 24), ("middle", 25), ("new", 26) })
+        {
+            repository.Write($".cis/local/runs/{name}/result.txt", "1234");
+            repository.Age($".cis/local/runs/{name}/result.txt", new DateTime(2026, 8, day, 0, 0, 0, DateTimeKind.Utc));
+        }
+
+        var service = repository.Service();
+        var plan = service.Plan(repository.Path);
+
+        Assert.Empty(plan.Errors);
+        Assert.Equal(".cis/local/runs/old", Assert.Single(plan.Entries, item => item.Candidate).Path);
+        var usage = Assert.Single(plan.FamilyStorage);
+        Assert.Equal(12, usage.LiveBytes);
+        Assert.Equal(4, usage.ProtectedBytes);
+        Assert.Equal(4, usage.CandidateBytes);
+        Assert.Equal(8, usage.PlannedLiveBytes);
+        Assert.True(usage.BudgetExceeded);
+        Assert.False(usage.BudgetBlocked);
+        Assert.Equal(4, service.Clean(repository.Path, "runs", false).ExitCode);
+        Assert.True(Directory.Exists(System.IO.Path.Combine(repository.Path, ".cis/local/runs/old")));
+        var cleaned = service.Clean(repository.Path, "runs", true);
+        Assert.Equal("cleaned", cleaned.Status);
+        Assert.Equal(8, Assert.Single(cleaned.FamilyStorage).LiveBytes);
+        Assert.True(File.Exists(System.IO.Path.Combine(repository.Path, ".cis/local/runs/new/result.txt")));
+    }
+
+    [Fact]
+    public void InitializedRepository_ProvidesTheMutationRunBudget()
+    {
+        using var repository = Fixture.CreateInitialized();
+
+        var inventory = repository.Service().Inventory(repository.Path, "mutation-runs");
+
+        Assert.Empty(inventory.Errors);
+        var rule = Assert.Single(inventory.Rules);
+        Assert.Equal(".cis/local/testing/mutation/runs", rule.Path);
+        Assert.Equal("delete", rule.Action);
+        Assert.Equal(1, rule.RetainDays);
+        Assert.Equal(2, rule.KeepLatest);
+        Assert.Equal(536870912, rule.MaximumBytes);
+    }
+
+    [Fact]
+    public void Plan_ProtectedEntriesExceedingBudgetBlockCleanupWithoutDeletingAnything()
+    {
+        using var repository = Fixture.Create();
+        repository.Write("docs/cis/references/local-artifact-retention.md", """
+            | Family | Path | Retain days | Keep latest | Action | Maximum bytes |
+            |---|---|---:|---:|---|---:|
+            | runs | .cis/local/runs | 1 | 2 | delete | 3 |
+            """);
+        repository.Write(".cis/local/runs/first.txt", "1234");
+        repository.Write(".cis/local/runs/second.txt", "5678");
+
+        var service = repository.Service();
+        var plan = service.Plan(repository.Path);
+
+        Assert.Equal(4, plan.ExitCode);
+        Assert.Contains(plan.Errors, error => error.Contains("8 protected bytes", StringComparison.Ordinal));
+        Assert.True(Assert.Single(plan.FamilyStorage).BudgetBlocked);
+        Assert.DoesNotContain(plan.Entries, entry => entry.Candidate);
+        Assert.False(service.Clean(repository.Path, "runs", true).Applied);
+        Assert.Equal(2, Directory.GetFiles(System.IO.Path.Combine(repository.Path, ".cis/local/runs")).Length);
+        var context = new CisRepositoryContextResolver().Resolve(repository.Path).Context!;
+        Assert.Equal("CIS-ARTIFACT-DOCTOR-001", Assert.Single(new ArtifactDoctorCheck(service).Inspect(context)).Code);
+    }
+
+    [Fact]
+    public void Plan_AgeCandidatesCountTowardBudgetAndPreserveRemainsProtected()
+    {
+        using var repository = Fixture.Create();
+        repository.Write("docs/cis/references/local-artifact-retention.md", """
+            | Family | Path | Retain days | Keep latest | Action | Maximum bytes |
+            |---|---|---:|---:|---|---:|
+            | runs | .cis/local/runs | 7 | 1 | delete | 4 |
+            | retained | .cis/local/retained | 0 | 0 | preserve | 1 |
+            """);
+        repository.Write(".cis/local/runs/old.txt", "1234");
+        repository.Write(".cis/local/runs/new.txt", "5678");
+        repository.Age(".cis/local/runs/old.txt", new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        repository.Age(".cis/local/runs/new.txt", new DateTime(2026, 8, 26, 0, 0, 0, DateTimeKind.Utc));
+        repository.Write(".cis/local/retained/result.txt", "retain");
+
+        var plan = repository.Service().Plan(repository.Path);
+
+        Assert.Single(plan.Entries, entry => entry.Candidate);
+        Assert.False(Assert.Single(plan.FamilyStorage, usage => usage.Family == "runs").BudgetBlocked);
+        Assert.True(Assert.Single(plan.FamilyStorage, usage => usage.Family == "retained").BudgetBlocked);
+        Assert.DoesNotContain(plan.Entries, entry => entry.Family == "retained" && entry.Candidate);
+    }
+
+    [Theory]
+    [InlineData("-1")]
+    [InlineData("1.5")]
+    [InlineData("512 MiB")]
+    [InlineData("9223372036854775808")]
+    public void Plan_RejectsInvalidByteBudgets(string budget)
+    {
+        using var repository = Fixture.Create();
+        repository.Write("docs/cis/references/local-artifact-retention.md", $"| runs | .cis/local/runs | 1 | 0 | delete | {budget} |");
+
+        var plan = repository.Service().Plan(repository.Path);
+
+        Assert.Equal(4, plan.ExitCode);
+        Assert.Contains(plan.Errors, error => error.Contains("Invalid artifact byte budget", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Plan_FiveColumnsAndEmptyBudgetPreserveAgeOnlyBehavior()
+    {
+        using var repository = Fixture.Create();
+        repository.Write("docs/cis/references/local-artifact-retention.md", """
+            | old-format | .cis/local/first | 7 | 0 | delete |
+            | empty-budget | .cis/local/second | 7 | 0 | delete | |
+            """);
+        repository.Write(".cis/local/first/recent.txt", "recent");
+        repository.Write(".cis/local/second/recent.txt", "recent");
+
+        var plan = repository.Service().Plan(repository.Path);
+
+        Assert.Empty(plan.Errors);
+        Assert.Equal(2, plan.Rules.Count);
+        Assert.All(plan.Rules, rule => Assert.Null(rule.MaximumBytes));
+        Assert.DoesNotContain(plan.Entries, entry => entry.Candidate);
+    }
+
+    [Fact]
+    public void Doctor_FindsBytePressureWithoutOpeningArtifactContent()
+    {
+        using var repository = Fixture.Create();
+        repository.Write("docs/cis/references/local-artifact-retention.md", "| runs | .cis/local/runs | 30 | 0 | delete | 0 |");
+        repository.Write(".cis/local/runs/recent.txt", "recent");
+        var path = System.IO.Path.Combine(repository.Path, ".cis/local/runs/recent.txt");
+        using var locked = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        var context = new CisRepositoryContextResolver().Resolve(repository.Path).Context!;
+
+        var finding = Assert.Single(new ArtifactDoctorCheck(repository.Service()).Inspect(context));
+
+        Assert.Equal("CIS-ARTIFACT-DOCTOR-002", finding.Code);
+        Assert.Equal(".cis/local/runs/recent.txt", Assert.Single(finding.Evidence));
+    }
+
+    [Fact]
+    public void Compact_ReportsArchiveGrowthSeparatelyFromLiveFamilyBytes()
+    {
+        using var repository = Fixture.Create();
+        repository.Write(".cis/local/runs/old/result.txt", new string('a', 200_000));
+        repository.Write(".cis/local/runs/old/nested/z.txt", "last");
+        repository.Write(".cis/local/runs/old/nested/a.txt", "first");
+        repository.Age(".cis/local/runs/old/result.txt", new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        repository.Age(".cis/local/runs/old/nested/z.txt", new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        repository.Age(".cis/local/runs/old/nested/a.txt", new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        var service = repository.Service();
+
+        var compacted = service.Compact(repository.Path, "runs", true);
+
+        Assert.Empty(compacted.Errors);
+        var storage = Assert.IsType<ArtifactStorageTotals>(compacted.Storage);
+        Assert.Equal(0, storage.ConfiguredLiveBytes);
+        Assert.True(storage.ArchiveBytes > 0);
+        Assert.True(storage.ManagementBytes > storage.ArchiveBytes);
+        Assert.Equal(storage.ManagementBytes, storage.TotalReportedBytes);
+        var retrieved = service.Retrieve(repository.Path, Assert.Single(compacted.Archives).ArchiveId);
+        Assert.Equal("retrieved", retrieved.Status);
+        Assert.True(retrieved.Storage!.ManagementBytes > storage.ManagementBytes);
+    }
+
+    [Fact]
+    public void CompactAndRetrieve_PreserveAnEmptyDirectory()
+    {
+        using var repository = Fixture.Create();
+        var directory = System.IO.Path.Combine(repository.Path, ".cis/local/runs/empty");
+        Directory.CreateDirectory(directory);
+        Directory.SetLastWriteTimeUtc(directory, new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        var service = repository.Service();
+
+        var compacted = service.Compact(repository.Path, "runs", true);
+        var archive = Assert.Single(compacted.Archives);
+        var retrieved = service.Retrieve(repository.Path, archive.ArchiveId);
+
+        Assert.Empty(compacted.Errors);
+        Assert.Empty(retrieved.Errors);
+        Assert.True(Directory.Exists(System.IO.Path.Combine(repository.Path, ".cis/local/artifacts/retrieved", archive.ArchiveId, ".cis/local/runs/empty")));
+    }
+
+    [Fact]
+    public void Retrieve_RejectsAMissingDeclaredEmptyDirectory()
+    {
+        using var repository = Fixture.Create();
+        var directory = System.IO.Path.Combine(repository.Path, ".cis/local/runs/empty");
+        Directory.CreateDirectory(directory);
+        Directory.SetLastWriteTimeUtc(directory, new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        var service = repository.Service();
+        var manifest = Assert.Single(service.Compact(repository.Path, "runs", true).Archives);
+        RewriteArchive(repository, manifest, archive => archive.GetEntry(".cis/local/runs/empty/")!.Delete());
+
+        var result = service.Retrieve(repository.Path, manifest.ArchiveId);
+
+        Assert.Equal(4, result.ExitCode);
+        Assert.Contains(result.Errors, error => error.Contains("Archive verification failed", StringComparison.Ordinal));
+        Assert.Empty(result.Outputs);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void RetrieveAndRestore_VerifyDeclaredContentEvenWhenZipDigestIsRewritten(bool restore)
+    {
+        using var repository = Fixture.Create();
+        repository.Write(".cis/local/runs/old/result.txt", "original");
+        repository.Age(".cis/local/runs/old/result.txt", new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        var service = repository.Service();
+        var manifest = Assert.Single(service.Compact(repository.Path, "runs", true).Archives);
+        RewriteArchive(repository, manifest, archive =>
+        {
+            archive.GetEntry(".cis/local/runs/old/result.txt")!.Delete();
+            using var writer = new StreamWriter(archive.CreateEntry(".cis/local/runs/old/result.txt").Open());
+            writer.Write("modified");
+        });
+
+        var result = restore ? service.Restore(repository.Path, manifest.ArchiveId, true) : service.Retrieve(repository.Path, manifest.ArchiveId);
+
+        Assert.Equal(4, result.ExitCode);
+        Assert.Contains(result.Errors, error => error.Contains("Archive verification failed", StringComparison.Ordinal));
+        Assert.Empty(result.Outputs);
+        Assert.False(Directory.Exists(System.IO.Path.Combine(repository.Path, ".cis/local/runs/old")));
+    }
+
+    [Theory]
+    [InlineData("../outside.txt", false)]
+    [InlineData(".cis/local/runs/old/result.txt", false)]
+    [InlineData(".cis/local/runs/old/link", true)]
+    public void Retrieve_StillRejectsTraversalDuplicateAndSymbolicLinkEntries(string name, bool symbolicLink)
+    {
+        using var repository = Fixture.Create();
+        repository.Write(".cis/local/runs/old/result.txt", "original");
+        repository.Age(".cis/local/runs/old/result.txt", new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        var service = repository.Service();
+        var manifest = Assert.Single(service.Compact(repository.Path, "runs", true).Archives);
+        RewriteArchive(repository, manifest, archive =>
+        {
+            var entry = archive.CreateEntry(name);
+            if (symbolicLink) entry.ExternalAttributes = unchecked((int)0xA1FF0000);
+            using var writer = new StreamWriter(entry.Open());
+            writer.Write("injected");
+        });
+
+        var result = service.Retrieve(repository.Path, manifest.ArchiveId);
+
+        Assert.Equal(4, result.ExitCode);
+        Assert.Empty(result.Outputs);
+    }
+
+    [Theory]
+    [InlineData("| state | .cis/local/artifacts | 0 | 0 | delete |")]
+    [InlineData("| state | .cis/local/artifacts\\archive | 0 | 0 | delete |")]
+    [InlineData("| first | .cis/local/runs | 0 | 0 | delete |\n| nested | .cis/local/runs/nested | 0 | 0 | delete |")]
+    [InlineData("| first | .cis/local/runs | 0 | 0 | delete |\n| nested | .cis/local/runs\\nested | 0 | 0 | delete |")]
+    public void Plan_RejectsManagementAndOverlappingFamilyAuthority(string profile)
+    {
+        using var repository = Fixture.Create();
+        repository.Write("docs/cis/references/local-artifact-retention.md", profile);
+
+        Assert.Equal(4, repository.Service().Plan(repository.Path).ExitCode);
+    }
+
+    private static void RewriteArchive(Fixture repository, ArtifactArchiveManifest manifest, Action<ZipArchive> edit)
+    {
+        var path = System.IO.Path.Combine(repository.Path, manifest.ZipPath.Replace('/', System.IO.Path.DirectorySeparatorChar));
+        using (var archive = ZipFile.Open(path, ZipArchiveMode.Update)) edit(archive);
+        var rewritten = manifest with { ZipDigest = Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path))) };
+        var manifestPath = System.IO.Path.Combine(repository.Path, ".cis/local/artifacts/archive", manifest.ArchiveId + ".json");
+        File.WriteAllText(manifestPath, JsonSerializer.Serialize(rewritten, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+    }
+
     private sealed class Fixture : IDisposable
     {
         public string Path { get; }
         private Fixture(string path) => Path = path;
+        public static Fixture CreateInitialized()
+        {
+            var fixture = new Fixture(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "cis-artifacts-tests", Guid.NewGuid().ToString("N")));
+            Directory.CreateDirectory(fixture.Path);
+            var initialized = new RepositoryInitializer().Initialize(new RepositoryInitRequest(fixture.Path, "docs/cis", DryRun: false, Confirmed: true));
+            Assert.Equal(0, initialized.ExitCode);
+            return fixture;
+        }
         public static Fixture Create()
         {
             var fixture = new Fixture(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "cis-artifacts-tests", Guid.NewGuid().ToString("N")));

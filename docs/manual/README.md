@@ -63,6 +63,7 @@ Each loaded module owns one top-level command group. The following leaf commands
 | [`cis test inventory`](cis_test_inventory.md) | Persist the classification-selected test-suite inventory. |
 | [`cis test validate`](cis_test_validate.md) | Validate suite contracts, adapters, and local evidence paths. |
 | [`cis test reconcile`](cis_test_reconcile.md) | Reconcile native runner outputs into typed test evidence. |
+| [`cis test mutation assess`](cis_test_mutation_assess.md) | Assess native mutation outcomes with a conservative score and explicit execution limits. |
 | [`cis test trace`](cis_test_trace.md) | Prove exact manual-case identities executed and passed. |
 | [`cis test status`](cis_test_status.md) | Report traceability for an exact or latest reconciled run. |
 | [`cis security inventory`](cis_security_inventory.md) | Persist the classification-selected security-suite inventory. |

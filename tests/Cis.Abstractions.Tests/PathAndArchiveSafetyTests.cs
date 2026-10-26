@@ -164,7 +164,10 @@ public sealed class PathAndArchiveSafetyTests
         Assert.True(bounded.OutputTruncated);
         Assert.True(bounded.StandardOutput.Length <= 128);
 
-        var slow = Command("ping 127.0.0.1 -n 20 >nul", "sleep 20");
+        // A shell read blocks on this owned, open pipe without relying on an
+        // external network command or a timing-dependent delay utility.
+        var slow = Command("set /p waiting=", "read waiting");
+        slow.RedirectStandardInput = true;
         var stopwatch = Stopwatch.StartNew();
         var timed = CisProcessSafety.Run(slow, TimeSpan.FromMilliseconds(100));
         stopwatch.Stop();

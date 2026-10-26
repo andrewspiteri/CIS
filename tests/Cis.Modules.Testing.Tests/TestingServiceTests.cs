@@ -157,7 +157,7 @@ public sealed partial class TestingServiceTests
     public void StrykerAdapter_ReportsSurvivorsAsFindings()
     {
         using var repository = TestRepository.Create();
-        repository.Write(".cis/local/results/stryker.json", """{"files":{"src/app.ts":{"mutants":[{"status":"Killed"},{"status":"Survived"},{"status":"Timeout"},{"status":"NoCoverage"}]}}}""");
+        repository.Write(".cis/local/results/stryker.json", MutationReport("Killed", "Survived", "Timeout", "NoCoverage"));
         var execution = new StrykerJsonResultAdapter().Read(new(repository.Path,
             Suite("api-mutation", "mutation", "stryker-json", ".cis/local/results/stryker.json"),
             Path.Combine(repository.Path, ".cis/local/results/stryker.json"), null, null));
@@ -165,7 +165,9 @@ public sealed partial class TestingServiceTests
         Assert.Equal("findings", execution.Status);
         Assert.Equal(2, execution.Mutation!.Killed + execution.Mutation.TimedOut);
         Assert.Equal(1, execution.Mutation.Survived);
-        Assert.Equal(50, execution.Mutation.Score);
+        Assert.Equal(25, execution.Mutation.Score);
+        Assert.Equal(50, execution.Mutation.NativeScore);
+        Assert.Equal(1, execution.Passed);
     }
 
     [Theory]
@@ -176,7 +178,7 @@ public sealed partial class TestingServiceTests
     public void StrykerAdapter_NonExecutedMutantsCannotPass(string status)
     {
         using var repository = TestRepository.Create();
-        repository.Write(".cis/local/results/stryker.json", """{"status":"Killed","files":{"src/app.cs":{"mutants":[{"status":"STATUS"}]}}}""".Replace("STATUS", status));
+        repository.Write(".cis/local/results/stryker.json", MutationReport(status));
         var execution = new StrykerJsonResultAdapter().Read(new(repository.Path,
             Suite("api-mutation", "mutation", "stryker-json", ".cis/local/results/stryker.json"),
             Path.Combine(repository.Path, ".cis/local/results/stryker.json"), null, null));
@@ -185,10 +187,12 @@ public sealed partial class TestingServiceTests
     }
 
     [Fact]
-    public void StrykerAdapter_AcceptsAHashBoundPassingGateDespiteDisposedSurvivors()
+    public void StrykerAdapter_RecomputesScoreInsteadOfTrustingClaimedPass()
     {
         using var repository = TestRepository.Create();
-        repository.Write(".cis/local/results/stryker.json", """{"schemaVersion":"2","thresholds":{"high":85,"low":80},"cisGate":{"break":80,"score":80,"passed":true,"sourceDigest":"abc"},"files":{"src/app.cs":{"mutants":[{"status":"Killed"},{"status":"Killed"},{"status":"Killed"},{"status":"Killed"},{"status":"Survived"}]}}}""");
+        var report = System.Text.Json.Nodes.JsonNode.Parse(MutationReport("Killed", "Killed", "Killed", "Killed", "Survived"))!;
+        report["cisGate"] = System.Text.Json.Nodes.JsonNode.Parse("""{"break":80,"score":100,"passed":false}""");
+        repository.Write(".cis/local/results/stryker.json", report.ToJsonString());
         var execution = new StrykerJsonResultAdapter().Read(new(repository.Path,
             Suite("api-mutation", "mutation", "stryker-json", ".cis/local/results/stryker.json"),
             Path.Combine(repository.Path, ".cis/local/results/stryker.json"), null, null));

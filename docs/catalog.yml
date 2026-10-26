@@ -1,6 +1,11 @@
 schema_version: 1
 repository: change-impact-studio
 documents:
+  - id: change-impact-studio:manual:cis-test-mutation-assess
+    path: docs/manual/cis_test_mutation_assess.md
+    type: command-reference
+    status: active
+    authority: canonical
   - id: change-impact-studio:manual:cis-plan-performance-check
     path: docs/manual/cis_plan_performance_check.md
     type: command-reference

@@ -80,6 +80,8 @@ public sealed class ArtifactsModule : ICisModule
         else if (selected == "agent")
         {
             Console.WriteLine($"status={Clean(result.Status)};exitCode={result.ExitCode};applied={result.Applied.ToString().ToLowerInvariant()};rules={result.Rules.Count};entries={result.Entries.Count};candidates={result.Entries.Count(item => item.Candidate)};archives={result.Archives.Count};outputs={result.Outputs.Count}");
+            if (result.Storage is { } storage) Console.WriteLine($"configuredLiveBytes={storage.ConfiguredLiveBytes};archiveBytes={storage.ArchiveBytes};managementBytes={storage.ManagementBytes};totalReportedBytes={storage.TotalReportedBytes}");
+            foreach (var usage in result.FamilyStorage) Console.WriteLine($"family={Clean(usage.Family)};liveBytes={usage.LiveBytes};protectedBytes={usage.ProtectedBytes};candidateBytes={usage.CandidateBytes};plannedLiveBytes={usage.PlannedLiveBytes};maximumBytes={usage.MaximumBytes};budgetExceeded={usage.BudgetExceeded.ToString().ToLowerInvariant()};budgetBlocked={usage.BudgetBlocked.ToString().ToLowerInvariant()}");
             foreach (var entry in result.Entries) Console.WriteLine($"entry={Clean(entry.Path)};family={Clean(entry.Family)};kind={entry.Kind};bytes={entry.SizeBytes};candidate={entry.Candidate.ToString().ToLowerInvariant()};action={entry.Action};digest={entry.Digest}");
             foreach (var archive in result.Archives) Console.WriteLine($"archive={archive.ArchiveId};family={Clean(archive.Family)};entries={archive.Entries.Count};digest={archive.ZipDigest};path={Clean(archive.ZipPath)}");
             foreach (var output in result.Outputs) Console.WriteLine($"output={Clean(output)}");
@@ -88,6 +90,9 @@ public sealed class ArtifactsModule : ICisModule
         else if (selected == "human")
         {
             Console.WriteLine($"Local artifacts: {result.Status}; entries={result.Entries.Count}; candidates={result.Entries.Count(item => item.Candidate)}; archives={result.Archives.Count}");
+            if (result.Storage is { } storage) Console.WriteLine($"Configured live entries: {storage.ConfiguredLiveBytes} bytes; artifact management: {storage.ManagementBytes} bytes (including {storage.ArchiveBytes} archive bytes); total reported: {storage.TotalReportedBytes} bytes.");
+            foreach (var usage in result.FamilyStorage.Where(usage => usage.MaximumBytes is not null))
+                Console.WriteLine($"- {usage.Family}: {usage.LiveBytes} live bytes; {usage.CandidateBytes} eligible bytes; {usage.PlannedLiveBytes} bytes after the plan; budget {usage.MaximumBytes} bytes{(usage.BudgetBlocked ? "; BLOCKED by protected entries" : "")}.");
             foreach (var entry in result.Entries) Console.WriteLine($"- {entry.Family}: {entry.Path}; {entry.SizeBytes} bytes; {entry.Action}; {entry.Digest[..12]}");
             foreach (var error in result.Errors) Console.WriteLine($"ERROR: {error}");
         }

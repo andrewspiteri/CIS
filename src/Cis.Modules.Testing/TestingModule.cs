@@ -31,6 +31,7 @@ public sealed class TestingModule : ICisModule
         root.Subcommands.Add(Reconcile(service));
         root.Subcommands.Add(Trace(service));
         root.Subcommands.Add(Status(service));
+        root.Subcommands.Add(Mutation());
         commands.Add(root);
     }
 
@@ -76,6 +77,59 @@ public sealed class TestingModule : ICisModule
         command.Arguments.Add(change); command.Options.Add(repository); command.Options.Add(format); command.Options.Add(run);
         command.SetAction(parse => Render(service.Status(parse.GetValue(repository)!, parse.GetValue(change)!, parse.GetValue(run)), parse.GetValue(format)!));
         return command;
+    }
+
+    private static Command Mutation()
+    {
+        var mutation = new Command("mutation", "Assess native mutation reports without changing them.");
+        var assess = new Command("assess", "Calculate conservative and native scores for the reported mutants.");
+        var repository = Repo(); var format = Format(); var report = Required("--report");
+        var threshold = new Option<double>("--break") { Required = true, Description = "Conservative score required, from 0 through 100." };
+        assess.Options.Add(repository); assess.Options.Add(format); assess.Options.Add(report); assess.Options.Add(threshold);
+        assess.SetAction(parse => AssessMutation(parse.GetValue(repository)!, parse.GetValue(report)!,
+            parse.GetValue(threshold), parse.GetValue(format)!));
+        mutation.Subcommands.Add(assess);
+        return mutation;
+    }
+
+    private static int AssessMutation(string repository, string report, double threshold, string format)
+    {
+        if (format is not ("json" or "agent" or "human"))
+        {
+            Console.Error.WriteLine("Unsupported format. Use human, json, or agent.");
+            return 2;
+        }
+        var suite = new TestSuiteProfile("mutation-assessment", "report", "mutation", "stryker", "assess", ".",
+            "stryker-json", report, "-", "-", "-", "always", "local", "read-only");
+        TestSuiteExecution result;
+        try
+        {
+            repository = Path.GetFullPath(repository);
+            var path = Path.GetFullPath(report, repository);
+            result = new StrykerJsonResultAdapter().Read(new(repository, suite, path, null, null, threshold));
+        }
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException
+            or ArgumentException or NotSupportedException)
+        {
+            result = new(suite.Id, suite.Layer, suite.Framework, "invalid-evidence", TestFailureKind.InvalidEvidence,
+                0, 0, 0, 0, 0, [], null, null, [], [$"Mutation report could not be assessed: {error.Message}"]);
+        }
+        if (format == "json") Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+        else if (format == "agent")
+        {
+            Console.WriteLine(FormattableString.Invariant($"status={result.Status};qualified={result.Mutation?.Qualified.ToString().ToLowerInvariant() ?? "false"};conservativeScore={result.Mutation?.Score};nativeScore={result.Mutation?.NativeScore};denominator={result.Mutation?.Denominator};reportSha256={result.Mutation?.ReportSha256 ?? "none"}"));
+            foreach (var diagnostic in result.Diagnostics) Console.WriteLine($"diagnostic={diagnostic.Replace(';', ',')}");
+            Console.WriteLine("scope=reported-mutants;sourceFreshnessCertified=false;completeScopeCertified=false;releaseReadinessCertified=false");
+        }
+        else
+        {
+            Console.WriteLine($"Mutation assessment: {result.Status}.");
+            if (result.Mutation is { } summary)
+                Console.WriteLine(FormattableString.Invariant($"Conservative score: {summary.Score:F6}% ({summary.Killed}/{summary.Denominator}); native score: {summary.NativeScore:F6}%."));
+            foreach (var diagnostic in result.Diagnostics) Console.WriteLine(diagnostic);
+            Console.WriteLine("This assesses the report only; it does not certify source freshness, full scope, or release readiness.");
+        }
+        return result.Mutation?.Qualified == true ? 0 : 4;
     }
 
     private static int Render(TestingResult result, string format)

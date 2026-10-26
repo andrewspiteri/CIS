@@ -14,6 +14,7 @@
     "coverage-analysis": "off",
     "concurrency": 1,
     "additional-timeout": 10000,
+    "break-on-initial-test-failure": true,
     "mutation-level": "Basic",
     "reporters": ["cleartext", "json"],
     "report-file-name": "cis-abstractions-hardening",

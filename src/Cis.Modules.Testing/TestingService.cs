@@ -116,12 +116,14 @@ public sealed partial class TestingService
                 continue;
             }
             var failedState = states.LastOrDefault(state => state.Status is "failed" or "blocked");
-            if (failedState is not null)
+            var failedMutation = failedState is not null && suite.ResultFormat.Equals("stryker-json", StringComparison.OrdinalIgnoreCase)
+                && states.Length == steps.Length && states.All(state => state.Status is "failed" or "succeeded");
+            if (failedState is not null && !failedMutation)
             {
                 executions.Add(Failed(suite, failedState));
                 continue;
             }
-            if (states.Length != steps.Length || states.Any(state => state.Status != "succeeded"))
+            if (!failedMutation && (states.Length != steps.Length || states.Any(state => state.Status != "succeeded")))
             {
                 executions.Add(Unavailable(suite, "Every bound workflow step must finish successfully before its reports can be reconciled."));
                 continue;
@@ -138,10 +140,10 @@ public sealed partial class TestingService
             }
             if (resultPath is null || !File.Exists(resultPath))
             {
-                executions.Add(InvalidEvidence(suite, "Workflow succeeded but the declared result file is missing."));
+                executions.Add(InvalidEvidence(suite, "The declared native result file is missing."));
                 continue;
             }
-            if (workflow.Run.InputDigest is not null)
+            if (workflow.Run.InputDigest is not null || failedMutation)
             {
                 var started = states.Select(state => DateTimeOffset.TryParse(state.StartedAtUtc, out var value) ? value : DateTimeOffset.MaxValue).Min();
                 var reports = new[] { resultPath, coveragePath, mutationPath }.Where(path => path is not null).ToArray();
@@ -158,9 +160,19 @@ public sealed partial class TestingService
             }
             try
             {
-                executions.Add(adapter.Read(new(context.RepositoryPath, suite, resultPath,
+                var assessment = suite.ResultFormat.Equals("stryker-json", StringComparison.OrdinalIgnoreCase)
+                    ? MutationAssessmentThreshold(context.RepositoryPath, resultPath) : null;
+                var execution = adapter.Read(new(context.RepositoryPath, suite, resultPath,
                     coveragePath is not null && File.Exists(coveragePath) ? coveragePath : null,
-                    mutationPath is not null && File.Exists(mutationPath) ? mutationPath : null)));
+                    mutationPath is not null && File.Exists(mutationPath) ? mutationPath : null, assessment?.Threshold));
+                if (assessment is { } bound)
+                {
+                    var artifact = TestResultEvidence.Artifact(context.RepositoryPath, "mutation-assessment", resultPath + ".assessment.json");
+                    if (execution.Mutation?.ReportSha256 != bound.ReportSha256 || artifact.Digest != bound.AssessmentSha256)
+                        throw new InvalidDataException("Mutation report or assessment changed while it was being read.");
+                    execution = execution with { Artifacts = execution.Artifacts.Concat([artifact]).ToArray() };
+                }
+                executions.Add(execution);
             }
             catch (Exception exception) when (exception is IOException or InvalidDataException or JsonException or System.Xml.XmlException)
             {
@@ -176,6 +188,18 @@ public sealed partial class TestingService
             var suite = validation.Suites.Single(item => item.Id.Equals(execution.SuiteId, StringComparison.OrdinalIgnoreCase));
             var steps = definition.Steps.Where(step => step.Suites.Contains(suite.Id, StringComparer.OrdinalIgnoreCase)).ToArray();
             var states = workflow.Run.Steps.Where(state => steps.Any(step => step.Id.Equals(state.Id, StringComparison.OrdinalIgnoreCase))).ToArray();
+            var failedState = states.LastOrDefault(state => state.Status is "failed" or "blocked");
+            if (failedState is not null && suite.ResultFormat.Equals("stryker-json", StringComparison.OrdinalIgnoreCase))
+            {
+                // Preserve the failed process observation while retaining any
+                // fresh native mutant outcomes that could still be assessed.
+                execution = execution with
+                {
+                    Status = "failed",
+                    FailureKind = ParseFailure(failedState.FailureKind),
+                    Diagnostics = new[] { failedState.Error ?? $"Workflow step {failedState.Id} failed." }.Concat(execution.Diagnostics).ToArray(),
+                };
+            }
             var caseIds = execution.Cases.Select(item => item.Id).Where(item => !string.IsNullOrWhiteSpace(item))
                 .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(item => item, StringComparer.OrdinalIgnoreCase).ToArray();
             var artifacts = execution.Artifacts
@@ -193,7 +217,8 @@ public sealed partial class TestingService
             .DistinctBy(item => (item.Path, item.Digest, item.SuiteId, item.Attempt))
             .OrderBy(item => item.Path, StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        var status = executions.Any(item => item.Status is "failed" or "invalid-evidence") ? "failed"
+        var status = executions.Any(item => item.Status is "failed" or "invalid-evidence"
+                || item.Mutation is { Qualified: false }) ? "failed"
             : executions.Any(item => item.Status is "unavailable" or "skipped") ? "incomplete"
             : executions.Any(item => item.Status is "findings") ? "passed-with-findings" : "passed";
         var manifest = new TestRunManifest(1, runId, workflow.Run.WorkflowId, workflow.Run.WorkflowDigest,
@@ -209,6 +234,37 @@ public sealed partial class TestingService
         Write(Path.Combine(runRoot, "results.json"), JsonSerializer.Serialize(executions, JsonOptions));
         Write(Path.Combine(runRoot, "artifacts.json"), JsonSerializer.Serialize(allArtifacts, JsonOptions));
         return Result(context, null, runId, validation.Suites, manifest, [], diagnostics, true, "reconciled");
+    }
+
+    private static (double Threshold, string ReportSha256, string AssessmentSha256)? MutationAssessmentThreshold(string repository, string report)
+    {
+        var sidecar = report + ".assessment.json";
+        if (!File.Exists(sidecar)) return null;
+        if (CisPathSafety.ContainsReparsePoint(repository, sidecar) || new FileInfo(sidecar).Length > 1024 * 1024)
+            throw new InvalidDataException("Mutation assessment must be an unlinked JSON sidecar no larger than 1 MiB.");
+        var bytes = File.ReadAllBytes(sidecar);
+        if (bytes.Length > 1024 * 1024) throw new InvalidDataException("Mutation assessment exceeds 1 MiB.");
+        using var document = JsonDocument.Parse(bytes);
+        var root = document.RootElement;
+        var errors = new List<string>();
+        StrykerJsonResultAdapter.CheckDuplicateProperties(root, "$", errors);
+        if (errors.Count > 0) throw new InvalidDataException("Mutation assessment contains duplicate JSON properties.");
+        if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("mutation", out var mutation)
+            || mutation.ValueKind != JsonValueKind.Object || !mutation.TryGetProperty("breakThreshold", out var threshold)
+            || threshold.ValueKind != JsonValueKind.Number || !threshold.TryGetDouble(out var value)
+            || !double.IsFinite(value) || value is < 0 or > 100)
+            throw new InvalidDataException("Mutation assessment requires a finite break threshold from 0 through 100.");
+        var digest = TestResultEvidence.Artifact(repository, "mutation-result", report).Digest;
+        if (!mutation.TryGetProperty("reportSha256", out var hash) || hash.ValueKind != JsonValueKind.String || hash.GetString() != digest
+            || !root.TryGetProperty("artifacts", out var artifacts) || artifacts.ValueKind != JsonValueKind.Array
+            || !artifacts.EnumerateArray().Any(artifact => artifact.ValueKind == JsonValueKind.Object
+                && artifact.TryGetProperty("kind", out var kind) && kind.ValueKind == JsonValueKind.String && kind.GetString() == "mutation-result"
+                && artifact.TryGetProperty("path", out var path) && path.ValueKind == JsonValueKind.String && path.GetString() == TestResultEvidence.Relative(repository, report)
+                && artifact.TryGetProperty("digest", out var sha) && sha.ValueKind == JsonValueKind.String && sha.GetString() == digest))
+            throw new InvalidDataException("Mutation assessment does not identify these exact raw report bytes.");
+        // Only the hash-bound threshold is reused. Scores, passed flags, and all
+        // native outcomes are recomputed from the original report by the adapter.
+        return (value, digest, Convert.ToHexStringLower(SHA256.HashData(bytes)));
     }
 
     private static TestArtifact Correlate(TestArtifact artifact, string runId, int? attempt, TestSuiteProfile suite,

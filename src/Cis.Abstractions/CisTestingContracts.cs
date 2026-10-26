@@ -58,7 +58,23 @@ public sealed record TestMutationSummary(
     double? HighThreshold,
     double? LowThreshold,
     double? BreakThreshold,
-    string SourcePath);
+    string SourcePath)
+{
+    public double NativeScore { get; init; }
+    public int Denominator { get; init; }
+    public int CompileErrors { get; init; }
+    public int Ignored { get; init; }
+    public int RuntimeErrors { get; init; }
+    public int Pending { get; init; }
+    public int Unknown { get; init; }
+    public bool ValidEvidence { get; init; }
+    public bool? ThresholdMet { get; init; }
+    public bool Qualified { get; init; }
+    public string ReportSha256 { get; init; } = string.Empty;
+    public string Scope { get; init; } = "reported-mutants";
+    public IReadOnlyList<string> Limitations { get; init; } =
+        ["Report assessment does not certify source freshness, complete mutation scope, or release readiness."];
+}
 
 public sealed record TestArtifact(
     string Kind,
@@ -108,12 +124,23 @@ public sealed record TestRunManifest(
     string? AssuranceTechnique = null,
     string? InputDigest = null);
 
+[method: System.Text.Json.Serialization.JsonConstructor]
 public sealed record TestResultAdapterContext(
     string RepositoryPath,
     TestSuiteProfile Suite,
     string ResultPath,
     string? CoveragePath,
-    string? MutationPath);
+    string? MutationPath)
+{
+    public double? MutationBreakThreshold { get; init; }
+
+    public TestResultAdapterContext(string RepositoryPath, TestSuiteProfile Suite, string ResultPath,
+        string? CoveragePath, string? MutationPath, double? MutationBreakThreshold)
+        : this(RepositoryPath, Suite, ResultPath, CoveragePath, MutationPath)
+    {
+        this.MutationBreakThreshold = MutationBreakThreshold;
+    }
+}
 
 public interface ICisTestResultAdapter
 {

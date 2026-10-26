@@ -789,8 +789,8 @@ internal sealed partial class RepositoryStarterBinder
         Rules apply only to immediate entries beneath the declared `.cis/local/` path.
         Canonical Markdown and user-managed repository files are never eligible.
 
-        | Family | Path | Retain days | Keep latest | Action |
-        |---|---|---:|---:|---|
+        | Family | Path | Retain days | Keep latest | Action | Maximum bytes |
+        |---|---|---:|---:|---|---:|
         | graph | .cis/local/graph | 0 | 0 | preserve |
         | api | .cis/local/api | 0 | 0 | preserve |
         | references | .cis/local/references | 0 | 0 | preserve |
@@ -801,6 +801,7 @@ internal sealed partial class RepositoryStarterBinder
         | context | .cis/local/context | 30 | 20 | archive |
         | workflows | .cis/local/workflows | 30 | 20 | archive |
         | testing | .cis/local/testing/runs | 30 | 10 | archive |
+        | mutation-runs | .cis/local/testing/mutation/runs | 1 | 2 | delete | 536870912 |
         | security | .cis/local/security/runs | 30 | 10 | archive |
         | ci | .cis/local/ci | 14 | 20 | archive |
         | diagnostics | .cis/local/diagnostics | 30 | 20 | archive |
@@ -2900,17 +2901,39 @@ internal sealed partial class RepositoryStarterBinder
     private static string CreateToolingEvidenceSkill() => """
         ---
         name: cis-tooling-evidence
-        description: Record and validate exact CIS routing, generation, testing, run, and usage evidence for a changed workstream. Use before handoff, verification, or pull-request readiness checks.
+        description: Record and validate exact CIS routing, generation, testing, run, and usage evidence for changed files. Use before handoff, verification, or pull-request readiness checks.
         ---
 
         # CIS tooling evidence
 
-        1. Add a `## CIS tooling evidence` section to the task handoff.
-        2. Record exact context, graph, frontend, test-reconciliation, and run-ID evidence that applies.
-        3. Record the deterministic generation decision and a specific reason when no template applies.
-        4. Preserve the local usage ledger, or record a specific bounded bypass reason.
+        ## Purpose
+
+        Keep exact evidence useful and small enough to review, without overstating what ran.
+
+        ## Workflow
+
+        1. Add a `## CIS tooling evidence` section to the handoff. Link existing artifacts
+           rather than copying them into each task.
+        2. Record applicable context/graph commands, generation decision, reconciled test
+           command, run ID, source commit and relevant dirty diff, configuration/tool
+           versions, outcome and hashes. State skipped or unavailable checks explicitly.
+        3. For mutation work, keep the unchanged native report and a small summary separating
+           native outcomes, conservative assessment and execution failures. Count distinct
+           mutants, not diagnostic rows. Do not add bespoke per-mutant proof requirements
+           where ordinary native results meet the adopted policy.
+        4. Retain the local usage ledger or state a specific bypass reason. Bound additional
+           diagnostics to a concrete failure and retention budget; full source/runtime copies
+           and repeated archives are not default completion evidence. Preserve stronger
+           repository requirements and never silently discard protected evidence.
         5. Run `cis agent evidence validate --evidence <path> --changed-file <path> --strict --format agent`.
-        6. Replace placeholders and resolve every warning before claiming readiness.
+        6. Replace placeholders and resolve every warning before readiness is claimed.
+
+        ## Guardrails
+
+        A hash or summary does not prove an unrun check or preserve unavailable dirty source.
+        Keep the small relevant diff when reproduction needs it. Evidence-budget exhaustion
+        is a blocker to resolve, not permission to drop failures, archive indefinitely or
+        relax a gate.
         """;
 
     private static string CreatePolicyImpactSkill() => """
@@ -3523,14 +3546,32 @@ internal sealed partial class RepositoryStarterBinder
         ## Workflow
 
         1. Run `cis test inventory` and `cis test validate --strict`; reconcile the canonical suite profile before execution.
-        2. Start with targeted build, test, lint, analysis, security, and packaging checks through `cis workflow run standard-delivery --run-id <id>`.
-        3. Run each evidence gate as an independently observed command, or use fail-fast orchestration that preserves every gate's exit status; never let a later successful command mask an earlier failure. Canonical retries are zero.
-        4. If a result could be environmental, inspect the recorded failure classification. A diagnostic rerun uses the same run ID as a new attempt and never erases the first product, infrastructure, prerequisite, timeout, cancellation, or unknown result.
-        5. Run `cis test reconcile --run <id>` and `cis test trace <change-id> --run <id>`. A successful process without readable declared result evidence is `invalid-evidence`, not passed.
-        6. Expand to component or repository checks only when impact or failures justify it. Record unavailable credential-dependent checks and any bounded human-approved exception truthfully.
-        7. Record the run ID, profile digest, repository revision, artifact hashes, implementer, assurer, and assurance technique. Keep independent assurance separate from the implementing agent's self-assessment or use a genuinely independent mechanical technique.
-        8. After all implementation and evidence are stable, run `cis verify diff` and confirm the snapshot names every planned repository, includes tracked and untracked changes, and is non-empty.
-        9. Run `cis verify validate`. If the human explicitly accepts the outcome, use `cis verify finalize --reviewer <human> --reason <rationale>` so lifecycle completion, closure, recapture, and acceptance remain coordinated.
+        2. During implementation, run the smallest relevant planned checks that can fail for
+           the changed behavior. Expand according to impact and failures; a tiny iteration
+           does not automatically require the whole standard-delivery workflow. Preserve any
+           stronger active requirement and run `cis workflow run standard-delivery --run-id <id>`
+           at the required handoff/checkpoint. Full required release gates remain mandatory.
+           Canonical retries are zero and every attempt remains visible.
+           Observe each gate separately or use fail-fast orchestration that preserves each
+           exit status; a later successful command must not mask an earlier failure.
+        3. Inspect failure classification before a diagnostic rerun. Infrastructure,
+           prerequisite, timeout, cancellation and unknown failures are not product passes.
+           Give diagnostics a fixed attempt/time/storage budget; repeated identical runs
+           without a new hypothesis or changed evidence are a stop condition.
+        4. Run `cis test reconcile --run <id>` and `cis test trace <change-id> --run <id>`. Missing or unreadable expected evidence is `invalid-evidence` even after exit code zero.
+        5. Record exact unavailable checks and bounded human-approved exceptions; never silently pass them.
+        6. Keep independent assurance separate from the implementer or use a genuinely
+           independent mechanical technique. Record actors, technique, run ID, profile
+           digest, source revision/dirty diff and artifact hashes. Link native reports and
+           small summaries; scope extra captures to a concrete failure and retention budget.
+           For mutation, qualify the native runner with a small healthy/failing canary before
+           broad execution, including real children when applicable. Keep native outcomes,
+           conservative interpretation and execution health distinct; only the complete
+           final required scope can satisfy its gate.
+        7. After evidence stabilizes, run `cis verify diff`. Confirm the snapshot names every
+           planned repository, includes tracked and untracked changes, and is non-empty.
+           Then run `cis verify validate`.
+        8. Only on explicit human acceptance use `cis verify finalize --reviewer <human> --reason <rationale>`.
 
         ## Output Expectations
 
@@ -3538,7 +3579,12 @@ internal sealed partial class RepositoryStarterBinder
 
         ## Guardrails
 
-        Do not claim checks that were not run, infer earlier success from the final exit code of a non-fail-fast command chain, accept an empty or stale snapshot, or equate compilation with complete verification.
+        Do not claim checks that were not run, infer earlier success from the final exit code
+        of a non-fail-fast command chain, accept an empty or stale snapshot, or equate
+        compilation with complete verification. Focused iteration evidence is not full
+        delivery or release acceptance. Preserve thresholds, failures and stronger policy;
+        do not add a blanket every-row direct-assertion rule to ordinary native mutation
+        results. Storage caps are real limits, not an invitation to retain endless archives.
 
         ## Related Files
 

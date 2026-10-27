@@ -43,7 +43,8 @@ public sealed partial class TestingServiceTests
         {
             Console.SetOut(output);
             Assert.Equal(0, registry.Root.Parse(["test", "incremental", "revalidate", "--profile", "profile.json", "--repo", fixture.Path,
-                "--previous-testing-assembly", typeof(IncrementalTestService).Assembly.Location, "--reason", "Reviewed compatible guard update.", "--format", "json"]).Invoke());
+                "--previous-testing-assembly", typeof(IncrementalTestService).Assembly.Location, "--reason", "Reviewed compatible guard update.",
+                "--legacy-session-environment", "--format", "json"]).Invoke());
         }
         finally { Console.SetOut(previous); }
         using var result = System.Text.Json.JsonDocument.Parse(output.ToString());

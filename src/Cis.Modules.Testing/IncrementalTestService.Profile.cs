@@ -1,4 +1,3 @@
-using System.Collections;
 using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using System.Text;
@@ -23,7 +22,8 @@ public sealed partial class IncrementalTestService
     private sealed record Input(string Repository, IncrementalTestProfile Profile, string ProfilePath,
         string ProfileHash, string Storage, string Root, string StatePath, string CommonIdentity);
 
-    private static Input Read(IncrementalTestOptions options, string? previousTestingProducer = null, string? previousHelperProducer = null)
+    private static Input Read(IncrementalTestOptions options, string? previousTestingProducer = null, string? previousHelperProducer = null,
+        bool legacySessionEnvironment = false)
     {
         Require(options.Layer is "unit" or "mutation" or "all", "Layer must be unit, mutation, or all.");
         Require(options.MaximumBatches is >= 1 and <= 512 && options.MaximumSeconds is >= 1 and <= 3600,
@@ -85,9 +85,7 @@ public sealed partial class IncrementalTestService
             tools = tools.Select(file => new { file, hash = HashFile(file) }).ToArray(),
             cis = new[] { previousTestingProducer ?? HashFile(typeof(IncrementalTestService).Assembly.Location), previousHelperProducer ?? HashFile(typeof(CisProcessJob).Assembly.Location) },
             platform = System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier,
-            // Never persist inherited values, which may include credentials. Any change invalidates reuse.
-            ambientEnvironment = HashObject(Environment.GetEnvironmentVariables().Cast<DictionaryEntry>()
-                .OrderBy(pair => (string)pair.Key, StringComparer.Ordinal).Select(pair => new { name = (string)pair.Key, value = (string?)pair.Value }).ToArray()),
+            ambientEnvironment = AmbientEnvironmentIdentity(profile, legacySessionEnvironment),
         };
         var storage = Safe(repository, ".cis/local/testing");
         var root = Safe(repository, LocalRoot + "/" + profile.Id);

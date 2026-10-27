@@ -33,8 +33,23 @@ cis test incremental status --profile <relative.json> --repo <repository> --form
 tests. `run` executes pending batches. `--layer unit` runs unit work alone;
 `--layer mutation` also runs any missing unit prerequisite. `all` is the default.
 `--force` reruns current results as well as pending work.
+With `--layer unit`, a healthy refresh preserves compatible completed mutation
+reports, including those for batches outside the current execution budget.
+Changed inputs or a failed unit refresh invalidate the affected mutation result.
+A damaged saved unit report also requires a new mutation check. A unit-only run
+reports `reusedMutationBatches: 0` because that counter describes the requested
+layer; preserved mutation reports remain available to a later mutation run.
 
 ## Selection and reuse
+
+SSH connection identifiers and shell session bookkeeping do not invalidate saved
+results. CIS omits `SSH_CLIENT`, `SSH_CONNECTION`, `SSH_TTY`, `XDG_SESSION_ID`,
+`TERM_SESSION_ID`, `WT_SESSION`, `SHLVL`, `_`, `PWD` and `OLDPWD` from ambient
+identity. Native commands receive empty values for those variables, except `PWD`
+is their working directory and `SHLVL` is `0`. Explicit profile environment values
+override these defaults and remain pinned inputs. Other inherited variables,
+including `PATH` and `SSH_AUTH_SOCK`, remain identity inputs unless the profile
+overrides them. Inherited values are hashed, never saved in reports.
 
 A fresh, complete graph without extraction errors or warnings is required. Refresh
 it after source or test changes. Each declared production file is one batch. CIS
@@ -146,6 +161,14 @@ execution records remain unchanged. Changed inputs, failed stages, unfinished
 execution and recovery holds cannot acquire completion through this command.
 The reason records the compatibility review; CIS does not infer compatibility
 from that text. A changed result interpretation needs its own policy review.
+
+For the one-time transition from the original full-environment cache identity,
+add `--legacy-session-environment` while still in the original launch environment.
+Review that the earlier native work did not rely on the now-canonical session
+values, or declare required values in the profile and rerun affected work. The
+flag reconstructs the old identity before checking reports; it cannot recover a
+lost original environment or authorize reuse when other inputs changed. Later
+compatible updates use ordinary `revalidate` without this flag.
 
 Defaults are four file batches and 1,200 seconds per invocation. The maximums are
 512 batches and 3,600 seconds. Scheduling reserves time for baseline recovery;

@@ -136,8 +136,10 @@ public sealed class TestingModule : ICisModule
         var revalidate = new Command("revalidate", "Recheck completed caches after a reviewed compatible testing-module update without executing native tests.");
         var revalidateRepository = Repo(); var revalidateFormat = Format(); var revalidateProfile = Required("--profile");
         var previous = Required("--previous-testing-assembly"); var reason = Required("--reason");
+        var legacySession = new Option<bool>("--legacy-session-environment") { Description = "Reconstruct pre-normalization cache identity from the original inherited environment. Requires compatibility review." };
         revalidate.Options.Add(revalidateRepository); revalidate.Options.Add(revalidateFormat); revalidate.Options.Add(revalidateProfile);
         revalidate.Options.Add(previous); revalidate.Options.Add(reason);
+        revalidate.Options.Add(legacySession);
         revalidate.SetAction(parse =>
         {
             var output = parse.GetValue(revalidateFormat)!;
@@ -145,7 +147,7 @@ public sealed class TestingModule : ICisModule
             var reader = services.GetService<ICisGraphSnapshotReader>();
             if (reader is null) return RenderIncremental(new("missing-graph-module", 2), output);
             return RenderIncremental(new IncrementalTestService(reader).Revalidate(new(parse.GetValue(revalidateRepository)!, parse.GetValue(revalidateProfile)!),
-                parse.GetValue(previous)!, parse.GetValue(reason)!), output);
+                parse.GetValue(previous)!, parse.GetValue(reason)!, parse.GetValue(legacySession)), output);
         });
         root.Subcommands.Add(revalidate);
         return root;

@@ -346,6 +346,51 @@ public sealed class IncrementalTestServiceTests
     }
 
     [Fact]
+    public void ForcedUnitRefreshPreservesCompatibleMutationsIncludingUnattemptedBatches()
+    {
+        using var fixture = new Fixture();
+        Assert.Equal(0, fixture.Run().ExitCode);
+        var before = fixture.SavedState();
+        var calls = fixture.Calls().Count(call => call.StartsWith("mutation ", StringComparison.Ordinal));
+
+        var forced = new IncrementalTestService(fixture).Run(new(fixture.Path, "profile.json", "unit", 1, 120, true));
+
+        Assert.Equal(3, forced.ExitCode);
+        Assert.Equal(1, forced.ExecutedUnitBatches);
+        Assert.Equal(0, forced.ExecutedMutationBatches);
+        // Less than the mutation recovery reserve, but enough for the pending unit refresh.
+        var resumed = new IncrementalTestService(fixture).Run(new(fixture.Path, "profile.json", "all", 4, 30));
+        Assert.Equal(0, resumed.ExitCode);
+        Assert.Equal(1, resumed.ExecutedUnitBatches);
+        Assert.Equal(0, resumed.ExecutedMutationBatches);
+        Assert.Equal(2, resumed.ReusedMutationBatches);
+        Assert.Equal(calls, fixture.Calls().Count(call => call.StartsWith("mutation ", StringComparison.Ordinal)));
+        var after = fixture.SavedState();
+        foreach (var (id, batch) in before.Batches)
+        {
+            Assert.Equal(batch.Mutation!.ReportSha256, after.Batches[id].Mutation!.ReportSha256);
+            Assert.Equal(batch.Mutation.Fingerprint, after.Batches[id].Mutation!.Fingerprint);
+            Assert.True(File.Exists(fixture.Full(IncrementalTestService.LocalRoot + "/sample/" + after.Batches[id].Mutation!.ReportPath)));
+        }
+    }
+
+    [Fact]
+    public void FailedForcedUnitRefreshStillInvalidatesThatBatchesMutation()
+    {
+        using var fixture = new Fixture();
+        Assert.Equal(0, fixture.Run().ExitCode);
+        fixture.Fault("src/A.cs", "unit:unit-failure");
+
+        var result = new IncrementalTestService(fixture).Run(new(fixture.Path, "profile.json", "unit", 1, 120, true));
+
+        Assert.Equal(4, result.ExitCode);
+        Assert.Null(result.CompleteScopeScore);
+        var state = fixture.SavedState();
+        Assert.Null(state.Batches.Values.Single(batch => batch.SourceFile == "src/A.cs").Mutation);
+        Assert.NotNull(state.Batches.Values.Single(batch => batch.SourceFile == "src/B.cs").Mutation);
+    }
+
+    [Fact]
     public void RetiringASourceRemovesItsSavedReportsAndState()
     {
         using var fixture = new Fixture();

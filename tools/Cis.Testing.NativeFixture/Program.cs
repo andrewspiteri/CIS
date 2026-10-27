@@ -17,6 +17,11 @@ if (mode == "config-mutation")
 }
 Directory.CreateDirectory(output);
 Directory.CreateDirectory(".cis");
+if (File.Exists(".cis/environment-probe.json"))
+{
+    var names = JsonSerializer.Deserialize<string[]>(File.ReadAllText(".cis/environment-probe.json"))!;
+    File.WriteAllText(".cis/environment-observed.json", JsonSerializer.Serialize(names.ToDictionary(name => name, Environment.GetEnvironmentVariable)));
+}
 var overrideFile = Path.Combine(".cis", "fault-" + Path.GetFileName(source));
 if (mode is "unit" or "mutation" && File.Exists(overrideFile))
 {

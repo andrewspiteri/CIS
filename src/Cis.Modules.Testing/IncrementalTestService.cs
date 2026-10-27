@@ -27,6 +27,7 @@ public sealed partial class IncrementalTestService
         IncrementalTestState? state = null;
         var executedUnit = 0;
         var executedMutation = 0;
+        var rerunMutations = new HashSet<string>(StringComparer.Ordinal);
         var diagnostics = new List<string>();
         try
         {
@@ -61,7 +62,15 @@ public sealed partial class IncrementalTestService
             }
             if (options.Force)
             {
-                foreach (var batch in selection.Batches) state.Batches[batch.Id] = new(batch.SourceFile, null, null);
+                foreach (var batch in selection.Batches)
+                {
+                    state.Batches.TryGetValue(batch.Id, out var prior);
+                    var mutation = options.Layer == "unit"
+                        && (prior?.Unit is null || Current(input, batch.SourceFile, prior.Unit, batch.UnitFingerprint, false))
+                        && Current(input, batch.SourceFile, prior?.Mutation, batch.MutationFingerprint, true)
+                        ? prior!.Mutation : null;
+                    state.Batches[batch.Id] = new(batch.SourceFile, null, mutation);
+                }
                 Save(input, state);
             }
             var attempted = 0;
@@ -71,14 +80,17 @@ public sealed partial class IncrementalTestService
                 var mutationWanted = options.Layer != "unit" && input.Profile.MutationCommand is not null;
                 if (batch.UnitCurrent && (!mutationWanted || batch.MutationCurrent)) continue;
                 if (attempted >= options.MaximumBatches) break;
-                var reserve = mutationWanted ? 2 * input.Profile.RecoveryTimeoutSeconds + 10 : 0;
-                if (options.MaximumSeconds - watch.Elapsed.TotalSeconds <= reserve + 2) break;
-                attempted++;
                 state.Batches.TryGetValue(batch.Id, out var prior);
                 var saved = prior ?? new(batch.SourceFile, null, null);
+                var retainMutation = (batch.UnitCurrent || saved.Unit is null)
+                    && Current(input, batch.SourceFile, saved.Mutation, batch.MutationFingerprint, true);
+                var reserve = mutationWanted && !retainMutation ? 2 * input.Profile.RecoveryTimeoutSeconds + 10 : 0;
+                if (options.MaximumSeconds - watch.Elapsed.TotalSeconds <= reserve + 2) break;
+                attempted++;
                 if (!batch.UnitCurrent)
                 {
-                    saved = saved with { Unit = null, Mutation = null };
+                    var mutation = retainMutation ? saved.Mutation : null;
+                    saved = saved with { Unit = null, Mutation = mutation };
                     state.Batches[batch.Id] = saved;
                     Save(input, state);
                     var output = Work(input);
@@ -87,13 +99,13 @@ public sealed partial class IncrementalTestService
                     var unchanged = Unchanged(input, batch);
                     var result = Assess(input, batch, false, output, execution, unchanged);
                     executedUnit++;
-                    saved = saved with { Unit = result };
+                    saved = saved with { Unit = result, Mutation = result.Completed ? mutation : null };
                     state.Batches[batch.Id] = saved;
                     Save(input, state);
                     CleanWork(input, !result.Completed);
                     if (!result.Completed) { diagnostics.AddRange(result.Diagnostics); failed = true; break; }
                 }
-                if (!mutationWanted || batch.UnitCurrent && batch.MutationCurrent) continue;
+                if (!mutationWanted || Current(input, batch.SourceFile, saved.Mutation, batch.MutationFingerprint, true)) continue;
                 if (options.MaximumSeconds - watch.Elapsed.TotalSeconds <= reserve + 2) break;
                 state = state with { RecoveryRequired = true, RecoverySourceFile = batch.SourceFile };
                 saved = saved with { Mutation = null };
@@ -104,6 +116,7 @@ public sealed partial class IncrementalTestService
                     Seconds(input, options, watch, reserve, nativeTimeoutSeconds > 0 ? nativeTimeoutSeconds : null), ref state);
                 var assessed = Assess(input, batch, true, nativeOutput, native, Unchanged(input, batch));
                 executedMutation++;
+                rerunMutations.Add(batch.Id);
                 // A crash between native completion and recovery cannot publish a reusable mutation result.
                 state.Batches[batch.Id] = saved with { Mutation = assessed with { Completed = false, Status = "recovering" } };
                 Save(input, state);
@@ -125,7 +138,8 @@ public sealed partial class IncrementalTestService
             {
                 ExecutedUnitBatches = executedUnit, ExecutedMutationBatches = executedMutation,
                 ReusedUnitBatches = selection.Batches.Count(batch => batch.UnitCurrent),
-                ReusedMutationBatches = options.Layer == "unit" ? 0 : selection.Batches.Count(batch => batch.UnitCurrent && batch.MutationCurrent),
+                ReusedMutationBatches = options.Layer == "unit" ? 0 : selection.Batches.Count(batch => batch.MutationCurrent && !rerunMutations.Contains(batch.Id)
+                    && final.Batches.Any(current => current.Id == batch.Id && current.UnitCurrent && current.MutationCurrent)),
                 DurationMilliseconds = watch.ElapsedMilliseconds, RetainedBytes = Bytes(input.Storage), Diagnostics = diagnostics,
             };
             if (!failed && !resultSummary.ScopeComplete) resultSummary = resultSummary with { Status = "batch-limit", ExitCode = 3 };
@@ -183,7 +197,7 @@ public sealed partial class IncrementalTestService
             .Replace("{mutationConfig}", mutationConfig ?? "", StringComparison.Ordinal)).ToArray();
         var limits = new MutationRunProfile
         {
-            WorkingDirectory = input.Profile.WorkingDirectory, Environment = input.Profile.Environment,
+            WorkingDirectory = input.Profile.WorkingDirectory, Environment = NativeEnvironment(input.Profile, working),
             TimeoutSeconds = seconds, MaxRunBytes = input.Profile.MaxRunBytes,
             MaxRetainedBytes = input.Profile.MaxRetainedBytes, MinFreeBytes = input.Profile.MinFreeBytes,
         };

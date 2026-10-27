@@ -275,9 +275,15 @@ public sealed partial class MutationRunService
                 diagnostics.Add("Native report contains mutation outcomes outside the declared source scope: " + file.Name);
                 return false;
             }
+            var nativeSource = file.Value.GetProperty("source").GetString();
+            // Stryker emits this placeholder for files outside a canary's
+            // mutate filter. It proves no coverage and cannot satisfy a full run.
+            var omittedCanaryFile = !exact && nativeSource == "File ignored by mutate filter"
+                && file.Value.GetProperty("mutants").GetArrayLength() == 0;
             if (CisPathSafety.ContainsReparsePoint(repository, path)
-                || !File.Exists(path) || file.Value.GetProperty("source").GetString() != File.ReadAllText(path))
+                || !File.Exists(path) || !omittedCanaryFile && nativeSource != File.ReadAllText(path))
             { diagnostics.Add("Native report does not match the declared source bytes: " + file.Name); return false; }
+            if (omittedCanaryFile) continue;
             if (!observed.Add(path)) { diagnostics.Add("Native report repeats a declared source through a path alias."); return false; }
         }
         if (exact && !observed.SetEquals(declared)) { diagnostics.Add("Qualification report does not cover exactly the declared source file set."); return false; }

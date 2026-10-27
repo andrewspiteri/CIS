@@ -264,6 +264,51 @@ public sealed class MutationRunServiceTests
     }
 
     [Theory]
+    [InlineData("File ignored by mutate filter", "None", true)]
+    [InlineData("different source", "None", false)]
+    [InlineData("File ignored by mutate filter", "Killed", false)]
+    [InlineData("File ignored by mutate filter", "Ignored", false)]
+    [InlineData("File ignored by mutate filter", "CompileError", false)]
+    public void NarrowCanaryAcceptsOnlyTheEmptyNativeFilterPlaceholder(string source, string status, bool allowed)
+    {
+        using var fixture = new Target();
+        const string actual = "class Other { bool Value = true; }";
+        fixture.Write("other.cs", actual);
+        fixture.Save(fixture.Profile with
+        {
+            SourceFiles = ["subject.cs", "other.cs"],
+            CanaryCommand = fixture.Command("Killed", declaredOtherSource: source, declaredOtherStatus: status),
+            Command = fixture.Command("Killed", marker: true, declaredOtherSource: actual, declaredOtherStatus: "Killed"),
+        });
+
+        var result = fixture.Run("qualification");
+
+        Assert.Equal(allowed ? 0 : 4, result.ExitCode);
+        Assert.Equal(allowed, result.Qualified);
+        Assert.Equal(allowed, File.Exists(fixture.Full("broad-started")));
+        if (allowed) Assert.Equal(2, result.Assessment!.Mutation!.Killed);
+    }
+
+    [Fact]
+    public void FullQualificationCannotUseTheCanaryPlaceholderForADeclaredFile()
+    {
+        using var fixture = new Target();
+        fixture.Write("other.cs", "class Other { bool Value = true; }");
+        fixture.Save(fixture.Profile with
+        {
+            SourceFiles = ["subject.cs", "other.cs"],
+            Command = fixture.Command("Killed", declaredOtherSource: "File ignored by mutate filter", declaredOtherStatus: "None"),
+        });
+
+        var result = fixture.Run("qualification");
+
+        Assert.Equal(4, result.ExitCode);
+        Assert.Equal(0, result.Canary!.ExitCode);
+        Assert.False(result.Qualified);
+        Assert.Contains(result.Diagnostics, item => item.Contains("does not match the declared source bytes", StringComparison.Ordinal));
+    }
+
+    [Theory]
     [InlineData("diagnostic", 0, "diagnostic-completed", TestFailureKind.None)]
     [InlineData("qualification", 4, "failed", TestFailureKind.Product)]
     public void ThresholdExitPreservesNormalDiagnosticExecutionAndQualificationFindings(string kind, int exitCode,
@@ -478,7 +523,8 @@ public sealed class MutationRunServiceTests
                 param([string]$Output, [string]$Status = 'Killed', [switch]$ChangeSource, [switch]$Marker, [string]$ExtraStatus,
                     [int]$NativeExit = 0, [int]$ExtraSourceBytes = 0, [switch]$Canary,
                     [string]$RequiredEnvironmentName, [string]$RequiredEnvironmentHash, [int]$TemporaryBytes = 0,
-                    [switch]$NativeLogs, [switch]$FailBeforeReport, [switch]$OversizedLogs)
+                    [switch]$NativeLogs, [switch]$FailBeforeReport, [switch]$OversizedLogs,
+                    [string]$DeclaredOtherSource, [string]$DeclaredOtherStatus)
                 $ErrorActionPreference = 'Stop'
                 if ($RequiredEnvironmentName) {
                     $actual = [Environment]::GetEnvironmentVariable($RequiredEnvironmentName)
@@ -522,6 +568,13 @@ public sealed class MutationRunServiceTests
                     $extra = $mutant.Clone(); $extra.status = $ExtraStatus
                     $files['other.cs'] = @{ language = 'cs'; source = 'class Other {} //' + ('x' * $ExtraSourceBytes); mutants = @($extra) }
                 }
+                if ($DeclaredOtherSource) {
+                    $others = @()
+                    if ($DeclaredOtherStatus -ne 'None') {
+                        $other = $mutant.Clone(); $other.id = '1'; $other.status = $DeclaredOtherStatus; $others = @($other)
+                    }
+                    $files['other.cs'] = @{ language = 'cs'; source = $DeclaredOtherSource; mutants = $others }
+                }
                 @{ schemaVersion = '2'; thresholds = @{ high = 90; low = 70 }; files = $files } |
                     ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $Output 'report.json')
                 $scratch = Join-Path $Output 'disposable'; [IO.Directory]::CreateDirectory($scratch) | Out-Null
@@ -540,7 +593,8 @@ public sealed class MutationRunServiceTests
 
         internal string[] Command(string status, bool changeSource = false, bool marker = false, string? extraStatus = null, int nativeExit = 0,
             int extraSourceBytes = 0, bool canary = false, string? requiredEnvironmentName = null, string? requiredEnvironmentHash = null,
-            int temporaryBytes = 0, bool nativeLogs = false, bool failBeforeReport = false, bool oversizedLogs = false)
+            int temporaryBytes = 0, bool nativeLogs = false, bool failBeforeReport = false, bool oversizedLogs = false,
+            string? declaredOtherSource = null, string? declaredOtherStatus = null)
         {
             var values = new List<string> { "pwsh", "-NoProfile", "-NonInteractive", "-File", "native.ps1", "-Output", "{output}", "-Status", status };
             if (changeSource) values.Add("-ChangeSource");
@@ -554,6 +608,7 @@ public sealed class MutationRunServiceTests
             if (nativeLogs) values.Add("-NativeLogs");
             if (failBeforeReport) values.Add("-FailBeforeReport");
             if (oversizedLogs) values.Add("-OversizedLogs");
+            if (declaredOtherSource is not null) values.AddRange(["-DeclaredOtherSource", declaredOtherSource, "-DeclaredOtherStatus", declaredOtherStatus ?? "None"]);
             return values.ToArray();
         }
         internal void Save(MutationRunProfile profile) => Write("profile.json", JsonSerializer.Serialize(profile, Json));

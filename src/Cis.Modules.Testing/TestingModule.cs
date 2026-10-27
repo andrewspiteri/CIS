@@ -20,6 +20,7 @@ public sealed class TestingModule : ICisModule
         services.AddSingleton<ICisTestResultAdapter, TrxTestResultAdapter>();
         services.AddSingleton<ICisTestResultAdapter, StrykerJsonResultAdapter>();
         services.AddSingleton<TestingService>();
+        services.AddSingleton<IncrementalTestService>();
     }
 
     public void RegisterCommands(ICisCommandRegistry commands, IServiceProvider services)
@@ -32,6 +33,7 @@ public sealed class TestingModule : ICisModule
         root.Subcommands.Add(Trace(service));
         root.Subcommands.Add(Status(service));
         root.Subcommands.Add(Mutation());
+        root.Subcommands.Add(Incremental(services));
         commands.Add(root);
     }
 
@@ -101,6 +103,58 @@ public sealed class TestingModule : ICisModule
             parse.GetValue(kind)!), parse.GetValue(runFormat)!));
         mutation.Subcommands.Add(run);
         return mutation;
+    }
+
+    private static Command Incremental(IServiceProvider services)
+    {
+        var root = new Command("incremental", "Plan and run graph-guided unit and mutation batches with reusable results.");
+        foreach (var operation in new[] { "plan", "run", "status" })
+        {
+            var command = new Command(operation, operation == "run" ? "Execute bounded pending batches and save each completed result." : "Inspect current and pending batches without executing tests.");
+            var repository = Repo(); var format = Format(); var profile = Required("--profile");
+            var layer = new Option<string>("--layer") { DefaultValueFactory = _ => "all", Description = "unit, mutation, or all." };
+            var batches = new Option<int>("--max-batches") { DefaultValueFactory = _ => 4 };
+            var seconds = new Option<int>("--max-seconds") { DefaultValueFactory = _ => 1200 };
+            var force = new Option<bool>("--force") { Description = "Rerun current results as well as pending work." };
+            command.Options.Add(repository); command.Options.Add(format); command.Options.Add(profile);
+            command.Options.Add(layer); command.Options.Add(batches); command.Options.Add(seconds); command.Options.Add(force);
+            command.SetAction(parse =>
+            {
+                var output = parse.GetValue(format)!;
+                if (output is not ("human" or "agent" or "json")) return 2;
+                var reader = services.GetService<ICisGraphSnapshotReader>();
+                if (reader is null) return RenderIncremental(new("missing-graph-module", 2) { Diagnostics = ["The installed graph module is required."] }, output);
+                var service = new IncrementalTestService(reader);
+                var options = new IncrementalTestOptions(parse.GetValue(repository)!, parse.GetValue(profile)!, parse.GetValue(layer)!,
+                    parse.GetValue(batches), parse.GetValue(seconds), parse.GetValue(force));
+                return RenderIncremental(operation == "run" ? service.Run(options) : service.Plan(options), output);
+            });
+            root.Subcommands.Add(command);
+        }
+        return root;
+    }
+
+    private static int RenderIncremental(IncrementalTestResult result, string format)
+    {
+        if (format == "json") Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+        else if (format == "agent")
+        {
+            Console.WriteLine($"status={result.Status};exitCode={result.ExitCode};profile={result.ProfileId};layer={result.Layer};scopeComplete={result.ScopeComplete.ToString().ToLowerInvariant()};qualified=false");
+            Console.WriteLine($"executedUnitBatches={result.ExecutedUnitBatches};executedMutationBatches={result.ExecutedMutationBatches};reusedUnitBatches={result.ReusedUnitBatches};reusedMutationBatches={result.ReusedMutationBatches};pendingUnitBatches={result.PendingUnitBatches};pendingMutationBatches={result.PendingMutationBatches}");
+            Console.WriteLine(FormattableString.Invariant($"knownScore={result.KnownScore};completeScopeScore={result.CompleteScopeScore};killed={result.Killed};knownDenominator={result.KnownDenominator};durationMilliseconds={result.DurationMilliseconds};retainedBytes={result.RetainedBytes}"));
+            foreach (var batch in result.Batches) Console.WriteLine($"source={batch.SourceFile};selection={batch.Selection};unitCurrent={batch.UnitCurrent.ToString().ToLowerInvariant()};mutationCurrent={batch.MutationCurrent.ToString().ToLowerInvariant()}");
+            foreach (var diagnostic in result.Diagnostics) Console.WriteLine($"diagnostic={diagnostic.Replace(';', ',')}");
+        }
+        else
+        {
+            Console.WriteLine($"Incremental {result.Layer}: {result.Status}; {result.PendingUnitBatches} unit batches and {result.PendingMutationBatches} mutation batches pending.");
+            Console.WriteLine($"Executed: {result.ExecutedUnitBatches} unit, {result.ExecutedMutationBatches} mutation. Reused: {result.ReusedUnitBatches} unit, {result.ReusedMutationBatches} mutation.");
+            if (result.CompleteScopeScore is { } score) Console.WriteLine(FormattableString.Invariant($"Current declared-scope mutation score: {score:F6}% ({result.Killed}/{result.KnownDenominator})."));
+            else if (result.KnownScore is { } known) Console.WriteLine(FormattableString.Invariant($"Completed batches only: {known:F6}% ({result.Killed}/{result.KnownDenominator}); full scope remains incomplete."));
+            foreach (var diagnostic in result.Diagnostics) Console.WriteLine(diagnostic);
+            Console.WriteLine("Development feedback only; release qualification remains separate.");
+        }
+        return result.ExitCode;
     }
 
     private static int RunMutation(MutationRunOptions options, string format)

@@ -1,6 +1,11 @@
 schema_version: 1
 repository: change-impact-studio
 documents:
+  - id: change-impact-studio:manual:cis-test-incremental
+    path: docs/manual/cis_test_incremental.md
+    type: command-reference
+    status: draft
+    authority: canonical
   - id: change-impact-studio:manual:mstest-adapter-compat
     path: docs/manual/cis_mstest_adapter_compat.md
     type: command-reference

@@ -15,6 +15,10 @@ Execute a native mutation command through CIS's shared process and storage guard
 Each target supplies a JSON profile; CIS does not contain target-specific assertion
 rules, source offsets or test controllers.
 
+For routine iterations that reuse completed unit and mutation work across file
+batches, use [`cis test incremental`](cis_test_incremental.md). The command here
+continues to execute and assess one complete native invocation.
+
 ```text
 cis test mutation run --profile <repository-relative.json> [--kind diagnostic|canary|qualification] [--repo <path>] [--format human|json|agent]
 ```

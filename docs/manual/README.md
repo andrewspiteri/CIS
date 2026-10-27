@@ -64,6 +64,7 @@ Each loaded module owns one top-level command group. The following leaf commands
 | [`cis test validate`](cis_test_validate.md) | Validate suite contracts, adapters, and local evidence paths. |
 | [`cis test reconcile`](cis_test_reconcile.md) | Reconcile native runner outputs into typed test evidence. |
 | [`cis test mutation run`](cis_test_mutation_run.md) | Run a reusable native profile with bounded execution and separate diagnostic and qualification results. |
+| [`cis test incremental`](cis_test_incremental.md) | Run graph-guided unit and mutation file batches and reuse current completed results. |
 | [Optional MSTest adapter compatibility tool](cis_mstest_adapter_compat.md) | Prepare and validate an opt-in overlay for the exact supported adapter binary. |
 | [`cis test mutation assess`](cis_test_mutation_assess.md) | Assess native report outcomes with a conservative score and explicit evidence limits. |
 | [`cis test trace`](cis_test_trace.md) | Prove exact manual-case identities executed and passed. |

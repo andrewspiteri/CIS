@@ -259,7 +259,7 @@ public sealed partial class MutationRunService
     private static bool Expected(Exception error) => error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException
         or ArgumentException or InvalidOperationException or NotSupportedException or System.ComponentModel.Win32Exception;
 
-    private static bool MatchScope(string repository, MutationRunProfile profile, string report, bool exact, List<string> diagnostics)
+    internal static bool MatchScope(string repository, MutationRunProfile profile, string report, bool exact, List<string> diagnostics)
     {
         if (profile.SourceFiles.Length == 0) return !exact;
         var declared = profile.SourceFiles.Select(path => Resolve(repository, path)).ToHashSet(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);

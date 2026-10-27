@@ -7,7 +7,7 @@ namespace Cis.Modules.Testing;
 
 public sealed partial class MutationRunService
 {
-    private static MutationNativeExecution Execute(string repository, string output, string storage,
+    internal static MutationNativeExecution Execute(string repository, string output, string storage,
         MutationRunProfile profile, string[] command)
     {
         var temporary = Path.Combine(Path.GetTempPath(), "cis-mutation-" + Guid.NewGuid().ToString("N"));

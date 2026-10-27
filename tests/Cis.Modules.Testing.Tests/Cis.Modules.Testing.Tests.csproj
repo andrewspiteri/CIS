@@ -3,6 +3,7 @@
     <ProjectReference Include="..\..\src\Cis.Modules.Testing\Cis.Modules.Testing.csproj" />
     <ProjectReference Include="..\..\src\Cis.Modules.Repository\Cis.Modules.Repository.csproj" />
     <ProjectReference Include="..\..\src\Cis.Modules.Workflow\Cis.Modules.Workflow.csproj" />
+    <ProjectReference Include="..\..\tools\Cis.Testing.NativeFixture\Cis.Testing.NativeFixture.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
@@ -12,4 +13,12 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
   </ItemGroup>
+  <Target Name="CopyNativeTestingFixture" AfterTargets="Build">
+    <ItemGroup>
+      <NativeTestingFixture Include="../../tools/Cis.Testing.NativeFixture/bin/$(Configuration)/$(TargetFramework)/Cis.Testing.NativeFixture.dll" />
+      <NativeTestingFixture Include="../../tools/Cis.Testing.NativeFixture/bin/$(Configuration)/$(TargetFramework)/Cis.Testing.NativeFixture.runtimeconfig.json" />
+      <NativeTestingFixture Include="../../tools/Cis.Testing.NativeFixture/bin/$(Configuration)/$(TargetFramework)/Cis.Testing.NativeFixture.deps.json" />
+    </ItemGroup>
+    <Copy SourceFiles="@(NativeTestingFixture)" DestinationFolder="$(TargetDir)native-fixture" />
+  </Target>
 </Project>

@@ -61,6 +61,41 @@ public sealed class MutationRunnerScriptTests
     }
 
     [Fact]
+    public void ExternalScratchGrowthCountsAgainstRunAndRetainedBudgets()
+    {
+        using var fixture = new RunnerFixture();
+        var scratch = Directory.CreateTempSubdirectory("cis-external-scratch-");
+        try
+        {
+            var output = Path.Combine(scratch.FullName, "payload.bin").Replace("'", "''");
+            var result = fixture.Run($"[IO.File]::WriteAllBytes('{output}', [byte[]]::new(32768)); Start-Sleep -Seconds 30",
+                $"-ScratchRoot '{scratch.FullName.Replace("'", "''")}' -MaximumRetainedBytes 16384");
+            Assert.Equal("storage-limit", result.GetProperty("status").GetString());
+            Assert.True(result.GetProperty("peakRunBytes").GetInt64() >= 32768);
+            Assert.True(result.GetProperty("peakRetainedBytes").GetInt64() >= 32768);
+        }
+        finally { scratch.Delete(recursive: true); }
+    }
+
+    [Fact]
+    public void ExternalScratchRetainedBudgetIsCheckedBeforeLaunch()
+    {
+        using var fixture = new RunnerFixture();
+        var scratch = Directory.CreateTempSubdirectory("cis-external-scratch-");
+        try
+        {
+            File.WriteAllBytes(Path.Combine(scratch.FullName, "existing.bin"), new byte[32768]);
+            var marker = Path.Combine(scratch.FullName, "started.txt");
+            var result = fixture.Run($"[IO.File]::WriteAllText('{marker.Replace("'", "''")}', 'started')",
+                $"-ScratchRoot '{scratch.FullName.Replace("'", "''")}' -MaximumRetainedBytes 16384");
+            Assert.Equal("storage-limit", result.GetProperty("status").GetString());
+            Assert.False(File.Exists(marker));
+            Assert.Equal(JsonValueKind.Null, result.GetProperty("exitCode").ValueKind);
+        }
+        finally { scratch.Delete(recursive: true); }
+    }
+
+    [Fact]
     public void BoundedCaptureKeepsNativeFailureAndDrainsBothStreams()
     {
         using var fixture = new RunnerFixture();

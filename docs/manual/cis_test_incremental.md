@@ -134,10 +134,14 @@ phase has its own profile timeout. A large interrupted file repeats at most that
 file's bounded attempt; there is no per-mutant checkpoint inside a file.
 
 Unit and mutation commands use the shared native process/storage guard and its
-short owned temporary directories. `maxRunBytes` bounds a native phase and its
-owned scratch. `maxRetainedBytes` measures `.cis/local/testing`, including saved
-results. Existing unrelated reports count toward the cap and are not deleted to
-make room. The command shares the existing mutation execution lease.
+owned temporary directories. On Linux, scratch uses a short directory under the
+host temporary root so repository paths cannot exhaust Unix-domain socket limits.
+Set the invoking process's `TMPDIR` to a short owned location when needed.
+`maxRunBytes` bounds a native phase and its scratch. `maxRetainedBytes` measures
+`.cis/local/testing`, including saved results, plus active scratch outside that
+directory. Free-space checks cover both filesystems. Existing unrelated reports
+count toward the cap and are not deleted to make room. The command shares the
+existing mutation execution lease.
 
 Before instrumentation, CIS durably marks recovery as required. After every mutation
 attempt, including a missing report or hard timeout, it runs `recoveryCommand` and

@@ -62,6 +62,17 @@ function Get-MutationRunBytes {
     return $bytes
 }
 
+function Get-MutationRetainedBytes {
+    param([string]$StorageRoot, [string]$ScratchRoot)
+    $comparison = if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+    $storage = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($StorageRoot))
+    if (-not [string]::IsNullOrEmpty($ScratchRoot) -and
+        -not $ScratchRoot.StartsWith($storage + [IO.Path]::DirectorySeparatorChar, $comparison)) {
+        return Get-MutationRunBytes $StorageRoot $ScratchRoot
+    }
+    return Get-MutationTreeBytes $StorageRoot
+}
+
 function Invoke-BoundedMutationProcess {
     param(
         [string]$FilePath,
@@ -104,11 +115,12 @@ function Invoke-BoundedMutationProcess {
             $runPath = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($RunRoot))
             $comparison = if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
             $separator = [IO.Path]::DirectorySeparatorChar
-            if (-not $scratchPath.StartsWith($storagePath + $separator, $comparison) -or
+            if ([string]::Equals($scratchPath, $storagePath, $comparison) -or
+                $storagePath.StartsWith($scratchPath + $separator, $comparison) -or
                 [string]::Equals($scratchPath, $runPath, $comparison) -or
                 $scratchPath.StartsWith($runPath + $separator, $comparison) -or
                 $runPath.StartsWith($scratchPath + $separator, $comparison)) {
-                throw 'Mutation scratch root must be inside mutation storage and disjoint from the run root.'
+                throw 'Mutation scratch root must be disjoint from the run root and must not contain mutation storage.'
             }
             if (-not [IO.Directory]::Exists($scratchPath)) { throw 'Mutation scratch root must be an existing owned directory.' }
             # Check links before accepting the root; rejected input must never be scanned at final accounting.
@@ -117,14 +129,15 @@ function Invoke-BoundedMutationProcess {
         }
         # Repeat preflight here so direct callers cannot bypass the storage guard.
         $peakRun = Get-MutationRunBytes $RunRoot $validatedScratchRoot
-        $peakRetained = Get-MutationTreeBytes $StorageRoot
+        $peakRetained = Get-MutationRetainedBytes $StorageRoot $validatedScratchRoot
         $existingParent = [IO.Path]::GetFullPath($RunRoot)
         while (-not [IO.Directory]::Exists($existingParent)) { $existingParent = [IO.Path]::GetDirectoryName($existingParent) }
         $drive = [IO.DriveInfo]::new($existingParent)
+        $scratchDrive = if ($null -ne $validatedScratchRoot) { [IO.DriveInfo]::new($validatedScratchRoot) } else { $drive }
         if ($peakRun -ge $MaximumRunBytes -or $peakRetained -ge $MaximumRetainedBytes) {
             $status = 'storage-limit'
         }
-        elseif ($drive.AvailableFreeSpace -lt $MinimumFreeBytes) { $status = 'disk-space' }
+        elseif ($drive.AvailableFreeSpace -lt $MinimumFreeBytes -or $scratchDrive.AvailableFreeSpace -lt $MinimumFreeBytes) { $status = 'disk-space' }
         if ($status -ne 'exited') {
             return [pscustomobject]@{ status = $status; exitCode = $null; durationMilliseconds = $watch.ElapsedMilliseconds
                 peakRunBytes = $peakRun; peakRetainedBytes = $peakRetained; outputTruncated = $false; error = $null }
@@ -189,9 +202,9 @@ function Invoke-BoundedMutationProcess {
             if ($watch.ElapsedMilliseconds -ge $nextStorageCheck) {
                 foreach ($stream in $streams) { $stream.writer.Flush() }
                 $peakRun = [Math]::Max($peakRun, (Get-MutationRunBytes $RunRoot $validatedScratchRoot))
-                $peakRetained = [Math]::Max($peakRetained, (Get-MutationTreeBytes $StorageRoot))
+                $peakRetained = [Math]::Max($peakRetained, (Get-MutationRetainedBytes $StorageRoot $validatedScratchRoot))
                 if ($peakRun -ge $MaximumRunBytes -or $peakRetained -ge $MaximumRetainedBytes) { $status = 'storage-limit'; break }
-                if ($drive.AvailableFreeSpace -lt $MinimumFreeBytes) { $status = 'disk-space'; break }
+                if ($drive.AvailableFreeSpace -lt $MinimumFreeBytes -or $scratchDrive.AvailableFreeSpace -lt $MinimumFreeBytes) { $status = 'disk-space'; break }
                 $nextStorageCheck = $watch.ElapsedMilliseconds + 1000
             }
             Start-Sleep -Milliseconds 10
@@ -235,7 +248,7 @@ function Invoke-BoundedMutationProcess {
         $watch.Stop()
     }
     $peakRun = [Math]::Max($peakRun, (Get-MutationRunBytes $RunRoot $validatedScratchRoot))
-    $peakRetained = [Math]::Max($peakRetained, (Get-MutationTreeBytes $StorageRoot))
+    $peakRetained = [Math]::Max($peakRetained, (Get-MutationRetainedBytes $StorageRoot $validatedScratchRoot))
     if ($status -eq 'exited' -and ($peakRun -ge $MaximumRunBytes -or $peakRetained -ge $MaximumRetainedBytes)) { $status = 'storage-limit' }
     return [pscustomobject]@{ status = $status; exitCode = $exitCode; durationMilliseconds = $watch.ElapsedMilliseconds
         peakRunBytes = $peakRun; peakRetainedBytes = $peakRetained

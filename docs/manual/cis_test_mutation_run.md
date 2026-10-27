@@ -44,8 +44,13 @@ shown below; `healthCheckCommand` is optional. Unknown fields are rejected.
 `environment` defaults to empty and supplies target-process variables without
 changing the CIS guard's environment. Values are pinned through the profile hash.
 For each native command, CIS defaults `TEMP`, `TMP` and `TMPDIR` to a fresh, short
-owned directory beneath mutation storage. Its bytes count toward both that command's
-run limit and the aggregate retained limit, and CIS removes it after execution.
+owned directory. On Linux this uses the host temporary root, keeping Unix-domain
+socket paths independent of repository depth. Set the invoking process's `TMPDIR`
+to a short owned location when needed. Scratch bytes count toward both that command's
+run limit and the aggregate retained limit; free-space checks cover both filesystems.
+CIS removes scratch after execution. An interrupted Linux run leaves a small recovery
+marker; another run waits for the previous guard's deadline before removing that
+scratch under the same temporary root.
 Explicit profile overrides remain honored. Files outside that command's run and
 temporary directories do not count toward its per-run limit; files beneath mutation
 storage still count toward the aggregate limit.

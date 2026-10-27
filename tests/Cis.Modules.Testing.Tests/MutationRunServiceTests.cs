@@ -126,10 +126,12 @@ public sealed class MutationRunServiceTests
         using var observed = JsonDocument.Parse(File.ReadAllText(fixture.Full("native-temp-observed.json")));
         var scratch = observed.RootElement.GetProperty("file").GetString()!;
         var runRoot = System.IO.Path.GetDirectoryName(fixture.Full(result.SummaryPath!))!;
-        var scratchStorage = fixture.Full(MutationRunService.LocalRoot + "/.tmp");
+        var scratchStorage = OperatingSystem.IsLinux() ? System.IO.Path.GetTempPath().TrimEnd(System.IO.Path.DirectorySeparatorChar)
+            : fixture.Full(MutationRunService.LocalRoot + "/.tmp");
         Assert.StartsWith(scratchStorage + System.IO.Path.DirectorySeparatorChar, scratch, CisPathSafety.PlatformComparison);
         Assert.False(CisPathSafety.IsUnderRoot(runRoot, scratch, allowRoot: true));
-        Assert.Equal(22, new DirectoryInfo(System.IO.Path.GetDirectoryName(scratch)!).Name.Length);
+        Assert.Equal(OperatingSystem.IsLinux() ? 26 : 22, new DirectoryInfo(System.IO.Path.GetDirectoryName(scratch)!).Name.Length);
+        if (OperatingSystem.IsLinux()) Assert.InRange(System.Text.Encoding.UTF8.GetByteCount(System.IO.Path.GetDirectoryName(scratch)!), 1, 40);
         Assert.False(File.Exists(scratch));
         Assert.False(Directory.Exists(System.IO.Path.GetDirectoryName(scratch)));
         foreach (var name in callerEnvironment.Keys)

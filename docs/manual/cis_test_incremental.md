@@ -60,7 +60,7 @@ alone does not invalidate otherwise unchanged work. Native report hashes and par
 outcomes are rechecked before reuse.
 
 Failed or aborted unit results, missing reports, source mismatches, pending/runtime
-error outcomes and timeouts cannot become reusable completions. Completed native
+error outcomes and timed-out invocations cannot become reusable completions. Completed native
 survivor and no-coverage findings remain saved until relevant inputs change or a
 forced rerun is requested. They retain their original status and score contribution.
 An exact native file with an empty mutant array adds no kills or denominator;
@@ -127,11 +127,37 @@ as executable plugins.
 
 ## Bounds and recovery
 
+### Revalidate a compatible runner update
+
+After reviewing a testing-module update for compatibility, use `revalidate` to
+preserve completed results whose other inputs still match. Supply the previous
+installed `Cis.Modules.Testing.dll` outside the target repository, with its original
+`Cis.Abstractions.dll` beside it, and record the review reason. Review compatibility
+of both assemblies. For example, correcting a false storage-scan failure leaves earlier
+completed native verdicts unchanged.
+
+```text
+cis test incremental revalidate --repo <repository> --profile <relative.json> --previous-testing-assembly <absolute-previous-Cis.Modules.Testing.dll> --reason "Reviewed guard correction; native assessment rules unchanged." --format agent
+```
+
+CIS reconstructs the previous producer's input identity, rechecks native reports
+and source, then updates eligible cache fingerprints. Reports and original native
+execution records remain unchanged. Changed inputs, failed stages, unfinished
+execution and recovery holds cannot acquire completion through this command.
+The reason records the compatibility review; CIS does not infer compatibility
+from that text. A changed result interpretation needs its own policy review.
+
 Defaults are four file batches and 1,200 seconds per invocation. The maximums are
 512 batches and 3,600 seconds. Scheduling reserves time for baseline recovery;
 native guard startup, cleanup and final publication can add overhead. Each native
 phase has its own profile timeout. A large interrupted file repeats at most that
 file's bounded attempt; there is no per-mutant checkpoint inside a file.
+
+For a large file, `run --native-timeout-seconds <1-3600>` overrides the invocation
+guard within the command's remaining wall budget. Use one file batch when it needs
+that full budget. The override is recorded in diagnostics and does not alter the
+native per-mutant timeout or invalidate completed input-matching results. Native
+timeouts inside Stryker remain configured in its pinned template.
 
 Unit and mutation commands use the shared native process/storage guard and its
 owned temporary directories. On Linux, scratch uses a short directory under the
@@ -161,8 +187,10 @@ transient. Saved current reports are a reusable cache, not an attempt archive.
 
 `knownScore` covers current readable native findings only. `completeScopeScore`
 remains absent while any required source batch is unfinished or recovery is on
-hold. Native timeout findings stay visible and receive no conservative kill credit.
-`thresholdMet` also requires no uncovered mutants. `qualified` is always false:
+hold. An explicit mutant timeout in a normally completed native report remains a
+cached miss after healthy recovery. It receives no conservative kill credit and
+keeps `thresholdMet` false. An invocation killed by its guard is unfinished work
+and cannot use this rule. `thresholdMet` also requires no uncovered mutants. `qualified` is always false:
 the declared development profile does not certify complete release scope.
 
 Exit codes are `0` for a completed requested layer or a readable plan, `2` for an

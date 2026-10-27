@@ -20,7 +20,7 @@ public sealed partial class IncrementalTestService
         catch (Exception error) when (Expected(error)) { return new("invalid-plan", 2) { Diagnostics = [error.Message] }; }
     }
 
-    public IncrementalTestResult Run(IncrementalTestOptions options)
+    public IncrementalTestResult Run(IncrementalTestOptions options, int nativeTimeoutSeconds = 0)
     {
         var watch = Stopwatch.StartNew();
         Input? input = null;
@@ -31,6 +31,11 @@ public sealed partial class IncrementalTestService
         try
         {
             input = Read(options);
+            Require(nativeTimeoutSeconds is >= 0 and <= 3600, "Native timeout override must be 0-3600 seconds.");
+            if (nativeTimeoutSeconds > 0)
+            {
+                diagnostics.Add($"Native invocation guard override: {nativeTimeoutSeconds} seconds; source, native test timeouts and assessment policy are unchanged.");
+            }
             Directory.CreateDirectory(input.Root);
             // Share the native build/output lease with the existing mutation command.
             var leasePath = Safe(input.Repository, MutationRunService.LocalRoot + "/run.lock");
@@ -96,7 +101,7 @@ public sealed partial class IncrementalTestService
                 Save(input, state); // Durable before any instrumentation can begin.
                 var nativeOutput = Work(input);
                 var native = Execute(input, batch, input.Profile.MutationCommand!, nativeOutput,
-                    Seconds(input, options, watch, reserve), ref state);
+                    Seconds(input, options, watch, reserve, nativeTimeoutSeconds > 0 ? nativeTimeoutSeconds : null), ref state);
                 var assessed = Assess(input, batch, true, nativeOutput, native, Unchanged(input, batch));
                 executedMutation++;
                 // A crash between native completion and recovery cannot publish a reusable mutation result.
@@ -110,7 +115,7 @@ public sealed partial class IncrementalTestService
                     RecoveryExecution = recovery, PostflightExecution = postflight, PostflightPassed = passed,
                     Diagnostics = recovered ? assessed.Diagnostics : assessed.Diagnostics.Append("Baseline recovery failed.").ToArray(),
                 };
-                assessed = assessed with { Status = assessed.Completed ? "completed" : "failed" };
+                assessed = assessed with { Status = assessed.Completed ? assessed.Mutation?.TimedOut > 0 ? "completed-with-timeouts" : "completed" : "failed" };
                 state.Batches[batch.Id] = saved with { Mutation = assessed };
                 Save(input, state);
                 if (!assessed.Completed) { diagnostics.AddRange(assessed.Diagnostics); failed = true; break; }
@@ -153,8 +158,8 @@ public sealed partial class IncrementalTestService
         return selected.UnitFingerprint == batch.UnitFingerprint && selected.MutationFingerprint == batch.MutationFingerprint;
     }
 
-    private static int Seconds(Input input, IncrementalTestOptions options, Stopwatch watch, int reserve)
-        => Math.Max(1, Math.Min(input.Profile.TimeoutSeconds, (int)(options.MaximumSeconds - watch.Elapsed.TotalSeconds - reserve)));
+    private static int Seconds(Input input, IncrementalTestOptions options, Stopwatch watch, int reserve, int? nativeOverride = null)
+        => Math.Max(1, Math.Min(nativeOverride ?? input.Profile.TimeoutSeconds, (int)(options.MaximumSeconds - watch.Elapsed.TotalSeconds - reserve)));
 
     private static MutationNativeExecution Execute(Input input, IncrementalTestBatch batch, string[] command,
         string output, int seconds, ref IncrementalTestState state, bool fullTests = false)
@@ -227,7 +232,7 @@ public sealed partial class IncrementalTestService
         var pendingMutation = input.Profile.MutationCommand is null ? 0 : batches.Count(batch => !batch.MutationCurrent);
         var complete = pendingUnit == 0 && (options.Layer == "unit" || pendingMutation == 0)
             && !state.RecoveryRequired && state.ActiveExecutionUntilUtc is null;
-        // Current native timeout findings remain visible even though their batch cannot be reused.
+        // A completed native timeout verdict is a cached miss. A timed-out invocation is unfinished work.
         var mutations = new List<TestMutationSummary>();
         foreach (var batch in batches)
         {
@@ -257,7 +262,7 @@ public sealed partial class IncrementalTestService
             Killed = killed, Survived = mutations.Sum(item => item.Survived), TimedOut = mutations.Sum(item => item.TimedOut),
             NoCoverage = mutations.Sum(item => item.NoCoverage), KnownDenominator = denominator, KnownScore = score,
             CompleteScopeScore = mutationComplete ? score : null,
-            ThresholdMet = mutationComplete && score >= input.Profile.BreakThreshold && mutations.All(item => item.NoCoverage == 0),
+            ThresholdMet = mutationComplete && score >= input.Profile.BreakThreshold && mutations.All(item => item.NoCoverage == 0 && item.TimedOut == 0),
             Batches = batches,
         };
     }

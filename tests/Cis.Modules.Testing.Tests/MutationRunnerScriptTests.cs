@@ -96,6 +96,31 @@ public sealed class MutationRunnerScriptTests
     }
 
     [Fact]
+    public async Task DisappearingTemporaryFilesDoNotAbortHealthyNativeExecution()
+    {
+        using var fixture = new RunnerFixture();
+        var scratch = Directory.CreateTempSubdirectory("cis-churning-scratch-");
+        using var stop = new CancellationTokenSource();
+        var churn = Task.Run(() =>
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                for (var index = 0; index < 128; index++)
+                    File.WriteAllBytes(Path.Combine(scratch.FullName, "temporary-" + index), [1]);
+                for (var index = 0; index < 128; index++) File.Delete(Path.Combine(scratch.FullName, "temporary-" + index));
+            }
+        }, TestContext.Current.CancellationToken);
+        try
+        {
+            var result = fixture.Run("Start-Sleep -Seconds 5; Write-Output healthy", $"-ScratchRoot '{scratch.FullName.Replace("'", "''")}'");
+            Assert.Equal("exited", result.GetProperty("status").GetString());
+            Assert.Equal(0, result.GetProperty("exitCode").GetInt32());
+            Assert.Equal(JsonValueKind.Null, result.GetProperty("error").ValueKind);
+        }
+        finally { stop.Cancel(); await churn; scratch.Delete(recursive: true); }
+    }
+
+    [Fact]
     public void BoundedCaptureKeepsNativeFailureAndDrainsBothStreams()
     {
         using var fixture = new RunnerFixture();

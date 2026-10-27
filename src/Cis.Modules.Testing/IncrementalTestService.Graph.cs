@@ -106,7 +106,7 @@ public sealed partial class IncrementalTestService
                     && unit.Total == result.Total && unit.Passed == result.Passed && unit.Failed == result.Failed && unit.Skipped == result.Skipped;
             }
             var measured = ReadMutation(input, source, path).Mutation;
-            return measured is { ValidEvidence: true, TimedOut: 0, RuntimeErrors: 0, Pending: 0, Unknown: 0 }
+            return measured is { ValidEvidence: true, RuntimeErrors: 0, Pending: 0, Unknown: 0 }
                 && HashObject(measured) == HashObject(result.Mutation);
         }
         catch (Exception error) when (Expected(error)) { return false; }

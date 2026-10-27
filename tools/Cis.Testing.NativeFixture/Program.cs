@@ -45,13 +45,13 @@ if (mode is "unit" or "unit-failure" or "unit-abort")
     new XDocument(new XElement("TestRun", new XElement("Results", row), summary)).Save(Path.Combine(output, "unit.trx"));
     return failed ? 1 : 0;
 }
-if (mode is "mutation" or "survivor" or "pending" or "wrong-source" or "empty")
+if (mode is "mutation" or "survivor" or "pending" or "wrong-source" or "empty" or "reported-timeout")
 {
     var mutant = new
     {
-        id = "0", mutatorName = "Boolean", replacement = "false", status = mode == "survivor" ? "Survived" : mode == "pending" ? "Pending" : "Killed",
+        id = "0", mutatorName = "Boolean", replacement = "false", status = mode == "survivor" ? "Survived" : mode == "pending" ? "Pending" : mode == "reported-timeout" ? "Timeout" : "Killed",
         location = new { start = new { line = 1, column = 1 }, end = new { line = 1, column = 2 } },
-        killedBy = mode == "survivor" ? Array.Empty<string>() : new[] { "native-case" },
+        killedBy = mode is "survivor" or "reported-timeout" ? Array.Empty<string>() : new[] { "native-case" },
     };
     var files = new Dictionary<string, object>
     {

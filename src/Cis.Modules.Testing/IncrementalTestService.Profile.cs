@@ -23,7 +23,7 @@ public sealed partial class IncrementalTestService
     private sealed record Input(string Repository, IncrementalTestProfile Profile, string ProfilePath,
         string ProfileHash, string Storage, string Root, string StatePath, string CommonIdentity);
 
-    private static Input Read(IncrementalTestOptions options)
+    private static Input Read(IncrementalTestOptions options, string? previousTestingProducer = null, string? previousHelperProducer = null)
     {
         Require(options.Layer is "unit" or "mutation" or "all", "Layer must be unit, mutation, or all.");
         Require(options.MaximumBatches is >= 1 and <= 512 && options.MaximumSeconds is >= 1 and <= 3600,
@@ -83,7 +83,7 @@ public sealed partial class IncrementalTestService
             profile = HashFile(path),
             configuration = profile.ConfigFiles.Order(StringComparer.Ordinal).Select(file => new { file, hash = HashFile(Safe(repository, file)) }).ToArray(),
             tools = tools.Select(file => new { file, hash = HashFile(file) }).ToArray(),
-            cis = new[] { typeof(IncrementalTestService).Assembly.Location, typeof(CisProcessJob).Assembly.Location }.Select(HashFile).ToArray(),
+            cis = new[] { previousTestingProducer ?? HashFile(typeof(IncrementalTestService).Assembly.Location), previousHelperProducer ?? HashFile(typeof(CisProcessJob).Assembly.Location) },
             platform = System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier,
             // Never persist inherited values, which may include credentials. Any change invalidates reuse.
             ambientEnvironment = HashObject(Environment.GetEnvironmentVariables().Cast<DictionaryEntry>()

@@ -81,7 +81,7 @@ public sealed partial class IncrementalTestService
         if (!healthy) diagnostics.Add($"Native execution: {execution.Status}, exit={execution.ExitCode}. {execution.Error}");
         if (!unchanged) diagnostics.Add("Relevant inputs changed during execution; this result cannot be reused.");
         var completed = healthy && unchanged && (mutation
-            ? assessment?.Mutation is { ValidEvidence: true, TimedOut: 0, RuntimeErrors: 0, Pending: 0, Unknown: 0 }
+            ? assessment?.Mutation is { ValidEvidence: true, RuntimeErrors: 0, Pending: 0, Unknown: 0 }
             : assessment is { Status: "passed", Total: > 0, Failed: 0, Skipped: 0 });
         if (mutation && PathComparer.Equals(batch.SourceFile, input.Profile.CanarySourceFile)
             && (assessment?.Mutation?.Killed ?? 0) < input.Profile.MinimumCanaryKills)

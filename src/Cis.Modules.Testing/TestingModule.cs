@@ -116,8 +116,10 @@ public sealed class TestingModule : ICisModule
             var batches = new Option<int>("--max-batches") { DefaultValueFactory = _ => 4 };
             var seconds = new Option<int>("--max-seconds") { DefaultValueFactory = _ => 1200 };
             var force = new Option<bool>("--force") { Description = "Rerun current results as well as pending work." };
+            var nativeTimeout = new Option<int>("--native-timeout-seconds") { DefaultValueFactory = _ => 0, Description = "Invocation guard override, 1-3600 seconds; zero uses the profile. Does not change native per-mutant timeouts." };
             command.Options.Add(repository); command.Options.Add(format); command.Options.Add(profile);
             command.Options.Add(layer); command.Options.Add(batches); command.Options.Add(seconds); command.Options.Add(force);
+            if (operation == "run") command.Options.Add(nativeTimeout);
             command.SetAction(parse =>
             {
                 var output = parse.GetValue(format)!;
@@ -127,10 +129,25 @@ public sealed class TestingModule : ICisModule
                 var service = new IncrementalTestService(reader);
                 var options = new IncrementalTestOptions(parse.GetValue(repository)!, parse.GetValue(profile)!, parse.GetValue(layer)!,
                     parse.GetValue(batches), parse.GetValue(seconds), parse.GetValue(force));
-                return RenderIncremental(operation == "run" ? service.Run(options) : service.Plan(options), output);
+                return RenderIncremental(operation == "run" ? service.Run(options, parse.GetValue(nativeTimeout)) : service.Plan(options), output);
             });
             root.Subcommands.Add(command);
         }
+        var revalidate = new Command("revalidate", "Recheck completed caches after a reviewed compatible testing-module update without executing native tests.");
+        var revalidateRepository = Repo(); var revalidateFormat = Format(); var revalidateProfile = Required("--profile");
+        var previous = Required("--previous-testing-assembly"); var reason = Required("--reason");
+        revalidate.Options.Add(revalidateRepository); revalidate.Options.Add(revalidateFormat); revalidate.Options.Add(revalidateProfile);
+        revalidate.Options.Add(previous); revalidate.Options.Add(reason);
+        revalidate.SetAction(parse =>
+        {
+            var output = parse.GetValue(revalidateFormat)!;
+            if (output is not ("human" or "agent" or "json")) return 2;
+            var reader = services.GetService<ICisGraphSnapshotReader>();
+            if (reader is null) return RenderIncremental(new("missing-graph-module", 2), output);
+            return RenderIncremental(new IncrementalTestService(reader).Revalidate(new(parse.GetValue(revalidateRepository)!, parse.GetValue(revalidateProfile)!),
+                parse.GetValue(previous)!, parse.GetValue(reason)!), output);
+        });
+        root.Subcommands.Add(revalidate);
         return root;
     }
 

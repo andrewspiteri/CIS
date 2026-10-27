@@ -30,4 +30,24 @@ public sealed partial class TestingServiceTests
     {
         public object? GetService(Type type) => type == typeof(TestingService) ? service : type == typeof(ICisGraphSnapshotReader) ? graph : null;
     }
+
+    [Fact]
+    public void RevalidateCommandRequiresCompatibilityInputsAndDoesNotExecuteTests()
+    {
+        using var fixture = new IncrementalTestServiceTests.Fixture();
+        var registry = new MutationCommandRegistry();
+        new TestingModule().RegisterCommands(registry, new IncrementalCommandServices(Service(), fixture));
+        using var output = new StringWriter(System.Globalization.CultureInfo.InvariantCulture);
+        var previous = Console.Out;
+        try
+        {
+            Console.SetOut(output);
+            Assert.Equal(0, registry.Root.Parse(["test", "incremental", "revalidate", "--profile", "profile.json", "--repo", fixture.Path,
+                "--previous-testing-assembly", typeof(IncrementalTestService).Assembly.Location, "--reason", "Reviewed compatible guard update.", "--format", "json"]).Invoke());
+        }
+        finally { Console.SetOut(previous); }
+        using var result = System.Text.Json.JsonDocument.Parse(output.ToString());
+        Assert.Equal("cache-revalidated", result.RootElement.GetProperty("status").GetString());
+        Assert.Empty(fixture.Calls());
+    }
 }

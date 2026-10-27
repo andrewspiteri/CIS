@@ -7,20 +7,31 @@ function Get-MutationTreeBytes {
     $pending.Push($Path)
     [long]$bytes = 0
     while ($pending.Count -gt 0) {
-        $directory = [IO.DirectoryInfo]::new($pending.Pop())
-        if ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) {
-            throw "Mutation storage crosses a symbolic link: $($directory.FullName)"
-        }
-        foreach ($entry in $directory.EnumerateFileSystemInfos()) {
-            if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) {
-                throw "Mutation storage contains a symbolic link: $($entry.FullName)"
+        try {
+            $directory = [IO.DirectoryInfo]::new($pending.Pop())
+            # FileSystemInfo.Attributes can return -1 after deletion, setting every
+            # flag including ReparsePoint. Fresh path queries throw on disappearance.
+            $attributes = [IO.File]::GetAttributes($directory.FullName)
+            if ($attributes -band [IO.FileAttributes]::ReparsePoint) {
+                throw "Mutation storage crosses a symbolic link: $($directory.FullName)"
             }
-            if ($entry -is [IO.DirectoryInfo]) { $pending.Push($entry.FullName) }
-            else {
-                if ($entry.Length -gt [long]::MaxValue - $bytes) { throw 'Mutation storage size exceeds the supported range.' }
-                $bytes += $entry.Length
+            foreach ($entry in $directory.EnumerateFileSystemInfos()) {
+                try {
+                    $attributes = [IO.File]::GetAttributes($entry.FullName)
+                    if ($attributes -band [IO.FileAttributes]::ReparsePoint) {
+                        throw "Mutation storage contains a symbolic link: $($entry.FullName)"
+                    }
+                    if ($attributes -band [IO.FileAttributes]::Directory) { $pending.Push($entry.FullName) }
+                    else {
+                        $length = [IO.FileInfo]::new($entry.FullName).Length
+                        if ($length -gt [long]::MaxValue - $bytes) { throw 'Mutation storage size exceeds the supported range.' }
+                        $bytes += $length
+                    }
+                }
+                catch [IO.FileNotFoundException], [IO.DirectoryNotFoundException] { continue }
             }
         }
+        catch [IO.FileNotFoundException], [IO.DirectoryNotFoundException] { continue }
     }
     return $bytes
 }

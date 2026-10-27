@@ -185,6 +185,27 @@ public sealed class IncrementalTestServiceTests
     }
 
     [Fact]
+    public void CompletedNativeTimeoutVerdictIsACachedMissAndStillHoldsTheGate()
+    {
+        using var fixture = new Fixture();
+        fixture.Fault("src/B.cs", "mutation:reported-timeout");
+        var first = fixture.Run();
+        Assert.Equal(0, first.ExitCode);
+        Assert.True(first.ScopeComplete);
+        Assert.Equal(50, first.CompleteScopeScore);
+        Assert.Equal(1, first.Killed);
+        Assert.Equal(1, first.TimedOut);
+        Assert.False(first.ThresholdMet);
+        var calls = fixture.Calls();
+        var next = fixture.Run();
+        Assert.Equal(0, next.ExecutedMutationBatches);
+        Assert.Equal(2, next.ReusedMutationBatches);
+        Assert.Equal(calls, fixture.Calls());
+        Assert.Equal(1, next.TimedOut);
+        Assert.False(next.ThresholdMet);
+    }
+
+    [Fact]
     public void StrykerTemplateGetsExactBatchScopeAndFilterWithoutChangingTheOriginal()
     {
         using var fixture = new Fixture();

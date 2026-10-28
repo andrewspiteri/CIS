@@ -259,8 +259,19 @@ native `--mutate` or `-m` arguments selecting that source and bounded character
 ranges, and a shorter outer invocation guard (`timeoutSeconds`). Other command or
 setting differences fail verification. A shorter outer guard still requires a
 completed native execution with healthy recovery and postflight; a guard timeout
-or abort cannot gain credit. Native Stryker timeouts and test timeout settings
-must remain unchanged. A longer outer guard is rejected.
+or abort cannot gain credit. A longer outer guard is rejected.
+
+An explicit rerun profile may set `rerunAdditionalTimeoutMilliseconds` to give a
+bounded diagnostic more time inside Stryker. The value must be 1–60,000 ms, at
+least the template's explicit positive integer `additional-timeout`, and below
+the rerun's outer invocation guard. For example, a rerun may use `30000` with an
+unchanged template containing `15000`. CIS changes only that key in the generated
+mutation configuration; the template and default budget remain unchanged. The
+original profile must omit this field or set it to null. All other native and
+test timeout settings must agree. The override is part of the rerun's input
+identity, and the saved native command must still match that profile. It cannot
+turn a native Timeout, guard timeout or incomplete execution into kill credit;
+only a completed native Killed result can supply the separate credit.
 
 Killing test IDs must have matching native definitions in both reports, including
 current test source text and valid locations. Only original `Timeout` to rerun

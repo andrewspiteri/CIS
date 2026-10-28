@@ -17,6 +17,8 @@ public sealed record IncrementalTestProfile
     public string UnitResultFormat { get; init; } = "trx";
     public string[]? MutationCommand { get; init; }
     public string? StrykerConfigFile { get; init; }
+    /// <summary>Explicit native additional-timeout budget for a diagnostic rerun; does not change the template.</summary>
+    public int? RerunAdditionalTimeoutMilliseconds { get; init; }
     public string? CanarySourceFile { get; init; }
     public int MinimumCanaryKills { get; init; } = 1;
     public string MutationReportPath { get; init; } = "reports/mutation-report.json";

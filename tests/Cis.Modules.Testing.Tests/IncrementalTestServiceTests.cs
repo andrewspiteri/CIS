@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Cis.Abstractions;
 using Xunit;
 
@@ -240,6 +241,37 @@ public sealed class IncrementalTestServiceTests
         Assert.Equal(2, result.Killed);
         Assert.Equal(template, File.ReadAllText(fixture.Full("stryker.json")));
         Assert.Contains(fixture.Calls(), call => call.StartsWith("mutation src/A.cs", StringComparison.Ordinal) && call.Contains("Fixture.ATests.", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(null, 15000)]
+    [InlineData(30000, 30000)]
+    public void NativeRerunBudgetChangesOnlyTheRenderedAdditionalTimeout(int? budget, int expectedTimeout)
+    {
+        using var fixture = new Fixture();
+        const string template = "{\"stryker-config\":{\"mutate\":[\"wrong.cs\"],\"test-case-filter\":\"wrong\",\"mutation-level\":\"Complete\",\"additional-timeout\":15000,\"timeout-ratio\":1.5,\"concurrency\":2}}";
+        fixture.Write("stryker.json", template);
+        fixture.Write(".cis/configuration-probe", "observe the native fixture's actual configuration input");
+        fixture.Save(fixture.Profile with
+        {
+            SourceFiles = ["src/A.cs"],
+            ConfigFiles = ["config.json", "stryker.json"],
+            StrykerConfigFile = "stryker.json",
+            TimeoutSeconds = 120,
+            RerunAdditionalTimeoutMilliseconds = budget,
+            MutationCommand = [fixture.Profile.UnitCommand[0], fixture.Profile.UnitCommand[1], "config-mutation", "{output}", "{mutationConfig}"],
+        });
+        var result = fixture.Run();
+        Assert.True(result.ExitCode == 0, string.Join("; ", result.Diagnostics));
+        Assert.Equal(1, result.ExecutedMutationBatches);
+        Assert.Equal(template, File.ReadAllText(fixture.Full("stryker.json")));
+        var expected = JsonNode.Parse(template)!;
+        var settings = expected["stryker-config"]!;
+        settings["mutate"] = new JsonArray("src/A.cs");
+        settings["test-case-filter"] = Assert.Single(result.Batches).TestFilter;
+        settings["additional-timeout"] = expectedTimeout;
+        var observed = JsonNode.Parse(File.ReadAllText(fixture.Full(".cis/rendered-mutation-config.json")));
+        Assert.True(JsonNode.DeepEquals(expected, observed), "The actual native configuration changed beyond scope, filter and the declared budget.");
     }
 
     [Fact]

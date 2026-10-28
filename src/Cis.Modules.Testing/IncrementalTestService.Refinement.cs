@@ -148,6 +148,8 @@ public sealed partial class IncrementalTestService
     {
         Require(original.Profile.Id != rerun.Profile.Id && original.Profile.MutationCommand is not null && rerun.Profile.MutationCommand is not null,
             "Refinement requires distinct original and rerun mutation profile IDs in the same repository.");
+        Require(original.Profile.RerunAdditionalTimeoutMilliseconds is null,
+            "An original profile cannot use the diagnostic rerun additional timeout.");
         Require(rerun.Profile.SourceFiles.All(file => original.Profile.SourceFiles.Contains(file, PathComparer)),
             "Rerun source scope is outside the original profile.");
         Require(rerun.Profile.TimeoutSeconds <= original.Profile.TimeoutSeconds,
@@ -158,10 +160,11 @@ public sealed partial class IncrementalTestService
             Id = original.Profile.Id, SourceFiles = original.Profile.SourceFiles,
             CanarySourceFile = original.Profile.CanarySourceFile, FullTestFilter = original.Profile.FullTestFilter,
             TimeoutSeconds = original.Profile.TimeoutSeconds,
+            RerunAdditionalTimeoutMilliseconds = null,
             MutationCommand = RefinementCommand(rerun),
         };
         Require(HashObject(expected) == HashObject(normalized),
-            "Only reviewed test-filter narrowing, source subset, canary selection, native mutation ranges and a shorter outer invocation guard may differ between profiles.");
+            "Only reviewed test-filter narrowing, source subset, canary selection, native mutation ranges, a bounded rerun additional timeout and a shorter outer invocation guard may differ between profiles.");
     }
 
     private static string[] RefinementCommand(Input input)

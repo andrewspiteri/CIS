@@ -121,6 +121,114 @@ public sealed class IncrementalRefinementTests
     }
 
     [Theory]
+    [InlineData(15000)]
+    [InlineData(30000)]
+    [InlineData(60000)]
+    public void ABoundedNativeRerunBudgetPreservesRawEvidenceAndRequiresACompletedKill(int budget)
+    {
+        using var fixture = new Fixture(rerunAdditionalTimeout: budget);
+        var before = fixture.Reports().ToDictionary(path => path, File.ReadAllText);
+        var template = File.ReadAllText(fixture.Inner.Full("stryker.json"));
+        var result = fixture.Refine();
+        Assert.True(result.ExitCode == 0, string.Join("; ", result.Diagnostics));
+        Assert.Single(result.Credits);
+        Assert.Equal(50, result.Raw!.Score);
+        Assert.Equal(100, result.Effective!.Score);
+        Assert.Equal(result.Raw.Denominator, result.Effective.Denominator);
+        Assert.False(result.Qualified);
+        foreach (var pair in before) Assert.Equal(pair.Value, File.ReadAllText(pair.Key));
+        Assert.Equal(template, File.ReadAllText(fixture.Inner.Full("stryker.json")));
+        Assert.Empty(fixture.Inner.Calls());
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(14999)]
+    [InlineData(60001)]
+    [InlineData(int.MaxValue)]
+    public void InvalidNativeRerunBudgetsCannotAuthorizeCredit(int budget)
+    {
+        using var fixture = new Fixture(rerunAdditionalTimeout: 30000);
+        fixture.ChangeRerun(fixture.Rerun with { RerunAdditionalTimeoutMilliseconds = budget });
+        var result = fixture.Refine();
+        Assert.Equal(4, result.ExitCode);
+        Assert.Empty(result.Credits);
+        Assert.Empty(fixture.Inner.Calls());
+    }
+
+    [Theory]
+    [InlineData(30)]
+    [InlineData(15)]
+    public void TheNativeRerunBudgetMustRemainBelowItsOuterGuard(int seconds)
+    {
+        using var fixture = new Fixture(rerunAdditionalTimeout: 30000);
+        fixture.ChangeRerun(fixture.Rerun with { TimeoutSeconds = seconds });
+        Assert.Equal(4, fixture.Refine().ExitCode);
+        Assert.Empty(fixture.Inner.Calls());
+    }
+
+    [Theory]
+    [InlineData("null")]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("\"15000\"")]
+    [InlineData("15000.5")]
+    public void TheNativeTemplateBudgetMustBeAnExplicitPositiveInteger(string baseline)
+    {
+        using var fixture = new Fixture(rerunAdditionalTimeout: 30000);
+        fixture.Inner.Write("stryker.json", "{\"stryker-config\":{\"additional-timeout\":" + baseline + "}}");
+        Assert.Equal(4, fixture.Refine().ExitCode);
+        Assert.Empty(fixture.Inner.Calls());
+    }
+
+    [Fact]
+    public void ANativeRerunBudgetRequiresTheDeclaredTemplate()
+    {
+        using var fixture = new Fixture(rerunAdditionalTimeout: 30000);
+        fixture.ChangeRerun(fixture.Rerun with { StrykerConfigFile = null });
+        Assert.Equal(4, fixture.Refine().ExitCode);
+        Assert.Empty(fixture.Inner.Calls());
+    }
+
+    [Fact]
+    public void TheOriginalProfileCannotUseTheDiagnosticNativeRerunBudget()
+    {
+        using var fixture = new Fixture(rerunAdditionalTimeout: 30000, budgetOnOriginal: true);
+        var result = fixture.Refine();
+        Assert.Equal(4, result.ExitCode);
+        Assert.Contains(result.Diagnostics, item => item.Contains("original profile", StringComparison.Ordinal));
+        var verification = fixture.Service.Verify(new(fixture.Inner.Path, "profile.json"));
+        Assert.Equal(4, verification.ExitCode);
+        Assert.Contains(verification.Diagnostics, item => item.Contains("original full-file evidence", StringComparison.Ordinal));
+        Assert.Empty(fixture.Inner.Calls());
+    }
+
+    [Theory]
+    [InlineData("native-timeout")]
+    [InlineData("reported-timeout")]
+    [InlineData("changed-budget")]
+    [InlineData("command")]
+    public void ADeclaredBudgetCannotReplaceVerifiedCurrentNativeExecution(string fault)
+    {
+        using var fixture = new Fixture(rerunAdditionalTimeout: 30000);
+        switch (fault)
+        {
+            case "native-timeout":
+                fixture.ChangeRerunStage(stage => stage with { Execution = stage.Execution! with { Status = "timeout", ExitCode = null } });
+                break;
+            case "reported-timeout": fixture.ChangeRerunReport(report => report["files"]!["src/B.cs"]!["mutants"]![0]!["status"] = "Timeout"); break;
+            case "changed-budget": fixture.ChangeRerun(fixture.Rerun with { RerunAdditionalTimeoutMilliseconds = 45000 }); break;
+            case "command": fixture.ChangeRerunStage(stage => stage with { Execution = stage.Execution! with { Command = ["unrelated"] } }); break;
+        }
+        var result = fixture.Refine();
+        Assert.Equal(4, result.ExitCode);
+        Assert.Empty(result.Credits);
+        Assert.Null(result.SidecarPath);
+        Assert.Empty(fixture.Inner.Calls());
+    }
+
+    [Theory]
     [InlineData("report")]
     [InlineData("fingerprint")]
     [InlineData("helper")]
@@ -262,18 +370,32 @@ public sealed class IncrementalRefinementTests
         private string? _previousProducerDirectory;
         private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
-        internal Fixture(bool refreshOriginal = true, bool narrow = true, int? rerunGuard = null)
+        internal Fixture(bool refreshOriginal = true, bool narrow = true, int? rerunGuard = null,
+            int? rerunAdditionalTimeout = null, bool budgetOnOriginal = false)
         {
             Inner.Write("tool.txt", "immutable fixture tool input");
             Inner.Write("tests/ATests.cs", "class ATests { public void Value() {} }");
             Inner.Write("tests/BTests.cs", "class BTests { public void Value() {} }");
             Original = Inner.Profile with { ToolFiles = [.. Inner.Profile.ToolFiles, "tool.txt"] };
+            if (rerunAdditionalTimeout is not null)
+            {
+                Inner.Write("stryker.json", "{\"stryker-config\":{\"additional-timeout\":15000,\"mutation-level\":\"Complete\"}}");
+                Original = Original with
+                {
+                    ConfigFiles = [.. Original.ConfigFiles, "stryker.json"],
+                    StrykerConfigFile = "stryker.json",
+                    TimeoutSeconds = 120,
+                    MutationCommand = [.. Original.MutationCommand!, "--config-file", "{mutationConfig}"],
+                    RerunAdditionalTimeoutMilliseconds = budgetOnOriginal ? rerunAdditionalTimeout : null,
+                };
+            }
             Inner.Save(Original);
             Rerun = Original with
             {
                 Id = "rerun", SourceFiles = ["src/B.cs"], CanarySourceFile = "src/B.cs",
                 FullTestFilter = narrow ? "(" + Original.FullTestFilter + ")&(FullyQualifiedName=Fixture.BTests.Value)" : Original.FullTestFilter,
                 TimeoutSeconds = rerunGuard ?? Original.TimeoutSeconds,
+                RerunAdditionalTimeoutMilliseconds = rerunAdditionalTimeout,
                 MutationCommand = [.. Original.MutationCommand!, "--mutate", "{sourceFile}{0..2}{4..6}"],
             };
             ChangeRerun(Rerun);
@@ -424,6 +546,7 @@ public sealed class IncrementalRefinementTests
                 ExecutablePath = command[0],
                 Command = command.Select(value => value.Replace("{sourceFile}", batch.SourceFile, StringComparison.Ordinal)
                     .Replace("{testFilter}", full ? profile.FullTestFilter : batch.TestFilter, StringComparison.Ordinal)
+                    .Replace("{mutationConfig}", System.IO.Path.Combine(output, "stryker-config.json"), StringComparison.Ordinal)
                     .Replace("{output}", output, StringComparison.Ordinal)).ToArray(),
             };
         }

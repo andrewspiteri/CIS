@@ -11,6 +11,8 @@ if (mode == "config-mutation")
 {
     using var config = JsonDocument.Parse(File.ReadAllText(source));
     var settings = config.RootElement.GetProperty("stryker-config");
+    if (File.Exists(".cis/configuration-probe"))
+        File.WriteAllText(".cis/rendered-mutation-config.json", config.RootElement.GetRawText());
     source = settings.GetProperty("mutate")[0].GetString()!;
     configuredFilter = settings.GetProperty("test-case-filter").GetString();
     mode = "mutation";

@@ -220,6 +220,8 @@ public sealed partial class IncrementalTestService
 
     private static void VerifyFullFile(Input input, IncrementalTestBatch batch)
     {
+        Require(input.Profile.RerunAdditionalTimeoutMilliseconds is null,
+            "A diagnostic rerun additional timeout cannot establish original full-file evidence.");
         var command = input.Profile.MutationCommand!;
         var relative = Relative(Safe(input.Repository, input.Profile.WorkingDirectory, true), Safe(input.Repository, batch.SourceFile));
         Require(input.Profile.StrykerConfigFile is not null || command.Contains("{sourceFile}", StringComparer.Ordinal),

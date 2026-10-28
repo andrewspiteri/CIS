@@ -67,6 +67,22 @@ public sealed partial class IncrementalTestService
         if (profile.RecoveryCommand is not null) Command(profile.RecoveryCommand, false);
         Require(profile.TimeoutSeconds is >= 1 and <= 3600 && profile.RecoveryTimeoutSeconds is >= 1 and <= 600
             && profile.MaxRunBytes > 0 && profile.MaxRetainedBytes > 0 && profile.MinFreeBytes >= 0, "Execution limits are invalid.");
+        if (profile.RerunAdditionalTimeoutMilliseconds is int additionalTimeout)
+        {
+            Require(profile.MutationCommand is not null && profile.StrykerConfigFile is not null,
+                "Rerun additional timeout requires a mutation command and declared Stryker template.");
+            var template = ReadJson<JsonElement>(Safe(repository, profile.StrykerConfigFile), 262144).GetProperty("stryker-config");
+            int baseline = 0;
+            Require(template.TryGetProperty("additional-timeout", out var configured) && configured.ValueKind == JsonValueKind.Number
+                && configured.TryGetInt32(out baseline) && baseline > 0,
+                "Rerun additional timeout requires an explicit positive integer additional-timeout in the template.");
+            Require(additionalTimeout is >= 1 and <= 60000 && additionalTimeout >= baseline
+                && additionalTimeout < profile.TimeoutSeconds * 1000,
+                "Rerun additional timeout must be 1-60000 milliseconds, at least the template value, and below the outer invocation guard.");
+            Require(!profile.UnitCommand.Any(value => value.Contains("{mutationConfig}", StringComparison.Ordinal))
+                && !(profile.RecoveryCommand?.Any(value => value.Contains("{mutationConfig}", StringComparison.Ordinal)) ?? false),
+                "A rerun additional timeout applies only to the mutation command's rendered configuration.");
+        }
         Require(double.IsFinite(profile.BreakThreshold) && profile.BreakThreshold is >= 0 and <= 100, "Mutation threshold must be 0-100.");
         Require(profile.Environment is not null && profile.Environment.Count <= 64 && profile.Environment.All(pair =>
             pair.Key is { Length: > 0 and <= 128 } && !pair.Key.Contains('=') && !pair.Key.Contains('\0')

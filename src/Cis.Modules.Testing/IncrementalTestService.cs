@@ -189,6 +189,8 @@ public sealed partial class IncrementalTestService
             var config = template["stryker-config"]!.AsObject();
             config["mutate"] = new JsonArray(Relative(working, Safe(input.Repository, batch.SourceFile)));
             config["test-case-filter"] = batch.TestFilter;
+            if (input.Profile.RerunAdditionalTimeoutMilliseconds is int additionalTimeout)
+                config["additional-timeout"] = additionalTimeout;
             mutationConfig = Safe(output, "stryker-config.json");
             File.WriteAllText(mutationConfig, template.ToJsonString(Json));
         }

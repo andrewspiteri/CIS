@@ -27,11 +27,17 @@ public sealed partial class IncrementalTestService
             Directory.CreateDirectory(Path.GetDirectoryName(Safe(input.Repository, MutationRunService.LocalRoot + "/run.lock"))!);
             using var lease = new FileStream(Safe(input.Repository, MutationRunService.LocalRoot + "/run.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             var state = State(input);
-            Require(!state.RecoveryRequired && state.ActiveExecutionUntilUtc is null, "Baseline recovery must finish before cache revalidation.");
+            Require(state.ActiveExecutionUntilUtc is null, "An active native invocation must finish before cache revalidation.");
             var old = Select(oldInput, state, false);
             var current = Select(input, state, false);
+            var pending = old.Batches.Where(batch => state.RecoveryRequired && batch.SourceFile == state.RecoverySourceFile
+                && state.Batches.TryGetValue(batch.Id, out var saved) && RecoverableNative(oldInput, batch, saved, oldHash, oldHelperHash))
+                .Select(batch => batch.Id).ToHashSet(StringComparer.Ordinal);
+            Require(!state.RecoveryRequired || pending.Count == 1,
+                "Pending recovery requires an unchanged admissible completed native report before producer revalidation.");
             var units = 0;
             var mutations = 0;
+            var awaitingRecovery = 0;
             foreach (var batch in current.Batches)
             {
                 var prior = old.Batches.Single(item => item.Id == batch.Id);
@@ -48,9 +54,14 @@ public sealed partial class IncrementalTestService
                     saved = saved with { Mutation = RevalidateProducer(saved.Mutation, batch.MutationFingerprint) };
                     mutations++;
                 }
+                else if (pending.Contains(batch.Id))
+                {
+                    saved = saved with { Mutation = RevalidateProducer(saved.Mutation!, batch.MutationFingerprint, false) };
+                    awaitingRecovery++;
+                }
                 state.Batches[batch.Id] = saved;
 
-                IncrementalStageResult RevalidateProducer(IncrementalStageResult stage, string fingerprint)
+                IncrementalStageResult RevalidateProducer(IncrementalStageResult stage, string fingerprint, bool addDiagnostic = true)
                 {
                     var history = stage.ProducerRevalidations;
                     if (stage.Fingerprint != fingerprint)
@@ -63,7 +74,7 @@ public sealed partial class IncrementalTestService
                             legacySessionEnvironment, reason, DateTimeOffset.UtcNow)];
                     }
                     return stage with { Fingerprint = fingerprint, ProducerRevalidations = history,
-                        Diagnostics = stage.Diagnostics.Append(diagnostic).Distinct(StringComparer.Ordinal).ToArray() };
+                        Diagnostics = addDiagnostic ? stage.Diagnostics.Append(diagnostic).Distinct(StringComparer.Ordinal).ToArray() : stage.Diagnostics };
                 }
             }
             // Reports and native execution records are unchanged. Failed/incomplete results stay held.
@@ -72,7 +83,7 @@ public sealed partial class IncrementalTestService
             var result = Summarize(input, options, final, state, "cache-revalidated", 0) with
             {
                 ReusedUnitBatches = units, ReusedMutationBatches = mutations, RetainedBytes = Bytes(input.Storage),
-                Diagnostics = [$"Revalidated {units} unit and {mutations} mutation results. {reason}"],
+                Diagnostics = [$"Revalidated {units} unit and {mutations} mutation results; {awaitingRecovery} completed native reports still await recovery. {reason}"],
             };
             SaveLatest(input, result);
             return result;

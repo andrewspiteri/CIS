@@ -31,7 +31,11 @@ if (mode is "unit" or "mutation" && File.Exists(overrideFile))
     if (fault.StartsWith(mode + ":", StringComparison.Ordinal)) mode = fault[(mode.Length + 1)..];
 }
 File.AppendAllText(".cis/native-calls.log", mode + " " + source + " " + (configuredFilter ?? (args.Length > 3 ? args[3] : "")) + "\n");
-if (mode == "recovery") { File.Delete(".cis/instrumented"); Console.WriteLine("native-recovery-complete"); return 0; }
+if (mode == "recovery")
+{
+    if (File.Exists(".cis/recovery-failure")) { Console.Error.WriteLine("native-recovery-failed"); return 1; }
+    File.Delete(".cis/instrumented"); Console.WriteLine("native-recovery-complete"); return 0;
+}
 if (mode == "recovery-failure") return 1;
 if (mode == "unit-malformed") { File.WriteAllText(Path.Combine(output, "unit.trx"), "<TestRun>"); return 0; }
 if (mode == "timeout")

@@ -58,7 +58,8 @@ public sealed partial class IncrementalTestService
             {
                 Require(input.Profile.RecoveryCommand is not null, "An interrupted invocation requires a configured recoveryCommand.");
                 var batch = selection.Batches.FirstOrDefault(item => item.SourceFile == state.RecoverySourceFile) ?? selection.Batches[0];
-                Require(Recover(input, batch, ref state, out _, out _, out _), "Baseline recovery did not pass; saved results remain on hold.");
+                Require(ResumeRecovery(input, batch, ref state), "Baseline recovery did not pass; saved results remain on hold.");
+                selection = Select(input, state, options.Force);
             }
             if (options.Force)
             {
@@ -210,7 +211,7 @@ public sealed partial class IncrementalTestService
     }
 
     private static bool Recover(Input input, IncrementalTestBatch batch, ref IncrementalTestState state,
-        out MutationNativeExecution? recovery, out MutationNativeExecution? postflight, out int passed)
+        out MutationNativeExecution? recovery, out MutationNativeExecution? postflight, out int passed, bool clearRecovery = true)
     {
         recovery = null; postflight = null; passed = 0;
         if (input.Profile.RecoveryCommand is null) return false;
@@ -229,7 +230,7 @@ public sealed partial class IncrementalTestService
         }
         catch (Exception error) when (Expected(error)) { healthy = false; }
         CleanWork(input, !healthy);
-        if (healthy)
+        if (healthy && clearRecovery)
         {
             state = state with { RecoveryRequired = false, RecoverySourceFile = null };
             Save(input, state);

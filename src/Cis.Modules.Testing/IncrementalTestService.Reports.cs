@@ -6,6 +6,7 @@ namespace Cis.Modules.Testing;
 
 public sealed partial class IncrementalTestService
 {
+    private const string ChangedExecutionInputs = "Relevant inputs changed during execution; this result cannot be reused.";
     private static TestSuiteExecution ReadUnit(Input input, string path)
     {
         Require(new FileInfo(path).Length is > 0 and <= 100 * 1024 * 1024, "Unit report must contain 1 byte through 100 MiB.");
@@ -79,7 +80,7 @@ public sealed partial class IncrementalTestService
         var healthy = execution.Status == "exited" && execution.Error is null && !execution.OutputTruncated
             && (mutation ? execution.ExitCode is 0 or 2 : execution.ExitCode == 0);
         if (!healthy) diagnostics.Add($"Native execution: {execution.Status}, exit={execution.ExitCode}. {execution.Error}");
-        if (!unchanged) diagnostics.Add("Relevant inputs changed during execution; this result cannot be reused.");
+        if (!unchanged) diagnostics.Add(ChangedExecutionInputs);
         var completed = healthy && unchanged && (mutation
             ? assessment?.Mutation is { ValidEvidence: true, RuntimeErrors: 0, Pending: 0, Unknown: 0 }
             : assessment is { Status: "passed", Total: > 0, Failed: 0, Skipped: 0 });

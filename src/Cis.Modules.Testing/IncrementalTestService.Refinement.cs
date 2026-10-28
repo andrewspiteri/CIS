@@ -197,8 +197,14 @@ public sealed partial class IncrementalTestService
             "Native mutation, recovery and postflight must all have completed healthy executions.");
         var helper = RefinementProducer(input, batch, stage);
         VerifyRefinementCommand(input, batch, stage.Execution!, input.Profile.MutationCommand!, false, helper);
-        VerifyRefinementCommand(input, batch, stage.RecoveryExecution!, input.Profile.RecoveryCommand!, true, helper);
-        VerifyRefinementCommand(input, batch, stage.PostflightExecution!, input.Profile.UnitCommand, true, helper);
+        foreach (var phase in new[] { (stage.RecoveryExecution!, input.Profile.RecoveryCommand!), (stage.PostflightExecution!, input.Profile.UnitCommand) })
+        {
+            var producer = phase.Item1.CisToolAssemblySha256;
+            Require(producer == helper || producer == HashFile(typeof(CisProcessJob).Assembly.Location)
+                || stage.ProducerRevalidations.Any(link => link.PreviousHelperSha256 == producer),
+                "Recovery/postflight helper is outside the verified producer history.");
+            VerifyRefinementCommand(input, batch, phase.Item1, phase.Item2, true, producer!);
+        }
     }
 
     private void VerifyRefinementUnit(Input input, IncrementalTestBatch batch, IncrementalStageResult stage)
@@ -236,12 +242,13 @@ public sealed partial class IncrementalTestService
         Require(expanded.SequenceEqual(actual, StringComparer.Ordinal), "Native execution does not match its current profile command.");
     }
 
-    private string RefinementProducer(Input input, IncrementalTestBatch batch, IncrementalStageResult stage, bool mutation = true)
+    private string RefinementProducer(Input input, IncrementalTestBatch batch, IncrementalStageResult stage, bool mutation = true,
+        string? expectedTesting = null, string? expectedHelper = null)
     {
         var history = stage.ProducerRevalidations;
         Require(history is { Length: <= 8 }, "Producer revalidation history is missing or exceeds eight links.");
-        var testing = HashFile(typeof(IncrementalTestService).Assembly.Location);
-        var helper = HashFile(typeof(CisProcessJob).Assembly.Location);
+        var testing = expectedTesting ?? HashFile(typeof(IncrementalTestService).Assembly.Location);
+        var helper = expectedHelper ?? HashFile(typeof(CisProcessJob).Assembly.Location);
         if (history.Length == 0) return helper;
         var options = new IncrementalTestOptions(input.Repository, Relative(input.Repository, input.ProfilePath));
         IncrementalProducerRevalidation? prior = null;

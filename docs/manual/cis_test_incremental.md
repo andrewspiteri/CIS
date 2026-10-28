@@ -217,6 +217,23 @@ existing mutation execution lease.
 Before instrumentation, CIS durably marks recovery as required. After every mutation
 attempt, including a missing report or hard timeout, it runs `recoveryCommand` and
 the unit command with `fullTestFilter`. A failed recovery holds cached progress.
+
+When only recovery failed after an admissible completed native invocation, retry
+the same profile without `--force`. CIS rechecks the exact input fingerprint,
+report hash, parsed outcomes, native command and producer identity, then retries
+the pinned recovery and full-filter postflight budgets. It can reuse that native
+report only after both phases pass and inputs remain unchanged. The earlier
+failed receipts are retained in a per-batch recovery history, limited to eight
+attempts and 256 KiB; reaching either bound holds the retry. A native invocation
+timeout, abort, damaged report or known input-change hold cannot gain completion
+through recovery. An explicit mutant Timeout in an otherwise completed report
+remains a conservative miss.
+
+A reviewed compatible producer update may revalidate such a report's identity
+while recovery is pending. This does not complete the stage or clear its recovery
+hold. Run the same profile afterward to obtain actual healthy recovery receipts.
+`--native-timeout-seconds` overrides only the mutation invocation guard; it does
+not extend `recoveryTimeoutSeconds`.
 An interrupted invocation records the previous native guard's maximum activity
 window; another invocation refuses to overlap it, then performs any required
 recovery before reuse. Native infrastructure or cleanup failures remain failures.

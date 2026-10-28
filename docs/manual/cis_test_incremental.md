@@ -56,9 +56,17 @@ it after source or test changes. Each declared production file is one batch. CIS
 follows callers to identify test files, then follows implementation and test
 dependencies to include shared code and fixtures in that batch's input identity.
 New test files in the same graph components enter selection automatically.
+External metadata symbols may record repository call sites. Those observations
+do not make one caller depend on another caller's file. Compiler-bound repository
+declarations, including partial declarations and interface relationships, remain
+dependency inputs. Pin external dependency and runtime identity through the
+declared configuration and tool inventory.
 
 For C# files, class names from the graph produce a VSTest filter intersected with
-`fullTestFilter`. When the graph cannot narrow that selection, CIS uses the full
+`fullTestFilter`. An outer dot-qualified class predicate replaces nested predicates
+that it already covers. Nested-only fixtures retain their own predicates. When
+the graph cannot narrow that selection, or the filter exceeds 32,768 characters,
+CIS uses the full
 configured filter and hashes all graph inputs. Other languages use this full-filter
 path; language-specific narrow filters are not inferred.
 
@@ -273,6 +281,46 @@ identities, baseline bindings, and the verified native killing tests. The sideca
 is limited to 1 MiB and replaces the previous attestation for that profile pair.
 Invoke `refine` again to recheck current evidence before relying on saved credit;
 a saved sidecar alone does not establish that its inputs remain current.
+
+### Verify saved evidence for another tool
+
+`cis test incremental verify` returns a current evidence receipt without running
+tests or changing saved reports, state or refinement sidecars. Another tool can
+use the JSON receipt and its referenced raw reports as inputs to its own scope
+and acceptance checks.
+
+```text
+cis test incremental verify --repo . --profile original.json --refinement-profile rerun.json --format json
+```
+
+Omit `--refinement-profile` to verify raw outcomes alone. Repeat the option for
+additional completed rerun profiles. CIS recomputes native timeout credits from
+those profiles and their reports; it does not use saved sidecar counts or
+completion claims. A mutant receives at most one added kill across reruns.
+
+Verification requires a complete current declared scope, healthy native unit
+execution, and healthy mutation recovery and full-filter postflight receipts.
+Original mutation profiles must select full source files with an explicit
+`Complete` mutation level. Native ranges and native incremental filtering cannot
+establish full-file original evidence. If a native configuration is used, it must
+be the declared template rendered by CIS, selected once with `--config-file` or
+`-f`; undeclared implicit or alternate configurations fail verification.
+Every counted native kill must identify
+current killing-test source and a valid test definition. Changed inputs, damaged
+reports, incomplete executions and unverified producer identities fail the check.
+
+CIS retains the current unit XML for each source batch. Historical full-filter
+postflight XML is deleted after successful validation; the receipt explicitly
+reports that only its native execution receipt is available. A narrowed rerun
+still requires the original profile's fresh unit baseline described above.
+
+The receipt is limited to 1 MiB. It deduplicates source, test, dependency,
+configuration and tool hashes, binds raw reports and native stages, and reports
+raw and effective counts separately. Commands and environment values appear only
+as digests. No repository archive or raw report copies are created. The receiving
+tool must obtain the referenced reports and independently match the receipt's
+source and input closure to its required scope. A successful check returns `0`
+even when the score is below the threshold; `qualified` remains false.
 
 Exit codes are `0` for a completed requested layer or a readable plan, `2` for an
 invalid plan, `3` for remaining work after a scheduling limit, and `4` for execution,

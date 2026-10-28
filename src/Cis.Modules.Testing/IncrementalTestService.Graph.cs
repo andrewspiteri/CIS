@@ -15,7 +15,7 @@ public sealed partial class IncrementalTestService
             "A fresh, complete graph without errors or warnings is required. Run cis graph build before planning. " + string.Join("; ", snapshot.Errors));
         var graph = snapshot.Graph!;
         Require(graph.Nodes.Count <= 250000 && graph.Edges.Count <= 1000000, "Graph exceeds the incremental planning bound.");
-        var paths = graph.Nodes.ToDictionary(node => node.Key, node => node.Locations.Select(location => location.Path.Replace('\\', '/'))
+        var paths = graph.Nodes.ToDictionary(node => node.Key, node => DependencyLocations(node).Select(location => location.Path.Replace('\\', '/'))
             .Where(path => CisPathSafety.TryResolveUnderRoot(input.Repository, path, out var full) && File.Exists(full))
             .Distinct(PathComparer).ToArray(), StringComparer.Ordinal);
         var forward = new Dictionary<string, HashSet<string>>(PathComparer);
@@ -46,11 +46,16 @@ public sealed partial class IncrementalTestService
         {
             var callers = Closure([source], reverse);
             var tests = callers.Where(allTests.Contains).Order(StringComparer.Ordinal).ToArray();
-            var classes = graph.Nodes.Where(node => node.Kind == "symbol" && node.Subtype == "class" && node.Facets.Contains("csharp", StringComparer.Ordinal)
+            var classNames = graph.Nodes.Where(node => node.Kind == "symbol" && node.Subtype == "class" && node.Facets.Contains("csharp", StringComparer.Ordinal)
                 && paths[node.Key].Any(path => tests.Contains(path, PathComparer)))
                 .Select(node => node.Properties.GetValueOrDefault("qualifiedName"))
                 .Where(name => name is not null && Regex.IsMatch(name, @"\A[A-Za-z_][A-Za-z0-9_.+]*\z", RegexOptions.CultureInvariant))
-                .Select(name => "FullyQualifiedName~" + name + ".").Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+                .Select(name => name!).ToHashSet(StringComparer.Ordinal);
+            // An outer dot-qualified predicate already matches every case matched by its
+            // nested predicates. Remove only that exact redundancy, retaining nested-only
+            // fixtures and names whose separators do not imply the existing predicate.
+            var classes = classNames.Where(name => !HasCoveringClassFilter(name, classNames))
+                .Select(name => "FullyQualifiedName~" + name + ".").Order(StringComparer.Ordinal).ToArray();
             var narrow = source.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) && represented.Contains(source) && tests.Length > 0 && classes.Length > 0
                 && snapshot.GraphCapabilities.Contains("compiler.calls", StringComparer.Ordinal);
             var filter = narrow ? "(" + profile.FullTestFilter + ")&(" + string.Join('|', classes) + ")" : profile.FullTestFilter;
@@ -74,6 +79,26 @@ public sealed partial class IncrementalTestService
                 !force && profile.MutationCommand is not null && Current(input, source, prior?.Mutation, mutation, true), dependencies));
         }
         return new(snapshot, result.ToArray());
+    }
+
+    private static IEnumerable<CisGraphLocation> DependencyLocations(CisGraphNode node)
+    {
+        if (node.Kind != "symbol") return node.Locations;
+        // External metadata symbols carry a repository call site, not their implementation.
+        // Real declarations take precedence over mixed observation locations, including
+        // every bound declaration of a partial symbol.
+        var declarations = node.Provenance.Where(evidence => evidence.SourceKind == "repository-source" && evidence.Method == "compiler-binding")
+            .Select(evidence => evidence.Path.Replace('\\', '/')).ToHashSet(PathComparer);
+        if (declarations.Count > 0)
+            return node.Locations.Where(location => declarations.Contains(location.Path.Replace('\\', '/')));
+        return node.Properties.GetValueOrDefault("external") == "true" ? [] : node.Locations;
+    }
+
+    private static bool HasCoveringClassFilter(string name, HashSet<string> classNames)
+    {
+        for (var index = name.IndexOf('.'); index >= 0; index = name.IndexOf('.', index + 1))
+            if (classNames.Contains(name[..index])) return true;
+        return false;
     }
 
     private static void Add(Dictionary<string, HashSet<string>> map, string from, string to)

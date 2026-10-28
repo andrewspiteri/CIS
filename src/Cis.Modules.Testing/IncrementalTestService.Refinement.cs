@@ -26,104 +26,13 @@ public sealed partial class IncrementalTestService
             Directory.CreateDirectory(Path.GetDirectoryName(Safe(original.Repository, MutationRunService.LocalRoot + "/run.lock"))!);
             using var lease = new FileStream(Safe(original.Repository, MutationRunService.LocalRoot + "/run.lock"),
                 FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-            var state = State(original);
-            var rerunState = State(rerun);
-            Require(!state.RecoveryRequired && state.ActiveExecutionUntilUtc is null
-                && !rerunState.RecoveryRequired && rerunState.ActiveExecutionUntilUtc is null,
-                "Both profiles must finish native work and healthy recovery before refinement.");
-            var selection = Select(original, state, false);
-            var rerunSelection = Select(rerun, rerunState, false);
-            Require(selection.Batches.All(batch => batch.UnitCurrent && batch.MutationCurrent)
-                && rerunSelection.Batches.All(batch => batch.UnitCurrent && batch.MutationCurrent),
-                "Both profiles require completed current unit and native mutation stages with matching input and report hashes.");
-            var bindings = new List<IncrementalRefinementBinding>();
-            var credits = new List<IncrementalRefinementCredit>();
-            foreach (var batch in selection.Batches)
-            {
-                VerifyRefinementUnit(original, batch, state.Batches[batch.Id].Unit!);
-                VerifyRefinementStage(original, batch, state.Batches[batch.Id].Mutation!);
-            }
-            foreach (var batch in rerunSelection.Batches)
-            {
-                var prior = selection.Batches.Single(item => PathComparer.Equals(item.SourceFile, batch.SourceFile));
-                Require(prior.TestFiles.SequenceEqual(batch.TestFiles, PathComparer)
-                    && prior.DependencyFiles.SequenceEqual(batch.DependencyFiles, PathComparer),
-                    "The rerun changed graph-selected test or dependency inventories.");
-                var before = state.Batches[prior.Id].Mutation!;
-                var after = rerunState.Batches[batch.Id].Mutation!;
-                VerifyRefinementUnit(rerun, batch, rerunState.Batches[batch.Id].Unit!);
-                Require(after.FinishedUtc >= before.FinishedUtc, "The native rerun predates the original timeout report.");
-                VerifyRefinementStage(rerun, batch, after);
-                var baseReport = ReadRefinementReport(original, prior, before);
-                var rerunReport = ReadRefinementReport(rerun, batch, after);
-                foreach (var mutant in rerunReport.Mutants.Values)
-                {
-                    Require(baseReport.Mutants.TryGetValue(mutant.Id, out var old) && old.Definition == mutant.Definition,
-                        "Rerun mutant ID or source/operator/replacement/location definition differs: " + batch.SourceFile + "#" + mutant.Id);
-                    if (old.Status != "Timeout" || mutant.Status != "Killed") continue;
-                    Require(mutant.KilledBy.Length > 0, "A refined kill requires native killedBy test identities.");
-                    var tests = new List<string>();
-                    foreach (var id in mutant.KilledBy)
-                    {
-                        Require(rerunReport.Tests.TryGetValue(id, out var test) && baseReport.Tests.TryGetValue(id, out var originalTest)
-                            && test == originalTest, "A killing test is missing, changed or outside the original current test inventory: " + id);
-                        tests.Add(test.Definition);
-                    }
-                    credits.Add(new(batch.SourceFile, mutant.Id, mutant.Definition, mutant.KilledBy, tests.ToArray()));
-                }
-                bindings.Add(new(batch.SourceFile, Relative(original.Repository, Safe(original.Root, before.ReportPath)),
-                    before.ReportSha256, before.Fingerprint, Relative(rerun.Repository, Safe(rerun.Root, after.ReportPath)),
-                    after.ReportSha256, after.Fingerprint, HashObject(before), HashObject(after)));
-            }
-            Require(credits.Count > 0, "The rerun contains no verified native Timeout-to-Killed outcomes.");
-            var summary = Summarize(original, originalOptions, selection, state, "completed", 0);
-            Require(summary.ScopeComplete && summary.CompleteScopeScore is not null,
-                "The original declared scope must be current and complete before refinement.");
-            var raw = Counts(summary.Killed, summary.Survived, summary.TimedOut, summary.NoCoverage, summary.KnownDenominator);
-            var narrow = original.Profile.FullTestFilter != rerun.Profile.FullTestFilter;
-            var finished = rerunSelection.Batches.Max(batch => rerunState.Batches[batch.Id].Mutation!.FinishedUtc);
-            var needsBaseline = narrow && selection.Batches.Any(batch => state.Batches[batch.Id].Unit!.FinishedUtc < finished);
-            var effective = needsBaseline ? raw : Counts(raw.Killed + credits.Count, raw.Survived,
-                raw.TimedOut - credits.Count, raw.NoCoverage, raw.Denominator);
-            Require(Read(originalOptions).CommonIdentity == original.CommonIdentity && Read(rerunOptions).CommonIdentity == rerun.CommonIdentity
-                && Select(original, state, false).Batches.All(batch => batch.UnitCurrent && batch.MutationCurrent)
-                && Select(rerun, rerunState, false).Batches.All(batch => batch.UnitCurrent && batch.MutationCurrent),
-                "Inputs or reports changed during refinement.");
-            var sidecar = "refinements/" + rerun.Profile.Id + ".json";
-            var result = new IncrementalRefinementResult(needsBaseline ? "needs-baseline" : "refined", needsBaseline ? 3 : 0)
-            {
-                ProfileId = original.Profile.Id, RerunProfileId = rerun.Profile.Id,
-                OriginalProfileSha256 = original.ProfileHash, RerunProfileSha256 = rerun.ProfileHash,
-                OriginalProfilePath = Relative(original.Repository, original.ProfilePath), RerunProfilePath = Relative(rerun.Repository, rerun.ProfilePath),
-                EnvironmentSha256 = HashObject(new { inherited = AmbientEnvironmentIdentity(original.Profile, false), declared = original.Profile.Environment }),
-                TestingProducerSha256 = HashFile(typeof(IncrementalTestService).Assembly.Location),
-                HelperProducerSha256 = HashFile(typeof(CisProcessJob).Assembly.Location),
-                Reason = options.Reason, VerifiedUtc = DateTimeOffset.UtcNow, RequiresBaseline = needsBaseline,
-                Raw = raw, Effective = effective, Bindings = bindings, Credits = needsBaseline ? [] : credits,
-                BaselineBindings = selection.Batches.Select(batch =>
-                {
-                    var unit = state.Batches[batch.Id].Unit!;
-                    return new IncrementalRefinementBaselineBinding(batch.SourceFile,
-                        Relative(original.Repository, Safe(original.Root, unit.ReportPath)), unit.ReportSha256, unit.Fingerprint, unit.FinishedUtc);
-                }).ToArray(),
-                Inputs = original.Profile.SourceFiles.Concat(original.Profile.TestFiles).Concat(original.Profile.ConfigFiles)
-                    .Concat(selection.Batches.SelectMany(batch => batch.DependencyFiles)).Select(file => Safe(original.Repository, file))
-                    .Concat(original.Profile.ToolFiles.Select(file => Path.GetFullPath(file, original.Repository)))
-                    .Distinct(PathComparer).Order(StringComparer.Ordinal).Select(file => new MutationInputIdentity(
-                        CisPathSafety.IsUnderRoot(original.Repository, file) ? Relative(original.Repository, file) : file, HashFile(file))).ToArray(),
-                ThresholdMet = !needsBaseline && effective.Score >= original.Profile.BreakThreshold
-                    && effective.TimedOut == 0 && effective.NoCoverage == 0,
-                SidecarPath = needsBaseline ? null : Relative(original.Repository, Safe(original.Root, sidecar)),
-                Diagnostics = needsBaseline
-                    ? ["The rerun narrows the test filter. Run the original profile's complete forced unit layer after the rerun, then refine again. No kill credit was published."]
-                    : ["Verified native rerun kills are separate from unchanged raw outcomes. Release qualification remains separate."],
-            };
-            if (!needsBaseline)
+            var result = EvaluateRefinement(options, original, rerun);
+            if (!result.RequiresBaseline)
             {
                 Require(JsonSerializer.SerializeToUtf8Bytes(result, Json).Length <= 1024 * 1024,
                     "Refinement sidecar exceeds 1 MiB. Use a smaller rerun source subset.");
                 Directory.CreateDirectory(Safe(original.Root, "refinements"));
-                Write(original, Safe(original.Root, sidecar), result);
+                Write(original, Safe(original.Repository, result.SidecarPath!), result);
             }
             return result;
         }
@@ -131,6 +40,105 @@ public sealed partial class IncrementalTestService
         {
             return new("refinement-failed", 4) { Diagnostics = [error.Message] };
         }
+    }
+
+    private IncrementalRefinementResult EvaluateRefinement(IncrementalRefinementOptions options, Input original, Input rerun)
+    {
+        var originalOptions = new IncrementalTestOptions(original.Repository, Relative(original.Repository, original.ProfilePath));
+        var rerunOptions = new IncrementalTestOptions(rerun.Repository, Relative(rerun.Repository, rerun.ProfilePath));
+        var state = State(original);
+        var rerunState = State(rerun);
+        Require(!state.RecoveryRequired && state.ActiveExecutionUntilUtc is null
+            && !rerunState.RecoveryRequired && rerunState.ActiveExecutionUntilUtc is null,
+            "Both profiles must finish native work and healthy recovery before refinement.");
+        var selection = Select(original, state, false);
+        var rerunSelection = Select(rerun, rerunState, false);
+        Require(selection.Batches.All(batch => batch.UnitCurrent && batch.MutationCurrent)
+            && rerunSelection.Batches.All(batch => batch.UnitCurrent && batch.MutationCurrent),
+            "Both profiles require completed current unit and native mutation stages with matching input and report hashes.");
+        var bindings = new List<IncrementalRefinementBinding>();
+        var credits = new List<IncrementalRefinementCredit>();
+        foreach (var batch in selection.Batches)
+        {
+            VerifyRefinementUnit(original, batch, state.Batches[batch.Id].Unit!);
+            VerifyRefinementStage(original, batch, state.Batches[batch.Id].Mutation!);
+        }
+        foreach (var batch in rerunSelection.Batches)
+        {
+            var prior = selection.Batches.Single(item => PathComparer.Equals(item.SourceFile, batch.SourceFile));
+            Require(prior.TestFiles.SequenceEqual(batch.TestFiles, PathComparer)
+                && prior.DependencyFiles.SequenceEqual(batch.DependencyFiles, PathComparer),
+                "The rerun changed graph-selected test or dependency inventories.");
+            var before = state.Batches[prior.Id].Mutation!;
+            var after = rerunState.Batches[batch.Id].Mutation!;
+            VerifyRefinementUnit(rerun, batch, rerunState.Batches[batch.Id].Unit!);
+            Require(after.FinishedUtc >= before.FinishedUtc, "The native rerun predates the original timeout report.");
+            VerifyRefinementStage(rerun, batch, after);
+            var baseReport = ReadRefinementReport(original, prior, before);
+            var rerunReport = ReadRefinementReport(rerun, batch, after);
+            foreach (var mutant in rerunReport.Mutants.Values)
+            {
+                Require(baseReport.Mutants.TryGetValue(mutant.Id, out var old) && old.Definition == mutant.Definition,
+                    "Rerun mutant ID or source/operator/replacement/location definition differs: " + batch.SourceFile + "#" + mutant.Id);
+                if (old.Status != "Timeout" || mutant.Status != "Killed") continue;
+                Require(mutant.KilledBy.Length > 0, "A refined kill requires native killedBy test identities.");
+                var tests = new List<string>();
+                foreach (var id in mutant.KilledBy)
+                {
+                    Require(rerunReport.Tests.TryGetValue(id, out var test) && baseReport.Tests.TryGetValue(id, out var originalTest)
+                        && test == originalTest, "A killing test is missing, changed or outside the original current test inventory: " + id);
+                    tests.Add(test.Definition);
+                }
+                credits.Add(new(batch.SourceFile, mutant.Id, mutant.Definition, mutant.KilledBy, tests.ToArray()));
+            }
+            bindings.Add(new(batch.SourceFile, Relative(original.Repository, Safe(original.Root, before.ReportPath)),
+                before.ReportSha256, before.Fingerprint, Relative(rerun.Repository, Safe(rerun.Root, after.ReportPath)),
+                after.ReportSha256, after.Fingerprint, HashObject(before), HashObject(after)));
+        }
+        Require(credits.Count > 0, "The rerun contains no verified native Timeout-to-Killed outcomes.");
+        var summary = Summarize(original, originalOptions, selection, state, "completed", 0);
+        Require(summary.ScopeComplete && summary.CompleteScopeScore is not null,
+            "The original declared scope must be current and complete before refinement.");
+        var raw = Counts(summary.Killed, summary.Survived, summary.TimedOut, summary.NoCoverage, summary.KnownDenominator);
+        var narrow = original.Profile.FullTestFilter != rerun.Profile.FullTestFilter;
+        var finished = rerunSelection.Batches.Max(batch => rerunState.Batches[batch.Id].Mutation!.FinishedUtc);
+        var needsBaseline = narrow && selection.Batches.Any(batch => state.Batches[batch.Id].Unit!.FinishedUtc < finished);
+        var effective = needsBaseline ? raw : Counts(raw.Killed + credits.Count, raw.Survived,
+            raw.TimedOut - credits.Count, raw.NoCoverage, raw.Denominator);
+        Require(Read(originalOptions).CommonIdentity == original.CommonIdentity && Read(rerunOptions).CommonIdentity == rerun.CommonIdentity
+            && Select(original, state, false).Batches.All(batch => batch.UnitCurrent && batch.MutationCurrent)
+            && Select(rerun, rerunState, false).Batches.All(batch => batch.UnitCurrent && batch.MutationCurrent),
+            "Inputs or reports changed during refinement.");
+        var sidecar = "refinements/" + rerun.Profile.Id + ".json";
+        var result = new IncrementalRefinementResult(needsBaseline ? "needs-baseline" : "refined", needsBaseline ? 3 : 0)
+        {
+            ProfileId = original.Profile.Id, RerunProfileId = rerun.Profile.Id,
+            OriginalProfileSha256 = original.ProfileHash, RerunProfileSha256 = rerun.ProfileHash,
+            OriginalProfilePath = Relative(original.Repository, original.ProfilePath), RerunProfilePath = Relative(rerun.Repository, rerun.ProfilePath),
+            EnvironmentSha256 = HashObject(new { inherited = AmbientEnvironmentIdentity(original.Profile, false), declared = original.Profile.Environment }),
+            TestingProducerSha256 = HashFile(typeof(IncrementalTestService).Assembly.Location),
+            HelperProducerSha256 = HashFile(typeof(CisProcessJob).Assembly.Location),
+            Reason = options.Reason, VerifiedUtc = DateTimeOffset.UtcNow, RequiresBaseline = needsBaseline,
+            Raw = raw, Effective = effective, Bindings = bindings, Credits = needsBaseline ? [] : credits,
+            BaselineBindings = selection.Batches.Select(batch =>
+            {
+                var unit = state.Batches[batch.Id].Unit!;
+                return new IncrementalRefinementBaselineBinding(batch.SourceFile,
+                    Relative(original.Repository, Safe(original.Root, unit.ReportPath)), unit.ReportSha256, unit.Fingerprint, unit.FinishedUtc);
+            }).ToArray(),
+            Inputs = original.Profile.SourceFiles.Concat(original.Profile.TestFiles).Concat(original.Profile.ConfigFiles)
+                .Concat(selection.Batches.SelectMany(batch => batch.DependencyFiles)).Select(file => Safe(original.Repository, file))
+                .Concat(original.Profile.ToolFiles.Select(file => Path.GetFullPath(file, original.Repository)))
+                .Distinct(PathComparer).Order(StringComparer.Ordinal).Select(file => new MutationInputIdentity(
+                    CisPathSafety.IsUnderRoot(original.Repository, file) ? Relative(original.Repository, file) : file, HashFile(file))).ToArray(),
+            ThresholdMet = !needsBaseline && effective.Score >= original.Profile.BreakThreshold
+                && effective.TimedOut == 0 && effective.NoCoverage == 0,
+            SidecarPath = needsBaseline ? null : Relative(original.Repository, Safe(original.Root, sidecar)),
+            Diagnostics = needsBaseline
+                ? ["The rerun narrows the test filter. Run the original profile's complete forced unit layer after the rerun, then refine again. No kill credit was published."]
+                : ["Verified native rerun kills are separate from unchanged raw outcomes. Release qualification remains separate."],
+        };
+        return result;
     }
 
     private static IncrementalMutationCounts Counts(int killed, int survived, int timeout, int uncovered, int denominator)

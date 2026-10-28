@@ -165,7 +165,43 @@ public sealed class TestingModule : ICisModule
                 parse.GetValue(refineProfile)!, parse.GetValue(rerunProfile)!, parse.GetValue(refinementReason)!)), output);
         });
         root.Subcommands.Add(refine);
+        var verify = new Command("verify", "Verify current saved unit and mutation evidence without executing or changing the cache.");
+        var verifyRepository = Repo(); var verifyFormat = Format(); var verifyProfile = Required("--profile");
+        var refinementProfiles = new Option<string[]>("--refinement-profile")
+        {
+            Description = "Explicit native timeout rerun profiles to reverify. May be repeated; saved sidecar claims are not trusted.",
+        };
+        verify.Options.Add(verifyRepository); verify.Options.Add(verifyFormat); verify.Options.Add(verifyProfile); verify.Options.Add(refinementProfiles);
+        verify.SetAction(parse =>
+        {
+            var output = parse.GetValue(verifyFormat)!;
+            if (output is not ("human" or "agent" or "json")) return 2;
+            var reader = services.GetService<ICisGraphSnapshotReader>();
+            if (reader is null) return RenderEvidence(new("missing-graph-module", 2), output);
+            return RenderEvidence(new IncrementalTestService(reader).Verify(new(parse.GetValue(verifyRepository)!,
+                parse.GetValue(verifyProfile)!, parse.GetValue(refinementProfiles))), output);
+        });
+        root.Subcommands.Add(verify);
         return root;
+    }
+
+    private static int RenderEvidence(IncrementalEvidenceResult result, string format)
+    {
+        if (format == "json") Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+        else if (format == "agent")
+        {
+            Console.WriteLine($"status={result.Status};exitCode={result.ExitCode};qualified=false;scopeComplete={result.ScopeComplete.ToString().ToLowerInvariant()};sources={result.Batches.Count};credits={result.Credits.Count}");
+            Console.WriteLine(FormattableString.Invariant($"rawKilled={result.Raw?.Killed};rawScore={result.Raw?.Score};effectiveKilled={result.Effective?.Killed};effectiveScore={result.Effective?.Score};denominator={result.Raw?.Denominator}"));
+            foreach (var diagnostic in result.Diagnostics) Console.WriteLine($"diagnostic={diagnostic.Replace(';', ',')}");
+        }
+        else
+        {
+            Console.WriteLine($"Saved evidence: {result.Status}; {result.Batches.Count} current source batches, {result.Credits.Count} verified native timeout kills.");
+            if (result.Raw is { } raw && result.Effective is { } effective)
+                Console.WriteLine(FormattableString.Invariant($"Raw score: {raw.Score:F6}% ({raw.Killed}/{raw.Denominator}); effective score: {effective.Score:F6}% ({effective.Killed}/{effective.Denominator})."));
+            foreach (var diagnostic in result.Diagnostics) Console.WriteLine(diagnostic);
+        }
+        return result.ExitCode;
     }
 
     private static int RenderRefinement(IncrementalRefinementResult result, string format)

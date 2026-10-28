@@ -6,10 +6,19 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Cis.Abstractions\Cis.Abstractions.csproj" />
+    <ProjectReference Include="..\..\tools\Cis.ProcessSafety.NativeFixture\Cis.ProcessSafety.NativeFixture.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit.v3" />
     <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
   </ItemGroup>
+  <Target Name="CopyNativeProcessSafetyFixture" AfterTargets="Build">
+    <ItemGroup>
+      <NativeProcessSafetyFixture Include="../../tools/Cis.ProcessSafety.NativeFixture/bin/$(Configuration)/$(TargetFramework)/*.dll" />
+      <NativeProcessSafetyFixture Include="../../tools/Cis.ProcessSafety.NativeFixture/bin/$(Configuration)/$(TargetFramework)/*.deps.json" />
+      <NativeProcessSafetyFixture Include="../../tools/Cis.ProcessSafety.NativeFixture/bin/$(Configuration)/$(TargetFramework)/*.runtimeconfig.json" />
+    </ItemGroup>
+    <Copy SourceFiles="@(NativeProcessSafetyFixture)" DestinationFolder="$(TargetDir)process-safety-fixture" />
+  </Target>
 </Project>

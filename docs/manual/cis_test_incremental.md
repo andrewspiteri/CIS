@@ -282,6 +282,68 @@ is limited to 1 MiB and replaces the previous attestation for that profile pair.
 Invoke `refine` again to recheck current evidence before relying on saved credit;
 a saved sidecar alone does not establish that its inputs remain current.
 
+### Verify an exact source variant
+
+`cis test incremental verify-source-variant` checks saved diagnostic evidence for
+one original native `Survived` definition. It compares an original/pass attempt,
+the exact source replacement/fail attempt, and a restored/pass attempt. It does
+not run tests, change raw reports or caches, or apply mutation score credit.
+
+```text
+cis test incremental verify-source-variant --repo <repository> --manifest .cis/source-variant.json --format json
+```
+
+Prepare three separate, non-nested snapshots with identical unit-only profiles,
+current tests, dependencies, build settings, tools and environment. Declare one
+production source file. Only that file's exact native span/replacement may differ
+in the variant snapshot; the restored source must match the original bytes. Run
+each profile through `cis test incremental run --layer unit`. The expected failed
+variant remains a failed ordinary unit attempt; this verifier checks that saved
+attempt separately. Each attempt must execute exactly one native test case with
+the same GUID and method recorded in the original Stryker report.
+
+Inside that test, use `SourceVariantBodyCapture.Encode(subjectAssembly,
+sourceDocument, testAssembly, testSourceDocument)` from `Cis.Abstractions` and write
+its returned line through the native test's output channel. Retain the actual
+subject/test assemblies and their external portable PDB files at the observed
+paths. CIS checks their hashes, module identities, PE-bound PDB checksums and
+SHA256 source-document checksums. A console probe, supplied completion flags,
+stale binaries or a different test body cannot replace this evidence. Native
+timeouts, incomplete hosts and retained input-change or execution holds fail
+verification; no assertion-message whitelist is used.
+
+Illustrative manifest; replace the paths, report hash and GUID with actual evidence:
+
+```json
+{
+  "schemaVersion": 1,
+  "evidence": {
+    "repositoryPath": ".",
+    "reportPath": ".cis/original-mutation-report.json",
+    "reportSha256": "<original-report-sha256>",
+    "sourceFile": "src/Subject.cs",
+    "subjectAssemblyPath": "bin/Release/net10.0/Example.Tests.dll",
+    "mutantId": "17",
+    "nativeTestId": "<native-test-guid>",
+    "original": { "repositoryPath": ".", "profilePath": "unit-proof.json" },
+    "variant": { "repositoryPath": "/work/variant", "profilePath": "unit-proof.json" },
+    "restored": { "repositoryPath": "/work/restored", "profilePath": "unit-proof.json" }
+  }
+}
+```
+
+The manifest, report and current source paths belong under `--repo`;
+`evidence.repositoryPath` must identify that same repository. Each phase's profile
+path belongs under its named snapshot. A snapshot outside `--repo` needs an
+explicit absolute path. Manifests are limited to 256 KiB, reject duplicate or
+unknown fields, and cannot supply approval flags.
+
+Output supports `json`, `human` and `agent`. Exit `0` means this diagnostic check
+passed; `qualified` stays false and `partial` stays true. Invalid manifests return
+`2`; missing, stale or unverifiable evidence returns `4`. The JSON receipt is
+limited to 1 MiB and includes pinned inputs and phase/body identities. It supplies
+no automatic mutation credit or complete-scope qualification.
+
 ### Verify saved evidence for another tool
 
 `cis test incremental verify` returns a current evidence receipt without running

@@ -5,7 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Cis.Modules.Testing;
 
-public sealed class TestingModule : ICisModule
+public sealed partial class TestingModule : ICisModule
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     public string Name => "test";
@@ -182,6 +182,7 @@ public sealed class TestingModule : ICisModule
                 parse.GetValue(verifyProfile)!, parse.GetValue(refinementProfiles))), output);
         });
         root.Subcommands.Add(verify);
+        root.Subcommands.Add(SourceVariant(services));
         return root;
     }
 

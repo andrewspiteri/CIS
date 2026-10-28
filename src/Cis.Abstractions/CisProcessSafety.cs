@@ -33,8 +33,8 @@ public static class CisProcessSafety
         if (!process.Start())
             throw new InvalidOperationException($"Process '{startInfo.FileName}' could not be started.");
 
-        var output = ReadBoundedAsync(process.StandardOutput, maximumCharactersPerStream);
-        var error = ReadBoundedAsync(process.StandardError, maximumCharactersPerStream);
+        var output = StartReader(process.StandardOutput, maximumCharactersPerStream);
+        var error = StartReader(process.StandardError, maximumCharactersPerStream);
         var timedOut = !process.WaitForExit((int)timeout.TotalMilliseconds);
         if (timedOut)
         {
@@ -50,13 +50,19 @@ public static class CisProcessSafety
             stdout.Text, stderr.Text, stdout.Truncated || stderr.Truncated);
     }
 
-    private static async Task<BoundedText> ReadBoundedAsync(StreamReader reader, int maximumCharacters)
+    private static Task<BoundedText> StartReader(StreamReader reader, int maximumCharacters)
+        // Run blocks its caller while waiting for the process and its streams. Neither
+        // pipe may depend on another worker being available to finish that wait.
+        => Task.Factory.StartNew(() => ReadBounded(reader, maximumCharacters), CancellationToken.None,
+            TaskCreationOptions.LongRunning, TaskScheduler.Default);
+
+    private static BoundedText ReadBounded(StreamReader reader, int maximumCharacters)
     {
         var buffer = new char[8_192];
         var retained = new StringBuilder(Math.Min(maximumCharacters, 65_536));
         var truncated = false;
         int read;
-        while ((read = await reader.ReadAsync(buffer).ConfigureAwait(false)) > 0)
+        while ((read = reader.Read(buffer, 0, buffer.Length)) > 0)
         {
             var available = maximumCharacters - retained.Length;
             if (available > 0) retained.Append(buffer, 0, Math.Min(available, read));

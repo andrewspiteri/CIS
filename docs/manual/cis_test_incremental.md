@@ -3,7 +3,7 @@ title: "cis test incremental"
 type: command-reference
 status: Draft
 owner: "Andrew Spiteri"
-last_reviewed: "2026-10-27"
+last_reviewed: "2026-10-28"
 review_cadence: on incremental execution contract change
 cis:
   stable_id: change-impact-studio:manual:cis-test-incremental
@@ -73,6 +73,12 @@ installed testing/helper assemblies, platform and inherited environment identity
 Inherited environment values are hashed and are not saved. A graph build ID change
 alone does not invalidate otherwise unchanged work. Native report hashes and parsed
 outcomes are rechecked before reuse.
+
+Native build commands must compile the declared inputs. After restoring files
+with timestamps older than existing build outputs, run a clean or forced baseline
+build before execution. An incremental compiler may otherwise reuse stale
+binaries. CIS checks source and report identity; those checks do not establish
+that an arbitrary native build command rebuilt its binaries.
 
 Failed or aborted unit results, missing reports, source mismatches, pending/runtime
 error outcomes and timed-out invocations cannot become reusable completions. Completed native
@@ -162,6 +168,14 @@ execution and recovery holds cannot acquire completion through this command.
 The reason records the compatibility review; CIS does not infer compatibility
 from that text. A changed result interpretation needs its own policy review.
 
+Revalidation also saves a structured producer history on each changed stage. Each
+link binds the previous and current testing/helper hashes, input fingerprints,
+unchanged report hash, environment digests and compatibility review. Histories are
+limited to eight links. Keep the reviewed previous binary pairs at their recorded
+locations while refinement still relies on their native receipts. Refinement
+rechecks those files and the complete chain; a text diagnostic alone cannot
+authorize an older helper. Refresh native results when the history limit is reached.
+
 For the one-time transition from the original full-environment cache identity,
 add `--legacy-session-environment` while still in the original launch environment.
 Review that the earlier native work did not rely on the now-canonical session
@@ -204,9 +218,11 @@ recovery before reuse. Native infrastructure or cleanup failures remain failures
 State lives under `.cis/local/testing/incremental/<id>/`. It contains one current
 unit report and one current mutation report per source batch, compact state and
 the latest invocation summary. Replaced reports and reports for retired batches
-are removed. Native work trees are deleted; failures retain at most the last
-128 KiB of each standard-output/error log. Successful postflight captures are
-transient. Saved current reports are a reusable cache, not an attempt archive.
+are removed. Native work trees are deleted; failed invocations and completed
+mutation reports containing timeouts retain at most the last 128 KiB of each
+standard-output/error log. Successful recovery and postflight captures are
+transient and do not overwrite those retained tails. Saved current reports are
+a reusable cache, not an attempt archive.
 
 `knownScore` covers current readable native findings only. `completeScopeScore`
 remains absent while any required source batch is unfinished or recovery is on
@@ -215,6 +231,48 @@ cached miss after healthy recovery. It receives no conservative kill credit and
 keeps `thresholdMet` false. An invocation killed by its guard is unfinished work
 and cannot use this rule. `thresholdMet` also requires no uncovered mutants. `qualified` is always false:
 the declared development profile does not certify complete release scope.
+
+### Verify a completed timeout rerun
+
+`cis test incremental refine` verifies saved results without executing tests. It
+can give separate credit when an original native `Timeout` has a completed native
+`Killed` result for the exact same source, mutant definition and current inputs.
+It does not change the raw report, remove unresolved mutants, or qualify a release.
+
+```text
+cis test incremental refine --repo . --profile original.json --rerun-profile rerun.json --reason "Reviewed narrower test filter and exact source ranges." --format json
+```
+
+Both profiles must belong to the same repository and have current, completed unit
+and mutation results with healthy recovery and postflight. Tests, dependencies,
+configuration, tools and environment must agree. Supported profile differences
+are the profile ID, a source subset and its canary, the reviewed test filter, and
+native `--mutate` or `-m` arguments selecting that source and bounded character
+ranges, and a shorter outer invocation guard (`timeoutSeconds`). Other command or
+setting differences fail verification. A shorter outer guard still requires a
+completed native execution with healthy recovery and postflight; a guard timeout
+or abort cannot gain credit. Native Stryker timeouts and test timeout settings
+must remain unchanged. A longer outer guard is rejected.
+
+Killing test IDs must have matching native definitions in both reports, including
+current test source text and valid locations. Only original `Timeout` to rerun
+`Killed` outcomes can gain credit. Runtime errors, pending work, changed definitions
+and missing or damaged evidence remain failures.
+
+When the rerun changes the test filter, verification returns `needs-baseline`
+with exit code `3` until every original unit batch has been refreshed after the
+rerun. Start the original profile's unit layer with `--force`; resume without
+`--force` if a scheduling limit leaves batches pending. This preserves healthy
+mutation caches. Then invoke `refine` again. No refinement credit is published
+while that refresh is pending.
+
+A successful verification saves one current sidecar per rerun profile under
+`refinements/` in the original profile's state directory. It records raw and
+effective counts separately, original and rerun report hashes, input and producer
+identities, baseline bindings, and the verified native killing tests. The sidecar
+is limited to 1 MiB and replaces the previous attestation for that profile pair.
+Invoke `refine` again to recheck current evidence before relying on saved credit;
+a saved sidecar alone does not establish that its inputs remain current.
 
 Exit codes are `0` for a completed requested layer or a readable plan, `2` for an
 invalid plan, `3` for remaining work after a scheduling limit, and `4` for execution,

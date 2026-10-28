@@ -22,7 +22,8 @@ public sealed partial class IncrementalTestService
             Require(File.Exists(previousHelper) && !CisPathSafety.IsUnderRoot(input.Repository, previousHelper, allowRoot: true)
                 && !CisPathSafety.ContainsReparsePoint(Path.GetPathRoot(previousHelper)!, previousHelper),
                 "The previous installed helper must be beside the previous testing assembly.");
-            var oldInput = Read(options, oldHash, HashFile(previousHelper), legacySessionEnvironment);
+            var oldHelperHash = HashFile(previousHelper);
+            var oldInput = Read(options, oldHash, oldHelperHash, legacySessionEnvironment);
             Directory.CreateDirectory(Path.GetDirectoryName(Safe(input.Repository, MutationRunService.LocalRoot + "/run.lock"))!);
             using var lease = new FileStream(Safe(input.Repository, MutationRunService.LocalRoot + "/run.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             var state = State(input);
@@ -39,15 +40,31 @@ public sealed partial class IncrementalTestService
                     + (legacySessionEnvironment ? " using the original full inherited environment" : "") + ": " + reason;
                 if (prior.UnitCurrent && saved.Unit is { Completed: true })
                 {
-                    saved = saved with { Unit = saved.Unit with { Fingerprint = batch.UnitFingerprint, Diagnostics = saved.Unit.Diagnostics.Append(diagnostic).Distinct(StringComparer.Ordinal).ToArray() } };
+                    saved = saved with { Unit = RevalidateProducer(saved.Unit, batch.UnitFingerprint) };
                     units++;
                 }
                 if (prior.UnitCurrent && prior.MutationCurrent && saved.Mutation is { Completed: true })
                 {
-                    saved = saved with { Mutation = saved.Mutation with { Fingerprint = batch.MutationFingerprint, Diagnostics = saved.Mutation.Diagnostics.Append(diagnostic).Distinct(StringComparer.Ordinal).ToArray() } };
+                    saved = saved with { Mutation = RevalidateProducer(saved.Mutation, batch.MutationFingerprint) };
                     mutations++;
                 }
                 state.Batches[batch.Id] = saved;
+
+                IncrementalStageResult RevalidateProducer(IncrementalStageResult stage, string fingerprint)
+                {
+                    var history = stage.ProducerRevalidations;
+                    if (stage.Fingerprint != fingerprint)
+                    {
+                        Require(history is { Length: < 8 }, "Producer revalidation history reached its eight-link limit; refresh the native stage.");
+                        history = [.. history, new(previousTestingAssembly, previousHelper, oldHash, oldHelperHash,
+                            HashFile(typeof(IncrementalTestService).Assembly.Location), HashFile(typeof(CisProcessJob).Assembly.Location),
+                            stage.Fingerprint, fingerprint, stage.ReportSha256,
+                            AmbientEnvironmentIdentity(input.Profile, legacySessionEnvironment), AmbientEnvironmentIdentity(input.Profile, false),
+                            legacySessionEnvironment, reason, DateTimeOffset.UtcNow)];
+                    }
+                    return stage with { Fingerprint = fingerprint, ProducerRevalidations = history,
+                        Diagnostics = stage.Diagnostics.Append(diagnostic).Distinct(StringComparer.Ordinal).ToArray() };
+                }
             }
             // Reports and native execution records are unchanged. Failed/incomplete results stay held.
             Save(input, state);

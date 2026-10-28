@@ -196,6 +196,22 @@ public sealed class IncrementalTestServiceTests
         Assert.Equal(1, first.Killed);
         Assert.Equal(1, first.TimedOut);
         Assert.False(first.ThresholdMet);
+        var retainedRoot = IncrementalTestService.LocalRoot + "/sample/";
+        var stdoutPath = fixture.Full(retainedRoot + "latest-failure-stdout.log");
+        var stderrPath = fixture.Full(retainedRoot + "latest-failure-stderr.log");
+        Assert.True(File.Exists(stdoutPath));
+        Assert.True(File.Exists(stderrPath));
+        Assert.Equal(128 * 1024, new FileInfo(stdoutPath).Length);
+        Assert.Equal(128 * 1024, new FileInfo(stderrPath).Length);
+        var stdout = File.ReadAllText(stdoutPath);
+        var stderr = File.ReadAllText(stderrPath);
+        Assert.Contains("native-timeout-stdout-tail", stdout);
+        Assert.Contains("native-timeout-stderr-tail", stderr);
+        Assert.DoesNotContain("native-timeout-stdout-prefix", stdout);
+        Assert.DoesNotContain("native-timeout-stderr-prefix", stderr);
+        Assert.DoesNotContain("native-unit-complete", stdout);
+        Assert.DoesNotContain("native-recovery-complete", stdout);
+        Assert.False(Directory.Exists(fixture.Full(retainedRoot + "work")));
         var calls = fixture.Calls();
         var next = fixture.Run();
         Assert.Equal(0, next.ExecutedMutationBatches);
@@ -203,6 +219,9 @@ public sealed class IncrementalTestServiceTests
         Assert.Equal(calls, fixture.Calls());
         Assert.Equal(1, next.TimedOut);
         Assert.False(next.ThresholdMet);
+        Assert.Equal(stdout, File.ReadAllText(stdoutPath));
+        Assert.Equal(stderr, File.ReadAllText(stderrPath));
+        Assert.False(Directory.Exists(fixture.Full(retainedRoot + "work")));
     }
 
     [Fact]

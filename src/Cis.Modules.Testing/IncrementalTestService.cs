@@ -120,7 +120,7 @@ public sealed partial class IncrementalTestService
                 // A crash between native completion and recovery cannot publish a reusable mutation result.
                 state.Batches[batch.Id] = saved with { Mutation = assessed with { Completed = false, Status = "recovering" } };
                 Save(input, state);
-                CleanWork(input, !assessed.Completed);
+                CleanWork(input, !assessed.Completed || assessed.Mutation?.TimedOut > 0);
                 var recovered = Recover(input, batch, ref state, out var recovery, out var postflight, out var passed);
                 assessed = assessed with
                 {

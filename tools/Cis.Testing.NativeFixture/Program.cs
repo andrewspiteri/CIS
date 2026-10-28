@@ -29,7 +29,7 @@ if (mode is "unit" or "mutation" && File.Exists(overrideFile))
     if (fault.StartsWith(mode + ":", StringComparison.Ordinal)) mode = fault[(mode.Length + 1)..];
 }
 File.AppendAllText(".cis/native-calls.log", mode + " " + source + " " + (configuredFilter ?? (args.Length > 3 ? args[3] : "")) + "\n");
-if (mode == "recovery") { File.Delete(".cis/instrumented"); return 0; }
+if (mode == "recovery") { File.Delete(".cis/instrumented"); Console.WriteLine("native-recovery-complete"); return 0; }
 if (mode == "recovery-failure") return 1;
 if (mode == "unit-malformed") { File.WriteAllText(Path.Combine(output, "unit.trx"), "<TestRun>"); return 0; }
 if (mode == "timeout")
@@ -48,10 +48,18 @@ if (mode is "unit" or "unit-failure" or "unit-abort")
         new XElement("Counters", new XAttribute("total", 1), new XAttribute("executed", 1),
             new XAttribute("passed", passed), new XAttribute("failed", 1 - passed)));
     new XDocument(new XElement("TestRun", new XElement("Results", row), summary)).Save(Path.Combine(output, "unit.trx"));
+    Console.WriteLine("native-unit-complete");
     return failed ? 1 : 0;
 }
 if (mode is "mutation" or "survivor" or "pending" or "wrong-source" or "empty" or "reported-timeout")
 {
+    if (mode == "reported-timeout")
+    {
+        Console.Write("native-timeout-stdout-prefix" + new string('x', 160 * 1024));
+        Console.WriteLine("native-timeout-stdout-tail");
+        Console.Error.Write("native-timeout-stderr-prefix" + new string('y', 160 * 1024));
+        Console.Error.WriteLine("native-timeout-stderr-tail");
+    }
     var mutant = new
     {
         id = "0", mutatorName = "Boolean", replacement = "false", status = mode == "survivor" ? "Survived" : mode == "pending" ? "Pending" : mode == "reported-timeout" ? "Timeout" : "Killed",

@@ -23,7 +23,7 @@ public sealed partial class IncrementalTestService
         string ProfileHash, string Storage, string Root, string StatePath, string CommonIdentity);
 
     private static Input Read(IncrementalTestOptions options, string? previousTestingProducer = null, string? previousHelperProducer = null,
-        bool legacySessionEnvironment = false)
+        bool legacySessionEnvironment = false, string? environmentIdentity = null)
     {
         Require(options.Layer is "unit" or "mutation" or "all", "Layer must be unit, mutation, or all.");
         Require(options.MaximumBatches is >= 1 and <= 512 && options.MaximumSeconds is >= 1 and <= 3600,
@@ -85,7 +85,7 @@ public sealed partial class IncrementalTestService
             tools = tools.Select(file => new { file, hash = HashFile(file) }).ToArray(),
             cis = new[] { previousTestingProducer ?? HashFile(typeof(IncrementalTestService).Assembly.Location), previousHelperProducer ?? HashFile(typeof(CisProcessJob).Assembly.Location) },
             platform = System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier,
-            ambientEnvironment = AmbientEnvironmentIdentity(profile, legacySessionEnvironment),
+            ambientEnvironment = environmentIdentity ?? AmbientEnvironmentIdentity(profile, legacySessionEnvironment),
         };
         var storage = Safe(repository, ".cis/local/testing");
         var root = Safe(repository, LocalRoot + "/" + profile.Id);

@@ -44,7 +44,15 @@ public sealed record IncrementalStageResult(string Fingerprint, string Status, b
     public MutationNativeExecution? RecoveryExecution { get; init; }
     public MutationNativeExecution? PostflightExecution { get; init; }
     public int PostflightPassed { get; init; }
+    public IncrementalProducerRevalidation[] ProducerRevalidations { get; init; } = [];
 }
+
+/// <summary>Reviewed compatibility proof for an unchanged native report and its producer inputs.</summary>
+public sealed record IncrementalProducerRevalidation(string PreviousTestingAssemblyPath, string PreviousHelperAssemblyPath,
+    string PreviousTestingSha256, string PreviousHelperSha256, string TestingSha256, string HelperSha256,
+    string PreviousFingerprint, string Fingerprint, string ReportSha256,
+    string PreviousEnvironmentSha256, string EnvironmentSha256, bool LegacySessionEnvironment,
+    string Reason, DateTimeOffset VerifiedUtc);
 
 public sealed record IncrementalBatchState(string SourceFile, IncrementalStageResult? Unit,
     IncrementalStageResult? Mutation);

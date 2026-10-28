@@ -150,7 +150,42 @@ public sealed class TestingModule : ICisModule
                 parse.GetValue(previous)!, parse.GetValue(reason)!, parse.GetValue(legacySession)), output);
         });
         root.Subcommands.Add(revalidate);
+        var refine = new Command("refine", "Verify completed native timeout reruns and save a separate source-bound attestation without executing tests.");
+        var refineRepository = Repo(); var refineFormat = Format(); var refineProfile = Required("--profile");
+        var rerunProfile = Required("--rerun-profile"); var refinementReason = Required("--reason");
+        refine.Options.Add(refineRepository); refine.Options.Add(refineFormat); refine.Options.Add(refineProfile);
+        refine.Options.Add(rerunProfile); refine.Options.Add(refinementReason);
+        refine.SetAction(parse =>
+        {
+            var output = parse.GetValue(refineFormat)!;
+            if (output is not ("human" or "agent" or "json")) return 2;
+            var reader = services.GetService<ICisGraphSnapshotReader>();
+            if (reader is null) return RenderRefinement(new("missing-graph-module", 2), output);
+            return RenderRefinement(new IncrementalTestService(reader).Refine(new(parse.GetValue(refineRepository)!,
+                parse.GetValue(refineProfile)!, parse.GetValue(rerunProfile)!, parse.GetValue(refinementReason)!)), output);
+        });
+        root.Subcommands.Add(refine);
         return root;
+    }
+
+    private static int RenderRefinement(IncrementalRefinementResult result, string format)
+    {
+        if (format == "json") Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+        else if (format == "agent")
+        {
+            Console.WriteLine($"status={result.Status};exitCode={result.ExitCode};qualified=false;requiresBaseline={result.RequiresBaseline.ToString().ToLowerInvariant()};credits={result.Credits.Count};sidecar={result.SidecarPath}");
+            Console.WriteLine(FormattableString.Invariant($"rawKilled={result.Raw?.Killed};rawTimedOut={result.Raw?.TimedOut};rawScore={result.Raw?.Score};effectiveKilled={result.Effective?.Killed};effectiveTimedOut={result.Effective?.TimedOut};effectiveScore={result.Effective?.Score};denominator={result.Raw?.Denominator}"));
+            foreach (var diagnostic in result.Diagnostics) Console.WriteLine($"diagnostic={diagnostic.Replace(';', ',')}");
+        }
+        else
+        {
+            Console.WriteLine($"Native rerun verification: {result.Status}; {result.Credits.Count} verified timeout kills.");
+            if (result.Raw is { } raw && result.Effective is { } effective)
+                Console.WriteLine(FormattableString.Invariant($"Raw score: {raw.Score:F6}% ({raw.Killed}/{raw.Denominator}); effective score: {effective.Score:F6}% ({effective.Killed}/{effective.Denominator})."));
+            foreach (var diagnostic in result.Diagnostics) Console.WriteLine(diagnostic);
+            if (result.SidecarPath is not null) Console.WriteLine("Attestation: " + result.SidecarPath);
+        }
+        return result.ExitCode;
     }
 
     private static int RenderIncremental(IncrementalTestResult result, string format)

@@ -37,19 +37,44 @@ internal sealed record DotNetTestConfiguration(bool IsTest, IReadOnlyList<string
         var packages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var evidence = new List<string>();
         var uncertainTest = false;
+        var uncertainRunner = false;
         bool? testProperty = null;
+        var properties = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var input in inputs)
         {
             var relative = Path.GetRelativePath(repository, input.Path).Replace('\\', '/');
-            var declarations = input.Document.Descendants().Where(element => element.Name.LocalName is "PackageReference" or "IsTestProject").ToArray();
+            var declarations = input.Document.Descendants().Where(element => element.Name.LocalName == "PackageReference"
+                || element.Parent?.Name.LocalName == "PropertyGroup").ToArray();
+            var groupConditions = new Dictionary<XElement, bool?>();
             foreach (var declaration in declarations)
             {
-                if (declaration.AncestorsAndSelf().Any(element => element.Attribute("Condition") is not null))
+                // MSBuild evaluates a group's condition once, before its children
+                // can assign a property used by that condition.
+                var conditions = declaration.AncestorsAndSelf().Reverse().Select(element =>
                 {
+                    if (element == declaration) return LiteralCondition(element.Attribute("Condition")?.Value, properties);
+                    if (!groupConditions.TryGetValue(element, out var result))
+                        groupConditions[element] = result = LiteralCondition(element.Attribute("Condition")?.Value, properties);
+                    return result;
+                }).ToArray();
+                if (conditions.Contains(false)) continue;
+                if (conditions.Contains(null))
+                {
+                    if (declaration.Parent?.Name.LocalName == "PropertyGroup") properties.Remove(declaration.Name.LocalName);
+                    uncertainRunner |= IsRunnerProperty(declaration.Name.LocalName);
                     warnings.Add($"Conditional .NET test/package declaration in {relative} requires evaluated configuration review.");
                     uncertainTest |= declaration.Name.LocalName == "IsTestProject"
-                        || IsTestPackage(declaration.Attribute("Include")?.Value ?? declaration.Attribute("Update")?.Value);
+                        || IsTestPackage(declaration.Attribute("Include")?.Value ?? declaration.Attribute("Update")?.Value ?? declaration.Attribute("Remove")?.Value);
                     continue;
+                }
+                if (declaration.Parent?.Name.LocalName == "PropertyGroup")
+                {
+                    if (!declaration.Value.Contains("$(", StringComparison.Ordinal)
+                        && !declaration.Value.Contains("@(", StringComparison.Ordinal))
+                        properties[declaration.Name.LocalName] = declaration.Value.Trim();
+                    else properties.Remove(declaration.Name.LocalName);
+                    if (IsRunnerProperty(declaration.Name.LocalName) && !bool.TryParse(declaration.Value.Trim(), out _))
+                        uncertainRunner = true;
                 }
                 if (declaration.Name.LocalName == "IsTestProject" && bool.TryParse(declaration.Value.Trim(), out var value))
                     testProperty = value;
@@ -77,7 +102,10 @@ internal sealed record DotNetTestConfiguration(bool IsTest, IReadOnlyList<string
         if (packages.Contains("TUnit") || packages.Contains("Microsoft.Testing.Platform") || sdk.StartsWith("MSTest.Sdk", StringComparison.OrdinalIgnoreCase))
             frameworks.Add("microsoft-testing-platform");
         if (packages.Any(package => package.StartsWith("Reqnroll.", StringComparison.OrdinalIgnoreCase))) frameworks.Add("reqnroll");
-        var runner = DotNetRunnerSettings.Read(repository, directory, inputs.Select(input => input.Document), warnings);
+        var resolvedProperties = new XDocument(new XElement("Project", new XElement("PropertyGroup",
+            properties.Select(property => new XElement(property.Key, property.Value)))));
+        var runner = DotNetRunnerSettings.Read(repository, directory, [resolvedProperties], warnings);
+        runner |= uncertainRunner;
         if (uncertainTest) frameworks.Add("test-runner-unverified");
         var isTest = testProperty ?? (frameworks.Count > 0 || packages.Contains("Microsoft.NET.Test.Sdk"));
         if (isTest && runner && !frameworks.Contains("microsoft-testing-platform")) frameworks.Add("microsoft-testing-platform");
@@ -86,8 +114,23 @@ internal sealed record DotNetTestConfiguration(bool IsTest, IReadOnlyList<string
         return new(isTest, isTest ? frameworks : [], packages, evidence.Distinct(StringComparer.Ordinal).ToArray());
     }
 
+    // Deliberately bounded literal evaluation: never execute MSBuild, imports, tasks,
+    // property functions, or target-repository assemblies during discovery.
+    private static bool? LiteralCondition(string? condition, IReadOnlyDictionary<string, string> properties)
+    {
+        if (condition is null) return true;
+        var match = System.Text.RegularExpressions.Regex.Match(condition,
+            "^\\s*['\"]\\$\\((?<property>[A-Za-z_][A-Za-z0-9_]*)\\)['\"]\\s*(?<op>==|!=)\\s*['\"](?<value>[^'\"$@]*)['\"]\\s*$");
+        if (!match.Success || !properties.TryGetValue(match.Groups["property"].Value, out var value)) return null;
+        var equal = value.Equals(match.Groups["value"].Value, StringComparison.OrdinalIgnoreCase);
+        return match.Groups["op"].Value == "==" ? equal : !equal;
+    }
+
     private static bool IsTestPackage(string? package) => package is not null &&
         (package.Equals("Microsoft.NET.Test.Sdk", StringComparison.OrdinalIgnoreCase)
          || new[] { "xunit", "NUnit", "MSTest", "TUnit", "Microsoft.Testing.Platform", "Reqnroll" }
              .Any(prefix => package.Equals(prefix, StringComparison.OrdinalIgnoreCase) || package.StartsWith(prefix + ".", StringComparison.OrdinalIgnoreCase)));
+
+    private static bool IsRunnerProperty(string name) => name is "TestingPlatformDotnetTestSupport"
+        or "UseMicrosoftTestingPlatformRunner" or "EnableNUnitRunner" or "EnableMSTestRunner";
 }

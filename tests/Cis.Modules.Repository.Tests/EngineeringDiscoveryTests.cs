@@ -3,6 +3,44 @@ namespace Cis.Modules.Repository.Tests;
 public sealed class EngineeringDiscoveryTests
 {
     [Theory]
+    [InlineData("<PropertyGroup Condition=\"'$(Gate)'=='true'\"><Gate>false</Gate><EnableMSTestRunner>true</EnableMSTestRunner></PropertyGroup>")]
+    [InlineData("<PropertyGroup><EnableMSTestRunner>$(UnknownRunner)</EnableMSTestRunner></PropertyGroup>")]
+    public void GroupConditionsAndUnknownRunnerValuesCannotInventVstestBinding(string settings)
+    {
+        using var repo = new Fixture();
+        repo.Write("Tests.csproj", "<Project><PropertyGroup><Gate>true</Gate><IsTestProject>true</IsTestProject></PropertyGroup>"
+            + settings + "<ItemGroup><PackageReference Include=\"MSTest.TestFramework\" /></ItemGroup></Project>");
+        var classification = new RepositoryClassifier().Classify(repo.Path);
+        Assert.Contains("microsoft-testing-platform", Assert.Single(classification.Components).Frameworks);
+        Assert.Null(RepositoryTestingStarter.CreateImportProfile(repo.Path, classification));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void LiteralIsTestProjectConditionSelectsInheritedPackagesAndDisabledRunner(bool isTest)
+    {
+        using var repo = new Fixture();
+        repo.Write("tests/Example.csproj", $"<Project><PropertyGroup><IsTestProject>{isTest.ToString().ToLowerInvariant()}</IsTestProject></PropertyGroup></Project>");
+        repo.Write("tests/Directory.Build.targets", """
+            <Project>
+              <PropertyGroup Condition="'$(IsTestProject)' == 'true'"><EnableMSTestRunner>false</EnableMSTestRunner></PropertyGroup>
+              <ItemGroup Condition="'$(IsTestProject)' == 'true'">
+                <PackageReference Include="Microsoft.NET.Test.Sdk" />
+                <PackageReference Include="MSTest.TestFramework" />
+                <PackageReference Include="MSTest.TestAdapter" />
+              </ItemGroup>
+            </Project>
+            """);
+        var result = new RepositoryClassifier().Classify(repo.Path);
+        var component = Assert.Single(result.Components);
+        Assert.Equal(isTest, component.Frameworks.Contains("mstest"));
+        Assert.DoesNotContain("test-runner-unverified", component.Frameworks);
+        Assert.DoesNotContain("microsoft-testing-platform", component.Frameworks);
+        Assert.Equal(isTest, RepositoryTestingStarter.CreateImportProfile(repo.Path, result) is not null);
+    }
+
+    [Theory]
     [InlineData("global")]
     [InlineData("property")]
     [InlineData("update")]

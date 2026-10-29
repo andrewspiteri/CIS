@@ -588,16 +588,7 @@ public sealed class GraphModule : ICisModule
             Console.WriteLine($"graphPath={Normalize(result.GraphPath)}");
             Console.WriteLine($"manifestPath={Normalize(result.ManifestPath)}");
             Console.WriteLine($"diagnosticsPath={Normalize(result.DiagnosticsPath)}");
-            foreach (var diagnostic in result.Diagnostics)
-            {
-                Console.WriteLine(
-                    $"diagnostic={diagnostic.Code};severity={diagnostic.Severity};" +
-                    $"message={Normalize(diagnostic.Message)}");
-                foreach (var evidence in diagnostic.Evidence)
-                {
-                    Console.WriteLine($"evidence.{diagnostic.Code}={Normalize(evidence)}");
-                }
-            }
+            RenderAgentDiagnostics(result.Diagnostics);
 
             return;
         }
@@ -926,22 +917,21 @@ public sealed class GraphModule : ICisModule
 
     private static void RenderAgentDiagnostics(IEnumerable<CisGraphDiagnostic> diagnostics)
     {
-        foreach (var diagnostic in diagnostics)
+        var ordered = diagnostics.OrderBy(item => item.Severity == "error" ? 0 : 1)
+            .ThenBy(item => item.Code, StringComparer.Ordinal).ToArray();
+        foreach (var group in ordered.GroupBy(item => (item.Code, item.Severity)))
+            Console.WriteLine($"diagnosticSummary={group.Key.Code};severity={group.Key.Severity};count={group.Count()}");
+        foreach (var diagnostic in ordered.Take(5))
         {
-            Console.WriteLine(
-                $"diagnostic={diagnostic.Code};severity={diagnostic.Severity};" +
-                $"message={Normalize(diagnostic.Message)}");
-            foreach (var evidence in diagnostic.Evidence.Take(10))
-            {
+            Console.WriteLine($"diagnostic={diagnostic.Code};severity={diagnostic.Severity};message={Normalize(diagnostic.Message)}");
+            foreach (var evidence in diagnostic.Evidence.Take(2))
                 Console.WriteLine($"evidence.{diagnostic.Code}={Normalize(evidence)}");
-            }
-            if (diagnostic.Evidence.Count > 10)
-            {
-                Console.WriteLine($"evidence.{diagnostic.Code}.omitted={diagnostic.Evidence.Count - 10}");
-            }
+            if (diagnostic.Evidence.Count > 2)
+                Console.WriteLine($"evidence.{diagnostic.Code}.omitted={diagnostic.Evidence.Count - 2}");
         }
+        if (ordered.Length > 5)
+            Console.WriteLine($"diagnostics.omitted={ordered.Length - 5};details=use --format json for complete diagnostics");
     }
-
     private static void RenderAgentObservations(CisGraphEdge edge)
     {
         foreach (var observation in edge.Observations)

@@ -28,7 +28,7 @@ public sealed class GraphBuilder
         "cis.markdown.decisions/1",
         "cis.repository-files/1",
         "cis.source-declarations/2",
-        "cis.csharp.compiler/5",
+        "cis.csharp.compiler/6",
         "cis.csharp.semantic-facts/3",
         "cis.test-declarations/2",
         "cis.project-dependencies/1",
@@ -1143,7 +1143,8 @@ public sealed class GraphBuilder
             sourceNodes[path] = sourceNode;
             if (language == "csharp")
             {
-                compilerInputs.Add(new CSharpCompilerInput(path, content, componentId, component is not null));
+                compilerInputs.Add(CSharpProjectScope.CreateInput(context.RepositoryPath, path, content,
+                    componentId, component is not null, hashes.Keys));
             }
 
             AddEdge(context.RepositoryId, "contains", repositoryNodeKey, sourceNode.Key, "discovered", "high", [sourceEvidence], edges);
@@ -1302,7 +1303,7 @@ public sealed class GraphBuilder
                 line,
                 hashes.GetValueOrDefault(discovered.Path),
                 "compiler-binding",
-                "cis.csharp.compiler/5",
+                "cis.csharp.compiler/6",
                 "high",
                 "Roslyn resolved the declaration within the repository compilation.");
             var callSemantics = callsByCaller.GetValueOrDefault(discovered.LocalId)?

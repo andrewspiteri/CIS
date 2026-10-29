@@ -269,7 +269,7 @@ public sealed partial class GraphValidator
         if (!stored.Success || stored.Build is null || stored.Manifest is null)
         {
             return Unavailable(context.RepositoryPath, strict: false,
-                $"SQLite graph status cache is empty or incompatible: {stored.Error}. Run `cis graph build`.", graphPath);
+                $"Unable to read SQLite graph status: {stored.Error}", graphPath);
         }
 
         var diagnostics = new List<CisGraphDiagnostic>(stored.Diagnostics);

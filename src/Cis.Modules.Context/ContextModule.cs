@@ -50,9 +50,9 @@ public sealed class ContextModule : ICisModule
             queryService));
         context.Subcommands.Add(CreateFocusedCommand(
             "callers",
-            "Retrieve explicit dependency, consumer, subscriber, and reference evidence connected to an exact target.",
+            "Retrieve incoming call, dependency, subscriber, and reference evidence for an exact target.",
             null,
-            ["calls", "depends-on", "consumed-by", "subscribes-to", "references"],
+            ["calls", "depends-on", "subscribes-to", "references"],
             queryService));
         context.Subcommands.Add(CreateFocusedCommand(
             "tests-for",
@@ -171,7 +171,7 @@ public sealed class ContextModule : ICisModule
                     parseResult.GetValue(id) ?? string.Empty,
                     kind,
                     edgeTypes,
-                    "both",
+                    name == "callers" ? "in" : "both",
                     Depth: 1,
                     parseResult.GetValue(limit),
                     parseResult.GetValue(includeProposed)));

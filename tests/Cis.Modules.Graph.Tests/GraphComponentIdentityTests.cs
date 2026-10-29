@@ -27,12 +27,11 @@ public sealed partial class GraphBuilderTests
         Assert.Contains(edges, edge => NodeValue(edge, "type") == "calls" && NodeValue(edge, "from") == NodeValue(unmapped, "key"));
         Assert.DoesNotContain(edges, edge => NodeValue(edge, "type") == "calls" && NodeValue(edge, "from") == NodeValue(owned, "key"));
         Assert.DoesNotContain(edges, edge => NodeValue(edge, "type") == "belongs-to" && NodeValue(edge, "from") == NodeValue(unmapped, "key"));
-        var ambiguousType = Assert.Single(graph.RootElement.GetProperty("nodes").EnumerateArray(), node =>
-            NodeValue(node, "kind") == "symbol" && NodeValue(node, "label") == "Example.Reading");
-        Assert.Equal("", ambiguousType.GetProperty("properties").GetProperty("component").GetString());
-        Assert.DoesNotContain(edges, edge => NodeValue(edge, "type") == "belongs-to" && NodeValue(edge, "from") == NodeValue(ambiguousType, "key"));
-        Assert.Contains(build.Diagnostics, finding => finding.Code == "CIS-GRAPH-CSHARP-002"
-            && finding.Evidence.Contains(unmappedPath) && finding.Evidence.Contains("src/Orders.Api/Reading.cs"));
+        var types = graph.RootElement.GetProperty("nodes").EnumerateArray().Where(node =>
+            NodeValue(node, "kind") == "symbol" && NodeValue(node, "label") == "Example.Reading").ToArray();
+        Assert.Equal(2, types.Length);
+        Assert.Single(types, node => node.GetProperty("properties").GetProperty("component").GetString() == repositoryId);
+        Assert.DoesNotContain(build.Diagnostics, finding => finding.Code == "CIS-GRAPH-CSHARP-002");
         Assert.NotEqual(0, CreateValidator().Validate(repository.Path, strict: true).ExitCode);
     }
 

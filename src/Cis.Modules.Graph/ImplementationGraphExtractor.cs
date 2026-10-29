@@ -69,7 +69,9 @@ internal static partial class ImplementationGraphExtractor
 
     private static IReadOnlyList<string> EnumerateInputPathsCore(string repositoryPath)
     {
+        var scope = GraphInputScope.Read(repositoryPath);
         var files = new List<string>();
+        if (File.Exists(Path.Combine(repositoryPath, GraphInputScope.RelativePath))) files.Add(GraphInputScope.RelativePath);
         var pending = new Stack<string>();
         pending.Push(repositoryPath);
         while (pending.TryPop(out var directory))
@@ -81,7 +83,7 @@ internal static partial class ImplementationGraphExtractor
             foreach (var child in entries.OfType<DirectoryInfo>().OrderBy(entry => entry.FullName, StringComparer.OrdinalIgnoreCase))
             {
                 var relative = Path.GetRelativePath(repositoryPath, child.FullName).Replace('\\', '/');
-                if (!IsExcludedDirectory(relative))
+                if (!IsExcludedDirectory(relative) && !scope.ExcludesDirectory(relative))
                 {
                     pending.Push(child.FullName);
                 }
@@ -89,7 +91,7 @@ internal static partial class ImplementationGraphExtractor
 
             files.AddRange(entries.OfType<FileInfo>()
                 .Select(file => Path.GetRelativePath(repositoryPath, file.FullName).Replace('\\', '/'))
-                .Where(IsGraphInput));
+                .Where(path => IsGraphInput(path) && scope.Includes(path)));
         }
 
         return files.Order(StringComparer.OrdinalIgnoreCase).ToArray();

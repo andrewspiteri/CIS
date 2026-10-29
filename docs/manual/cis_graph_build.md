@@ -103,6 +103,46 @@ Graph builds migrate the disposable SQLite store to storage schema 6, including
 indexes used when replacing obsolete evidence. Use this tool version to rebuild
 the cache; an older tool does not share the newer storage contract.
 
+An interrupted write can leave a rollback journal. A rebuild opens the existing
+database for writing so SQLite can recover it before schema inspection. Permission
+and lock failures are surfaced rather than treated as incompatible schemas. The
+writer reopens the committed database and checks its build identity before reporting
+success. If recovery still fails, inspect `cis repo doctor`, graph-directory permissions,
+and active writers before retrying. Do not delete a journal from a live database.
+
+Agent output includes diagnostic counts by code and severity, at most five diagnostic
+samples, and at most two evidence paths per sample. Omission counts are explicit.
+Use `--format json` for complete diagnostics or read the reported diagnostics file.
+
+## Implementation input scope
+
+An optional `.cis/graph-inputs.json` filters implementation extraction with relative
+file or directory prefixes. It does not filter catalogued documents or remove source
+files. For example, to retain historical snapshots on disk without compiling them
+into the live graph:
+
+```json
+{
+  "schemaVersion": 1,
+  "exclude": ["history/evidence", "verification/reference-api"]
+}
+```
+
+`include` is also supported; an omitted or empty list includes all otherwise eligible
+implementation paths. Exclusions take precedence. Prefixes match complete path
+segments; wildcards, absolute paths and parent traversal are rejected. The configuration
+is a hashed graph input, so changing it makes the graph stale. Excluded implementation
+files do not contribute symbols or call edges; catalogued evidence links remain available.
+
+C# identities include the nearest unambiguous project path. Separate projects are
+analyzed in separate compilations, with literal unconditional `ProjectReference`
+dependencies. Detached files and files beneath colocated ambiguous projects receive
+file scopes. Lambda and local-function identities include their enclosing symbol and
+source offset. These identities are derived and can change when source is moved.
+This is bounded static analysis: conditional references, SDK compile rules, linked
+sources and explicit imports are not evaluated. It does not establish complete
+MSBuild project membership or runtime coverage.
+
 Dependency extraction supports `.csproj`, `package.json`, Gradle build files, and
 `Package.swift`. A project reference creates `depends-on`; it never proves behavioral
 verification. `verified-by` is emitted only when a recognized test contains the exact
@@ -163,7 +203,9 @@ tokenization for indexed substring routing. SQLite
 incremental auto-vacuum reclaims free pages after graph changes; a storage migration
 performs a full compaction when its physical layout changes.
 
-The directory is ignored by Git and may be deleted at any time. Rebuilding an
+The directory is ignored by Git. It may be deleted when no graph reader or writer
+is active; remove the complete disposable store rather than an individual live
+journal. Rebuilding an
 unchanged repository reports `unchanged` and does not rewrite these files. A changed
 build updates only changed node and edge rows. Supported older database schemas are
 migrated using SQLite `user_version`; incompatible disposable state is safely rebuilt.

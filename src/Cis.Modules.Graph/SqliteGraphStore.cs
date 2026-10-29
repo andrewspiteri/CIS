@@ -73,9 +73,9 @@ public sealed class SqliteGraphStore
                 state.Head, state.Dirty, inputs, extractors);
             return new GraphStoreReadResult(true, graph, manifest, diagnostics, null);
         }
-        catch (Exception exception) when (exception is SqliteException or IOException or UnauthorizedAccessException or JsonException)
+        catch (Exception exception) when (exception is SqliteException or IOException or UnauthorizedAccessException or JsonException or InvalidDataException)
         {
-            return GraphStoreReadResult.Failure(exception.Message);
+            return GraphStoreReadResult.Failure(DescribeReadFailure(exception));
         }
     }
 
@@ -102,13 +102,64 @@ public sealed class SqliteGraphStore
                 state.EdgeCount,
                 null);
         }
-        catch (Exception exception) when (exception is SqliteException or IOException or UnauthorizedAccessException or JsonException)
+        catch (Exception exception) when (exception is SqliteException or IOException or UnauthorizedAccessException or JsonException or InvalidDataException)
         {
-            return GraphStoreHeaderResult.Failure(exception.Message);
+            return GraphStoreHeaderResult.Failure(DescribeReadFailure(exception));
         }
     }
 
+    private static string DescribeReadFailure(Exception error) => error switch
+    {
+        SqliteException { SqliteExtendedErrorCode: 776 } => "SQLite rollback recovery is pending. Run a writable `cis graph build`; if it fails, inspect graph-directory permissions and active writers with `cis repo doctor`. " + error.Message,
+        SqliteException { SqliteErrorCode: 8 or 14 } or UnauthorizedAccessException => "SQLite graph access failed. Check database and directory permissions with `cis repo doctor` before retrying. " + error.Message,
+        SqliteException { SqliteErrorCode: 5 or 6 } => "SQLite graph is busy or locked. Wait for the active writer or inspect it with `cis repo doctor` before retrying. " + error.Message,
+        SqliteException { SqliteErrorCode: 11 or 26 } => "SQLite graph is corrupt or is not a database. Rebuild the derived graph with `cis graph build`. " + error.Message,
+        _ => error.Message,
+    };
+
     public void Write(
+        string repositoryPath,
+        CisGraphDocument graph,
+        CisGraphManifest manifest,
+        IReadOnlyList<CisGraphDiagnostic> diagnostics)
+    {
+        try { WriteCore(repositoryPath, graph, manifest, diagnostics); }
+        catch (SqliteException error) when (error.SqliteErrorCode is 11 or 26)
+        {
+            // Recovery of a journal paired with an already-replaced database can
+            // reveal corruption. Preserve that entire generation for diagnosis;
+            // publish a separately validated store, never a database beside old sidecars.
+            var path = DatabasePath(repositoryPath);
+            var staging = Path.Combine(Path.GetDirectoryName(path)!, "rebuild-" + Guid.NewGuid().ToString("N"));
+            WriteCore(staging, graph, manifest, diagnostics);
+            var backup = Path.Combine(Path.GetDirectoryName(path)!, "corrupt-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(backup);
+            var moved = new List<(string Original, string Backup)>();
+            try
+            {
+                foreach (var suffix in new[] { "", "-journal", "-wal", "-shm" })
+                {
+                    var original = path + suffix;
+                    if (!File.Exists(original)) continue;
+                    var destination = Path.Combine(backup, Path.GetFileName(original));
+                    File.Move(original, destination);
+                    moved.Add((original, destination));
+                }
+                File.Move(DatabasePath(staging), path);
+            }
+            catch
+            {
+                foreach (var item in moved.AsEnumerable().Reverse()) File.Move(item.Backup, item.Original);
+                throw;
+            }
+            using var verified = Open(path, readOnly: true);
+            EnsureReadableSchema(verified);
+            if (ReadBuildState(verified)?.BuildId != graph.Build.Id)
+                throw new InvalidDataException("Replacement graph build identity did not match.");
+        }
+    }
+
+    private void WriteCore(
         string repositoryPath,
         CisGraphDocument graph,
         CisGraphManifest manifest,
@@ -147,7 +198,18 @@ public sealed class SqliteGraphStore
                 reclaim.CommandText = "PRAGMA incremental_vacuum(256);";
                 reclaim.ExecuteNonQuery();
             }
-            if (replaceIncompatible) File.Move(writePath, path, overwrite: true);
+            if (replaceIncompatible)
+            {
+                // An unreadable database with sidecars may still need recovery. Never
+                // publish new bytes beside another generation's rollback journal.
+                if (new[] { "-journal", "-wal", "-shm" }.Any(suffix => File.Exists(path + suffix)))
+                    throw new IOException("SQLite recovery sidecars remain; database replacement was refused. Check graph directory permissions and active writers with `cis repo doctor`.");
+                File.Move(writePath, path, overwrite: true);
+            }
+            using var verified = Open(path, readOnly: true);
+            EnsureReadableSchema(verified);
+            if (ReadBuildState(verified)?.BuildId != graph.Build.Id)
+                throw new InvalidDataException("The committed SQLite graph could not be reopened with the expected build identity.");
         }
         catch
         {
@@ -652,26 +714,29 @@ public sealed class SqliteGraphStore
             Cache = SqliteCacheMode.Private,
             Pooling = false,
         }.ToString());
-        connection.Open();
-        using var command = connection.CreateCommand();
-        command.CommandText = "PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;";
-        command.ExecuteNonQuery();
-        return connection;
+        try
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;";
+            command.ExecuteNonQuery();
+            return connection;
+        }
+        catch
+        {
+            connection.Dispose();
+            throw;
+        }
     }
 
     private static int ReadStorageVersion(string path)
     {
-        try
-        {
-            using var connection = Open(path, readOnly: true);
-            using var command = connection.CreateCommand();
-            command.CommandText = "PRAGMA user_version;";
-            return Convert.ToInt32(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
-        }
-        catch (Exception exception) when (exception is SqliteException or IOException or UnauthorizedAccessException)
-        {
-            return -1;
-        }
+        // Called only by the writer, under the graph build lock. A read-only
+        // probe cannot recover a hot rollback journal after an interrupted write.
+        using var connection = Open(path, readOnly: false);
+        using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA user_version;";
+        return Convert.ToInt32(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
     }
 
     private static void EnsureReadableSchema(SqliteConnection connection)

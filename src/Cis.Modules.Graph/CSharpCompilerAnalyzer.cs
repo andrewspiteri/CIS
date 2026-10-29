@@ -8,19 +8,52 @@ internal static class CSharpCompilerAnalyzer
 {
     public static CSharpCompilerAnalysis Analyze(IReadOnlyList<CSharpCompilerInput> inputs)
     {
+        if (inputs.All(input => input.ProjectPath is null)) return AnalyzeCompilation(inputs, inputs, null);
+        var groups = inputs.GroupBy(input => input.ProjectPath ?? "source:" + input.Path, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
+        var compilations = new Dictionary<string, CSharpCompilation>(StringComparer.Ordinal);
+        var visiting = new HashSet<string>(StringComparer.Ordinal);
+        var runtimeReferences = RuntimeReferences();
+        CSharpCompilation Compile(string project)
+        {
+            if (compilations.TryGetValue(project, out var cached)) return cached;
+            visiting.Add(project);
+            var references = runtimeReferences.ToList();
+            foreach (var dependency in groups[project].SelectMany(input => input.ProjectReferences).Distinct(StringComparer.Ordinal))
+                if (groups.ContainsKey(dependency) && !visiting.Contains(dependency)) references.Add(Compile(dependency).ToMetadataReference());
+            var compilation = CSharpCompilation.Create("Cis.Project." + Uri.EscapeDataString(project),
+                groups[project].Select(input => CSharpSyntaxTree.ParseText(input.Content,
+                    new CSharpParseOptions(LanguageVersion.Preview), input.Path)), references,
+                new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
+            visiting.Remove(project);
+            compilations.Add(project, compilation);
+            return compilation;
+        }
+        var results = groups.OrderBy(group => group.Key, StringComparer.Ordinal)
+            .Select(group => AnalyzeCompilation(group.Value, inputs, Compile(group.Key))).ToArray();
+        return new(results.SelectMany(result => result.Symbols).DistinctBy(item => item.LocalId).OrderBy(item => item.LocalId, StringComparer.Ordinal).ToArray(),
+            results.SelectMany(result => result.ReferencedSymbols).DistinctBy(item => item.LocalId).OrderBy(item => item.LocalId, StringComparer.Ordinal).ToArray(),
+            results.SelectMany(result => result.Annotations).Distinct().ToArray(),
+            results.SelectMany(result => result.Interfaces).Distinct().ToArray(),
+            results.SelectMany(result => result.Calls).ToArray());
+    }
+
+    private static CSharpCompilerAnalysis AnalyzeCompilation(IReadOnlyList<CSharpCompilerInput> inputs,
+        IReadOnlyList<CSharpCompilerInput> allInputs, CSharpCompilation? projectCompilation)
+    {
         if (inputs.Count == 0)
         {
             return new CSharpCompilerAnalysis([], [], [], [], []);
         }
 
-        var inputByPath = inputs.ToDictionary(input => input.Path, StringComparer.OrdinalIgnoreCase);
-        var syntaxTrees = inputs
+        var inputByPath = allInputs.ToDictionary(input => input.Path, StringComparer.OrdinalIgnoreCase);
+        var syntaxTrees = projectCompilation?.SyntaxTrees.ToArray() ?? inputs
             .Select(input => CSharpSyntaxTree.ParseText(
                 input.Content,
                 new CSharpParseOptions(LanguageVersion.Preview),
                 input.Path))
             .ToArray();
-        var compilation = CSharpCompilation.Create(
+        var compilation = projectCompilation ?? CSharpCompilation.Create(
             "Cis.Repository.CompilerAnalysis",
             syntaxTrees,
             RuntimeReferences(),
@@ -260,6 +293,9 @@ internal static class CSharpCompilerAnalyzer
         var definition = symbol.OriginalDefinition;
         var kind = SymbolKind(definition, declaration);
         var qualifiedName = definition.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat);
+        if (definition is IMethodSymbol { MethodKind: MethodKind.AnonymousFunction or MethodKind.LocalFunction })
+            qualifiedName = definition.ContainingSymbol.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat)
+                + "/" + qualifiedName + "@" + path + ":" + sourceLocation.SourceSpan.Start;
         if (string.IsNullOrWhiteSpace(qualifiedName))
         {
             return false;
@@ -310,7 +346,8 @@ internal static class CSharpCompilerAnalyzer
     // Separate path segments cannot collide with an encoded, single-segment
     // component ID. Repository fallback is a key namespace, not ownership.
     private static string SourceIdentityScope(CSharpCompilerInput input)
-        => input.HasConfirmedComponent ? Encode(input.ComponentId) : "unowned/" + Encode(input.ComponentId);
+        => (input.HasConfirmedComponent ? Encode(input.ComponentId) : "unowned/" + Encode(input.ComponentId))
+            + (input.ProjectPath is null ? "" : "/project/" + Encode(input.ProjectPath));
 
     private static CSharpCompilerReferencedSymbol CreateReferencedSymbol(
         ISymbol symbol,
@@ -611,7 +648,11 @@ internal sealed record CSharpCompilerInput(
     string Path,
     string Content,
     string ComponentId,
-    bool HasConfirmedComponent = true);
+    bool HasConfirmedComponent = true)
+{
+    public string? ProjectPath { get; init; }
+    public IReadOnlyList<string> ProjectReferences { get; init; } = [];
+}
 
 internal sealed record CSharpCompilerSymbol(
     string LocalId,

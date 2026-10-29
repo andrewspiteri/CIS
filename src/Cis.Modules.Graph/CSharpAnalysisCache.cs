@@ -15,7 +15,7 @@ internal static class CSharpAnalysisCache
             module = typeof(CSharpCompilerAnalyzer).Module.ModuleVersionId,
             compiler = typeof(Microsoft.CodeAnalysis.CSharp.CSharpCompilation).Assembly.FullName,
             inputs = inputs.OrderBy(item => item.Path, StringComparer.Ordinal).Select(item => new {
-                item.Path, item.ComponentId, item.HasConfirmedComponent,
+                item.Path, item.ComponentId, item.HasConfirmedComponent, item.ProjectPath, item.ProjectReferences,
                 hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(item.Content))) }) });
         var key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
         var path = Path.Combine(repository, ".cis", "local", "graph", "compiler-analysis.json");

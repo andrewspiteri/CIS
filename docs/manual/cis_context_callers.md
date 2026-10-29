@@ -11,8 +11,8 @@ cis:
 
 # `cis context callers`
 
-Retrieves explicit dependency, consumer, subscriber, and reference evidence connected
-to one exact graph target.
+Retrieves incoming call, dependency, subscriber, and reference evidence for one exact
+graph target.
 
 ## Synopsis
 
@@ -21,8 +21,10 @@ cis context callers --id <id> [--limit <number>] [--include-proposed]
   [--repo <path>] [--format <human|json|agent>]
 ```
 
-The command traverses compiler-backed `calls` plus `depends-on`, `consumed-by`,
-`subscribes-to`, and `references` relationships in both directions at depth one.
+The command traverses incoming compiler-backed `calls` plus `depends-on`,
+`subscribes-to`, and `references` relationships at depth one. Outgoing calls are
+excluded. Use `cis graph related --direction both` to inspect both directions or
+to inspect `consumed-by` relationships, which point from a contract to its consumer.
 For C#, `calls` is produced by Roslyn semantic binding and carries high-confidence
 invocation evidence. Other languages continue to expose structurally declared
 consumers and dependencies until their compiler adapters provide equivalent binding.

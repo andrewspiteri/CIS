@@ -11,6 +11,12 @@ cis:
 
 # `cis graph status`
 
+Agent output uses bounded diagnostic samples and exact summary counts. Request
+`--format json` for full diagnostic details. Status remains read-only: a pending
+rollback journal can require a writable `cis graph build` to recover an interrupted
+transaction. If that rebuild fails, inspect permissions and active writers with
+`cis repo doctor` before retrying.
+
 Reads the SQLite graph header, manifest, stored diagnostics, and current input hashes
 without loading or validating every node and edge. Use it for UI status, routing readiness,
 and Repository Doctor. Use `cis graph validate` when deep structural assurance is required.

@@ -22,6 +22,13 @@ Wizard** to resume it. Saved requests are listed on the foundation page.
 The [status](cis_brd_feature_wizard_status.md) and [save](cis_brd_feature_wizard_save.md)
 commands own its review state and preserve answers in the canonical request.
 
+The technical page reuses applicable direction from the current accepted product
+baseline. It examines complete source passages, including facts outside an empty
+heading, and exposes their source references. These inherited values resolve fields
+without recording new human answers. A feature-specific unresolved choice still needs
+an answer. Unreadable source text is reported as an import problem; a changed or
+inactive baseline cannot supply accepted answers.
+
 ```text
 cis brd feature intake --input <request.json> --workspace <authority>
   [--dry-run | --yes --expected-plan <preview-planHash>]

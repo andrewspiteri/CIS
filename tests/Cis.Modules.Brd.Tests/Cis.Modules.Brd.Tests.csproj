@@ -6,6 +6,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Cis.Host\Cis.Host.csproj" />
     <ProjectReference Include="..\..\src\Cis.Modules.Brd\Cis.Modules.Brd.csproj" />
+    <ProjectReference Include="..\..\src\Cis.Modules.Definition\Cis.Modules.Definition.csproj" />
     <ProjectReference Include="..\..\src\Cis.Modules.Docs\Cis.Modules.Docs.csproj" />
     <ProjectReference Include="..\..\src\Cis.Modules.Graph\Cis.Modules.Graph.csproj" />
     <ProjectReference Include="..\..\src\Cis.Modules.Repository\Cis.Modules.Repository.csproj" />

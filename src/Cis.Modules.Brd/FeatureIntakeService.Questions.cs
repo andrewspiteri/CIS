@@ -56,16 +56,17 @@ public sealed partial class FeatureIntakeService
                 var question = QuestionsFor(page).Single(item => item.Id == field.Id);
                 var featureDirection = state.Record.Plan.BacklogItemId is not null
                     ? SourceExcerpt(state.Source, question.SourceTerms) : FeatureTechnicalDirection(state.Source, question.SourceTerms);
-                var baselineDirection = BaselineExcerpt(state, page, question);
+                var baselineDirection = BaselineDirection(state, page, question);
                 var inherited = state.Baseline is { Active: true } && question.BaselineTerms.Length > 0
-                    && featureDirection.Length == 0 && baselineDirection.Length > 0;
+                    && featureDirection.Length == 0 && baselineDirection.Text.Length > 0;
                 var hasSaved = !string.IsNullOrWhiteSpace(field.Answer);
                 fields[i] = field with
                 {
                     Answer = hasSaved ? field.Answer : null,
-                    SuggestedAnswer = inherited ? "Approved product direction:\n\n" + baselineDirection : field.SuggestedAnswer,
+                    SuggestedAnswer = inherited ? "Approved product direction:\n\n" + baselineDirection.Text : field.SuggestedAnswer,
                     Required = !inherited || hasSaved && !HasAnswer(field.Answer),
                     Inherited = inherited && !hasSaved,
+                    SourceReferences = inherited && !hasSaved ? baselineDirection.References : [],
                     Label = inherited && !hasSaved ? field.Id switch
                     {
                         "technical-platform" => "Technologies and deployment inherited from the product",
@@ -125,16 +126,67 @@ public sealed partial class FeatureIntakeService
     }
 
     private static string BaselineExcerpt(WizardState state, string page, ReviewQuestion question)
+        => BaselineDirection(state, page, question).Text;
+
+    private sealed record SourceDirection(string Text, IReadOnlyList<string> References);
+
+    private static SourceDirection BaselineDirection(WizardState state, string page, ReviewQuestion question)
     {
-        if (question.BaselineTerms.Length == 0) return "";
-        foreach (var document in ReviewPages.Single(item => item.Id == page).Documents)
+        if (question.BaselineTerms.Length == 0) return new("", []);
+        var passages = new List<string>();
+        var references = new List<string>();
+        var documents = ReviewPages.Single(item => item.Id == page).Documents.AsEnumerable();
+        if (page == "technical") documents = documents.Append("specs/business-requirements.md");
+        foreach (var document in documents.Distinct(StringComparer.Ordinal))
         {
             var path = CisProductDocumentPaths.Resolve(Path.Combine(state.Authority.RepositoryPath, state.Authority.DocumentationRoot), document);
-            if (!SafeAbsolutePath(path) || !File.Exists(path) || new FileInfo(path).Length > 2_097_152) continue;
-            var text = CisReadScope.Read(typeof(FeatureIntakeService), "feature-question-context", path, () => File.ReadAllText(path, Encoding.UTF8));
-            var excerpt = SourceExcerpt(text, question.BaselineTerms);
-            if (UsableDirection(excerpt)) return excerpt;
+            if (!SafeAbsolutePath(path)) throw new InvalidDataException("The product direction uses an unsafe source path.");
+            if (!File.Exists(path)) continue;
+            var text = CisReadScope.Read(typeof(FeatureIntakeService), "feature-question-context", path,
+                () => CisDocumentText.Read(path, 2_097_152));
+            var direction = FullSourceDirection(text, question.BaselineTerms);
+            if (!UsableDirection(direction)) continue;
+            passages.Add(direction);
+            references.Add(Path.GetRelativePath(state.Authority.RepositoryPath, path).Replace('\\', '/') + "@" + Hash(Encoding.UTF8.GetBytes(text)));
         }
-        return "";
+        return new(string.Join("\n\n", passages), references);
+    }
+
+    // Assess every visible passage. Display excerpts must not decide whether an
+    // accepted source resolves a field: their bounds can hide a condition or exception.
+    private static string FullSourceDirection(string source, string terms)
+    {
+        var visible = BrdDocumentLayout.Visible(source);
+        var headings = Regex.Matches(visible, @"(?m)^ {0,3}(?<level>#{1,6})\s+(?<title>[^\r\n]+)\r?$",
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        var ranges = new List<(int Start, int End)>();
+        for (var i = 0; i < headings.Count; i++)
+        {
+            if (!Regex.IsMatch(headings[i].Groups["title"].Value, terms,
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))) continue;
+            var next = i + 1;
+            while (next < headings.Count && headings[next].Groups["level"].Length > headings[i].Groups["level"].Length) next++;
+            var end = next < headings.Count ? headings[next].Index : visible.Length;
+            if (!string.IsNullOrWhiteSpace(visible[(headings[i].Index + headings[i].Length)..end]))
+                ranges.Add((headings[i].Index, end));
+        }
+        // Keep whole paragraphs/list blocks/table blocks when the relevant fact is
+        // outside a recognized section, including adjacent qualifications.
+        foreach (Match paragraph in Regex.Matches(visible, @"[^\r\n]+(?:\r?\n(?![ \t]*\r?$)[^\r\n]+)*",
+            RegexOptions.Multiline | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
+        {
+            if (ranges.Any(range => paragraph.Index >= range.Start && paragraph.Index < range.End)) continue;
+            if (Regex.IsMatch(paragraph.Value, terms, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
+                && paragraph.Value.Split('\n').Any(line => !line.TrimStart().StartsWith('#') && !string.IsNullOrWhiteSpace(line)))
+                ranges.Add((paragraph.Index, paragraph.Index + paragraph.Length));
+        }
+        var merged = new List<(int Start, int End)>();
+        foreach (var range in ranges.OrderBy(range => range.Start))
+        {
+            if (merged.Count > 0 && range.Start <= merged[^1].End)
+                merged[^1] = (merged[^1].Start, Math.Max(merged[^1].End, range.End));
+            else merged.Add(range);
+        }
+        return string.Join("\n\n", merged.Select(range => visible[range.Start..range.End].Trim()));
     }
 }

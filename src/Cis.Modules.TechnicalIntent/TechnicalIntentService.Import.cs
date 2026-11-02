@@ -25,9 +25,28 @@ public sealed partial class TechnicalIntentService
     private static string ExtractImportedSection(string content, string required)
     {
         if (!ImportedSectionAliases.TryGetValue(required, out var aliases)) return string.Empty;
-        var body = aliases.Select(alias => ExtractSection(content, alias)).FirstOrDefault(text => !string.IsNullOrWhiteSpace(text)) ?? string.Empty;
+        var body = string.Join("\n\n", aliases.Select(alias => ExtractSection(content, alias))
+            .Where(text => !string.IsNullOrWhiteSpace(text)).Distinct(StringComparer.Ordinal));
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            var topics = required switch
+            {
+                "Technical surface and ownership" => new[] { "TI-Q-001", "TI-Q-002", "TI-Q-003", "TI-Q-005" },
+                "Runtime architecture and trust boundaries" => ["TI-Q-004", "TI-Q-009"],
+                "Application model and invariants" => ["TI-Q-006", "TI-Q-007"],
+                "API, integration, and compatibility intent" => ["TI-Q-008", "TI-Q-011"],
+                "Security and privacy intent" => ["TI-Q-009", "TI-Q-013"],
+                "Operations, migration, and recovery intent" => ["TI-Q-010", "TI-Q-012"],
+                "Quality attributes and verification direction" => ["TI-Q-014"],
+                "Decisions and delivery constraints" => ["TI-Q-016"],
+                _ => [],
+            };
+            body = TechnicalIntentQuestionnaireService.ImportedDirectionsFor(content, topics);
+        }
         // A differently titled closure section replaces the open-decision section only
         // when it explicitly states closure. Its table statuses are checked separately.
+        if (required == "Open technical decisions" && string.IsNullOrWhiteSpace(body))
+            body = TechnicalIntentQuestionnaireService.ImportedDecisionClosure(content);
         if (required == "Open technical decisions" && !Regex.IsMatch(body,
             @"\b(?:technical\s+)?(?:choices|decisions)\s+(?:are\s+)?(?:now\s+)?closed\b|\bno\s+(?:open|unresolved)\s+technical\s+decisions\b",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))) return string.Empty;

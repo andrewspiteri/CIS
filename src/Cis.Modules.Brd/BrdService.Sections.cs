@@ -23,63 +23,85 @@ public sealed partial class BrdService
         }
         catch (Exception error) when (error is System.Text.Json.JsonException or InvalidDataException)
         { return string.Empty; } // Validation reports the invalid map; never fall back to a different section.
-        var bounds = FindSectionBounds(content, heading);
-        return bounds is { } section ? content[section.Start..section.End].Trim() : string.Empty;
+        var sections = FindRecognizedSectionBounds(content, heading)
+            .Select(section => content[section.Start..section.End].Trim())
+            .Where(section => !string.IsNullOrWhiteSpace(BrdDocumentLayout.Visible(section))).ToArray();
+        if (heading != "Open questions" && sections.Any(section => !IsEmptyScaffoldSection(section)))
+            sections = sections.Where(section => !IsEmptyScaffoldSection(section)).ToArray();
+        // Answer editing has one question-table location. Ambiguous independent
+        // locations are reported by validation, never merged into a competing copy.
+        if (heading == "Open questions" && sections.Length > 1) return string.Empty;
+        return string.Join("\n\n###### CIS section boundary\n\n", sections);
     }
+
+    private static bool IsEmptyScaffoldSection(string content)
+        => Regex.IsMatch(content.Trim(), @"\ATODO: Complete [^\r\n]+ through human review of workspace evidence\.\z",
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
 
     private static (int Start, int End)? FindSectionBounds(string content, string heading)
     {
-        string[] aliases = heading switch
-        {
-            "Executive summary" => ["Overview", "Document intent"],
-            "Business outcomes" => ["Business objectives", "Product objectives", "Platform objectives"],
-            "Scope" => ["Product scope", "Project scope", "Business scope"],
-            "Stakeholders and actors" => ["Stakeholders", "Actors and roles"],
-            "Business capabilities and processes" => ["Business capabilities", "Business processes",
-                "Shared platform capabilities and service product capabilities"],
-            "Functional requirements" => ["Business functional requirements"],
-            "Quality, regulatory, and operational requirements" => ["Non-functional requirements",
-                "Quality requirements"],
-            "Constraints and assumptions" => ["Assumptions and constraints"],
-            "Success measures" => ["Success criteria", "Success metrics"],
-            "Traceability" => ["Requirements traceability"],
-            "Open questions" => ["Outstanding questions"],
-            _ => [],
-        };
+        var sections = FindRecognizedSectionBounds(content, heading);
+        var populated = sections.FirstOrDefault(section => !string.IsNullOrWhiteSpace(BrdDocumentLayout.Visible(content[section.Start..section.End])));
+        if (populated != default) return populated;
+        return sections.FirstOrDefault() is var bounds && bounds != default ? bounds : null;
+    }
+
+    internal static bool HasAmbiguousQuestionSections(string content)
+        => FindRecognizedSectionBounds(content, "Open questions")
+            .Count(section => !string.IsNullOrWhiteSpace(BrdDocumentLayout.Visible(content[section.Start..section.End]))) > 1;
+
+    private static IReadOnlyList<(int Start, int End)> FindRecognizedSectionBounds(string content, string heading)
+    {
+        var aliases = SectionAliases(heading);
+        var roleTitles = RequiredSections.SelectMany(role => new[] { role }.Concat(SectionAliases(role)))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var lines = BrdDocumentLayout.Visible(content).Split('\n');
         var headings = new List<(int Offset, int BodyOffset, int Level, string Title)>();
-        char fence = '\0';
-        var fenceLength = 0;
         var offset = 0;
-        for (var index = 0; index < lines.Length; index++)
+        foreach (var line in lines)
         {
             var lineOffset = offset;
-            offset = Math.Min(content.Length, offset + lines[index].Length + 1);
-            var line = lines[index].TrimStart();
-            if (line.StartsWith("```", StringComparison.Ordinal) || line.StartsWith("~~~", StringComparison.Ordinal))
-            {
-                var length = line.TakeWhile(character => character == line[0]).Count();
-                if (fence == '\0') { fence = line[0]; fenceLength = length; }
-                else if (line[0] == fence && length >= fenceLength) fence = '\0';
-                continue;
-            }
-            if (fence != '\0') continue;
-            var match = Regex.Match(line, @"^(#{1,6})\s+(.+?)\s*#*\s*$",
+            offset = Math.Min(content.Length, offset + line.Length + 1);
+            var match = Regex.Match(line.TrimStart(), @"^(#{1,6})\s+(.+?)\s*#*\s*$",
                 RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
             if (!match.Success) continue;
             var title = Regex.Replace(match.Groups[2].Value, @"^\d+(?:\.\d+)*[.)]?\s+", string.Empty,
                 RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
             headings.Add((lineOffset, offset, match.Groups[1].Length, title.Trim()));
         }
-        // Prefer the canonical heading even if a document also has an overview.
+        var ranges = new List<(int Start, int End)>();
+        // Keep canonical-first ordering for answer editing. A recognized role
+        // starts a new section even when the author uses a deeper heading level.
         foreach (var name in new[] { heading }.Concat(aliases))
         {
-            var found = headings.FindIndex(item => item.Title.Equals(name, StringComparison.OrdinalIgnoreCase));
-            if (found < 0) continue;
-            var start = headings[found];
-            var end = headings.Skip(found + 1).FirstOrDefault(item => item.Level <= start.Level);
-            return (start.BodyOffset, end == default ? content.Length : end.Offset);
+            foreach (var found in headings.Select((item, index) => (item, index))
+                .Where(pair => pair.item.Title.Equals(name, StringComparison.OrdinalIgnoreCase)))
+            {
+                var start = found.item;
+                var end = headings.Skip(found.index + 1).FirstOrDefault(item => item.Level <= start.Level || roleTitles.Contains(item.Title));
+                var range = (Start: start.BodyOffset, End: end == default ? content.Length : end.Offset);
+                if (!ranges.Any(existing => range.Start < existing.End && existing.Start < range.End)) ranges.Add(range);
+            }
         }
-        return null;
+        return ranges;
     }
+
+    private static string[] SectionAliases(string heading) => heading switch
+    {
+        "Executive summary" => ["Overview", "Document intent"],
+        "Business outcomes" => ["Business objectives", "Product objectives", "Platform objectives"],
+        "Scope" => ["Product scope", "Project scope", "Business scope"],
+        "Stakeholders and actors" => ["Stakeholders", "Actors and roles"],
+        "Business capabilities and processes" => ["Business capabilities", "Business processes",
+                "Shared platform capabilities and service product capabilities"],
+        "Functional requirements" => ["Business functional requirements", "Requirements", "Product requirements",
+                "Business requirements", "User requirements", "Required behavior", "Required behaviour", "Product behavior", "Product behaviour"],
+        "Quality, regulatory, and operational requirements" => ["Non-functional requirements",
+                "Quality requirements"],
+        "Constraints and assumptions" => ["Assumptions and constraints"],
+        "Success measures" => ["Success criteria", "Success metrics"],
+        "Traceability" => ["Requirements traceability"],
+        "Open questions" => ["Outstanding questions"],
+        _ => [],
+    };
 }

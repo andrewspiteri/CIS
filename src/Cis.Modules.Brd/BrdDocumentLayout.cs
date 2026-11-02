@@ -55,6 +55,10 @@ internal static class BrdDocumentLayout
 
     internal static IReadOnlyList<string> Validate(string content)
     {
+        var structureErrors = ValidateStructure(content);
+        if (structureErrors.Count > 0) return structureErrors;
+        if (BrdService.HasAmbiguousQuestionSections(content))
+            return ["BRD import problem: more than one populated open-question section was found. Retain the source and reconcile the question locations before answering; no competing answer table was created."];
         try
         {
             if (Read(content) is { } layout)
@@ -63,6 +67,39 @@ internal static class BrdDocumentLayout
         }
         catch (Exception error) when (error is JsonException or InvalidDataException)
         { return ["Invalid BRD layout: " + error.Message]; }
+    }
+
+    internal static IReadOnlyList<string> ValidateStructure(string content)
+    {
+        var header = Header(content);
+        if (content.TrimStart('\uFEFF').StartsWith("---", StringComparison.Ordinal) && !header.Success)
+            return ["BRD import problem: the frontmatter delimiter is incomplete. The source was retained; repair the document before assessing business completeness."];
+        var comment = false;
+        var fence = '\0'; var fenceLength = 0;
+        foreach (var line in content[(header.Success ? header.Length : 0)..].Split('\n'))
+        {
+            var text = line.TrimStart();
+            if (!comment && (text.StartsWith("```", StringComparison.Ordinal) || text.StartsWith("~~~", StringComparison.Ordinal)))
+            {
+                var length = text.TakeWhile(character => character == text[0]).Count();
+                if (fence == '\0') { fence = text[0]; fenceLength = length; }
+                else if (text[0] == fence && length >= fenceLength && string.IsNullOrWhiteSpace(text[length..])) fence = '\0';
+                continue;
+            }
+            if (fence != '\0') continue;
+            var offset = 0;
+            while (offset < line.Length)
+            {
+                var marker = line.IndexOf(comment ? "-->" : "<!--", offset, StringComparison.Ordinal);
+                if (marker < 0) break;
+                offset = marker + (comment ? 3 : 4);
+                comment = !comment;
+            }
+        }
+        if (fence != '\0' || comment)
+            return ["BRD import problem: an unclosed " + (comment ? "HTML comment" : "Markdown fence")
+                + " hides part of the source. The source was retained; repair the document before assessing business completeness."];
+        return [];
     }
 
     internal static string? Extract(string content, string role)

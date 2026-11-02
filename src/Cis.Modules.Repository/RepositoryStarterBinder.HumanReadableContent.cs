@@ -66,7 +66,7 @@ internal sealed partial class RepositoryStarterBinder
         }
 
         // Explicit host entry points; divergent existing files go through normal collision handling.
-        Add("guidance.host.agents", "AGENTS.md", "# Repository agent guidance\n\nRead `.github/instructions/cis-repository.instructions.md` before repository work." + route);
+        Add("guidance.host.agents", "AGENTS.md", "# Repository agent guidance\n\nRead `.github/instructions/cis-repository.instructions.md` before repository work. For a supplied BRD, Technical Intent, or pair, follow `.github/skills/cis-govern-business-requirements/SKILL.md` before authoring or a full questionnaire; the graphical wizard is optional." + route);
         Add("guidance.host.claude", "CLAUDE.md", "# Repository agent guidance\n\nRead `AGENTS.md` and `.github/instructions/cis-repository.instructions.md` before repository work." + route);
 
         var matrixIndex = artifacts.FindIndex(item => item.Definition == "reference.standards-conformance-matrix");

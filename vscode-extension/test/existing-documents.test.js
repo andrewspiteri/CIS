@@ -100,38 +100,38 @@ test('reconciliation failures retain the loaded-file state and never claim succe
   assert.equal(calls.length, 3);
 });
 
-test('technical imports prepare unanswered choices and finish loading without attempting generation', async () => {
+test('technical imports interpret the source through the wizard before assessing remaining questions', async () => {
   const calls = []; const messages = []; let cleared = false;
   const documents = { documents: [{ role: 'technical', title: 'Technical intent', candidates: [{ title: 'Intent', path: 'docs/intent.md' }] }] };
   const cli = { runForeground: async (_title, args) => {
-    calls.push(args); return args[1] === 'questions' ? { status: 'initialized', complete: false, current: true, errors: [] } : {};
+    calls.push(args); return args[1] === 'prepare' ? { status: 'prepared', technicalQuestions: { complete: false, current: true }, errors: [] } : {};
   }, clearQueryCache() { cleared = true; } };
   assert.equal(await loadExistingDocuments(pickerVscode('select-file', { showInformationMessage: message => messages.push(message) }),
     cli, '/project', 'technical', { documents }), true);
   assert.deepEqual(calls.slice(1), [
     ['graph', 'build', '--workspace', '/project'],
-    ['technical-intent', 'questions', 'init', '--workspace', '/project'],
+    ['definition', 'prepare', '--page', 'technical', '--workspace', '/project'],
     ['graph', 'build', '--workspace', '/project'],
   ]);
   assert.equal(cleared, true);
-  assert.match(messages[0], /Review and answer the technical choices next/u);
-  assert.doesNotMatch(messages[0], /and reconciled its evidence/u);
+  assert.match(messages[0], /reconciled its evidence.*Review the wizard findings before approval/u);
+  assert.doesNotMatch(messages[0], /Review and answer the technical choices next/u);
 });
 
-test('technical imports reconcile only after current technical choices are complete', async () => {
+test('technical imports use the same interpretation route when source facts satisfy all questions', async () => {
   const calls = [];
   const documents = { documents: [{ role: 'technical', title: 'Technical intent', candidates: [{ title: 'Intent', path: 'docs/intent.md' }] }] };
   const cli = { runForeground: async (_title, args) => {
-    calls.push(args); return args[1] === 'questions' ? { complete: true, current: true, errors: [] } : {};
+    calls.push(args); return args[1] === 'prepare' ? { technicalQuestions: { complete: true, current: true }, errors: [] } : {};
   }, clearQueryCache() {} };
   assert.equal(await loadExistingDocuments(pickerVscode(), cli, '/project', 'technical', { documents }), true);
-  assert.deepEqual(calls.slice(1).map(args => args.slice(0, args.indexOf('--workspace'))),
-    [['graph', 'build'], ['technical-intent', 'questions', 'init'], ['technical-intent', 'init'], ['graph', 'build']]);
+  assert.deepEqual(calls.slice(1), [['graph', 'build', '--workspace', '/project'],
+    ['definition', 'prepare', '--page', 'technical', '--workspace', '/project'], ['graph', 'build', '--workspace', '/project']]);
 });
 
-test('questionnaire preparation errors preserve the import and remain visible', async () => {
+test('technical source interpretation errors preserve the import and remain visible', async () => {
   const documents = { documents: [{ role: 'technical', title: 'Intent', candidates: [{ title: 'Intent', path: 'docs/intent.md' }] }] };
-  const cli = { runForeground: async (_title, args) => args[1] === 'questions' ? { errors: ['The BRD needs approval.'] } : {}, clearQueryCache() {} };
+  const cli = { runForeground: async (_title, args) => args[1] === 'prepare' ? { errors: ['Input import problem: the source fence is not closed.'] } : {}, clearQueryCache() {} };
   await assert.rejects(loadExistingDocuments(pickerVscode('select-file', { showInformationMessage: () => assert.fail('must not report success') }),
-    cli, '/project', 'technical', { documents }), error => error.documentLoaded && /The BRD needs approval/u.test(error.message));
+    cli, '/project', 'technical', { documents }), error => error.documentLoaded && /Input import problem: the source fence is not closed/u.test(error.message));
 });

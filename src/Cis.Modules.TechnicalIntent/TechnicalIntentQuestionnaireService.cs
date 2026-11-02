@@ -103,6 +103,8 @@ public sealed partial class TechnicalIntentQuestionnaireService
         {
             if (previous.TryGetValue(definition.Id, out var item) && !string.IsNullOrWhiteSpace(item.Answer))
             {
+                if (item.ResolutionSource is "accepted-document" or "selected-document")
+                    return item;
                 if (item.ResolutionSource == "repository-evidence")
                     return profile.Derived.TryGetValue(definition.Id, out var refreshed)
                         ? ToDerivedQuestion(definition, refreshed)
@@ -118,6 +120,10 @@ public sealed partial class TechnicalIntentQuestionnaireService
                 ? ToDerivedQuestion(definition, derived)
                 : ToQuestion(definition, null, null, null);
         }).ToArray();
+        var sourceWarnings = new List<string>();
+        var sourceErrors = new List<string>();
+        questions = ApplyDocumentDirections(state.Authority!, questions, sourceWarnings, sourceErrors, state.BrdVersion!, state.BrdReady);
+        if (sourceErrors.Count > 0) return Result("input-problem", state, questions, false, sourceErrors.ToArray()) with { Warnings = sourceWarnings };
         var complete = state.BrdReady && questions.All(IsResolved);
         var content = Render(state.Authority!.Id, state.BrdVersion!, complete, questions);
         var stableId = $"{state.Authority.Id}:spec:technical-intent-questionnaire";
@@ -177,26 +183,32 @@ public sealed partial class TechnicalIntentQuestionnaireService
         var content = Render(state.Authority!.Id, state.BrdVersion!, updated.All(IsResolved), updated);
         Write(state.Path!, content);
 
+        var effective = StatusInternal(state.Workspace!.WorkspacePath, "answered", true);
+        if (effective.Complete != updated.All(IsResolved))
+            Write(state.Path!, Render(state.Authority.Id, state.BrdVersion!, effective.Complete, updated));
+
         var stableId = $"{state.Authority.Id}:spec:technical-intent-questionnaire";
         var catalog = File.ReadAllText(state.Context!.CatalogPath);
         var nextCatalog = UpdateCatalogStatus(catalog, stableId,
-            updated.All(IsResolved) ? "active" : "draft");
+            effective.Complete ? "active" : "draft");
         if (!Equivalent(catalog, nextCatalog)) Write(state.Context.CatalogPath, nextCatalog);
-        var complete = updated.All(IsResolved);
-        return new TechnicalIntentQuestionnaireResult("answered", state.Workspace!.WorkspacePath, state.Authority.Id,
-            Normalize(Path.GetRelativePath(state.Authority.RepositoryPath, state.Path!)), state.BrdVersion, true, complete,
-            updated.Count(IsResolved), updated.Count(item => !IsResolved(item)), updated,
-            complete ? [] : [$"{updated.Count(item => !IsResolved(item))} high-level technical decision(s) remain unanswered."], [], true);
+        // Saving a human answer does not amend the selected source. Return the
+        // reconciled read projection so a contradiction is visible immediately,
+        // while the original answer, actor and timestamp stay in the record.
+        return StatusInternal(state.Workspace!.WorkspacePath, "answered", true);
     }
 
-    internal static QuestionnaireSnapshot? ReadSnapshot(string path, string expectedBrdVersion)
+    internal static QuestionnaireSnapshot? ReadSnapshot(string path, string expectedBrdVersion, CisWorkspaceRepository? authority = null, bool brdAccepted = false)
     {
         if (!File.Exists(path)) return null;
         var content = File.ReadAllText(path);
         var questions = ParseQuestions(content).Values.OrderBy(item => item.Id, StringComparer.Ordinal).ToArray();
         var version = ReadNested(content, "brd_version");
+        var sourceErrors = new List<string>();
+        if (authority is not null)
+            questions = ApplyDocumentDirections(authority, questions, [], sourceErrors, expectedBrdVersion, brdAccepted);
         return new QuestionnaireSnapshot(path, Hash(content), version ?? string.Empty,
-            version == expectedBrdVersion, questions.Length == Definitions.Count && questions.All(IsResolved), questions);
+            version == expectedBrdVersion && sourceErrors.Count == 0, questions.Length == Definitions.Count && questions.All(IsResolved) && sourceErrors.Count == 0, questions);
     }
 
     private TechnicalIntentQuestionnaireResult StatusInternal(string workspacePath, string operation, bool applied)
@@ -210,11 +222,12 @@ public sealed partial class TechnicalIntentQuestionnaireService
         if (questions.Length != Definitions.Count) errors.Add($"The questionnaire contains {questions.Length} of {Definitions.Count} required questions. Run `cis technical-intent questions init`.");
         var recordedBrd = ReadNested(content, "brd_version");
         var current = state.BrdReady && recordedBrd == state.BrdVersion;
-        var complete = questions.Length == Definitions.Count && questions.All(IsResolved);
         var warnings = new List<string>();
+        questions = ApplyDocumentDirections(state.Authority!, questions, warnings, errors, state.BrdVersion!, state.BrdReady);
+        current = current && errors.Count == 0;
+        var complete = questions.Length == Definitions.Count && questions.All(IsResolved) && errors.Count == 0;
         if (!current) warnings.Add("The technical questionnaire does not match the current Active BRD. Reinitialize and review its answers.");
         if (!complete) warnings.Add($"{questions.Count(item => !IsResolved(item))} high-level technical decision(s) remain unanswered.");
-        questions = SuggestFromSelectedDocument(state.Authority!, questions, warnings);
         return new TechnicalIntentQuestionnaireResult(operation, state.Workspace!.WorkspacePath, state.Authority!.Id,
             Normalize(Path.GetRelativePath(state.Authority.RepositoryPath, state.Path)), state.BrdVersion, current, complete,
             questions.Count(IsResolved), questions.Count(item => !IsResolved(item)), questions,
@@ -253,7 +266,9 @@ public sealed partial class TechnicalIntentQuestionnaireService
             "repository-evidence", derived.Confidence, derived.Evidence);
 
     private static bool IsResolved(TechnicalIntentQuestion question)
-        => question.Status is "Answered" or "Derived" && !string.IsNullOrWhiteSpace(question.Answer);
+        => (question.ResolutionSource is not ("selected-document" or "selected-scope-not-requested") || CisDefinitionDraftScope.IsActive)
+           && (question.Status is "Answered" or "Derived" && !string.IsNullOrWhiteSpace(question.Answer)
+               || question.Status == "Not requested" && (question.ResolutionSource is "scope-not-requested" or "selected-scope-not-requested") && question.Answer is null);
 
     private static WorkspaceAnalysis AnalyzeWorkspace(CisWorkspace workspace)
     {
@@ -574,8 +589,9 @@ public sealed partial class TechnicalIntentQuestionnaireService
     {
         var derived = questions.Count(item => item.Status == "Derived");
         var answered = questions.Count(item => item.Status == "Answered");
+        var notRequested = questions.Count(item => item.Status == "Not requested");
         var resolved = questions.Count(IsResolved);
-        var mode = derived > 0 ? "existing-project" : "greenfield";
+        var mode = questions.Any(item => item.ResolutionSource == "repository-evidence") ? "existing-project" : "greenfield";
         var builder = new StringBuilder($$"""
 ---
 title: "{{authorityId}} Technical Intent Questionnaire"
@@ -594,13 +610,14 @@ cis:
 
 # {{authorityId}} Technical Intent Questionnaire
 
-This governed pre-intent record captures high-level technology and architecture direction. For an existing implementation, CIS resolves evidence-supported facts from deterministic repository analysis and leaves ambiguous or intentional choices for a human. For a greenfield project, every direction remains a human question. Derived answers are reviewable and may be overridden explicitly.
+This governed pre-intent record captures high-level technology and architecture direction. Explicit facts in accepted, current BRD and Technical Intent sources resolve matching fields with source references. During setup, selected supplied direction can populate working fields pending final baseline adoption; outside setup, unadopted directions remain suggestions. CIS also records deterministic repository evidence for existing implementations. Optional capabilities absent from a supplied scope are marked Not requested with its accepted or pending-baseline provenance; this records neither N/A nor an exclusion. Unresolved choices and source conflicts remain visible; derived answers may be overridden explicitly.
 
 ## Decision progress
 
 - Resolved: {{resolved}} of {{questions.Count}}
-- Derived from repository evidence: {{derived}}
+- Derived from source or repository evidence: {{derived}}
 - Answered by a human: {{answered}}
+- Optional capabilities not requested: {{notRequested}}
 - State: {{(complete ? "Complete — ready to generate technical intent" : "Draft — answer every question before technical intent generation")}}
 
 ## Questions
@@ -643,9 +660,10 @@ This governed pre-intent record captures high-level technology and architecture 
             var answer = Regex.Match(body, @"(?ms)^#### Recorded answer\s*$\r?\n(?<answer>.*)\z",
                 RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)).Groups["answer"].Value.Trim();
             if (answer == "Not answered.") answer = string.Empty;
-            var resolvedStatus = status is "Answered" or "Derived" && answer.Length > 0 ? status : "Unanswered";
             var resolutionSource = ReadBullet(body, "Resolution source")
-                ?? (resolvedStatus == "Derived" ? "repository-evidence" : resolvedStatus == "Answered" ? "human" : "unresolved");
+                ?? (status == "Derived" ? "repository-evidence" : status == "Answered" ? "human" : "unresolved");
+            var resolvedStatus = status is "Answered" or "Derived" && answer.Length > 0 ? status
+                : status == "Not requested" && (resolutionSource is "scope-not-requested" or "selected-scope-not-requested") && answer.Length == 0 ? status : "Unanswered";
             var evidence = (ReadBullet(body, "Evidence") ?? string.Empty)
                 .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Where(value => value != "Not recorded").ToArray();

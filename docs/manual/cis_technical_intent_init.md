@@ -19,9 +19,12 @@ standards, and exact participant graph builds.
 cis technical-intent init [--workspace <path>] [--format <human|json|agent>]
 ```
 
-The command requires exactly one workspace authority, an Active/current BRD, a current and
-complete governed technical questionnaire, and fresh participant graphs. Run
-`cis technical-intent questions init` and answer its `TI-Q-*` decisions first. For a new or
+The command requires exactly one workspace authority, an Active/current BRD and fresh
+participant graphs. When generating a new intent, first complete the governed technical
+questionnaire with `cis technical-intent questions init`. A supplied intent selected through
+**Load existing documents** can instead be imported and reviewed as one baseline, without
+first transcribing its facts into the questionnaire. Unreadable input and detected conflicts in
+explicit direction still block adoption. For a new or
 recognizably untouched starter document, it creates a schema-4
 review scaffold containing:
 
@@ -41,8 +44,21 @@ review scaffold containing:
 - draft runtime, application, integration, security, operations, quality, and delivery direction;
 - accepted `TI-DEC-*` high-level decisions bound to the exact questionnaire answers.
 
-The generated content is a starting point, not an approved architecture. The questionnaire is
-the human choice boundary; the resulting intent still requires one technical review and approval.
+The generated content is a starting point, not an approved architecture. The resulting
+intent still requires technical review and approval. After adoption, explicit facts in
+the current accepted BRD and Technical Intent resolve matching questionnaire items as
+source-derived answers, with source references and without invented human answer records.
+During wizard setup, explicit facts in selected documents appear as source proposals
+awaiting final baseline adoption. They can prepare the baseline without per-field
+transcription. Outside that setup scope, draft directions remain suggestions.
+Material source changes invalidate their derived
+authority until the changed baseline is adopted; unresolved choices remain questions.
+An explicit primary-store override that contradicts supplied direction stays visible
+as a conflict and blocks readiness. Correct the recorded override or reconcile and
+adopt the changed source; saving an answer does not approve a source amendment.
+Optional supporting stores, asynchronous work and AI capabilities absent from an accepted
+supplied scope remain **Not requested**. This disposition records no answer or exclusion;
+adding a current requirement brings back the relevant unresolved choices.
 CIS replaces only recognized
 starter-placeholder sections; any human-authored section is preserved. Repeating the command
 with unchanged evidence is idempotent.

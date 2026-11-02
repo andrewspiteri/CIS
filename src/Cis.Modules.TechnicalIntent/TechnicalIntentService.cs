@@ -76,7 +76,17 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck, ICis
     }
 
     public TechnicalIntentResult Initialize(string workspacePath)
-        => InitializeCore(workspacePath, existingDraft: false);
+        => WithInputDiagnostics(workspacePath, () => InitializeCore(workspacePath, existingDraft: false));
+
+    private static TechnicalIntentResult WithInputDiagnostics(string workspacePath, Func<TechnicalIntentResult> action)
+    {
+        try { return action(); }
+        catch (Exception exception) when (exception is InvalidDataException or DecoderFallbackException)
+        {
+            return new("input-problem", workspacePath, null, null, null, [], [],
+                ["Input import problem: " + exception.Message + " The original source has been retained."], false);
+        }
+    }
 
     public CisTechnicalIntentDraftPreparation PrepareExistingDraft(string workspacePath)
     {
@@ -124,7 +134,7 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck, ICis
         }
         else
         {
-            existing = CisTechnicalIntentPresentation.RestoreManagedEvidence(File.ReadAllText(canonicalPath));
+            existing = CisTechnicalIntentPresentation.RestoreManagedEvidence(CisDocumentText.Read(canonicalPath));
             content = existing;
             if (!content.Contains($"stable_id: {stableId}", StringComparison.Ordinal))
             {
@@ -194,7 +204,7 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck, ICis
     }
 
     public TechnicalIntentResult Validate(string workspacePath)
-        => ValidateInternal(workspacePath, "validated", applied: false);
+        => WithInputDiagnostics(workspacePath, () => ValidateInternal(workspacePath, "validated", applied: false));
 
     private static bool PreservesReviewedNarrative(string content)
         => content.Contains(PreserveReviewedContent, StringComparison.Ordinal)
@@ -202,8 +212,8 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck, ICis
             || ReadNestedFrontMatter(content, "approved_content_hash") is { Length: > 0 } hash && hash != "null";
 
     public TechnicalIntentResult Status(string workspacePath)
-        => CisReadScope.Read(this, nameof(Status), workspacePath,
-            () => ValidateInternal(workspacePath, "status", applied: false));
+        => WithInputDiagnostics(workspacePath, () => CisReadScope.Read(this, nameof(Status), workspacePath,
+            () => ValidateInternal(workspacePath, "status", applied: false)));
 
     public TechnicalIntentResult Approve(string workspacePath, string reviewer, string reason)
     {
@@ -270,7 +280,7 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck, ICis
                     ["Canonical technical intent was not found. Run `cis technical-intent init`."], state.Warnings),
                 state.Baselines, state.Warnings, [], false);
 
-        var document = File.ReadAllText(state.CanonicalPath);
+        var document = CisDocumentText.Read(state.CanonicalPath);
         var content = CisTechnicalIntentPresentation.RestoreManagedEvidence(document);
         var errors = new List<string>();
         var warnings = new List<string>(state.Warnings);
@@ -436,7 +446,8 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck, ICis
             : valid && current ? "Ready for Approval" : "Review Required";
         var validation = new TechnicalIntentValidation(valid, current, effective, documentStatus,
             errors.Distinct(StringComparer.Ordinal).Order().ToArray(),
-            warnings.Distinct(StringComparer.Ordinal).Order().ToArray()) { Decisions = decisions };
+            warnings.Distinct(StringComparer.Ordinal).Order().ToArray())
+        { Decisions = decisions };
         return new TechnicalIntentResult(operation, state.Workspace!.WorkspacePath, state.Authority.Id,
             relativePath, validation, state.Baselines, validation.Warnings, [], applied);
     }
@@ -477,8 +488,14 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck, ICis
         var questionnairePath = Path.Combine(authority.RepositoryPath,
             authority.DocumentationRoot.Replace('/', Path.DirectorySeparatorChar), "specs", "technical-intent-questionnaire.md");
         var expectedBrdVersion = brd is null ? string.Empty : brd.Digest;
-        var questionnaire = TechnicalIntentQuestionnaireService.ReadSnapshot(questionnairePath, expectedBrdVersion);
-        if (brdReady)
+        errors.AddRange(TechnicalIntentQuestionnaireService.ValidateSuppliedDirections(authority, expectedBrdVersion, brdReady));
+        var questionnaire = TechnicalIntentQuestionnaireService.ReadSnapshot(questionnairePath, expectedBrdVersion, authority, brdReady);
+        // A supplied intent is adopted as one document. Interpreting it cannot depend
+        // on first asking the user to transcribe that same document into TI-Q fields.
+        var selectedIntent = CisProductDocumentPaths.Read(authority.RepositoryPath).GetValueOrDefault("technical");
+        var suppliedIntent = selectedIntent is not null
+            && File.Exists(CisProductDocumentPaths.ValidatePath(authority.RepositoryPath, selectedIntent));
+        if (brdReady && !suppliedIntent)
         {
             if (questionnaire is null)
                 readinessErrors.Add("The high-level technical questionnaire is missing. Run `cis technical-intent questions init`.");
@@ -487,7 +504,7 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck, ICis
             else if (!questionnaire.Complete)
                 readinessErrors.Add("The high-level technical questionnaire is incomplete. Answer every `TI-Q-*` item before generating technical intent.");
         }
-        if (questionnaire is { Current: true, Complete: true })
+        if (!suppliedIntent && questionnaire is { Current: true, Complete: true })
             baselines.Add(new TechnicalIntentBaseline("questionnaire", $"{authority.Id}:spec:technical-intent-questionnaire",
                 questionnaire.Digest, $"{questionnaire.Questions.Count} governed human technical choices"));
 
@@ -821,6 +838,12 @@ cis:
         return recognized >= 3;
     }
 
+    internal static bool IsUnacceptedGeneratedInput(string content)
+        => !HasCurrentApproval(content) && (IsScaffoldEligible(content)
+            || ReadNestedFrontMatter(content, "technical_intent_schema") is "2" or "3" or "4"
+                && (content.Contains(BusinessEvidenceStart, StringComparison.Ordinal)
+                    || content.Contains(QuestionnaireEvidenceStart, StringComparison.Ordinal)));
+
     private static bool IsGeneratedDraft(string content)
         => !string.Equals(ReadFrontMatter(content, "status"), "Active", StringComparison.OrdinalIgnoreCase)
            && ReadNestedFrontMatter(content, "technical_intent_schema") == "2"
@@ -877,16 +900,18 @@ cis:
         if (state.Questionnaire is not { Current: true, Complete: true } questionnaire)
             return "The governed high-level technical questionnaire is missing, stale, or incomplete. Technical-intent generation must remain blocked.";
         var builder = new StringBuilder()
-            .AppendLine("These governed choices establish the product's high-level technical direction. Existing-project facts may be derived from deterministic repository evidence; ambiguous and greenfield decisions require human answers. The detailed sections below elaborate them without silently selecting a different technology, topology, or provider.")
+            .AppendLine("These governed choices establish the product's high-level technical direction. Source-derived working fields remain pending final baseline adoption. Existing-project facts may also be derived from deterministic repository evidence; unresolved decisions require human answers. The detailed sections below elaborate them without silently selecting a different technology, topology, or provider.")
             .AppendLine()
             .AppendLine("| Decision input | Area | Recorded direction | Authority and provenance |")
             .AppendLine("| --- | --- | --- | --- |");
         foreach (var question in questionnaire.Questions)
         {
-            var provenance = question.ResolutionSource == "repository-evidence"
+            var provenance = question.ResolutionSource is "scope-not-requested" or "selected-scope-not-requested"
+                ? $"Optional capability not requested in the {(question.ResolutionSource == "selected-scope-not-requested" ? "selected working scope; baseline adoption pending" : "accepted scope")}; {string.Join(", ", question.Evidence ?? [])}"
+                : question.ResolutionSource is "repository-evidence" or "accepted-document" or "selected-document"
                 ? $"Derived by CIS ({question.Confidence ?? "unrated"}) from {string.Join(", ", question.Evidence ?? [])}"
                 : $"{question.AnsweredBy ?? "Not recorded"} at {question.AnsweredAtUtc ?? "Not recorded"}";
-            builder.AppendLine($"| `{Cell(question.Id)}` | {Cell(question.Area)} | {Cell(question.Answer ?? "Not answered")} | {Cell(provenance)} |");
+            builder.AppendLine($"| `{Cell(question.Id)}` | {Cell(question.Area)} | {Cell(question.Answer ?? (question.Status == "Not requested" ? "Not requested; no decision recorded" : "Not answered"))} | {Cell(provenance)} |");
         }
         return builder.ToString().TrimEnd();
     }
@@ -1253,7 +1278,9 @@ cis:
     }
 
     private static string QuestionnaireAnswer(State state, string id)
-        => state.Questionnaire?.Questions.FirstOrDefault(item => item.Id == id)?.Answer?.Trim() is { Length: > 0 } value
+        => state.Questionnaire?.Questions.FirstOrDefault(item => item.Id == id) is { ResolutionSource: "scope-not-requested" or "selected-scope-not-requested" } optional
+            ? $"Optional capability not requested in the {(optional.ResolutionSource == "selected-scope-not-requested" ? "selected working scope; baseline adoption pending" : "accepted current scope")}; no exclusion or implementation choice is recorded."
+            : state.Questionnaire?.Questions.FirstOrDefault(item => item.Id == id)?.Answer?.Trim() is { Length: > 0 } value
             ? value : "Not answered";
 
     private static string RenderDesignGoals(State state)
@@ -1715,12 +1742,16 @@ cis:
 
     private static string ExtractSection(string content, string heading)
     {
-        var match = Regex.Match(content, $@"(?m)^(?<level>\#{{2,3}})[ \t]+(?:\d+(?:\.\d+)*\.?[ \t]+)?{Regex.Escape(heading)}(?:[ \t]+v\d+(?:\.\d+)*)?[ \t]*\r?$",
-            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-        if (!match.Success) return string.Empty;
-        var body = content[(match.Index + match.Length)..];
-        var end = Regex.Match(body, $@"(?m)^\#{{1,{match.Groups["level"].Length}}}[ \t]+", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-        return (end.Success ? body[..end.Index] : body).Trim();
+        var sections = new List<string>();
+        foreach (Match match in Regex.Matches(content, $@"(?m)^(?<level>\#{{1,6}})[ \t]+(?:\d+(?:\.\d+)*\.?[ \t]+)?{Regex.Escape(heading)}(?:[ \t]+v\d+(?:\.\d+)*)?[ \t]*#*[ \t]*\r?$",
+                     RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
+        {
+            var body = content[(match.Index + match.Length)..];
+            var end = Regex.Match(body, $@"(?m)^\#{{1,{match.Groups["level"].Length}}}[ \t]+", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+            var section = (end.Success ? body[..end.Index] : body).Trim();
+            if (section.Length > 0) sections.Add(section);
+        }
+        return string.Join("\n\n", sections.Distinct(StringComparer.Ordinal));
     }
 
     private static string EnsureTopLevelFrontMatter(string content, string key, string value, string beforeKey)
@@ -1784,12 +1815,28 @@ cis:
     private static bool ApprovalDigestMatches(string content, string approvedHash)
         => approvedHash == ContentDigest(content) || approvedHash == LegacyContentDigest(content);
 
-    private static bool HasCurrentApproval(string content)
+    internal static bool HasCurrentApproval(string content)
         => string.Equals(ReadFrontMatter(content, "status"), "Active", StringComparison.OrdinalIgnoreCase)
            && ReadNestedFrontMatter(content, "approved_by") is { Length: > 0 } reviewer && reviewer != "null"
            && ReadNestedFrontMatter(content, "approval_reason") is { Length: > 0 } reason && reason != "null"
            && ReadNestedFrontMatter(content, "approved_content_hash") is { Length: > 0 } digest && digest != "null"
            && ApprovalDigestMatches(content, digest);
+
+    internal static bool IsAcceptedInput(string content, string expectedBrdVersion)
+    {
+        content = CisTechnicalIntentPresentation.RestoreManagedEvidence(content);
+        return HasCurrentApproval(content) && ParseBaselines(content)
+            .Any(item => item.Key.StartsWith("brd\u001f", StringComparison.Ordinal) && item.Value == expectedBrdVersion);
+    }
+
+    internal static bool IsPreparedSelectedInput(string content, string expectedBrdVersion)
+    {
+        content = CisTechnicalIntentPresentation.RestoreManagedEvidence(content);
+        return !IsScaffoldEligible(content)
+            && ReadNestedFrontMatter(content, "technical_intent_schema") is "1" or "2" or "3" or "4"
+            && ParseBaselines(content).Any(item => item.Key.StartsWith("brd\u001f", StringComparison.Ordinal)
+                && item.Value == expectedBrdVersion);
+    }
 
     private static bool BaselinesCanCarryForward(
         string content,

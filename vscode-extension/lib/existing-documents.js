@@ -33,23 +33,22 @@ async function loadExistingDocuments(vscode, cli, root, page, options = {}) {
   try {
     await cli.runForeground('Refresh evidence for the loaded document', ['graph', 'build', '--workspace', root], { repository: false });
     if (role.role === 'technical') {
-      const questionnaire = await cli.runForeground('Prepare technical choices for the loaded document',
-        ['technical-intent', 'questions', 'init', '--workspace', root], { repository: false });
-      if (questionnaire?.errors?.length) throw new Error(questionnaire.errors.join('\n'));
-      if (questionnaire?.complete !== true || questionnaire?.current !== true) {
-        await cli.runForeground('Update context after preparing technical choices', ['graph', 'build', '--workspace', root], { repository: false });
-        void vscode.window.showInformationMessage(`${loadedMessage}. Review and answer the technical choices next. Your document is preserved; evidence reconciliation will continue when those choices are complete.`);
-        return true;
-      }
+      // The wizard interprets a supplied document before checking the remaining
+      // questions. Its draft scope retains the final baseline adoption boundary.
+      const prepared = await cli.runForeground('Interpret the loaded technical direction',
+        ['definition', 'prepare', '--page', 'technical', '--workspace', root], { repository: false });
+      if (prepared?.errors?.length) throw new Error(prepared.errors.join('\n'));
+    } else {
+      const commands = {
+        business: ['brd', 'reconcile'],
+        architecture: ['solution-design', 'init'], components: ['solution-design', 'init'], diagrams: ['solution-design', 'init'],
+        experience: ['ui-direction', 'init'], delivery: ['brd', 'backlog', 'build'],
+      };
+      const command = commands[role.role];
+      if (!command) throw new Error('This document type has no reconciliation command.');
+      const reconciled = await cli.runForeground('Reconcile loaded document evidence', [...command, '--workspace', root], { repository: false });
+      if (reconciled?.errors?.length) throw new Error(reconciled.errors.join('\n'));
     }
-    const commands = {
-      business: ['brd', 'reconcile'], technical: ['technical-intent', 'init'],
-      architecture: ['solution-design', 'init'], components: ['solution-design', 'init'], diagrams: ['solution-design', 'init'],
-      experience: ['ui-direction', 'init'], delivery: ['brd', 'backlog', 'build'],
-    };
-    const command = commands[role.role];
-    if (!command) throw new Error('This document type has no reconciliation command.');
-    await cli.runForeground('Reconcile loaded document evidence', [...command, '--workspace', root], { repository: false });
     await cli.runForeground('Update context after document reconciliation', ['graph', 'build', '--workspace', root], { repository: false });
   } catch (error) {
     error.documentLoaded = true;

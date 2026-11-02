@@ -27,6 +27,7 @@
 
 ## Business requirements
 
+- When the user supplies a BRD, Technical Intent, or pair, start with the supplied-input procedure in `.github/skills/cis-govern-business-requirements/SKILL.md`. Load and inspect them through CIS before authoring replacements or asking a full questionnaire; the graphical wizard is optional.
 - Use `.github/skills/cis-govern-business-requirements/SKILL.md` for BRD discovery, reconciliation, validation, status, and approval work.
 - Treat BRDs found in product-owned participant repositories as source evidence, never as proof that requirements are current. Dependency-repository documents belong to another product authority and must not enter this product's BRD.
 - Agents may discover, draft, reconcile, and validate. They must not invent stakeholder decisions, assess sources on a human's behalf, or approve a BRD without explicit authorization, reviewer identity, and reason.
@@ -35,7 +36,7 @@
 
 ## Technical intent
 
-- Use `.github/skills/cis-govern-technical-intent/SKILL.md` after BRD approval and before creating a workspace change dossier.
+- Use `.github/skills/cis-govern-technical-intent/SKILL.md` for supplied technical direction, authorised answers and technical-intent governance. Preserve required BRD approval and downstream adoption controls.
 - Treat the authority repository's product-scoped technical intent as distinct from participant repository intent documents. Dependency technology is integration context, not inferred product direction.
 - Agents may draft direction and options, but must not resolve or defer `TI-DEC-*` choices or approve technical intent without explicit human identity and rationale.
 - `cis change create`, `cis plan build`, and `cis plan import-spec` require Active, current technical intent in a workspace authority.

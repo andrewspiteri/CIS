@@ -112,14 +112,30 @@ public sealed partial class DefinitionWizardService
         {
             var preparationErrors = PrepareBusinessEvidence(state);
             if (preparationErrors.Count > 0) return Error(state, preparationErrors);
+            if (CisProductDocumentPaths.Read(state.AuthorityRepositoryPath!).ContainsKey("business"))
+            {
+                var importedBusiness = _brd.Reconcile(state.WorkspacePath!);
+                if (importedBusiness.Errors.Count > 0)
+                    return StatusInternal(state, "input-problem", importedBusiness.Applied) with { Errors = importedBusiness.Errors };
+            }
         }
         using (CisDefinitionDraftScope.Enter())
         {
             switch (normalized)
             {
                 case "technical":
+                    // A selected supplied intent must be interpreted before its
+                    // factual questionnaire can be assessed. Final wizard activation
+                    // remains the authority decision for these draft source values.
+                    var selectedTechnical = CisProductDocumentPaths.Read(state.AuthorityRepositoryPath!).ContainsKey("technical");
+                    if (selectedTechnical)
+                    {
+                        var imported = _technicalIntent.Initialize(state.WorkspacePath!);
+                        if (imported.Errors.Count > 0)
+                            return StatusInternal(state, "input-problem", imported.Applied) with { Errors = imported.Errors };
+                    }
                     var technicalQuestions = _technicalQuestions.Initialize(state.WorkspacePath!);
-                    if (technicalQuestions.Complete && technicalQuestions.Current)
+                    if (!selectedTechnical && technicalQuestions.Complete && technicalQuestions.Current)
                         _technicalIntent.Initialize(state.WorkspacePath!);
                     break;
                 case "architecture":
@@ -343,7 +359,8 @@ public sealed partial class DefinitionWizardService
                 uiQuestions.Questions.Select(question => new CisDefinitionQuestion(question.Id, question.Area,
                     question.Question, question.Why, question.CommonOptions, question.SuggestedAnswer, question.Status,
                     question.Answer, question.AnsweredBy, question.AnsweredAtUtc, question.ResolutionSource,
-                    question.Confidence, question.Evidence)).ToArray(), uiQuestions.Errors) { UiRequired = uiQuestions.UiRequired },
+                    question.Confidence, question.Evidence)).ToArray(), uiQuestions.Errors)
+            { UiRequired = uiQuestions.UiRequired },
             BusinessInference = businessInference,
             ExistingDocuments = existingDocuments,
         };
@@ -577,7 +594,9 @@ This classification-selected index makes shared contracts discoverable before th
             ["surface"] = colors.ElementAtOrDefault(1) ?? "#ffffff",
             ["foreground"] = colors.ElementAtOrDefault(2) ?? "#172033",
             ["accent"] = colors.ElementAtOrDefault(3) ?? "#2563eb",
-            ["success"] = "#15803d", ["warning"] = "#b45309", ["error"] = "#b91c1c",
+            ["success"] = "#15803d",
+            ["warning"] = "#b45309",
+            ["error"] = "#b91c1c",
         };
         var densityAnswer = Answer("UI-Q-004");
         var density = densityAnswer.Contains("compact", StringComparison.OrdinalIgnoreCase) ? "Compact"

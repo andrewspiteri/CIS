@@ -28,6 +28,7 @@ public sealed record CisFeatureIntakeResult(
 public sealed record CisFeatureWizardField(string Id, string Label, string SuggestedAnswer, string? Answer, bool Required)
 {
     public bool Inherited { get; init; }
+    public IReadOnlyList<string> SourceReferences { get; init; } = [];
 }
 public sealed record CisFeatureWizardDocument(string Title, string Path, bool Exists);
 public sealed record CisFeatureWizardPage(string Id, string Title, string Status, bool Complete,

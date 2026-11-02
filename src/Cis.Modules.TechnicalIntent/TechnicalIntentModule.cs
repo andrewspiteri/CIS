@@ -307,7 +307,7 @@ public sealed class TechnicalIntentModule : ICisModule
         }
         Console.WriteLine($"Technical questionnaire: {result.Status}");
         Console.WriteLine($"Canonical path: {result.CanonicalPath ?? string.Empty}");
-        Console.WriteLine($"Answered: {result.AnsweredCount}/{result.AnsweredCount + result.UnansweredCount}; current: {result.Current}; complete: {result.Complete}");
+        Console.WriteLine($"Resolved or not requested: {result.AnsweredCount}/{result.AnsweredCount + result.UnansweredCount}; current: {result.Current}; complete: {result.Complete}");
         foreach (var warning in result.Warnings) Console.WriteLine($"Warning: {warning}");
         foreach (var error in result.Errors) Console.WriteLine($"Error: {error}");
     }

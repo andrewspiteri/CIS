@@ -7,6 +7,8 @@ applyTo: "**"
 - When onboarding or reconciling a repository, use `.github/skills/cis-repository-bootstrap/SKILL.md`; import existing source and initialize only a genuinely new empty project.
 - When importing one or several existing repositories, use `.github/skills/cis-import-repositories/SKILL.md`; dry-run the complete selection before confirmation.
 - For BRD intake or currency review, use `.github/skills/cis-govern-business-requirements/SKILL.md`; discovery never proves currency and approval is human-only.
+- When the user supplies an existing BRD, Technical Intent, or pair, follow that skill's supplied-input CLI procedure before new-document authoring or a full questionnaire. The graphical wizard is optional; the same persisted workflow is available to an external agent through `definition documents`, `definition prepare` and `definition status`.
+- For technical input and authorised `TI-Q-*` or revision-bound `TI-DEC-*` answers, use `.github/skills/cis-govern-technical-intent/SKILL.md`; source facts, working drafts and human decisions retain distinct authority.
 - Run `cis repo init` with an explicit maintainer-selected `--root`; if it returns an error or collision, run `cis repo doctor` with the same `--repo` and `--root`.
 - Read `.cis/repository.yml` before repository-wide work.
 - Start with `docs/README.md`, `docs/catalog.yml`, and the repository profile before broad searches.

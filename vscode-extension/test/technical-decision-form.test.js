@@ -74,6 +74,6 @@ test('one answer field escapes source text and retains answer provenance', () =>
       { id: 'TI-Q-2', area: 'Cache', answer: 'Redis', status: 'Derived' } ] }, escapeHtml);
   assert.match(html, /data-technical-resolution/u); assert.doesNotMatch(html, /data-technical-reason/u);
   assert.equal((html.match(/<textarea /gu) || []).length, 1);
-  assert.match(html, /Save answer/u); assert.match(html, /Recorded by Owner/u); assert.match(html, /Derived from repository evidence/u);
+  assert.match(html, /Save answer/u); assert.match(html, /Recorded by Owner/u); assert.match(html, /Derived from source evidence/u);
   assert.doesNotMatch(html, /<script>bad/u); assert.match(html, /&lt;\/textarea&gt;/u);
 });

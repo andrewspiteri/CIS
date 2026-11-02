@@ -5,6 +5,7 @@ applyTo: "docs/specs/business-requirements.md"
 # CIS business requirements authority
 
 - The canonical BRD belongs only to the repository registered with workspace role `authority`.
+- For a supplied BRD or BRD/TI pair, first use the headless supplied-input procedure in `.github/skills/cis-govern-business-requirements/SKILL.md`. CIS imports supported source layouts and retains their meaning; normal intake requires neither a graphical wizard nor hand-authored layout mapping. Inspect structured import diagnostics and genuine questions before considering a replacement draft.
 - Treat BRDs, domain-equivalent product-design documents such as GDDs, and development feature specifications found in product-owned repositories as source evidence until a human assesses each source row. Dependency-repository documents belong to another product authority and are excluded.
 - File existence, deterministic extraction, graph freshness, or agent review never proves business currency.
 - Complete business outcomes, scope, actors, capabilities, requirements, constraints, success measures, traceability, and open questions through human review.

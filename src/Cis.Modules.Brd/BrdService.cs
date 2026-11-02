@@ -129,9 +129,20 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
         var warnings = new List<string>();
         var errors = new List<string>();
         var baselines = new List<BrdRepositoryBaseline>();
+        string? canonicalContent = null;
+        if (File.Exists(canonicalPath))
+        {
+            try { canonicalContent = CisDocumentText.Read(canonicalPath); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException)
+            {
+                return new BrdDiscoveryResult("import-problem", workspace.WorkspacePath, authority.Id,
+                    NormalizePath(Path.GetRelativePath(authority.RepositoryPath, canonicalPath)), [], [], [],
+                    ["The selected BRD could not be interpreted. " + error.Message]);
+            }
+        }
         var pending = FeatureIntakeService.PendingRepositoryIds(workspace);
         // Never remove a repository already included in the canonical product baseline.
-        var recordedRepositories = File.Exists(canonicalPath) ? ParseBaselineRows(File.ReadAllText(canonicalPath)).Keys.ToHashSet(StringComparer.Ordinal) : [];
+        var recordedRepositories = canonicalContent is not null ? ParseBaselineRows(canonicalContent).Keys.ToHashSet(StringComparer.Ordinal) : [];
         var deferred = pending.Where(id => !recordedRepositories.Contains(id)).Order(StringComparer.Ordinal).ToArray();
         var baselineRepositories = workspace.Repositories.Where(repository => !deferred.Contains(repository.Id, StringComparer.Ordinal)).ToArray();
         foreach (var repository in baselineRepositories)
@@ -184,8 +195,8 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
         }
 
         var productRepositories = baselineRepositories.Where(repository => repository.IsProductOwned).ToArray();
-        var previousSources = File.Exists(canonicalPath)
-            ? ParseSourceRows(File.ReadAllText(canonicalPath))
+        var previousSources = canonicalContent is not null
+            ? ParseSourceRows(canonicalContent)
             : new Dictionary<string, SourceRow>(StringComparer.Ordinal);
         var fileCandidates = productRepositories
             .SelectMany(repository => FindCandidates(repository, authority, canonicalPath, previousSources, warnings))
@@ -213,7 +224,8 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
             candidates,
             baselines,
             warnings.Distinct(StringComparer.Ordinal).Order().ToArray(),
-            errors.Distinct(StringComparer.Ordinal).Order().ToArray()) { DeferredRepositoryIds = deferred };
+            errors.Distinct(StringComparer.Ordinal).Order().ToArray())
+        { DeferredRepositoryIds = deferred };
     }
 
     CisBrdSourceEvidenceReconciliation ICisBrdSourceEvidenceReconciler.ReconcileSourceEvidence(string repositoryPath)
@@ -285,7 +297,9 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
         }
         else
         {
-            var current = File.ReadAllText(canonicalPath);
+            var current = CisDocumentText.Read(canonicalPath);
+            var importErrors = BrdDocumentLayout.ValidateStructure(current);
+            if (importErrors.Count > 0) return Error("import-problem", discovery, importErrors);
             if (!current.Contains($"stable_id: {stableId}", StringComparison.Ordinal)
                 || !HasManagedBlocks(current))
             {
@@ -413,7 +427,16 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
             return QuestionsError("missing", resolution.Workspace.WorkspacePath, resolution.Authority.Id, relative,
                 ["Canonical BRD was not found. Run `cis brd init`."]);
         var errors = new List<string>();
-        var content = File.ReadAllText(path);
+        string content;
+        try { content = CisDocumentText.Read(path); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            return QuestionsError("import-problem", resolution.Workspace.WorkspacePath, resolution.Authority.Id, relative,
+                ["The selected BRD could not be interpreted. " + error.Message]);
+        }
+        var importErrors = BrdDocumentLayout.Validate(content);
+        if (importErrors.Count > 0)
+            return QuestionsError("import-problem", resolution.Workspace.WorkspacePath, resolution.Authority.Id, relative, importErrors);
         var section = ExtractSection(content, "Open questions");
         var questions = ParseQuestions(section, errors);
         var status = errors.Count > 0 ? "invalid"
@@ -596,7 +619,7 @@ public sealed partial class BrdService : ICisBrdSourceEvidenceReconciler
             var requirements = BrdRequirementReader.Read(content, "Functional requirements");
             errors.AddRange(requirements.Errors);
             if (requirements.Requirements.Count == 0)
-                errors.Add("The imported BRD has no readable functional requirements. Before approval, give each requirement a stable ID in a table row or bold requirement paragraph under Functional requirements. Numbered headings and original requirement IDs are supported.");
+                errors.Add("Import problem: the selected BRD has no readable functional requirements. Requirements may use prose, lists, tables or identified headings. Preserve the source and check the requirement passages; this is an extraction problem, not a missing business decision.");
         }
         var questionErrors = new List<string>();
         var openQuestions = ParseQuestions(ExtractSection(content, "Open questions"), questionErrors);

@@ -355,7 +355,7 @@ public sealed partial class TechnicalIntentWorkflowTests
         Assert.Contains("TI-INT-THRESHOLD-HANDLING-AND-HUMAN-REVIEW-RULE-ENGINE", content, StringComparison.Ordinal);
         Assert.Contains("TI-INT-AUDIT-EVIDENCE-EVIDENCE-STORE", content, StringComparison.Ordinal);
         Assert.Contains("Prepared and validated business facts", content, StringComparison.Ordinal);
-        Assert.True(initialized.Validation!.Valid);
+        Assert.True(initialized.Validation!.Valid, string.Join("\n", initialized.Validation.Errors));
     }
 
     [Fact]
@@ -528,7 +528,7 @@ public sealed partial class TechnicalIntentWorkflowTests
 
         var initialized = environment.Intent.Initialize(environment.Authority.Path);
         Assert.True(initialized.Applied);
-        Assert.True(initialized.Validation!.Valid);
+        Assert.True(initialized.Validation!.Valid, string.Join("\n", initialized.Validation.Errors));
         Assert.NotEmpty(initialized.Validation.Decisions);
         Assert.All(initialized.Validation.Decisions, decision => { Assert.False(decision.NeedsReview); Assert.Empty(decision.Issues); });
         Assert.Equal("Ready for Approval", initialized.Validation.EffectiveStatus);

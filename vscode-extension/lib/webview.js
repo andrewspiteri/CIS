@@ -322,15 +322,56 @@ function renderDefinitionPageBody(webview, root, model, page, vscode) {
   return '';
 }
 
+function technicalQuestionState(question) {
+  const status = String(question.status || '').toLowerCase();
+  const notRequested = status === 'not requested' && ['scope-not-requested', 'selected-scope-not-requested'].includes(question.resolutionSource) && question.answer == null;
+  const proposedScope = notRequested && question.resolutionSource === 'selected-scope-not-requested';
+  const derived = status === 'derived';
+  const supplied = derived && ['selected-document', 'draft-document'].includes(question.resolutionSource);
+  const accepted = derived && question.resolutionSource === 'accepted-document';
+  const recordedOverride = status === 'conflict' && typeof question.answer === 'string' && question.answer.trim().length > 0
+    && typeof question.answeredBy === 'string' && question.answeredBy.trim().length > 0;
+  return { notRequested, proposedScope, derived, supplied, accepted, inputProblem: status === 'import problem' || status === 'conflict',
+    conflict: status === 'conflict', recordedOverride, answered: status === 'answered',
+    resolved: status === 'answered' || derived || notRequested,
+    label: proposedScope ? 'Not requested; awaiting adoption' : notRequested ? 'Not requested' : supplied ? 'Supplied; awaiting adoption' : accepted ? 'From accepted source'
+      : derived ? 'Derived from project' : status === 'answered' ? 'Answered' : status === 'conflict' ? 'Source conflict'
+        : status === 'import problem' ? 'Import problem' : 'Decision required' };
+}
+
+function renderTechnicalInputProblem(question, state, evidence) {
+  const statements = question.suggestedAnswer || '';
+  return `<section class="suggestion"><strong>${escapeHtml(state.label)}</strong><p>${state.conflict
+    ? state.recordedOverride ? 'Compare the recorded override with the source statements. Correct the override or reconcile and adopt the changed source before continuing. Saving an override does not approve changed product direction.'
+      : 'Reconcile the conflicting source statements before continuing. Saving a questionnaire answer cannot settle the source conflict.'
+    : 'Repair the reported source import problem, then refresh technical evidence before continuing. An unreadable source does not establish a missing business decision.'}</p>${statements ? `<blockquote>${escapeHtml(statements).replaceAll('\n', '<br>')}</blockquote>` : ''}${evidence ? `<details><summary>Source evidence</summary><ul>${evidence}</ul></details>` : ''}</section>`;
+}
+
+function renderRecordedOverrideCorrection(question, page) {
+  const id = `${page ? 'wizard' : 'technical-answer'}-${question.id || ''}`;
+  const attributes = page ? `data-page="${escapeHtml(page)}" data-question="${escapeHtml(question.id || '')}"` : 'data-answer';
+  const action = page ? `data-save-question="${escapeHtml(question.id || '')}" data-page="${escapeHtml(page)}"`
+    : `data-command="save-answer" data-value="${escapeHtml(question.id || '')}"`;
+  return `<section class="answer"><label for="${escapeHtml(id)}">Recorded override — correction pending reconciliation</label><textarea id="${escapeHtml(id)}" ${attributes} rows="4" maxlength="16384">${escapeHtml(question.answer)}</textarea><p class="muted">Recorded by ${escapeHtml(question.answeredBy)}${question.answeredAtUtc ? ` at ${escapeHtml(question.answeredAtUtc)}` : ''}.</p><div class="actions"><button type="button" ${action}>Correct recorded override</button></div></section>`;
+}
+
 function renderWizardQuestions(questions, page) {
   const items = Array.isArray(questions) ? questions : [];
   if (!items.length) return `<article class="card empty">Prepare this page to initialize its guided decisions.</article>`;
   return `<section class="wizard-questions">${items.map(question => {
     const value = question.answer || question.suggestedAnswer || '';
-    const resolved = ['answered', 'derived'].includes(String(question.status || '').toLowerCase());
+    const state = technicalQuestionState(question);
+    const resolved = state.resolved;
+    const evidence = (question.evidence || []).map(item => `<li>${escapeHtml(item)}</li>`).join('');
+    if (state.inputProblem)
+      return `<article class="question-card"><div class="question-heading"><div><span class="eyebrow">${escapeHtml(question.id || '')} · ${escapeHtml(question.area || '')}</span><h3>${escapeHtml(question.question || '')}</h3></div><span class="badge warn">${escapeHtml(state.label)}</span></div>${renderTechnicalInputProblem(question, state, evidence)}${state.recordedOverride ? renderRecordedOverrideCorrection(question, page) : ''}</article>`;
+    const sourceDirection = state.supplied || state.accepted
+      ? `<section class="suggestion"><strong>${state.supplied ? 'Supplied source direction; baseline adoption pending' : 'Direction from an accepted source'}</strong><p>${state.supplied ? 'The supplied facts are available for this draft review. Final baseline adoption is still required; no human answer or approval has been recorded.' : 'CIS reuses the accepted source without recording a new human answer.'}</p>${evidence ? `<details><summary>Source passages</summary><ul>${evidence}</ul></details>` : ''}</section>` : '';
+    if (state.notRequested)
+      return `<article class="question-card"><div class="question-heading"><div><span class="eyebrow">${escapeHtml(question.id || '')} · ${escapeHtml(question.area || '')}</span><h3>${escapeHtml(question.question || '')}</h3></div><span class="badge good">${escapeHtml(state.label)}</span></div><p>${escapeHtml(question.suggestedAnswer || 'This optional capability is not requested in the supplied scope. No exclusion or implementation choice is recorded.')}</p>${state.proposedScope ? '<p class="muted">This draft scope still requires final baseline adoption.</p>' : ''}${evidence ? `<details><summary>${state.proposedScope ? 'Supplied scope' : 'Accepted scope'}</summary><ul>${evidence}</ul></details>` : ''}</article>`;
     const imported = !resolved && question.resolutionSource === 'technical-intent-document'
       ? `<section class="suggestion"><strong>From imported technical intent</strong><p>Review these source excerpts, edit if needed, then save your direction. They are not recorded answers yet.</p><details><summary>Source passages</summary><ul>${(question.evidence || []).map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul></details></section>` : '';
-    return `<article class="question-card"><div class="question-heading"><div><span class="eyebrow">${escapeHtml(question.id || '')} · ${escapeHtml(question.area || '')}</span><h3>${escapeHtml(question.question || '')}</h3></div><span class="badge ${resolved ? 'good' : 'warn'}">${resolved ? 'Resolved' : 'Decision required'}</span></div><p>${escapeHtml(question.why || '')}</p>${imported}<label for="wizard-${escapeHtml(question.id || '')}">Direction</label><textarea id="wizard-${escapeHtml(question.id || '')}" data-page="${escapeHtml(page)}" data-question="${escapeHtml(question.id || '')}" rows="4" maxlength="16384">${escapeHtml(value)}</textarea><div class="actions"><button type="button" data-save-question="${escapeHtml(question.id || '')}" data-page="${escapeHtml(page)}">Save direction</button></div></article>`;
+    return `<article class="question-card"><div class="question-heading"><div><span class="eyebrow">${escapeHtml(question.id || '')} · ${escapeHtml(question.area || '')}</span><h3>${escapeHtml(question.question || '')}</h3></div><span class="badge ${resolved ? 'good' : 'warn'}">${state.supplied || state.accepted ? escapeHtml(state.label) : resolved ? 'Resolved' : escapeHtml(state.label)}</span></div><p>${escapeHtml(question.why || '')}</p>${sourceDirection}${imported}<label for="wizard-${escapeHtml(question.id || '')}">${state.supplied || state.accepted ? 'Source direction — edit to override' : 'Direction'}</label><textarea id="wizard-${escapeHtml(question.id || '')}" data-page="${escapeHtml(page)}" data-question="${escapeHtml(question.id || '')}" rows="4" maxlength="16384">${escapeHtml(value)}</textarea><div class="actions"><button type="button" data-save-question="${escapeHtml(question.id || '')}" data-page="${escapeHtml(page)}">${state.supplied || state.accepted ? 'Save an override' : 'Save direction'}</button></div></article>`;
   }).join('')}</section>`;
 }
 
@@ -417,32 +458,39 @@ function renderDoctorHtml(webview, result, scriptNonce) {
 
 function renderTechnicalIntentQuestionsHtml(webview, status, scriptNonce) {
   const questions = Array.isArray(status?.questions) ? status.questions : [];
-  const resolvedStatuses = new Set(['answered', 'derived']);
-  const unanswered = questions.filter(item => !resolvedStatuses.has(String(item.status || '').toLowerCase()));
+  const unanswered = questions.filter(item => !technicalQuestionState(item).resolved);
   const derivedCount = questions.filter(item => String(item.status || '').toLowerCase() === 'derived').length;
   const humanCount = questions.filter(item => String(item.status || '').toLowerCase() === 'answered').length;
   const importedCount = unanswered.filter(item => item.resolutionSource === 'technical-intent-document').length;
+  const suppliedCount = questions.filter(item => technicalQuestionState(item).supplied).length;
+  const acceptedCount = questions.filter(item => technicalQuestionState(item).accepted).length;
+  const notRequestedCount = questions.filter(item => technicalQuestionState(item).notRequested).length;
+  const pendingScope = questions.some(item => technicalQuestionState(item).proposedScope);
   const cards = questions.map(question => {
-    const state = String(question.status || '').toLowerCase();
-    const answered = state === 'answered';
-    const derived = state === 'derived';
-    const resolved = answered || derived;
+    const state = technicalQuestionState(question);
+    const { answered, derived, resolved } = state;
     const options = (question.commonOptions || []).map(option => `<li>${escapeHtml(option)}</li>`).join('');
     const startingValue = question.answer || question.suggestedAnswer || '';
     const evidence = (question.evidence || []).map(item => `<li>${escapeHtml(item)}</li>`).join('');
-    const source = derived
+    if (state.inputProblem)
+      return `<article class="question-card" data-question-id="${escapeHtml(question.id || '')}"><header class="question-heading"><div><span class="eyebrow">${escapeHtml(question.id || '')} · ${escapeHtml(question.area || '')}</span><h2>${escapeHtml(question.question || '')}</h2></div><span class="badge unanswered">${escapeHtml(state.label)}</span></header>${renderTechnicalInputProblem(question, state, evidence)}${state.recordedOverride ? renderRecordedOverrideCorrection(question) : ''}</article>`;
+    if (state.notRequested)
+      return `<article class="question-card" data-question-id="${escapeHtml(question.id || '')}"><header class="question-heading"><div><span class="eyebrow">${escapeHtml(question.id || '')} · ${escapeHtml(question.area || '')}</span><h2>${escapeHtml(question.question || '')}</h2></div><span class="badge answered">${escapeHtml(state.label)}</span></header><p>${escapeHtml(question.suggestedAnswer || 'This optional capability is not requested in the supplied scope. No exclusion or implementation choice is recorded.')}</p>${state.proposedScope ? '<p class="muted">This draft scope still requires final baseline adoption.</p>' : ''}${evidence ? `<details><summary>${state.proposedScope ? 'Supplied scope' : 'Accepted scope'}</summary><ul>${evidence}</ul></details>` : ''}</article>`;
+    const source = state.supplied || state.accepted
+      ? `<section class="suggestion derived"><h3>${state.supplied ? 'Supplied source direction; baseline adoption pending' : 'Direction from an accepted source'}</h3><p>${escapeHtml(question.answer || '')}</p><p class="muted">${state.supplied ? 'These supplied facts support draft review. Final baseline adoption is still required; no human answer or approval has been recorded.' : 'CIS reuses the accepted source without recording a new human answer.'}</p>${evidence ? `<details><summary>Source passages</summary><ul>${evidence}</ul></details>` : ''}</section>`
+      : derived
       ? `<section class="suggestion derived"><h3>Derived from the existing project</h3><p>${escapeHtml(question.answer || '')}</p><p class="muted">Confidence: ${escapeHtml(question.confidence || 'unrated')}</p>${evidence ? `<details><summary>Repository evidence</summary><ul>${evidence}</ul></details>` : ''}</section>`
       : !resolved && question.resolutionSource === 'technical-intent-document'
         ? `<section class="suggestion"><h3>From imported technical intent</h3><p>The direction below contains exact source excerpts. Review and edit them before saving; they may cover only part of this question.</p><details><summary>Source passages</summary><ul>${evidence}</ul></details></section>`
       : `<section class="suggestion"><h3>Advisory starting direction</h3><p>${escapeHtml(question.suggestedAnswer || 'No suggestion is available.')}</p></section>`;
     return `<article class="question-card" data-question-id="${escapeHtml(question.id || '')}" aria-labelledby="technical-question-${escapeHtml(question.id || '')}">
-      <header class="question-heading"><div><span class="eyebrow">${escapeHtml(question.id || '')} · ${escapeHtml(question.area || '')}</span><h2 id="technical-question-${escapeHtml(question.id || '')}">${escapeHtml(question.question || '')}</h2></div><span class="badge ${resolved ? 'answered' : 'unanswered'}">${derived ? 'Derived from project' : answered ? 'Answered' : 'Decision required'}</span></header>
+      <header class="question-heading"><div><span class="eyebrow">${escapeHtml(question.id || '')} · ${escapeHtml(question.area || '')}</span><h2 id="technical-question-${escapeHtml(question.id || '')}">${escapeHtml(question.question || '')}</h2></div><span class="badge ${resolved ? 'answered' : 'unanswered'}">${escapeHtml(state.label)}</span></header>
       <p>${escapeHtml(question.why || '')}</p><details><summary>Common choices</summary><ul>${options}</ul></details>
       ${source}
       <section class="answer"><label for="technical-answer-${escapeHtml(question.id || '')}">${derived ? 'Derived direction — edit to override' : answered ? 'Recorded direction' : 'Your direction'}</label>
         <textarea id="technical-answer-${escapeHtml(question.id || '')}" maxlength="16384" rows="5" data-answer>${escapeHtml(startingValue)}</textarea>
         ${answered ? `<p class="muted">Recorded by ${escapeHtml(question.answeredBy || 'unknown')} at ${escapeHtml(question.answeredAtUtc || 'unknown time')}.</p>` : ''}
-        <div class="actions"><button type="button" data-command="save-answer" data-value="${escapeHtml(question.id || '')}">${resolved ? 'Update direction' : 'Save direction'}</button></div></section></article>`;
+        <div class="actions"><button type="button" data-command="save-answer" data-value="${escapeHtml(question.id || '')}">${state.supplied || state.accepted ? 'Save an override' : resolved ? 'Update direction' : 'Save direction'}</button></div></section></article>`;
   }).join('');
   const intent = status?.technicalIntent;
   const validation = intent?.validation;
@@ -461,8 +509,8 @@ function renderTechnicalIntentQuestionsHtml(webview, status, scriptNonce) {
   :root{color-scheme:light dark}*{box-sizing:border-box}body{color:var(--vscode-foreground);background:var(--vscode-editor-background);font:var(--vscode-font-weight) var(--vscode-font-size)/1.55 var(--vscode-font-family);margin:0;padding:2rem;max-width:78rem}main{display:grid;gap:1.2rem}.page-heading,.question-heading{display:flex;justify-content:space-between;align-items:start;gap:1rem}.page-heading{border-bottom:1px solid var(--vscode-panel-border);padding-bottom:1rem}.page-heading h1,.question-heading h2,.suggestion h3{margin:.15rem 0}.page-heading p,.question-card p{max-width:78ch}.eyebrow{display:block;color:var(--vscode-descriptionForeground);font-size:.78rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase}.progress{display:flex;gap:.55rem;flex-wrap:wrap}.badge{display:inline-block;border:1px solid var(--vscode-panel-border);border-radius:999px;padding:.12rem .6rem;font-size:.82rem}.badge.answered,.completion{border-color:var(--vscode-testing-iconPassed);color:var(--vscode-testing-iconPassed)}.badge.unanswered{color:var(--vscode-editorWarning-foreground)}.question-list{display:grid;gap:1rem}.question-card,.completion{border:1px solid var(--vscode-panel-border);border-radius:.35rem;background:var(--vscode-editorWidget-background);padding:1.1rem}.suggestion{border-left:3px solid var(--vscode-focusBorder);background:var(--vscode-textBlockQuote-background);padding:.75rem 1rem;margin:1rem 0}.answer label{display:block;font-weight:600;margin-bottom:.35rem}.muted{color:var(--vscode-descriptionForeground)}textarea{display:block;width:100%;resize:vertical;color:var(--vscode-input-foreground);background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,var(--vscode-panel-border));padding:.65rem;font:inherit;line-height:1.45}textarea:focus{outline:2px solid var(--vscode-focusBorder);outline-offset:1px}.actions{display:flex;gap:.6rem;flex-wrap:wrap;margin-top:.7rem}button{color:var(--vscode-button-foreground);background:var(--vscode-button-background);border:1px solid transparent;border-radius:2px;padding:.48rem .85rem;font:inherit;cursor:pointer}button.secondary{color:var(--vscode-button-secondaryForeground);background:var(--vscode-button-secondaryBackground)}button.link{color:var(--vscode-textLink-foreground);background:transparent;padding:0}button:focus-visible,summary:focus-visible{outline:2px solid var(--vscode-focusBorder);outline-offset:2px}details{margin:.8rem 0}summary{cursor:pointer;font-weight:600}
   @media(max-width:42rem){body{padding:1rem}.page-heading,.question-heading{display:block}.progress{margin-top:.65rem}.actions button{width:100%}}@media(prefers-reduced-motion:reduce){*{transition:none!important}}
   </style></head><body><main><header class="page-heading"><div><span class="eyebrow">Technical definition · governed pre-intent stage</span><h1>Choose the high-level technical direction</h1>
-    <p>${importedCount ? `CIS has prefilled ${importedCount} ${importedCount === 1 ? 'direction' : 'directions'} with passages from your imported technical intent. Review them instead of entering the same choices again. Nothing is recorded until you save a direction.` : derivedCount ? 'CIS has pre-filled evidence-supported directions from the existing implementation. Review or override them, then answer only the decisions the repository cannot establish safely.' : 'This is a greenfield project. Record the major technology and architecture choices before CIS creates components and interactions.'}</p><button class="link" type="button" data-command="open-questionnaire">Open canonical questionnaire</button></div>
-    <div class="progress" aria-label="Technical question progress"><span>${derivedCount} derived</span><span>${humanCount} human</span><span>${unanswered.length} remaining</span></div></header>
+    <p>${suppliedCount || pendingScope ? 'CIS has interpreted the supplied source for draft review. Review its facts and answer the remaining questions; final baseline adoption is still required.' : acceptedCount ? 'CIS reuses facts from your accepted sources. Review or override them and answer only the remaining decisions.' : importedCount ? `CIS has prefilled ${importedCount} ${importedCount === 1 ? 'direction' : 'directions'} with passages from your imported technical intent. Review them instead of entering the same choices again. Nothing is recorded until you save a direction.` : derivedCount ? 'CIS has pre-filled evidence-supported directions from the existing implementation. Review or override them, then answer only the decisions the repository cannot establish safely.' : notRequestedCount ? 'Optional capabilities absent from the accepted scope require no answer and record no exclusion or technical choice.' : 'This is a greenfield project. Record the major technology and architecture choices before CIS creates components and interactions.'}</p><button class="link" type="button" data-command="open-questionnaire">Open canonical questionnaire</button></div>
+    <div class="progress" aria-label="Technical question progress"><span>${derivedCount} derived</span><span>${humanCount} human</span>${notRequestedCount ? `<span>${notRequestedCount} not requested</span>` : ''}<span>${unanswered.length} remaining</span></div></header>
     ${completed}<section class="question-list" aria-label="High-level technical decisions">${cards || '<p>No technical questions were found.</p>'}</section></main>
   <script nonce="${scriptNonce}">const vscode=acquireVsCodeApi();const prior=vscode.getState()||{};const restore=()=>{const card=prior.questionId?document.querySelector('[data-question-id="'+CSS.escape(prior.questionId)+'"]'):undefined;card?.querySelector('[data-answer]')?.focus({preventScroll:true});window.scrollTo(0,Number.isFinite(prior.scrollY)?prior.scrollY:0);};requestAnimationFrame(()=>requestAnimationFrame(restore));document.querySelectorAll('button[data-command]').forEach(button=>button.addEventListener('click',()=>{const command=button.dataset.command;let value=button.dataset.value||'';if(command==='save-answer'){const card=button.closest('[data-question-id]');vscode.setState({scrollY:window.scrollY,questionId:button.dataset.value||''});value=JSON.stringify({id:button.dataset.value||'',answer:card?.querySelector('[data-answer]')?.value||''});}vscode.postMessage({command,value});}));</script></body></html>`;
 }

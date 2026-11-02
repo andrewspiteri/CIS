@@ -3403,20 +3403,53 @@ internal sealed partial class RepositoryStarterBinder
         Treat import as registration and initialization, not source copying. Never infer product ownership or route writes to a dependency. Do not silently choose a documentation root, import more than 20 repositories in one batch, hand-edit derived `.cis/local/` graph state, invent cross-repository edges, or hide a partial repository result behind an aggregate success claim.
         """;
 
-    private static string CreateGovernBusinessRequirementsSkill() => """
+    private const string SuppliedInputWorkflow = """
+        ## Supplied BRD and Technical Intent
+
+        Use this path when the user supplies an existing BRD, Technical Intent, or both. Load the supplied direction before considering new-document authoring or an unanswered full questionnaire. The graphical wizard is optional; an external agent uses the same CIS services through the CLI.
+
+        Read `.cis/workspace.yml` and identify its product-owned authority repository. If setup is missing, follow `cis-repository-bootstrap`; retain the maintainer-selected documentation root and normal confirmation controls. Locate the installed `cis` command or the launcher documented by that repository. Check `cis definition documents --help`, `cis definition prepare --help`, and `cis definition status --help` for the delivered version.
+
+        Replace the quoted placeholders below with actual values: `<workspace>` is the directory containing `.cis/workspace.yml`; source placeholders are absolute paths to the supplied Markdown files. Load only the supplied roles; a missing role uses its existing governed document or remains a reported prerequisite. CIS copies external source files into the project and preserves the originals.
+
+        Use argument-list process APIs where available. Otherwise follow the active shell's literal-argument quoting rules for paths and authorised text. Never interpolate document contents into command text. Serialize multiline technical-decision resolutions into a UTF-8 JSON file and pass its path through `--input`.
+
+        ```sh
+        cis definition documents --workspace "<workspace>" --role business --source "<absolute-brd.md>" --format json
+        cis definition documents --workspace "<workspace>" --role technical --source "<absolute-technical-intent.md>" --format json
+        cis graph build --workspace "<workspace>" --format json
+        cis definition prepare --workspace "<workspace>" --page technical --format json
+        cis definition status --workspace "<workspace>" --format json
+        ```
+
+        For a document already inside the project, use `definition documents --role <role> --path "<repository-relative-path>"` with the same workspace and JSON options instead of `--source`. Selecting a file and preparing technical direction are domain actions; no prior GUI visit or display-page navigation is required. `definition init` is available to start or resume the domain session, but is not a prerequisite for these commands.
+
+        Inspect `errors`, `warnings`, `pages` and their `complete`/`current`/`issues` fields, `technicalQuestions.questions`, and `readyToActivate`. A successful command can return exit code zero while review or adoption remains incomplete. Source-derived fields retain `resolutionSource` and `evidence`: `selected-document` is working direction pending baseline adoption; `accepted-document` is accepted source authority. The coordinator's `definition status` is the working-draft projection. A direct `technical-intent questions status` outside setup can intentionally show unadopted source passages as suggestions; this does not create a need to transcribe them again.
+
+        Reuse supplied requirements and settled facts, including supported prose, lists, tables and identified headings. CIS owns interpretation and stable internal identities; the ordinary load path does not require a layout-mapping JSON file or a rewritten source. Treat an import diagnostic as an affected-source problem, a contradiction as a focused conflict retaining both sources, and only a necessary unresolved decision as a question. Preserve other resolved fields. Optional scope marked `Not requested` records neither an exclusion nor an invented implementation choice.
+
+        For a genuinely unresolved technical item, use the [authorised-answer procedure](../cis-govern-technical-intent/SKILL.md#supplied-direction-and-authorised-answers). Read its current context and revision token where provided, obtain the user's actual decision, and save only that explicitly authorised answer. An actor name is provenance, not permission to decide. Baseline adoption and approval remain explicit governed actions; loading or preparing inputs grants no approval.
+
+        Resume from a new agent process with `cis definition status --workspace "<workspace>" --format json`, then repeat `definition prepare --page technical` when its diagnostics require reconciliation. Read and update state through CIS operations; preserve source files, managed metadata, approval hashes and recorded decisions.
+        """;
+
+
+    private static string CreateGovernBusinessRequirementsSkill() => $$"""
         ---
         name: cis-govern-business-requirements
-        description: Discover possible BRDs, domain-equivalent product-design documents such as GDDs, and development feature specifications, create or reconcile the canonical workspace business requirements document, assess and trace source evidence, validate completeness and drift, and present approval readiness. Use for BRD intake, product-design intake, feature-spec absorption, review, currency checks, or workspace business-requirement governance.
+        description: Load a supplied BRD or BRD/Technical Intent pair through the CIS CLI before new-document authoring; discover possible BRDs, domain-equivalent product-design documents and feature specifications, reconcile canonical requirements, assess source evidence, and validate completeness, currency and approval readiness.
         ---
 
         # Govern Business Requirements
+
+        {{SuppliedInputWorkflow}}
 
         ## Workflow
 
         1. Confirm `.cis/workspace.yml` identifies one ecosystem, one product, and exactly one product-owned `authority` repository. If not, dry-run `cis workspace init --root <documentation-root> --ecosystem <id> --product <id>` and request review before using `--yes`.
         2. Run `cis graph build --workspace <workspace>` and `cis graph status --workspace <workspace>` before intake. Reserve `cis graph validate --workspace <workspace>` for deep structural assurance.
         3. Run `cis brd discover --workspace <workspace> --format agent`. Treat every found BRD, product-design document such as a GDD, or feature specification in product-owned repositories as unverified source evidence; absence creates no implied requirements. Exclude dependency repositories because their requirements belong to another product authority.
-        4. Run `cis brd init --workspace <workspace> --title <title>`. Preserve the authority repository's canonical document and catalog entry. For imported layouts, distinguish unmatched headings from absent business content. Preview an explicit heading map with `cis brd layout --workspace <workspace> --input <layout.json> --format json`; inspect the selected sections and requirement IDs before applying with `--yes --review-hash <preview-reviewHash>`. Preserve the authored narrative. Keep Open questions in its canonical question/answer workflow; do not map a future activation register to it or infer that no unresolved questions remain. Rebuild, reconcile, rebuild and validate after applying a map.
+        4. For a supplied BRD, use the supplied-input path above and inspect its interpretation. Run `cis brd init --workspace <workspace> --title <title>` only when a genuinely new canonical BRD is required. Preserve the authority repository's document, narrative, stable identities and catalog entry. Existing `cis brd layout` remains an advanced diagnostic for an explicit unsupported mapping case; it is not the ordinary import prerequisite. Keep Open questions in its existing answer workflow and preserve genuine unresolved decisions.
         5. To delegate the initial draft, select explicit non-sensitive plain-text or Word Open XML (`.docx`) references and run `cis agent author brd --reference <file> --provider <provider> --actor <human>`. Word text extraction is bounded and does not execute embedded content. Review the one-file result; agent drafting cannot alter frontmatter or managed blocks and grants no approval.
         6. After implementation graph rebuilds, run `cis technical-intent refresh --workspace <workspace> --format agent` before starting the next feature. Do not request renewed BRD, technical-intent, or backlog approval when this safe refresh succeeds. If its BRD stage blocks on new or materially changed source evidence, use `cis brd reconcile --workspace <workspace> --format agent`, review the exact semantic delta, and request only the authority that delta requires.
         7. Review every source row. Set Assessment to `Adopted`, `Reference`, or `Rejected` and record rationale. For an Adopted feature specification, incorporate its business intent into the relevant BRD sections and cite its `BRD-SRC-*` ID in Traceability.
@@ -3429,7 +3462,7 @@ internal sealed partial class RepositoryStarterBinder
         14. Present validation errors, warnings, participant baseline drift, unresolved sources, unanswered questions, independent-review findings, and approval readiness to the user.
         15. Run `cis brd approve --reviewer <human> --reason <rationale>` only after the user explicitly authorizes that exact approval. Rebuild the authority graph after approval.
         16. After technical intent is Active/current, run `cis solution-design init`. Review and approve the overall architecture and component sheet as one bundle; UI-facing design follows as a distinct stage within those boundaries.
-        17. After the solution-design bundle is Active/current, capture and approve high-level UI direction through `cis ui-direction questions init`, `cis ui-direction init`, validation, and explicit human approval. Then run `cis brd backlog build`. Accept governed functional requirements expressed as canonical `BRD-FR-*` table rows or bold `BR-FR-*` narrative bullets; do not rewrite or reapprove the BRD solely to change between those presentation forms. Route only to product-owned participants, or to the authority when it is the sole owned greenfield repository. Never route implementation to dependencies. Review one-to-one functional-requirement coverage, normalized `HLT-FR-*` identities, repository routing, frontend types, dependencies, and global obligations, then validate and present approval readiness.
+        17. After the solution-design bundle is Active/current, capture and approve high-level UI direction through `cis ui-direction questions init`, `cis ui-direction init`, validation, and explicit human approval. Then run `cis brd backlog build`. Consume CIS's effective requirement interpretation, including supported canonical tables, prose, plain or numbered bullets, unbolded identified paragraphs and identified headings. Preserve existing identities and CIS-generated stable identities; presentation changes do not create new business decisions. Follow the existing source-version adoption controls. Route only to product-owned participants, or to the authority when it is the sole owned greenfield repository. Never route implementation to dependencies. Review functional-requirement coverage, repository routing, frontend types, dependencies, and global obligations, then validate and present approval readiness.
         18. Run `cis brd backlog approve --reviewer <human> --reason <rationale>` only with explicit authority. An approved high-level item may then become a feature specification; it is not an implementation task.
         19. Start only a dependency-ready item with `cis brd backlog start --item <HLT-ID>`. Expand the generated scaffold manually or through `cis agent author feature --item <HLT-ID> --provider <provider> --actor <human>`, then run `cis brd feature validate --item <HLT-ID>` until it is Ready for Approval.
         20. Present the exact feature scope, validation result, and approval rationale. Run `cis brd feature approve --item <HLT-ID> --reviewer <human> --reason <rationale>` only with explicit human authority.
@@ -3440,20 +3473,66 @@ internal sealed partial class RepositoryStarterBinder
         Never infer currency from file existence, choose source or review-finding dispositions, claim semantic absorption without updating BRD content and traceability, invent business requirements, approve on a user's behalf, or describe Review Required, Ready for Approval, or Stale content as Active. Agents cannot accept, reject, or approve findings. Do not edit managed candidate IDs, approval hashes, source hashes, baseline rows, review-disposition blocks, or block markers. CIS may mark an approved BRD, backlog, or feature Stale from content/evidence drift; only explicit human approval may restore Active status. Feature approval accepts scope but never authorizes implementation.
         """;
 
-    private static string CreateGovernTechnicalIntentSkill() => """
+    private const string SuppliedTechnicalInputWorkflow = """
+        ## Supplied direction and authorised answers
+
+        When the user supplies an existing Technical Intent, BRD, or pair, first follow [Supplied BRD and Technical Intent](../cis-govern-business-requirements/SKILL.md#supplied-brd-and-technical-intent). Use `definition documents` and `definition prepare --page technical` before authoring a replacement or starting a full questionnaire. The graphical wizard is optional. In setup, inspect `definition status --format json` so selected working facts remain visible with their pending-adoption provenance.
+
+        After inspection identifies a genuine unresolved item, record only the decision explicitly authorised by the named human. The following examples use replacement placeholders; `<workspace>` identifies the authority workspace.
+
+        For a `TI-Q-*` factual choice, read the current `technicalQuestions.questions` context and source evidence in definition status, then use:
+
+        ```sh
+        cis definition answer --workspace "<workspace>" --page technical --id "<TI-Q-ID>" --answer "<authorised answer>" --actor "<human decision-maker>" --format json
+        cis definition status --workspace "<workspace>" --format json
+        ```
+
+        This questionnaire operation has no revision-token option. Use the latest status and review any source conflict it returns; the answer does not silently amend an authoritative document.
+
+        For a `TI-DEC-*` document decision, read the current `pages` entry whose `id` is `technical`, then `guidance.technicalDecisions`; alternatively inspect `cis technical-intent status --workspace "<workspace>" --format json` at `validation.decisions`. Review the selected item's context, affected scope and `reviewToken`. Write a small UTF-8 input file outside CIS-managed state with the authorised resolution and that exact token:
+
+        ```json
+        {
+          "resolution": "<authorised resolution>",
+          "reviewToken": "<current reviewToken>",
+          "reason": "<human-provided rationale, when supplied>"
+        }
+        ```
+
+        `reason` is optional; omit it when no separate rationale was supplied. Submit the file through the existing revision-bound operation:
+
+        ```sh
+        cis technical-intent decisions resolve "<TI-DEC-ID>" --input "<decision-answer.json>" --actor "<human decision-maker>" --workspace "<workspace>" --format json
+        cis definition prepare --workspace "<workspace>" --page technical --format json
+        cis definition status --workspace "<workspace>" --format json
+        ```
+
+        A stale token returns a conflict without saving the decision. Re-read the current item and its relevant changes before requesting or recording renewed authority. Saving a resolution preserves its actor and provenance and does not approve the Technical Intent. Reopening uses the same workspace and persistent state; do not edit managed JSON, frontmatter or session records to progress.
+
+        Inspect structured readiness and errors as well as the command exit code. Imported working direction, accepted facts, unresolved choices, source conflicts and required baseline adoption remain distinct. Direct low-level status after adoption remains useful for domain diagnostics; selected working facts outside the coordinator retain their unadopted status.
+        """;
+
+
+    private static string CreateGovernTechnicalIntentSkill() => $$"""
         ---
         name: cis-govern-technical-intent
-        description: Capture high-level technical choices, then initialize, review, approve, or recheck the canonical workspace technical intent derived from an Active BRD, questionnaire, standards, classifications, and exact graph baselines. Use after BRD approval and before change-dossier creation or bounded planning.
+        description: Load supplied Technical Intent through the CIS CLI, reuse interpreted source facts, record explicitly authorised answers with applicable revision checks, and initialize, review or approve governed technical direction. Use for supplied technical inputs and after BRD approval before change planning.
         ---
 
         # Govern Technical Intent
 
+        {{SuppliedTechnicalInputWorkflow}}
+
         ## Workflow
 
+        Use the supplied-input procedure above when documents are provided. Implementation discovery fills an evidence gap; it does not replace supplied authoritative direction.
+
+        Apply the ordinary generation and approval prerequisites below after interpreting supplied inputs. Inspecting selected working direction through the coordinator does not require prior baseline approval.
+
         1. Confirm `cis brd status --workspace <workspace>` reports Active, valid, and current.
-        2. Run `cis technical-intent questions init`. For an existing implementation, retain evidence-supported `Derived` answers with confidence and provenance; present only unresolved or intentionally overridden choices for human input. For a greenfield project, present the complete `TI-Q-*` set. Record each human answer with `cis technical-intent questions answer`; advisory directions are not answers.
+        2. With supplied documents, first use the input path above and reuse their interpreted facts. Otherwise run `cis technical-intent questions init`. Retain source-derived and implementation-derived answers with provenance; present only necessary unresolved choices or explicit overrides for human input, including in greenfield projects. Record each authorised human answer through the existing questionnaire operation; advisory directions remain suggestions.
         3. Build and strictly validate the workspace graph.
-        4. Run `cis technical-intent init --workspace <workspace> --format agent` to generate or reconcile the deterministic scaffold from the completed questionnaire, Active BRD, classifications, standards, and graph builds.
+        4. Run `cis technical-intent init --workspace <workspace> --format agent` to interpret a selected supplied intent or generate a genuinely new scaffold from the completed questionnaire, Active BRD, classifications, standards, and graph builds. A supplied intent does not require the user to transcribe its settled facts into the questionnaire before interpretation; required adoption remains governed.
         5. Review the generated choices, component map, BRD-derived `TI-MOD-*` module tree and responsibility profiles, `TI-INT-*` integration-point catalog, business baseline, technical surface, standard provenance, and architecture guidelines without broadening the BRD or silently contradicting a human answer.
         6. Confirm that each business capability has one owning module; each module states purpose, BRD coverage, owned and excluded responsibilities, inputs, outputs, data/state, security, failure/recovery, and verification. Merge or split candidates only with preserved requirement traceability and explicit ownership migration.
         7. Confirm every cross-module, external-system, identity, persistence, model, event/file, operator, and runtime handoff records owner, direction, contract/data, authentication and authorization, compatibility, consistency, idempotency, timeout/retry, failure/recovery, observability, and test expectations. Exact endpoints and schemas belong in linked canonical reference dictionaries.
@@ -3980,7 +4059,8 @@ internal sealed partial class RepositoryStarterBinder
         "- When onboarding or reconciling a repository, use `.github/skills/cis-repository-bootstrap/SKILL.md`; import existing source and initialize only a genuinely new empty project.\n" +
         "- When importing one or several existing repositories, use `.github/skills/cis-import-repositories/SKILL.md`; declare product ownership or directional dependency scope and dry-run the complete selection before confirmation.\n" +
         "- For BRD intake or currency review, use `.github/skills/cis-govern-business-requirements/SKILL.md`; discovery never proves currency and approval is human-only.\n" +
-        "- After BRD approval and before change dossiers, use `.github/skills/cis-govern-technical-intent/SKILL.md`; technical decisions and approval remain human-authority actions.\n" +
+        "- When the user supplies an existing BRD, Technical Intent, or pair, follow that skill's supplied-input CLI procedure before new-document authoring or a full questionnaire. The graphical wizard is optional; the same persisted workflow is available through `definition documents`, `definition prepare` and `definition status`.\n" +
+        "- For technical input and authorised `TI-Q-*` or revision-bound `TI-DEC-*` answers, use `.github/skills/cis-govern-technical-intent/SKILL.md`; source facts, working drafts and human decisions retain distinct authority.\n" +
         "- Run `cis repo import` for existing source or `cis repo init` for a new empty project with an explicit maintainer-selected `--root`; product authority also requires explicit `--ecosystem` and `--product`, while imports require `--participation` and `--relationship`. If onboarding returns an error or collision, run `cis repo doctor` with the same `--repo` and `--root`.\n" +
         "- Read `.cis/repository.yml` before repository-wide work.\n" +
         "- Apply `.github/instructions/cis-engineering-assurance.instructions.md` for security, layered testing, browser regression, contracts, evidence, scaffolding and runtime diagnostics; preserve stronger project-specific requirements.\n" +
@@ -4064,6 +4144,7 @@ internal sealed partial class RepositoryStarterBinder
         # CIS business requirements authority
 
         - The canonical BRD belongs only to the repository registered with workspace role `authority`.
+        - For a supplied BRD or BRD/TI pair, first use the headless supplied-input procedure in `.github/skills/cis-govern-business-requirements/SKILL.md`. CIS imports supported source layouts and retains their meaning; normal intake requires neither a graphical wizard nor hand-authored layout mapping. Inspect structured import diagnostics and genuine questions before considering a replacement draft.
         - Treat BRDs, domain-equivalent product-design documents such as GDDs, and development feature specifications found in product-owned repositories as source evidence until a human assesses each source row. Dependency documents belong to another product authority and are excluded.
         - File existence, deterministic extraction, graph freshness, or agent review never proves business currency.
         - Complete business outcomes, scope, actors, capabilities, requirements, constraints, success measures, traceability, and open questions through human review.
@@ -4112,10 +4193,11 @@ internal sealed partial class RepositoryStarterBinder
         # CIS technical intent authority
 
         - The workspace authority owns one canonical product-scoped technical intent; participant repositories retain repository-scoped supporting intent documents.
-        - An Active/current BRD, completed/current governed technical questionnaire, and fresh product-owned participant graphs are required before technical-intent initialization or approval.
+        - For supplied direction, follow `.github/skills/cis-govern-technical-intent/SKILL.md` and its linked supplied-input procedure before authoring or questionnaire generation. Use `definition status --format json` for selected working facts pending baseline adoption; the graphical wizard is optional.
+        - Preserve the applicable BRD, graph and approval prerequisites. Interpret a selected supplied intent before assessing its factual questionnaire; a completed questionnaire remains the generation prerequisite when no supplied intent exists. Baseline adoption and downstream approval controls remain required.
         - Infer product frameworks, architecture, databases, and modules only from product-owned repositories. Record dependency repositories as directional integration points with declared component scope; never absorb their implementation choices as product direction or route writes to them.
-        - Existing implementations derive only evidence-supported technical facts with confidence and repository provenance; ambiguous choices remain human questions. Greenfield projects require human answers for every direction. Advisory starting directions become authority only through an explicit human answer.
-        - Initialization creates a Draft from questionnaire answers, the BRD, classifications, graph, and Active standards, including logical components, BRD-derived product modules, detailed responsibility profiles, and stable integration points.
+        - Reuse explicit source-derived facts and evidence-supported implementation facts with their provenance. Only necessary unresolved choices require human input, including in greenfield projects. Selected working facts remain pending adoption; advisory directions become decisions only through explicit human authority.
+        - Initialization interprets selected supplied direction or creates a genuinely new Draft from questionnaire answers, the BRD, classifications, graph, and Active standards, including logical components, BRD-derived product modules, detailed responsibility profiles, and stable integration points. Preserve supplied narrative and source-linked facts.
         - Review every `TI-MOD-*` candidate against the module completeness fields: purpose, BRD authority, ownership and exclusions, inputs, outputs, data/state, security/policy, failure/recovery, and verification. Do not equate a module with a deployable unless topology requires it.
         - Review every `TI-INT-*` handoff for source, trigger, target, contract/data, delivery/consistency, trust/authorization, failure/recovery, observability, compatibility, and test evidence. Refine exact operations in the owning API, event, permission, data, or operational reference dictionary.
         - Preserve the baseline, business, questionnaire, component-map, module-architecture, integration-point, technical-surface, standards, and decision-evidence markers, their source digests, stable identity, schema, and approval digest.

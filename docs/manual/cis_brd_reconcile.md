@@ -42,6 +42,20 @@ approved feature supplied the evidence.
 
 ## Development workflow
 
+For a BRD selected through **Load existing documents**, reconciliation preserves the
+authored text and retains a backup before adding CIS metadata. Requirements can use
+plain or numbered lists, prose with explicit obligations, tables, unbolded IDs, or
+identified requirement headings. Populated equivalent sections are read even when
+the canonical heading is empty; supported layouts need no mapping JSON. Existing IDs
+are retained. Requirements without IDs receive deterministic identities based on
+their complete wording, independent of list markers and section order.
+
+Unreadable text, incomplete Markdown blocks and ambiguous duplicate identities are
+import problems. CIS retains the source and reports the problem instead of inferring
+a missing business decision. The complete selected text is read within the 20 MiB
+source limit. Importing and interpreting a source does not approve it; source-version
+adoption and changed-content approval checks still apply.
+
 Reconciliation retains managed baseline, source-assessment and adopted-feature traceability
 data inside reversible HTML comments. Standard metadata headings are hidden too. Source
 values and assessments remain available to CIS and Markdown-source readers. Moving this

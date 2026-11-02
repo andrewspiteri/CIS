@@ -7,7 +7,8 @@ const { renderTechnicalDecisionForm } = require('./technical-decision-form');
 function renderTechnicalPage(root, page, model, action, renderQuestions) {
   const questionnaire = model.technicalQuestions;
   const questions = questionnaire?.questions || [];
-  const resolved = questions.filter(question => ['answered', 'derived'].includes(String(question.status).toLowerCase())).length;
+  const resolved = questions.filter(question => ['answered', 'derived'].includes(String(question.status).toLowerCase())
+    || question.status === 'Not requested' && ['scope-not-requested', 'selected-scope-not-requested'].includes(question.resolutionSource) && question.answer == null).length;
   const answersReady = questionnaire?.complete && questionnaire?.current;
   const decisions = [...(page.guidance?.technicalDecisions || [])].sort((a, b) => Number(b.needsReview) - Number(a.needsReview) || a.id.localeCompare(b.id));
   const pending = decisions.filter(decision => decision.needsReview).length;

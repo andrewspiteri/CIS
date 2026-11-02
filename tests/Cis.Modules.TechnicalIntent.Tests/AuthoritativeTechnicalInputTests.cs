@@ -173,6 +173,212 @@ No open technical decisions remain. All technical choices are closed for the cur
         Assert.NotEqual(0, result.ExitCode);
     }
 
+    [Theory]
+    [InlineData("TI-Q-008", "Clients may connect over HTTP or gRPC.")]
+    [InlineData("TI-Q-003", "The backend may be .NET or Java.")]
+    public void ImportedAuthority_ClaudeReviewTentativeAlternativesRemainUnresolved(string id, string direction)
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true, includeImplementation: false, completeQuestionnaire: false);
+        SelectTechnicalDirection(environment, SuppliedTechnicalDirection + "\n\n#### Candidate direction\n\n" + direction + "\n");
+        AdoptTechnicalDirection(environment);
+
+        var result = environment.Questionnaire.Initialize(environment.Authority.Path);
+        var question = result.Questions.Single(item => item.Id == id);
+
+        Assert.Equal("Unanswered", question.Status);
+        Assert.Contains(direction, question.SuggestedAnswer, StringComparison.Ordinal);
+        Assert.False(result.Complete);
+    }
+
+    [Theory]
+    [InlineData("| Persistence | PostgreSQL 16 |")]
+    [InlineData("| Primary database | PostgreSQL | Testing team |")]
+    public void ImportedAuthority_ClaudeReviewExtendedStoreRowsDeriveAndParticipateInConflicts(string row)
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true, includeImplementation: false, completeQuestionnaire: false);
+        var path = SelectTechnicalDirection(environment, SuppliedTechnicalDirection.Replace(
+            "| Persistence | The primary data store is PostgreSQL. |", row, StringComparison.Ordinal));
+        AdoptTechnicalDirection(environment);
+
+        var questions = environment.Questionnaire.Initialize(environment.Authority.Path);
+        var store = questions.Questions.Single(item => item.Id == "TI-Q-006");
+        Assert.Equal("Derived", store.Status);
+        Assert.Contains(row, store.Answer, StringComparison.Ordinal);
+        Assert.True(questions.Complete);
+        Assert.True(environment.Intent.Evaluate(environment.Authority.Path).Ready);
+
+        File.WriteAllText(path, File.ReadAllText(path) + "\n\n#### Current persistence\n\n| Persistence | SQLite 3 | Data team |\n");
+        var conflicting = environment.Intent.Initialize(environment.Authority.Path);
+        Assert.NotEqual(0, conflicting.ExitCode);
+        Assert.Contains(conflicting.Errors, error => error.Contains("Authoritative input conflict", StringComparison.Ordinal)
+            && error.Contains(row, StringComparison.Ordinal) && error.Contains("| Persistence | SQLite 3 | Data team |", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ImportedAuthority_ClaudeReviewAlternativeStoreRowCannotHideBehindSettledDirection()
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true, includeImplementation: false, completeQuestionnaire: false);
+        const string alternatives = "| Persistence | PostgreSQL or SQLite |";
+        SelectTechnicalDirection(environment, SuppliedTechnicalDirection + "\n\n#### Current persistence choice\n\n" + alternatives + "\n");
+        AdoptTechnicalDirection(environment);
+
+        var result = environment.Questionnaire.Initialize(environment.Authority.Path);
+        var question = result.Questions.Single(item => item.Id == "TI-Q-006");
+
+        Assert.Equal("Unanswered", question.Status);
+        Assert.Contains(alternatives, question.SuggestedAnswer, StringComparison.Ordinal);
+        Assert.DoesNotContain(result.Errors, error => error.Contains("Authoritative input conflict", StringComparison.Ordinal));
+        Assert.False(environment.Intent.Evaluate(environment.Authority.Path).Ready);
+    }
+
+    [Theory]
+    [InlineData("Persistence", "Deferred to phase 2 migration")]
+    [InlineData("Database", "Local cache only")]
+    [InlineData("Database", "Tests only")]
+    public void ImportedAuthority_ClaudeReviewExtendedStoreRowsRetainQualifyingNotes(string subject, string note)
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true, includeImplementation: false, completeQuestionnaire: false);
+        var row = $"| {subject} | SQLite | {note} |";
+        SelectTechnicalDirection(environment, SuppliedTechnicalDirection + "\n\n#### Store qualifications\n\n" + row + "\n");
+
+        var imported = environment.Intent.Initialize(environment.Authority.Path);
+
+        Assert.Equal(0, imported.ExitCode);
+        Assert.DoesNotContain(imported.Errors, error => error.Contains("Authoritative input conflict", StringComparison.Ordinal));
+        Assert.Equal(0, environment.Intent.Approve(environment.Authority.Path, "Technical owner", "Preserve the current store and the qualified supporting detail.").ExitCode);
+        var result = environment.Questionnaire.Initialize(environment.Authority.Path);
+        var question = result.Questions.Single(item => item.Id == "TI-Q-006");
+        Assert.Equal("Derived", question.Status);
+        Assert.Contains("PostgreSQL", question.Answer, StringComparison.Ordinal);
+        Assert.Contains(row, question.Answer, StringComparison.Ordinal);
+        Assert.True(result.Complete);
+        Assert.True(environment.Intent.Evaluate(environment.Authority.Path).Ready);
+    }
+
+    [Fact]
+    public void ImportedAuthority_ClaudeReviewQualifiedStoreNotesDoNotChooseTheCurrentPrimaryStore()
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true, includeImplementation: false, completeQuestionnaire: false);
+        const string notes = """
+            | Persistence | SQLite | Deferred to phase 2 migration |
+            | Database | SQLite | Local cache only |
+            | Database | SQLite | Tests only |
+            """;
+        SelectTechnicalDirection(environment, SuppliedTechnicalDirection.Replace(
+            "| Persistence | The primary data store is PostgreSQL. |\n", "", StringComparison.Ordinal)
+            + "\n\n#### Store qualifications\n\n" + notes + "\n");
+        AdoptTechnicalDirection(environment);
+
+        var result = environment.Questionnaire.Initialize(environment.Authority.Path);
+        var question = result.Questions.Single(item => item.Id == "TI-Q-006");
+
+        Assert.Equal("Unanswered", question.Status);
+        Assert.Null(question.Answer);
+        Assert.All(notes.Split('\n'), row => Assert.Contains(row.Trim(), question.SuggestedAnswer, StringComparison.Ordinal));
+        Assert.False(result.Complete);
+        Assert.False(environment.Intent.Evaluate(environment.Authority.Path).Ready);
+    }
+
+    [Fact]
+    public void ImportedAuthority_ClaudeReviewStoreCellPreservesEachSentenceScope()
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true, includeImplementation: false, completeQuestionnaire: false);
+        const string row = "| Persistence | Use PostgreSQL in production. Use SQLite for tests. |";
+        SelectTechnicalDirection(environment, SuppliedTechnicalDirection.Replace(
+            "| Persistence | The primary data store is PostgreSQL. |", row, StringComparison.Ordinal));
+
+        var imported = environment.Intent.Initialize(environment.Authority.Path);
+
+        Assert.Equal(0, imported.ExitCode);
+        Assert.DoesNotContain(imported.Errors, error => error.Contains("Authoritative input conflict", StringComparison.Ordinal));
+        Assert.Equal(0, environment.Intent.Approve(environment.Authority.Path, "Technical owner", "Preserve the different production and testing stores.").ExitCode);
+        var result = environment.Questionnaire.Initialize(environment.Authority.Path);
+        Assert.Equal("Derived", result.Questions.Single(item => item.Id == "TI-Q-006").Status);
+        Assert.Contains(row, result.Questions.Single(item => item.Id == "TI-Q-006").Answer, StringComparison.Ordinal);
+        Assert.True(result.Complete);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ImportedAuthority_ClaudeReviewGeneralServicesDoNotCreateDatastoreScope(bool businessHeading)
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true, includeImplementation: false, completeQuestionnaire: false,
+            businessCapabilities: businessHeading ? "Support follow-up consultations.\n\n## Additional services\n\nCustomers can book a follow-up consultation." : null);
+        var content = SuppliedTechnicalDirection.Replace(
+            "| Supporting stores | No cache, search index, message broker, or object storage is required. |\n", "", StringComparison.Ordinal);
+        if (!businessHeading) content += "\n\n#### Supporting services\n\nThe auxiliary application service sends appointment reminders.\n";
+        SelectTechnicalDirection(environment, content);
+        AdoptTechnicalDirection(environment);
+        var questionnairePath = Path.Combine(environment.Authority.Path, "docs/specs/technical-intent-questionnaire.md");
+        File.Delete(questionnairePath);
+
+        var result = environment.Questionnaire.Initialize(environment.Authority.Path);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal("Not requested", result.Questions.Single(item => item.Id == "TI-Q-007").Status);
+        Assert.True(result.Complete);
+        Assert.True(File.Exists(questionnairePath));
+    }
+
+    [Theory]
+    [InlineData("It is rebuilt nightly from the system of record.")]
+    [InlineData("- Owned by the data team.")]
+    public void ImportedAuthority_ClaudeReviewSupportingCategoryRetainsCompatibleContext(string detail)
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true, includeImplementation: false, completeQuestionnaire: false);
+        SelectTechnicalDirection(environment, SuppliedTechnicalDirection.Replace(
+            "| Supporting stores | No cache, search index, message broker, or object storage is required. |\n", "", StringComparison.Ordinal)
+            + "\n\n#### Supporting data services\n\nA graph database is required.\n\n" + detail + "\n");
+        AdoptTechnicalDirection(environment);
+
+        var result = environment.Questionnaire.Initialize(environment.Authority.Path);
+        var question = result.Questions.Single(item => item.Id == "TI-Q-007");
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal("Derived", question.Status);
+        Assert.Contains("A graph database is required.", question.Answer, StringComparison.Ordinal);
+        Assert.Contains(detail, question.Answer, StringComparison.Ordinal);
+        Assert.Equal(2, question.Evidence!.Count(evidence => evidence.Contains("Supporting data services", StringComparison.Ordinal)));
+        Assert.True(result.Complete);
+    }
+
+    [Fact]
+    public void ImportedAuthority_ClaudeReviewRecognizedCategoryStillNeedsExplicitDirection()
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true, includeImplementation: false, completeQuestionnaire: false);
+        const string tentative = "We might need a graph database.";
+        SelectTechnicalDirection(environment, SuppliedTechnicalDirection.Replace(
+            "| Supporting stores | No cache, search index, message broker, or object storage is required. |\n", "", StringComparison.Ordinal)
+            + "\n\n#### Supporting data services\n\n" + tentative + "\n");
+        AdoptTechnicalDirection(environment);
+
+        var result = environment.Questionnaire.Initialize(environment.Authority.Path);
+        var question = result.Questions.Single(item => item.Id == "TI-Q-007");
+
+        Assert.Equal("Unanswered", question.Status);
+        Assert.Null(question.Answer);
+        Assert.Contains(tentative, question.SuggestedAnswer, StringComparison.Ordinal);
+        Assert.DoesNotContain(result.Errors, error => error.Contains("Input import problem", StringComparison.Ordinal));
+        Assert.False(result.Complete);
+    }
+
+    [Fact]
+    public void ImportedAuthority_ClaudeReviewSeparateCategoryOccurrenceCannotHideUninterpretableDirection()
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true, includeImplementation: false, completeQuestionnaire: false);
+        var content = SuppliedTechnicalDirection.Replace(
+            "| Supporting stores | No cache, search index, message broker, or object storage is required. |\n", "", StringComparison.Ordinal)
+            + "\n\n#### Supporting data services\n\nA graph database is required.\n\n#### Supporting data services\n\nSee the attached table for the selected service.\n";
+        SelectTechnicalDirection(environment, content);
+        using var scope = CisDefinitionDraftScope.Enter();
+
+        var result = environment.Questionnaire.Initialize(environment.Authority.Path);
+
+        Assert.Equal("Import problem", result.Questions.Single(item => item.Id == "TI-Q-007").Status);
+        Assert.Contains(result.Errors, error => error.Contains("See the attached table", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void ImportedAuthority_CompactStoreSourceConflictsWithRecordedHumanAnswer()
     {
@@ -270,21 +476,23 @@ No open technical decisions remain. All technical choices are closed for the cur
         Assert.False(result.Complete);
     }
 
-    [Fact]
-    public void ImportedAuthority_CompactPrimaryStoreAllowsExplicitSupportingRole()
+    [Theory]
+    [InlineData("Use SQLite for a local cache.")]
+    [InlineData("| Persistence | `SQLite 3` as a cache | Data team |")]
+    public void ImportedAuthority_CompactPrimaryStoreAllowsExplicitSupportingRole(string supporting)
     {
         using var environment = WorkspaceEnvironment.Create(approveBrd: true, includeImplementation: false, completeQuestionnaire: false);
         SelectTechnicalDirection(environment, SuppliedTechnicalDirection
             .Replace("| Persistence | The primary data store is PostgreSQL. |", "| Persistence | PostgreSQL |", StringComparison.Ordinal)
             .Replace("| Supporting stores | No cache, search index, message broker, or object storage is required. |\n", "", StringComparison.Ordinal)
-            + "\n\n#### Supporting store\n\nUse SQLite for a local cache.\n");
+            + "\n\n#### Supporting store\n\n" + supporting + "\n");
         AdoptTechnicalDirection(environment);
 
         var result = environment.Questionnaire.Initialize(environment.Authority.Path);
 
         Assert.True(result.Complete, string.Join("\n", result.Errors));
         Assert.Equal("Derived", result.Questions.Single(item => item.Id == "TI-Q-006").Status);
-        Assert.Contains("Use SQLite for a local cache.", result.Questions.Single(item => item.Id == "TI-Q-007").Answer, StringComparison.Ordinal);
+        Assert.Contains(supporting, result.Questions.Single(item => item.Id == "TI-Q-007").Answer, StringComparison.Ordinal);
         Assert.DoesNotContain(result.Errors, error => error.Contains("Authoritative input conflict", StringComparison.Ordinal));
     }
 

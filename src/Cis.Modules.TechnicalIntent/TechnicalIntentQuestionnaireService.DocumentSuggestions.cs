@@ -8,6 +8,8 @@ namespace Cis.Modules.TechnicalIntent;
 
 public sealed partial class TechnicalIntentQuestionnaireService
 {
+    private const string PrimaryStoreValues = "PostgreSQL|SQLite|SQL Server|MySQL|MariaDB";
+
     // Topic routing selects original passages, never a generated recommendation.
     private static readonly IReadOnlyDictionary<string, (string Content, string Heading)> DocumentTopics =
         new Dictionary<string, (string, string)>
@@ -49,9 +51,17 @@ public sealed partial class TechnicalIntentQuestionnaireService
                 if (question.ResolutionSource == "human" && !conflicts.Contains(question.Id)
                     || !DocumentTopics.TryGetValue(question.Id, out var topic)) return question;
                 var chosen = documents.SelectMany(document => document.Passages
-                    .Where(passage => TopicMatches(question.Id, passage, topic))
+                    .Where(passage => TopicMatches(question.Id, passage, topic, document.Technical))
                     .Select(passage => (Document: document, Passage: passage))).ToArray();
-                var accepted = chosen.Where(item => (item.Document.Accepted || item.Document.Working) && IsExplicitDirection(item.Passage)).ToArray();
+                var categories = chosen.Where(item => IsSupportingServiceCategory(question.Id, item.Passage, item.Document.Technical))
+                    .GroupBy(item => (item.Document, item.Passage.HeadingLine)).ToArray();
+                var recognizedCategories = categories.Where(group => group.Any(item => AnswersFactualQuestion(question.Id, item.Passage)))
+                    .Select(group => group.Key).ToHashSet();
+                var explicitCategories = categories.Where(group => group.Any(item => AnswersFactualQuestion(question.Id, item.Passage) && IsExplicitDirection(item.Passage)))
+                    .Select(group => group.Key).ToHashSet();
+                var accepted = chosen.Where(item => (item.Document.Accepted || item.Document.Working)
+                    && !IsUnresolvedDirection(item.Passage)
+                    && (IsExplicitDirection(item.Passage) || explicitCategories.Contains((item.Document, item.Passage.HeadingLine)))).ToArray();
                 var sourceDerived = question.ResolutionSource is "accepted-document" or "selected-document" or "scope-not-requested" or "selected-scope-not-requested";
                 if (chosen.Length == 0)
                 {
@@ -75,9 +85,12 @@ public sealed partial class TechnicalIntentQuestionnaireService
                     return sourceDerived ? UnresolveSourceQuestion(question) : question;
                 }
                 var evidence = chosen.Select(item => $"{item.Document.Path}:{item.Passage.Line} — {item.Passage.Heading} ({item.Document.Digest})").ToArray();
-                var uninterpreted = chosen.Where(item => (item.Document.Selected || item.Document.Accepted)
-                    && IsSupportingServiceCategory(question.Id, item.Passage)
-                    && !AnswersFactualQuestion(question.Id, item.Passage) && !IsUnresolvedDirection(item.Passage)).ToArray();
+                // A recognised category can contain ownership or rebuild details
+                // alongside its service choice. Assess that heading occurrence as
+                // one context, without hiding an unreadable separate occurrence.
+                var uninterpreted = categories.Where(group => !recognizedCategories.Contains(group.Key)
+                    && !group.Any(item => IsUnresolvedDirection(item.Passage))
+                    && group.Any(item => item.Document.Selected || item.Document.Accepted)).SelectMany(group => group).ToArray();
                 if (uninterpreted.Length > 0)
                 {
                     errors.Add($"Input import problem: {question.Id} contains relevant supporting-service direction that could not be safely interpreted: "
@@ -150,7 +163,7 @@ public sealed partial class TechnicalIntentQuestionnaireService
 
     internal static string ImportedDirectionsFor(string content, IReadOnlyList<string> ids)
         => string.Join("\n\n", ReadDocumentPassages(content).Where(passage => ids.Any(id =>
-            DocumentTopics.TryGetValue(id, out var topic) && TopicMatches(id, passage, topic)))
+            DocumentTopics.TryGetValue(id, out var topic) && TopicMatches(id, passage, topic, technical: true)))
             .Select(passage => passage.Text).Distinct(StringComparer.Ordinal));
 
     internal static string ImportedDecisionClosure(string content)
@@ -158,9 +171,9 @@ public sealed partial class TechnicalIntentQuestionnaireService
             @"\b(?:technical\s+)?(?:choices|decisions)\s+(?:are\s+)?(?:now\s+)?closed\b|\bno\s+(?:open|unresolved)\s+technical\s+decisions\b",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))).Select(passage => passage.Text));
 
-    private static bool TopicMatches(string id, DocumentPassage passage, (string Content, string Heading) topic)
+    private static bool TopicMatches(string id, DocumentPassage passage, (string Content, string Heading) topic, bool technical)
         => Regex.IsMatch(passage.Text, topic.Content, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
-           || IsSupportingServiceCategory(id, passage)
+           || IsSupportingServiceCategory(id, passage, technical)
            || Regex.IsMatch(passage.Heading, topic.Heading, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
                && Regex.IsMatch(passage.Text, @"\b(?:Rust|Go|Java|Python|TypeScript|JavaScript|Ruby|PHP|Kotlin|Swift|React|Vue|Angular|Svelte|None)\b",
                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
@@ -168,15 +181,24 @@ public sealed partial class TechnicalIntentQuestionnaireService
     // An unambiguous question-category heading supplies context for its body;
     // recognizing relevant content must not depend on an unrelated framework name.
     // Broad headings such as exclusions still require a topical body match.
-    private static bool IsSupportingServiceCategory(string id, DocumentPassage passage)
-        => id == "TI-Q-007" && Regex.IsMatch(passage.Heading,
-            @"\b(?:supporting|additional)\s+(?:data\s+)?(?:services?|stores?)\b",
+    private static bool IsSupportingServiceCategory(string id, DocumentPassage passage, bool technical)
+        => technical && id == "TI-Q-007" && Regex.IsMatch(passage.Heading,
+            @"\b(?:supporting|additional)\s+(?:data\s+services?|(?:data\s+)?stores?)\b",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
 
     private static bool IsUnresolvedDirection(DocumentPassage passage)
-        => Regex.IsMatch(Regex.Replace(passage.Text, @"\b(?:no|without)\s+(?:open|unresolved)\b|\bmay not\b", "", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)),
-            @"\b(?:TODO|TBD|unresolved|undecided|to be decided|under consideration|proposed|recommend(?:ed|ation)?|consider using)\b|\b(?:may|could)\s+(?:use|adopt|choose|select|run|deploy|become|be\s+(?:used|adopted|chosen|selected|required))\b|\?",
+    {
+        var text = Regex.Replace(passage.Text, @"\b(?:no|without)\s+(?:open|unresolved)\b|\bmay not\b", "",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        // An optional payload permission is compatible with a settled transport.
+        // Other tentative language, including elsewhere in this passage, remains.
+        text = Regex.Replace(text, @"\bmay\s+(?:send|include|provide)\s+(?:(?:an?|the)\s+)?optional\b", "",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        return Regex.IsMatch(text,
+            @"\b(?:TODO|TBD|unresolved|undecided|to be decided|under consideration|proposed|recommend(?:ed|ation)?|consider using|may|could)\b|\?",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
+            || HasPrimaryStoreAlternatives(ReadPrimaryStoreRow(passage.Text));
+    }
 
     private static bool AnswersFactualQuestion(string id, DocumentPassage passage)
     {
@@ -303,22 +325,69 @@ public sealed partial class TechnicalIntentQuestionnaireService
     // One bounded scalar interpretation is used for source derivation and for
     // comparison with recorded answers. Scope qualifications still control
     // whether an otherwise recognized claim can contradict another claim.
+    private static Match ReadPrimaryStoreRow(string text)
+        => Regex.Match(text,
+            @"^\s*\|\s*(?:primary (?:database|data store|transactional store)|system of record|database|datastore|persistence)\s*\|\s*(?<direction>[^|]+)(?:\|(?<notes>.*)|$)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+
+    private static bool HasPrimaryStoreAlternatives(Match row)
+        => row.Success && Regex.IsMatch(row.Groups["direction"].Value,
+            @"\b(?:" + PrimaryStoreValues + @")\b`?(?:\s+\d[\w.+-]*`?)?\s+(?:or|versus|vs\.?)\s+`?(?:" + PrimaryStoreValues + @")\b",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+
+    private static IReadOnlyList<string> ReadPrimaryStoreNotes(Match row)
+        => row.Success ? Regex.Split(row.Groups["notes"].Value, @"(?<!\\)\|")
+            .Select(cell => cell.Trim().Trim('`').Trim()).Where(cell => cell.Length > 0).ToArray() : [];
+
+    private static bool IsDeferredStoreNote(string note)
+        => Regex.IsMatch(note,
+            @"\A(?:deferred\s+(?:to|until)\s+(?:phase\s*[2-9]\b|(?:a\s+)?later\s+phase\b)|(?:only\s+(?:for|in)\s+)?phase\s*[2-9]\b|(?:for\s+)?(?:migration|adapter)\s+only\b|future\s+(?:option|phase|work)\b)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+
+    private static bool IsSupportingStoreNote(string note)
+        => Regex.IsMatch(note,
+            @"\A(?:(?:local\s+)?(?:cache|search index|analytics|supporting store)\s+only|(?:used\s+)?(?:as|for)\s+(?:(?:a|an|the|local)\s+)*(?:cache|search index|analytics|supporting store)(?:\s+only)?)(?:[.;:(]|\z)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+
+    private static string PrimaryStoreNoteScope(string note)
+    {
+        var scope = Regex.Match(note,
+            @"\A(?:(?:for|in)\s+)?(?<scope>production|testing|tests?|development)(?:\s+only)?(?:[.;:(]|\z)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)).Groups["scope"].Value.ToLowerInvariant();
+        return scope is "test" or "tests" ? "testing" : scope;
+    }
+
     private static IEnumerable<(string Value, string Scope, string Text)> ReadPrimaryStoreClaims(DocumentPassage passage, bool forConflict = false)
     {
-        const string values = "PostgreSQL|SQLite|SQL Server|MySQL|MariaDB";
-        foreach (var statement in Regex.Split(passage.Text, @"(?<=[.!?])\s+|\r?\n(?=\s*(?:[-*+]|\d+[.)])\s)", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
+        const string values = PrimaryStoreValues;
+        // Parse the row before splitting its direction into statements. Notes
+        // qualify every statement, while each sentence retains its own scope.
+        var row = ReadPrimaryStoreRow(passage.Text);
+        if (HasPrimaryStoreAlternatives(row)) yield break;
+        var sourceDirection = row.Success ? row.Groups["direction"].Value : passage.Text;
+        // Extra columns can be ownership metadata or actual qualifications.
+        // Only complete qualifying phrases affect the current-store claim.
+        var notes = ReadPrimaryStoreNotes(row);
+        if (notes.Any(IsDeferredStoreNote) || notes.Any(IsSupportingStoreNote)) yield break;
+        var noteScope = notes.Select(PrimaryStoreNoteScope).FirstOrDefault(value => value.Length > 0) ?? string.Empty;
+        if (!forConflict && noteScope is ("testing" or "development")) yield break;
+        foreach (var direction in Regex.Split(sourceDirection, @"(?<=[.!?])\s+|\r?\n(?=\s*(?:[-*+]|\d+[.)])\s)", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
         {
-            if (forConflict && Regex.IsMatch(statement, @"\b(?:deferred|phase\s*[2-9]|later phase|future|migration|adapter|except|proposed|consider)\b",
+            var statement = row.Success ? passage.Text : direction;
+            if (forConflict && Regex.IsMatch(direction, @"\b(?:deferred|phase\s*[2-9]|later phase|future|migration|adapter|except|proposed|consider)\b",
                     RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))) continue;
-            var scope = Regex.Match(statement, @"\b(?:production|testing|tests|development)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)).Value.ToLowerInvariant();
+            var scope = Regex.Match(direction, @"\b(?:production|testing|tests|development)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)).Value.ToLowerInvariant();
+            if (scope.Length == 0) scope = noteScope;
             if (scope == "tests") scope = "testing";
-            var row = Regex.Match(statement,
-                @"^\s*\|\s*(?:primary (?:database|data store|transactional store)|system of record|database|datastore|persistence)\s*\|\s*(?<direction>[^|]+)\|?\s*$",
-                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-            var direction = row.Success ? row.Groups["direction"].Value : statement;
-            if (forConflict && Regex.IsMatch(direction,
-                    @"\buse\s+`?(?:" + values + @")`?\s+(?:as|for)\s+(?:(?:a|an|the|local)\s+)*(?:cache|search index|analytics|supporting store)\b",
+            if (Regex.IsMatch(direction,
+                    @"(?:\buse\s+|\A\s*)`?(?:" + values + @")`?(?:\s+\d[\w.+-]*)?`?\s+(?:as|for)\s+(?:(?:a|an|the|local)\s+)*(?:cache|search index|analytics|supporting store)\b",
                     RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))) continue;
+            if (row.Success && Regex.Match(direction, @"^\s*`?(?<value>" + values + @")\b",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)) is { Success: true } cell)
+            {
+                yield return (cell.Groups["value"].Value, scope, statement);
+                continue;
+            }
             var pattern = @"\b(?:primary (?:database|data store|transactional store)|system of record)\s*(?:is|will be|must be|:)\s*`?(?<value>" + values
                 + @")\b|\buse\s+`?(?<value>" + values + @")\b|^\s*`?(?<value>" + values
                 + @")`?(?:\s+in\s+(?:production|testing|tests|development))?\.?\s*$";
@@ -332,7 +401,7 @@ public sealed partial class TechnicalIntentQuestionnaireService
         var lines = content.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
         var passages = new List<DocumentPassage>();
         var paragraph = new List<string>();
-        var heading = "Technical intent"; var start = 1;
+        var heading = "Technical intent"; var headingLine = 0; var start = 1;
         var inFrontmatter = lines.Length > 0 && lines[0].TrimStart('\uFEFF').Trim() == "---";
         var inComment = false; var fence = '\0'; var fenceLength = 0; var excludedSection = false;
         var excludedLevel = 0;
@@ -343,7 +412,7 @@ public sealed partial class TechnicalIntentQuestionnaireService
             {
                 var text = string.Join("\n", paragraph).Trim();
                 if (!excludedSection && text.Length > 0 && !text.StartsWith("| Document control", StringComparison.OrdinalIgnoreCase))
-                    passages.Add(new(text, heading, start));
+                    passages.Add(new(text, heading, start, headingLine));
                 paragraph.Clear();
             }
         }
@@ -384,7 +453,7 @@ public sealed partial class TechnicalIntentQuestionnaireService
             { Flush(); fence = trimmed[0]; fenceLength = trimmed.TakeWhile(character => character == fence).Count(); continue; }
             if (Regex.IsMatch(line, @"^#{1,6}\s", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
             {
-                Flush(); heading = line.TrimStart('#', ' ');
+                Flush(); heading = line.TrimStart('#', ' '); headingLine = i + 1;
                 var level = line.TakeWhile(character => character == '#').Count();
                 if (excludedSection && level <= excludedLevel) excludedSection = false;
                 if (Regex.IsMatch(heading, @"^(?:\d+[. ]*)?(?:source and evidence|source register|references\b|revision history)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
@@ -415,6 +484,6 @@ public sealed partial class TechnicalIntentQuestionnaireService
         return passages;
     }
 
-    private sealed record DocumentPassage(string Text, string Heading, int Line);
+    private sealed record DocumentPassage(string Text, string Heading, int Line, int HeadingLine = 0);
     private sealed record InputDocument(string Path, string Digest, bool Accepted, bool Selected, bool Working, bool Technical, IReadOnlyList<DocumentPassage> Passages, bool Manual = false);
 }

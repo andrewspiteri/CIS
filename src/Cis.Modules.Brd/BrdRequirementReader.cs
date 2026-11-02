@@ -25,6 +25,7 @@ internal static class BrdRequirementReader
         var tableRequirement = -1; var tableId = -1; var tablePriority = -1; var tableAcceptance = -1;
         void Add(string? identity, string title, string text, string? priority = null, string? acceptance = null)
         {
+            var priorityText = text;
             var identityText = Normalize(Regex.Replace(text, @"(?m)^[ \t]*(?:[-*+]|\d+[.)])[ \t]+", string.Empty,
                 RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)));
             text = Normalize(text);
@@ -37,8 +38,7 @@ internal static class BrdRequirementReader
             // A condition constrains an optional capability without requiring its
             // delivery. Only the delivery clause can supply an obligation priority;
             // inferred optional scope must not replace a reviewed backlog priority.
-            var deliveryClause = Regex.Split((title + " " + text).Trim(), @";|\b(?:when|if|provided that)\b",
-                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))[0];
+            var deliveryClause = (PriorityClause(title) + " " + PriorityClause(priorityText)).Trim();
             var modality = Regex.Match(deliveryClause, @"\b(must|shall|should|may|could)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
             var optionalScope = Regex.Match(deliveryClause, @"\Aoptional\b|\b(?:is|are)\s+(?:explicitly\s+)?optional\b",
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
@@ -147,8 +147,37 @@ internal static class BrdRequirementReader
         var text = paragraph.TrimStart();
         if (Regex.IsMatch(text, $@"\A(?:#|[-*+]\s|\d+[.)]\s|\||(?:\*\*)?{Identity}(?=\s|[:.]))",
             RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))) return false;
-        return Regex.IsMatch(text, @"\A(?:except\b|unless\b|provided that\b)|\b(?:is|are)\s+exempt\s+from\s+(?:this|that)\b",
-            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        if (Regex.IsMatch(text, @"\b(?:is|are)\s+exempt\s+from\s+(?:this|that)\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))) return true;
+        if (!Regex.IsMatch(text, @"\A(?:except\b|unless\b|provided that\b)",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))) return false;
+        // A conditional opening can introduce an independent obligation. Keep it
+        // separate unless a back-reference or relative exception ties it to the prior rule.
+        return !Regex.IsMatch(text, @"\b(?:must|shall|should|may|could|will|required to)\b",
+                   RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
+            || Regex.IsMatch(text, @"\b(?:this|that)\s+(?:\w+\s+){0,2}(?:rule|requirement|policy|default|direction|constraint)\b|\Aexcept\b[^,]+,\s*which\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+    }
+
+    private static string PriorityClause(string text)
+    {
+        // Preserve sentence and list boundaries only for priority inference; persisted
+        // requirement text and identity retain their existing normalization.
+        // A leading condition governs its own obligation, including in later items.
+        // Keep trailing conditional constraints separate from the delivery priority.
+        // Strip list markers before sentence whitespace can consume their line boundary.
+        var items = Regex.Split(text.Trim(), @"^[ \t]*(?:[-*+]|\d+[.)])[ \t]+",
+            RegexOptions.Multiline | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        return string.Join(" ", items.SelectMany(item => Regex.Split(item.Trim(), @"(?<=[.!?])\s+",
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))).Select(segment =>
+        {
+            var clause = segment.Split(';', 2)[0].Trim();
+            return Regex.IsMatch(clause, @"\A(?:when|if|provided that)\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
+                ? clause
+                : Regex.Split(clause, @"\b(?:when|if|provided that)\b",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))[0];
+        }));
     }
 
     private static bool[] IdentifiedBlocks(string[] lines)

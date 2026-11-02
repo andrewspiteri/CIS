@@ -5,6 +5,62 @@ namespace Cis.Modules.Brd.Tests;
 
 public sealed partial class BrdWorkflowTests
 {
+    [Theory]
+    [InlineData("REQ-01: If the upload fails, the app should retry three times.", "Should")]
+    [InlineData("REQ-01: When the network is unavailable, the app may queue uploads.", "Could")]
+    [InlineData("**BR-007 Retry when offline**: The app should retry uploads.", "Should")]
+    [InlineData("REQ-02: Uploads are queued locally. When connectivity returns, the app should sync them.", "Should")]
+    [InlineData("REQ-02: Uploads are queued locally. If connectivity returns, the app may sync them.", "Could")]
+    [InlineData("REQ-02: Uploads are queued locally:\n  - When connectivity returns, the app should sync them.", "Should")]
+    [InlineData("- Uploads are queued locally:\n  - If connectivity returns, the app may sync them.", "Could")]
+    public void AuthoritativeImport_ClaudeReview_LeadingConditionAndTitlePreserveStatedPriority(string requirement, string priority)
+    {
+        using var environment = WorkspaceEnvironment.Create(1);
+        SelectedImportSource(environment, "## Requirements\n\n" + requirement);
+        Assert.True(environment.Service.Reconcile(environment.Authority.Path).Validation!.Valid);
+        Assert.Equal(0, environment.Service.Approve(environment.Authority.Path, "Fixture owner", "Adopt synthetic retry priority.").ExitCode);
+        var backlog = ImportedBacklog(environment);
+        Assert.Equal(priority, Assert.Single(backlog.Build(environment.Authority.Path).Items).Priority);
+        Assert.Equal(priority, Assert.Single(backlog.Build(environment.Authority.Path).Items).Priority);
+    }
+
+    [Theory]
+    [InlineData("REQ-02: Uploads are queued locally.\n  - When connectivity returns, the app should sync them.", "Should")]
+    [InlineData("- Uploads are queued locally.\n  - If connectivity returns, the app may sync them.", "Could")]
+    public void AuthoritativeImport_ClaudeReview_ListsAfterSentenceKeepStatedPriority(string requirement, string priority)
+    {
+        using var environment = WorkspaceEnvironment.Create(1);
+        SelectedImportSource(environment, "## Requirements\n\n" + requirement);
+        Assert.True(environment.Service.Reconcile(environment.Authority.Path).Validation!.Valid);
+        Assert.Equal(0, environment.Service.Approve(environment.Authority.Path, "Fixture owner", "Adopt synthetic structured retry priority.").ExitCode);
+        var backlog = ImportedBacklog(environment);
+        Assert.Equal(priority, Assert.Single(backlog.Build(environment.Authority.Path).Items).Priority);
+        Assert.Equal(priority, Assert.Single(backlog.Build(environment.Authority.Path).Items).Priority);
+    }
+
+    [Theory]
+    [InlineData("Unless stated otherwise, all timestamps must be recorded in UTC.")]
+    [InlineData("Except for archived observations, the service should display timestamps in UTC.")]
+    public void AuthoritativeImport_ClaudeReview_ConditionalIndependentObligationRemainsSeparate(string independent)
+    {
+        using var environment = WorkspaceEnvironment.Create(1);
+        SelectedImportSource(environment, """
+            ## Requirements
+
+            The service must delete observations after 30 days.
+
+            Records subject to a legal hold are exempt from this deletion rule.
+
+            """ + "\n" + independent);
+        Assert.True(environment.Service.Reconcile(environment.Authority.Path).Validation!.Valid);
+        Assert.Equal(0, environment.Service.Approve(environment.Authority.Path, "Fixture owner", "Adopt synthetic independent requirements.").ExitCode);
+        var items = ImportedBacklog(environment).Build(environment.Authority.Path).Items;
+        Assert.Equal(2, items.Count);
+        Assert.Contains("legal hold", items[0].Outcome);
+        Assert.DoesNotContain("timestamps", items[0].Outcome);
+        Assert.Equal(independent, items[1].Outcome);
+    }
+
     [Fact]
     public void AuthoritativeImport_SeparateExceptionReachesGeneratedFeatureAcceptance()
     {

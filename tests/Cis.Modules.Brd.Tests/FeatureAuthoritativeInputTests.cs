@@ -4,6 +4,30 @@ namespace Cis.Modules.Brd.Tests;
 
 public sealed partial class FeatureIntakeTests
 {
+    [Theory]
+    [InlineData("remains")]
+    [InlineData("must remain")]
+    public void ClaudeReview_IndependentConditionalObligationDoesNotBecomePlatformDirection(string exceptionModality)
+    {
+        using var fixture = new Fixture(); CreateIntake(fixture);
+        SelectTechnicalDocument(fixture, """
+            # Accepted product choices
+
+            Runtime: use .NET for the product.
+
+            Except for the standalone command-line utility, which remains on Python.
+
+            Unless stated otherwise, all timestamps must be recorded in UTC.
+            """.Replace("which remains", "which " + exceptionModality, StringComparison.Ordinal));
+        var platform = fixture.Service.Wizard(fixture.Authority, "referrals").Pages.Single(page => page.Id == "technical")
+            .Fields.Single(field => field.Id == "technical-platform");
+        Assert.True(platform.Inherited);
+        Assert.Contains(".NET", platform.SuggestedAnswer);
+        Assert.Contains("Python", platform.SuggestedAnswer);
+        Assert.DoesNotContain("timestamps", platform.SuggestedAnswer);
+        Assert.NotEmpty(platform.SourceReferences);
+    }
+
     [Fact]
     public void AcceptedPlatformRetainsSeparateExceptionWithoutTakingUnrelatedDirection()
     {

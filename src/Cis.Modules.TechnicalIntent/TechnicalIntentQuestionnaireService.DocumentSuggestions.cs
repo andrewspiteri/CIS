@@ -190,9 +190,14 @@ public sealed partial class TechnicalIntentQuestionnaireService
     {
         var text = Regex.Replace(passage.Text, @"\b(?:no|without)\s+(?:open|unresolved)\b|\bmay not\b", "",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-        // An optional payload permission is compatible with a settled transport.
-        // Other tentative language, including elsewhere in this passage, remains.
-        text = Regex.Replace(text, @"\bmay\s+(?:send|include|provide)\s+(?:(?:an?|the)\s+)?optional\b", "",
+        // A permission about payload content is compatible with a settled transport;
+        // the object, rather than an "optional" adjective, identifies that permission.
+        // A transport choice in that same clause is still tentative.
+        const string transports = "HTTP(?:/JSON)?|gRPC|GraphQL|WebSockets?";
+        text = Regex.Replace(text, @"\bmay\s+(?:send|include|provide)\s+(?:(?:an?|the)\s+)?(?:optional\s+)?(?:(?!or\b)[\w-]+\s+){0,3}(?:IDs?|identifiers?|headers?|fields?|metadata|payloads?)\b(?=(?<tail>[^.;!?\r\n]*))",
+            match => Regex.IsMatch(match.Groups["tail"].Value,
+                @"\b(?:" + transports + @")\b\s+(?:or|versus|vs\.?)\s+(?:" + transports + @")\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)) ? match.Value : string.Empty,
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
         return Regex.IsMatch(text,
             @"\b(?:TODO|TBD|unresolved|undecided|to be decided|under consideration|proposed|recommend(?:ed|ation)?|consider using|may|could)\b|\?",
@@ -357,6 +362,18 @@ public sealed partial class TechnicalIntentQuestionnaireService
         return scope is "test" or "tests" ? "testing" : scope;
     }
 
+    private static bool HasDeferredStoreQualification(string direction)
+    {
+        var stores = Regex.Matches(direction, @"\b(?:" + PrimaryStoreValues + @")\b",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        if (stores.Count != 1) return false;
+        // A strong suffix qualifies this scalar claim. An incidental migration
+        // or exception elsewhere in a multi-store statement does not discard it.
+        var suffix = direction[(stores[0].Index + stores[0].Length)..].TrimStart().TrimStart('`').TrimStart();
+        suffix = Regex.Replace(suffix, @"\A\d[\w.+-]*`?\s+", "", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        return IsDeferredStoreNote(suffix);
+    }
+
     private static IEnumerable<(string Value, string Scope, string Text)> ReadPrimaryStoreClaims(DocumentPassage passage, bool forConflict = false)
     {
         const string values = PrimaryStoreValues;
@@ -370,30 +387,35 @@ public sealed partial class TechnicalIntentQuestionnaireService
         var notes = ReadPrimaryStoreNotes(row);
         if (notes.Any(IsDeferredStoreNote) || notes.Any(IsSupportingStoreNote)) yield break;
         var noteScope = notes.Select(PrimaryStoreNoteScope).FirstOrDefault(value => value.Length > 0) ?? string.Empty;
-        if (!forConflict && noteScope is ("testing" or "development")) yield break;
-        foreach (var direction in Regex.Split(sourceDirection, @"(?<=[.!?])\s+|\r?\n(?=\s*(?:[-*+]|\d+[.)])\s)", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
-        {
-            var statement = row.Success ? passage.Text : direction;
-            if (forConflict && Regex.IsMatch(direction, @"\b(?:deferred|phase\s*[2-9]|later phase|future|migration|adapter|except|proposed|consider)\b",
-                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))) continue;
-            var scope = Regex.Match(direction, @"\b(?:production|testing|tests|development)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)).Value.ToLowerInvariant();
-            if (scope.Length == 0) scope = noteScope;
-            if (scope == "tests") scope = "testing";
-            if (Regex.IsMatch(direction,
-                    @"(?:\buse\s+|\A\s*)`?(?:" + values + @")`?(?:\s+\d[\w.+-]*)?`?\s+(?:as|for)\s+(?:(?:a|an|the|local)\s+)*(?:cache|search index|analytics|supporting store)\b",
-                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))) continue;
-            if (row.Success && Regex.Match(direction, @"^\s*`?(?<value>" + values + @")\b",
-                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)) is { Success: true } cell)
+        foreach (var sentence in Regex.Split(sourceDirection, @"(?<=[.!?])\s+|\r?\n(?=\s*(?:[-*+]|\d+[.)])\s)", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
+            // A second store after a clause separator owns its qualifications;
+            // alternatives joined by "or" remain one unresolved statement.
+            foreach (var direction in Regex.Split(sentence, @"(?:;\s*|,\s*with\s+)(?=(?:use\s+)?`?(?:" + values + @")\b)",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
             {
-                yield return (cell.Groups["value"].Value, scope, statement);
-                continue;
+                var statement = row.Success ? passage.Text : sentence;
+                if (forConflict && Regex.IsMatch(direction, @"\b(?:deferred|phase\s*[2-9]|later phase|future|migration|adapter|except|proposed|consider)\b",
+                        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))) continue;
+                var scope = Regex.Match(direction, @"\b(?:production|testing|tests|development)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)).Value.ToLowerInvariant();
+                if (scope.Length == 0) scope = noteScope;
+                if (scope == "tests") scope = "testing";
+                if (!forConflict && (scope is "testing" or "development" || noteScope is "testing" or "development"
+                        || HasDeferredStoreQualification(direction))) continue;
+                if (Regex.IsMatch(direction,
+                        @"(?:\buse\s+|\A\s*)`?(?:" + values + @")`?(?:\s+\d[\w.+-]*)?`?\s+(?:as|for)\s+(?:(?:a|an|the|local)\s+)*(?:cache|search index|analytics|supporting store)\b",
+                        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))) continue;
+                if ((row.Success || scope.Length > 0) && Regex.Match(direction, @"^\s*`?(?<value>" + values + @")\b",
+                        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)) is { Success: true } cell)
+                {
+                    yield return (cell.Groups["value"].Value, scope, statement);
+                    continue;
+                }
+                var pattern = @"\b(?:primary (?:database|data store|transactional store)|system of record)\s*(?:is|will be|must be|:)\s*`?(?<value>" + values
+                    + @")\b|\buse\s+`?(?<value>" + values + @")\b|^\s*`?(?<value>" + values
+                    + @")`?(?:\s+in\s+(?:production|testing|tests|development))?\.?\s*$";
+                foreach (Match match in Regex.Matches(direction, pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
+                    yield return (match.Groups["value"].Value, scope, statement);
             }
-            var pattern = @"\b(?:primary (?:database|data store|transactional store)|system of record)\s*(?:is|will be|must be|:)\s*`?(?<value>" + values
-                + @")\b|\buse\s+`?(?<value>" + values + @")\b|^\s*`?(?<value>" + values
-                + @")`?(?:\s+in\s+(?:production|testing|tests|development))?\.?\s*$";
-            foreach (Match match in Regex.Matches(direction, pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
-                yield return (match.Groups["value"].Value, scope, statement);
-        }
     }
 
     private static IReadOnlyList<DocumentPassage> ReadDocumentPassages(string content, List<string>? issues = null)

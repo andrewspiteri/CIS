@@ -38,13 +38,24 @@ internal static class BrdRequirementReader
             // A condition constrains an optional capability without requiring its
             // delivery. Only the delivery clause can supply an obligation priority;
             // inferred optional scope must not replace a reviewed backlog priority.
-            var deliveryClause = (PriorityClause(title) + " " + PriorityClause(priorityText)).Trim();
-            var modality = Regex.Match(deliveryClause, @"\b(must|shall|should|may|could)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-            var optionalScope = Regex.Match(deliveryClause, @"\Aoptional\b|\b(?:is|are)\s+(?:explicitly\s+)?optional\b",
+            var titleClause = PriorityClause(title);
+            var assertionClause = PriorityClause(priorityText);
+            var titleModality = PriorityModality(titleClause);
+            var assertionModality = PriorityModality(assertionClause);
+            var titleOptional = HasOptionalDeliveryScope(titleClause);
+            var assertionOptional = HasOptionalDeliveryScope(assertionClause);
+            var mandatoryTitle = !titleOptional && titleModality.Value.ToLowerInvariant() is "must" or "shall";
+            var mandatoryTitleScope = mandatoryTitle || !titleOptional
+                && Regex.IsMatch(titleClause, @"\A(?:mandatory|required)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+            if (string.IsNullOrWhiteSpace(priority) && mandatoryTitleScope && assertionOptional)
+                errors.Add($"BRD requirement {identity} has conflicting delivery scope in its title and assertion. Retain both passages and review their scope.");
+            var deferredTitle = Regex.IsMatch(titleClause, @"\bdeferred\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+            var conditionalConstraint = deferredTitle && Regex.IsMatch(assertionClause, @"\A(?:when|if|provided that)\b",
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-            var optional = optionalScope.Success && (!modality.Success || optionalScope.Index < modality.Index);
-            var explicitPriority = !string.IsNullOrWhiteSpace(priority) || modality.Success && !optional;
-            priority = !string.IsNullOrWhiteSpace(priority) ? priority : optional ? "Could" : modality.Value.ToLowerInvariant() switch
+            var modality = titleModality.Success ? titleModality : conditionalConstraint ? Match.Empty : assertionModality;
+            var optional = titleOptional || !mandatoryTitle && !titleModality.Success && assertionOptional;
+            var explicitPriority = !string.IsNullOrWhiteSpace(priority) || mandatoryTitle || modality.Success && !optional;
+            priority = !string.IsNullOrWhiteSpace(priority) ? priority : optional ? "Could" : mandatoryTitle ? "Must" : modality.Value.ToLowerInvariant() switch
             {
                 "should" => "Should",
                 "may" or "could" => "Could",
@@ -123,7 +134,7 @@ internal static class BrdRequirementReader
                 {
                     var next = lineIndex + 1;
                     while (next < lines.Length && string.IsNullOrWhiteSpace(lines[next])) next++;
-                    if (next == lines.Length || !ContinuesPreviousDirection(lines[next])) Flush();
+                    if (next == lines.Length || !ContinuesPreviousDirection(ReadParagraph(lines, next).Text)) Flush();
                     else body.AppendLine();
                     lineIndex = next - 1;
                 }
@@ -131,8 +142,13 @@ internal static class BrdRequirementReader
                 continue;
             }
             if (id is not null || anonymous) body.AppendLine(line);
-            else if (!identifiedBlocks[lineIndex] && Regex.IsMatch(line, @"\b(?:must|shall|should|may|required to)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
-            { anonymous = true; body.AppendLine(line); }
+            else if (!identifiedBlocks[lineIndex])
+            {
+                var paragraph = ReadParagraph(lines, lineIndex);
+                if (Regex.IsMatch(paragraph.Text, @"\b(?:must|shall|should|may|required to)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
+                { anonymous = true; body.AppendLine(paragraph.Text); }
+                lineIndex = paragraph.End - 1;
+            }
         }
         Flush();
         foreach (var duplicate in requirements.GroupBy(requirement => requirement.Id, StringComparer.Ordinal).Where(group => group.Count() > 1))
@@ -145,8 +161,7 @@ internal static class BrdRequirementReader
     internal static bool ContinuesPreviousDirection(string paragraph)
     {
         var text = paragraph.TrimStart();
-        if (Regex.IsMatch(text, $@"\A(?:#|[-*+]\s|\d+[.)]\s|\||(?:\*\*)?{Identity}(?=\s|[:.]))",
-            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))) return false;
+        if (StartsRequirementBoundary(text)) return false;
         if (Regex.IsMatch(text, @"\b(?:is|are)\s+exempt\s+from\s+(?:this|that)\b",
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))) return true;
         if (!Regex.IsMatch(text, @"\A(?:except\b|unless\b|provided that\b)",
@@ -168,16 +183,47 @@ internal static class BrdRequirementReader
         // Strip list markers before sentence whitespace can consume their line boundary.
         var items = Regex.Split(text.Trim(), @"^[ \t]*(?:[-*+]|\d+[.)])[ \t]+",
             RegexOptions.Multiline | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-        return string.Join(" ", items.SelectMany(item => Regex.Split(item.Trim(), @"(?<=[.!?])\s+",
-            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))).Select(segment =>
+        foreach (var segment in items.SelectMany(item => Regex.Split(item.Trim(), @"(?<=[.!?])\s+",
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))))
         {
-            var clause = segment.Split(';', 2)[0].Trim();
-            return Regex.IsMatch(clause, @"\A(?:when|if|provided that)\b",
-                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
-                ? clause
-                : Regex.Split(clause, @"\b(?:when|if|provided that)\b",
-                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))[0];
-        }));
+            foreach (var part in segment.Split(';'))
+            {
+                var clause = part.Trim();
+                var governing = Regex.IsMatch(clause, @"\A(?:when|if|provided that)\b",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
+                    ? clause
+                    : Regex.Split(clause, @"\b(?:when|if|provided that)\b",
+                        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))[0];
+                // A declared delivery scope governs following conditional constraints.
+                // A neutral preamble, however, must not hide a later actual obligation.
+                if (PriorityModality(governing).Success || HasOptionalDeliveryScope(governing)
+                    || Regex.IsMatch(governing, @"\bdeferred\b|\A(?:mandatory|required)\b",
+                        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))) return governing;
+            }
+        }
+        return string.Empty;
+    }
+
+    private static Match PriorityModality(string text)
+        => Regex.Match(text, @"\b(must|shall|should|may|could)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+
+    private static bool HasOptionalDeliveryScope(string text)
+    {
+        var optional = Regex.Match(text, @"\Aoptional\b|\b(?:is|are)\s+(?:explicitly\s+)?optional\b",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        var modality = PriorityModality(text);
+        return optional.Success && (!modality.Success || optional.Index < modality.Index);
+    }
+
+    private static bool StartsRequirementBoundary(string text)
+        => Regex.IsMatch(text.TrimStart(), $@"\A(?:#|[-*+]\s|\d+[.)]\s|\||(?:\*\*)?{Identity}(?=\s|[:.]))",
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+
+    private static (string Text, int End) ReadParagraph(string[] lines, int start)
+    {
+        var end = start + 1;
+        while (end < lines.Length && !string.IsNullOrWhiteSpace(lines[end]) && !StartsRequirementBoundary(lines[end])) end++;
+        return (string.Join('\n', lines[start..end]), end);
     }
 
     private static bool[] IdentifiedBlocks(string[] lines)

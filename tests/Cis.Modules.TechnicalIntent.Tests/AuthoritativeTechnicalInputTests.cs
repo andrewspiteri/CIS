@@ -440,12 +440,14 @@ No open technical decisions remain. All technical choices are closed for the cur
         Assert.Equal(content, File.ReadAllText(path));
     }
 
-    [Fact]
-    public void ImportedAuthority_OptionalPermissionRetainsSettledTransportAndItsQualification()
+    [Theory]
+    [InlineData("Clients may send an optional correlation ID over HTTP.")]
+    [InlineData("Clients may include a correlation ID over HTTP.")]
+    public void ImportedAuthority_OptionalPermissionRetainsSettledTransportAndItsQualification(string permission)
     {
         using var environment = WorkspaceEnvironment.Create(approveBrd: true, includeImplementation: false, completeQuestionnaire: false);
         SelectTechnicalDirection(environment, SuppliedTechnicalDirection
-            + "\n\n#### Correlation behavior\n\nClients may send an optional correlation ID over HTTP.\n");
+            + "\n\n#### Correlation behavior\n\n" + permission + "\n");
         AdoptTechnicalDirection(environment);
 
         var result = environment.Questionnaire.Initialize(environment.Authority.Path);
@@ -453,7 +455,7 @@ No open technical decisions remain. All technical choices are closed for the cur
 
         Assert.Equal("Derived", question.Status);
         Assert.Contains("Use versioned HTTP/JSON APIs", question.Answer, StringComparison.Ordinal);
-        Assert.Contains("Clients may send an optional correlation ID over HTTP.", question.Answer, StringComparison.Ordinal);
+        Assert.Contains(permission, question.Answer, StringComparison.Ordinal);
         Assert.True(result.Complete);
     }
 
@@ -461,6 +463,8 @@ No open technical decisions remain. All technical choices are closed for the cur
     [InlineData("We may use HTTP or gRPC; the transport is undecided.")]
     [InlineData("We may use HTTP or gRPC.")]
     [InlineData("HTTP could be used.")]
+    [InlineData("Clients may send JSON payloads over HTTP or gRPC.")]
+    [InlineData("Clients may include headers over HTTP or gRPC.")]
     public void ImportedAuthority_TransportAlternativesRemainUnresolvedAlongsideSettledDirection(string unresolved)
     {
         using var environment = WorkspaceEnvironment.Create(approveBrd: true, includeImplementation: false, completeQuestionnaire: false);
@@ -505,6 +509,52 @@ No open technical decisions remain. All technical choices are closed for the cur
         AdoptTechnicalDirection(environment);
         var result = environment.Questionnaire.Initialize(environment.Authority.Path);
         Assert.Equal(["TI-Q-006"], result.Questions.Where(question => question.Status == "Unanswered").Select(question => question.Id));
+    }
+
+    [Theory]
+    [InlineData("| Persistence | Use SQLite for tests. |")]
+    [InlineData("| Persistence | SQLite | Tests only |")]
+    [InlineData("| Persistence | Use SQLite deferred to phase 2 migration. |")]
+    public void ImportedAuthority_RemainingReviewTestOnlyStoreDoesNotChooseCurrentStore(string row)
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true, includeImplementation: false, completeQuestionnaire: false);
+        SelectTechnicalDirection(environment, SuppliedTechnicalDirection.Replace(
+            "| Persistence | The primary data store is PostgreSQL. |", row, StringComparison.Ordinal));
+        AdoptTechnicalDirection(environment);
+
+        var result = environment.Questionnaire.Initialize(environment.Authority.Path);
+        var store = result.Questions.Single(item => item.Id == "TI-Q-006");
+
+        Assert.Equal("Unanswered", store.Status);
+        Assert.Null(store.Answer);
+        Assert.Contains(row, store.SuggestedAnswer, StringComparison.Ordinal);
+        Assert.NotEmpty(store.Evidence!);
+        Assert.Equal(["TI-Q-006"], result.Questions.Where(question => question.Status == "Unanswered").Select(question => question.Id));
+        Assert.False(result.Complete);
+        var readiness = environment.Intent.Evaluate(environment.Authority.Path);
+        Assert.False(readiness.Ready);
+        Assert.Contains(readiness.Errors, error => error.Contains("TI-Q-006", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("The primary data store is PostgreSQL, with SQLite for tests.")]
+    [InlineData("| Persistence | PostgreSQL; SQLite for tests |")]
+    public void ImportedAuthority_RemainingReviewMixedStoreClausesKeepTheirOwnScope(string direction)
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true, includeImplementation: false, completeQuestionnaire: false);
+        SelectTechnicalDirection(environment, SuppliedTechnicalDirection.Replace(
+            "| Persistence | The primary data store is PostgreSQL. |\n", "", StringComparison.Ordinal)
+            + "\n\n#### Persistence\n\n" + direction + "\n");
+        AdoptTechnicalDirection(environment);
+
+        var result = environment.Questionnaire.Initialize(environment.Authority.Path);
+        var store = result.Questions.Single(item => item.Id == "TI-Q-006");
+
+        Assert.Equal("Derived", store.Status);
+        Assert.Contains(direction, store.Answer, StringComparison.Ordinal);
+        Assert.NotEmpty(store.Evidence!);
+        Assert.True(result.Complete);
+        Assert.True(environment.Intent.Evaluate(environment.Authority.Path).Ready);
     }
 
     [Fact]

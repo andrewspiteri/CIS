@@ -5,6 +5,75 @@ namespace Cis.Modules.Brd.Tests;
 
 public sealed partial class BrdWorkflowTests
 {
+    [Fact]
+    public void AuthoritativeImport_RemainingParser_WrappedExceptionRetainsIdentityAndGeneratedAcceptance()
+    {
+        const string expected = "The service must delete observations after 30 days. Records subject to a legal hold are exempt from this deletion rule.";
+        var identities = new List<string>();
+        foreach (var qualification in new[] { "Records subject to a legal hold are exempt from this deletion rule.", "Records subject to a legal hold\nare exempt from this deletion rule." })
+        {
+            using var environment = WorkspaceEnvironment.Create(1);
+            SelectedImportSource(environment, "## Requirements\n\nThe service must delete observations after 30 days.\n\n" + qualification);
+            Assert.True(environment.Service.Reconcile(environment.Authority.Path).Validation!.Valid);
+            Assert.Equal(0, environment.Service.Approve(environment.Authority.Path, "Fixture owner", "Adopt synthetic wrapped retention policy.").ExitCode);
+            var backlog = ImportedBacklog(environment);
+            var item = Assert.Single(backlog.Build(environment.Authority.Path).Items);
+            identities.Add(item.RequirementId);
+            Assert.Equal(expected, item.Outcome);
+            Assert.Equal(0, backlog.Approve(environment.Authority.Path, "Fixture owner", "Adopt synthetic backlog.").ExitCode);
+            var feature = backlog.StartFeature(environment.Authority.Path, item.Id);
+            Assert.Equal(0, feature.ExitCode);
+            Assert.Contains("Satisfy the source acceptance intent: " + expected,
+                File.ReadAllText(Path.Combine(environment.Authority.Path, feature.RelativePath!)));
+        }
+        Assert.Single(identities.Distinct(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void AuthoritativeImport_RemainingParser_WrappedIndependentObligationKeepsItsCondition()
+    {
+        using var environment = WorkspaceEnvironment.Create(1);
+        SelectedImportSource(environment, """
+            ## Requirements
+
+            The service must delete observations after 30 days.
+
+            Except for archived observations,
+            the service should display timestamps in UTC.
+            """);
+        Assert.True(environment.Service.Reconcile(environment.Authority.Path).Validation!.Valid);
+        Assert.Equal(0, environment.Service.Approve(environment.Authority.Path, "Fixture owner", "Adopt synthetic independent wrapped requirement.").ExitCode);
+        var items = ImportedBacklog(environment).Build(environment.Authority.Path).Items;
+        Assert.Equal(2, items.Count);
+        Assert.Equal("The service must delete observations after 30 days.", items[0].Outcome);
+        Assert.Equal("Except for archived observations, the service should display timestamps in UTC.", items[1].Outcome);
+        Assert.Equal("Should", items[1].Priority);
+    }
+
+    [Theory]
+    [InlineData("REQ-01: Optional exports are deferred until phase 2;\nwhen provided, they must omit sensitive data.", "Could", "Optional exports are deferred until phase 2; when provided, they must omit sensitive data.")]
+    [InlineData("**REQ-01 Exports.** Optional exports are deferred until phase 2;\nwhen provided, they must omit sensitive data.", "Could", "Exports")]
+    [InlineData("REQ-01: Uploads are queued locally; when connectivity returns,\nthe app should sync them.", "Should", "Uploads are queued locally; when connectivity returns, the app should sync them.")]
+    public void AuthoritativeImport_RemainingParser_TitleAndClausePunctuationPreserveScope(string requirement, string priority, string outcome)
+    {
+        using var environment = WorkspaceEnvironment.Create(1);
+        SelectedImportSource(environment, "## Requirements\n\n" + requirement);
+        Assert.True(environment.Service.Reconcile(environment.Authority.Path).Validation!.Valid);
+        Assert.Equal(0, environment.Service.Approve(environment.Authority.Path, "Fixture owner", "Adopt synthetic delivery scope.").ExitCode);
+        var backlog = ImportedBacklog(environment);
+        var item = Assert.Single(backlog.Build(environment.Authority.Path).Items);
+        Assert.Equal("REQ-01", item.RequirementId);
+        Assert.Equal(priority, item.Priority);
+        Assert.Equal(outcome, item.Outcome);
+        Assert.Equal(0, backlog.Approve(environment.Authority.Path, "Fixture owner", "Adopt synthetic backlog.").ExitCode);
+        var feature = backlog.StartFeature(environment.Authority.Path, item.Id);
+        Assert.Equal(0, feature.ExitCode);
+        var generated = File.ReadAllText(Path.Combine(environment.Authority.Path, feature.RelativePath!));
+        Assert.Contains(priority == "Could"
+            ? "Optional exports are deferred until phase 2; when provided, they must omit sensitive data."
+            : "Uploads are queued locally; when connectivity returns, the app should sync them.", generated);
+    }
+
     [Theory]
     [InlineData("REQ-01: If the upload fails, the app should retry three times.", "Should")]
     [InlineData("REQ-01: When the network is unavailable, the app may queue uploads.", "Could")]
@@ -180,6 +249,71 @@ public sealed partial class BrdWorkflowTests
         Assert.Equal("Stale", environment.Service.Status(environment.Authority.Path).Validation!.EffectiveStatus);
         Assert.Equal(0, environment.Service.Approve(environment.Authority.Path, "Fixture owner", "Adopt changed source version.").ExitCode);
         Assert.Equal(first.Items.Select(item => item.RequirementId), backlog.Build(environment.Authority.Path).Items.Select(item => item.RequirementId));
+    }
+
+    [Fact]
+    public void AuthoritativeImport_RemainingParser_RequiredFieldsTitleKeepsBodyPriority()
+    {
+        using var environment = WorkspaceEnvironment.Create(1);
+        SelectedImportSource(environment, "## Requirements\n\n### REQ-01 Required fields validation\n\nThe form should validate required fields.");
+        Assert.True(environment.Service.Reconcile(environment.Authority.Path).Validation!.Valid);
+        Assert.Equal(0, environment.Service.Approve(environment.Authority.Path, "Fixture owner", "Adopt synthetic field validation.").ExitCode);
+        var item = Assert.Single(ImportedBacklog(environment).Build(environment.Authority.Path).Items);
+        Assert.Equal("REQ-01", item.RequirementId);
+        Assert.Equal("Required fields validation", item.Outcome);
+        Assert.Equal("Should", item.Priority);
+    }
+
+    [Fact]
+    public void AuthoritativeImport_RemainingParser_SubstantiveTitleConflictIsNotHiddenByOptionalBody()
+    {
+        using var environment = WorkspaceEnvironment.Create(1);
+        SelectedImportSource(environment, "## Requirements\n\n**REQ-01 Mandatory exports.** Optional exports are deferred until phase 2; when provided, they must omit sensitive data.");
+        var result = environment.Service.Reconcile(environment.Authority.Path);
+        Assert.False(result.Validation!.Valid);
+        Assert.Contains(result.Validation.Errors, error => error.Contains("REQ-01", StringComparison.Ordinal)
+            && error.Contains("conflict", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void AuthoritativeImport_RemainingParser_TableOptionalScopeIsNotAConflictingTitle()
+    {
+        using var environment = WorkspaceEnvironment.Create(1);
+        const string requirement = "Optional exports must omit sensitive data.";
+        SelectedImportSource(environment, "## Requirements\n\n| ID | Requirement |\n| --- | --- |\n| REQ-01 | " + requirement + " |");
+        var reconciled = environment.Service.Reconcile(environment.Authority.Path);
+        Assert.True(reconciled.Validation!.Valid, string.Join("; ", reconciled.Validation.Errors));
+        Assert.Equal(0, environment.Service.Approve(environment.Authority.Path, "Fixture owner", "Adopt synthetic optional table requirement.").ExitCode);
+        var backlog = ImportedBacklog(environment);
+        var item = Assert.Single(backlog.Build(environment.Authority.Path).Items);
+        Assert.Equal("REQ-01", item.RequirementId);
+        Assert.Equal("Could", item.Priority);
+        Assert.Equal(requirement, item.Outcome);
+        Assert.Equal(0, backlog.Approve(environment.Authority.Path, "Fixture owner", "Adopt synthetic backlog.").ExitCode);
+        var feature = backlog.StartFeature(environment.Authority.Path, item.Id);
+        Assert.Equal(0, feature.ExitCode);
+        Assert.Contains(requirement,
+            File.ReadAllText(Path.Combine(environment.Authority.Path, feature.RelativePath!)));
+    }
+
+    [Fact]
+    public void AuthoritativeImport_RemainingParser_DeferredTitleConstraintCannotReplaceReviewedPriority()
+    {
+        using var environment = WorkspaceEnvironment.Create(1);
+        SelectedImportSource(environment, "## Requirements\n\n**REQ-01 Deferred exports.** When provided, they must omit sensitive data.");
+        Assert.True(environment.Service.Reconcile(environment.Authority.Path).Validation!.Valid);
+        Assert.Equal(0, environment.Service.Approve(environment.Authority.Path, "Fixture owner", "Adopt synthetic deferred delivery scope.").ExitCode);
+        var backlog = ImportedBacklog(environment);
+        var built = backlog.Build(environment.Authority.Path);
+        var backlogPath = Path.Combine(environment.Authority.Path, built.RelativePath!);
+        File.WriteAllText(backlogPath, File.ReadAllText(backlogPath).Replace("| Must |", "| Should |", StringComparison.Ordinal));
+        Assert.Equal(0, backlog.Approve(environment.Authority.Path, "Fixture owner", "Review deferred export priority.").ExitCode);
+        var reopened = backlog.Build(environment.Authority.Path);
+        Assert.Equal("Should", Assert.Single(reopened.Items).Priority);
+        Assert.Equal("Active", reopened.Validation!.EffectiveStatus);
+        var feature = backlog.StartFeature(environment.Authority.Path, Assert.Single(reopened.Items).Id);
+        Assert.Equal(0, feature.ExitCode);
+        Assert.Contains("When provided, they must omit sensitive data.", File.ReadAllText(Path.Combine(environment.Authority.Path, feature.RelativePath!)));
     }
 
     [Theory]

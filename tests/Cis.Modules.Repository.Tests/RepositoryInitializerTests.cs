@@ -262,8 +262,13 @@ public sealed class RepositoryInitializerTests
         {
             new { repositoryPath = repository.Path, relativePath = "AGENTS.md", content = merge.ProposedContent },
         }));
-        var applied = importer.Import(request with { DryRun = false, Confirmed = true, MergeReviewHash = plan.MergeReviewHash,
-            MergeEditsPath = Path.Combine(review.Path, "edits.json") });
+        var applied = importer.Import(request with
+        {
+            DryRun = false,
+            Confirmed = true,
+            MergeReviewHash = plan.MergeReviewHash,
+            MergeEditsPath = Path.Combine(review.Path, "edits.json")
+        });
         Assert.Equal(0, applied.ExitCode);
         Assert.True(applied.Applied);
         Assert.Equal(merge.ProposedContent, File.ReadAllText(Path.Combine(repository.Path, "AGENTS.md")));
@@ -297,8 +302,13 @@ public sealed class RepositoryInitializerTests
         }));
         if (deleteGuidance) File.Delete(Path.Combine(second.Path, "AGENTS.md"));
         else second.Write("AGENTS.md", "# Changed while reviewing\n");
-        var result = importer.Import(request with { DryRun = false, Confirmed = true, MergeReviewHash = plan.MergeReviewHash,
-            MergeEditsPath = edited ? Path.Combine(review.Path, "edits.json") : null });
+        var result = importer.Import(request with
+        {
+            DryRun = false,
+            Confirmed = true,
+            MergeReviewHash = plan.MergeReviewHash,
+            MergeEditsPath = edited ? Path.Combine(review.Path, "edits.json") : null
+        });
         Assert.Equal(2, result.ExitCode);
         Assert.Contains(result.Errors, error => error.Contains("changed after review", StringComparison.Ordinal));
         Assert.False(Directory.Exists(Path.Combine(first.Path, ".cis")));
@@ -327,10 +337,17 @@ public sealed class RepositoryInitializerTests
         Assert.False(Directory.Exists(Path.Combine(repository.Path, ".cis")));
         review.Write("edits.json", System.Text.Json.JsonSerializer.Serialize(plan.FileMerges.Select(merge => new
         {
-            repositoryPath = repository.Path, relativePath = merge.RelativePath, content = "# Reviewed " + merge.RelativePath + "\n",
+            repositoryPath = repository.Path,
+            relativePath = merge.RelativePath,
+            content = "# Reviewed " + merge.RelativePath + "\n",
         })));
-        var applied = importer.Import(request with { DryRun = false, Confirmed = true, MergeReviewHash = plan.MergeReviewHash,
-            MergeEditsPath = Path.Combine(review.Path, "edits.json") });
+        var applied = importer.Import(request with
+        {
+            DryRun = false,
+            Confirmed = true,
+            MergeReviewHash = plan.MergeReviewHash,
+            MergeEditsPath = Path.Combine(review.Path, "edits.json")
+        });
         Assert.Equal(0, applied.ExitCode);
         Assert.True(applied.Applied);
         foreach (var merge in plan.FileMerges)
@@ -360,11 +377,18 @@ public sealed class RepositoryInitializerTests
         Assert.All(plan.FileMerges, merge => Assert.True(merge.ContextSources.Single(source => source.Path == ".github/scripts/route.py").IsExcerpt));
         review.Write("edits.json", System.Text.Json.JsonSerializer.Serialize(plan.FileMerges.Select(merge => new
         {
-            repositoryPath = repository.Path, relativePath = merge.RelativePath, content = "# Edited\n",
+            repositoryPath = repository.Path,
+            relativePath = merge.RelativePath,
+            content = "# Edited\n",
         })));
         File.AppendAllText(Path.Combine(repository.Path, changedPath), "\nChanged beyond any excerpt.\n");
-        var applied = importer.Import(request with { DryRun = false, Confirmed = true, MergeReviewHash = plan.MergeReviewHash,
-            MergeEditsPath = Path.Combine(review.Path, "edits.json") });
+        var applied = importer.Import(request with
+        {
+            DryRun = false,
+            Confirmed = true,
+            MergeReviewHash = plan.MergeReviewHash,
+            MergeEditsPath = Path.Combine(review.Path, "edits.json")
+        });
         Assert.Equal(2, applied.ExitCode);
         Assert.Contains(applied.Errors, error => error.Contains("changed after review", StringComparison.Ordinal));
         Assert.False(Directory.Exists(Path.Combine(repository.Path, ".cis")));
@@ -383,10 +407,17 @@ public sealed class RepositoryInitializerTests
         var plan = importer.Import(request);
         review.Write("edits.json", System.Text.Json.JsonSerializer.Serialize(Enumerable.Repeat(new
         {
-            repositoryPath = repository.Path, relativePath = "AGENTS.md", content = "# Edited\n",
+            repositoryPath = repository.Path,
+            relativePath = "AGENTS.md",
+            content = "# Edited\n",
         }, 2)));
-        var applied = importer.Import(request with { DryRun = false, Confirmed = true, MergeReviewHash = plan.MergeReviewHash,
-            MergeEditsPath = Path.Combine(review.Path, "edits.json") });
+        var applied = importer.Import(request with
+        {
+            DryRun = false,
+            Confirmed = true,
+            MergeReviewHash = plan.MergeReviewHash,
+            MergeEditsPath = Path.Combine(review.Path, "edits.json")
+        });
         Assert.Equal(2, applied.ExitCode);
         Assert.False(Directory.Exists(Path.Combine(repository.Path, ".cis")));
     }
@@ -464,8 +495,13 @@ public sealed class RepositoryInitializerTests
         var request = new RepositoryImportRequest(repository.Path, "docs/cis", [repository.Path],
             true, false, "owned", "none", EcosystemId: "parr", ProductId: "parr", MinimalImport: false);
         var plan = importer.Import(request);
-        var result = importer.Import(request with { DryRun = false, Confirmed = true, MergeReviewHash = plan.MergeReviewHash,
-            MergeEditsPath = Path.Combine(review.Path, "edits.json") });
+        var result = importer.Import(request with
+        {
+            DryRun = false,
+            Confirmed = true,
+            MergeReviewHash = plan.MergeReviewHash,
+            MergeEditsPath = Path.Combine(review.Path, "edits.json")
+        });
         Assert.Equal(2, result.ExitCode);
         Assert.NotEmpty(result.Errors);
         Assert.False(Directory.Exists(Path.Combine(repository.Path, ".cis")));
@@ -2891,6 +2927,53 @@ public sealed class RepositoryInitializerTests
         Assert.Contains("Maintainer-owned profile", File.ReadAllText(profilePath), StringComparison.Ordinal);
         Assert.Contains("ownership: human", File.ReadAllText(Path.Combine(repository.Path, ".cis", "starter-manifest.yml")), StringComparison.Ordinal);
         Assert.DoesNotContain(repeated.Collisions, collision => collision.Contains("repository-profile.md", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Initialize_PreservesHumanOwnershipAndReviewHashWhenContentMatchesTemplate()
+    {
+        using var repository = TemporaryRepository.Create();
+        var initializer = new RepositoryInitializer();
+        var request = new RepositoryInitRequest(repository.Path, "docs/cis", DryRun: false, Confirmed: true);
+        Assert.Equal(0, initializer.Initialize(request).ExitCode);
+        const string skill = ".github/skills/cis-tooling-evidence/SKILL.md";
+        var skillPath = Path.Combine(repository.Path, skill);
+        var agentsPath = Path.Combine(repository.Path, "AGENTS.md");
+        var originalSkill = File.ReadAllText(skillPath);
+        var originalAgents = File.ReadAllText(agentsPath);
+        File.AppendAllText(skillPath, "\nMaintainer-owned evidence guidance.\n");
+        Assert.Equal(0, initializer.Initialize(request with { AcceptCurrent = true }).ExitCode);
+        File.AppendAllText(agentsPath, "\nMaintainer-owned entry point.\n");
+        var preview = initializer.Initialize(request with { DryRun = true, Confirmed = false, MergeAgents = true });
+        Assert.Equal(0, preview.ExitCode);
+        Assert.NotEmpty(preview.FileMerges);
+        Assert.Equal(0, initializer.Initialize(request with
+        {
+            MergeAgents = true,
+            ExpectedGuidanceMergeHash = RepositoryAgentsMerge.ReviewHash(preview.FileMerges),
+            ReviewedGuidanceContents = preview.FileMerges.ToDictionary(merge => merge.RelativePath, merge => merge.ProposedContent),
+        }).ExitCode);
+        var manifestPath = Path.Combine(repository.Path, ".cis", "starter-manifest.yml");
+        var store = new StarterManifestStore();
+        var reviewed = Assert.IsType<StarterManifest>(store.Read(manifestPath).Manifest);
+        var reviewedSkill = Assert.Single(reviewed.ManagedArtifacts, artifact => artifact.Path == skill);
+        var reviewedAgents = Assert.Single(reviewed.ManagedArtifacts, artifact => artifact.Path == "AGENTS.md");
+        Assert.Equal("human", reviewedSkill.Ownership);
+        Assert.Equal("human", reviewedAgents.Ownership);
+        Assert.NotNull(reviewedAgents.GuidanceTemplateHash);
+
+        File.WriteAllText(skillPath, originalSkill);
+        File.WriteAllText(agentsPath, originalAgents);
+        Assert.Equal(0, initializer.Initialize(request).ExitCode);
+
+        var reconciled = Assert.IsType<StarterManifest>(store.Read(manifestPath).Manifest);
+        var reconciledSkill = Assert.Single(reconciled.ManagedArtifacts, artifact => artifact.Path == skill);
+        var reconciledAgents = Assert.Single(reconciled.ManagedArtifacts, artifact => artifact.Path == "AGENTS.md");
+        Assert.Equal("human", reconciledSkill.Ownership);
+        Assert.Equal("human", reconciledAgents.Ownership);
+        Assert.Equal(reviewedAgents.GuidanceTemplateHash, reconciledAgents.GuidanceTemplateHash);
+        Assert.Equal(originalSkill, File.ReadAllText(skillPath));
+        Assert.Equal(originalAgents, File.ReadAllText(agentsPath));
     }
 
     [Fact]

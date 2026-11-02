@@ -10,7 +10,7 @@ cis:
 
 # Problem Details Catalogue
 
-Governed by `change-impact-studio:spec:problem-details-catalogue`. CIS seeded 206 row(s) from deterministic repository evidence. Review them before changing this document to Active.
+Governed by `change-impact-studio:spec:problem-details-catalogue`. CIS seeded 208 row(s) from deterministic repository evidence. Review them before changing this document to Active.
 
 | Problem ID | Problem type / reason | HTTP status | Raised by | Meaning | Frontend handling | Sensitive fields | Related commands / workflows | Status | Evidence |
 |---|---|---|---|---|---|---|---|---|---|
@@ -29,9 +29,11 @@ Governed by `change-impact-studio:spec:problem-details-catalogue`. CIS seeded 20
 | PROB-CIS-CLI-cf27fe92dc4e | CisCliError | unknown | change-impact-studio | CIS returned an unsupported workspace snapshot. | unknown | unknown | unknown | Draft | vscode-extension/lib/cis-cli.js:253 |
 | PROB-CIS-CLI-f589ab658e06 | CisCliError | unknown | change-impact-studio | CIS inputs kept changing during the workspace refresh. Refresh again when changes settle. | unknown | unknown | unknown | Draft | vscode-extension/lib/cis-cli.js:241 |
 | PROB-CIS-MODULES-REPOSITORY-TESTS-ORDER-NOT-FOUND-EXCEPTION | OrderNotFoundException | unknown | cis-modules-repository-tests | Order Not Found Exception | unknown | unknown | unknown | Draft | tests/Cis.Modules.Repository.Tests/RepositoryInitializerTests.cs |
+| PROB-CIS-MODULES-REPOSITORY-TESTS-OWNED-EXCEPTION | OwnedException | unknown | cis-modules-repository-tests | Owned Exception | unknown | unknown | unknown | Draft | tests/Cis.Modules.Repository.Tests/ReferencePreparationTests.cs |
+| PROB-CIS-MSTESTADAPTERCOMPAT-RUNTIME-OWNED-QUEUE-CANCELLATION-EXCEPTION | OwnedQueueCancellationException | unknown | cis-mstestadaptercompat-runtime | Owned Queue Cancellation Exception | unknown | unknown | unknown | Draft | tools/Cis.MSTestAdapterCompat/Runtime/CompatibilityRuntime.cs |
 | PROB-DOCTOR-COMMANDS-9236ff57a496 | Error | unknown | change-impact-studio | This finding does not contain a runnable command. | unknown | unknown | unknown | Draft | vscode-extension/lib/doctor-commands.js:14 |
-| PROB-EXISTING-DOCUMENTS-136e24a20edd | Error | unknown | change-impact-studio | Dynamic error message; inspect implementation | unknown | unknown | unknown | Draft | vscode-extension/lib/existing-documents.js:32; vscode-extension/lib/existing-documents.js:38; vscode-extension/lib/existing-documents.js:69 |
-| PROB-EXISTING-DOCUMENTS-3c26215cfe53 | Error | unknown | change-impact-studio | This document type has no reconciliation command. | unknown | unknown | unknown | Draft | vscode-extension/lib/existing-documents.js:51 |
+| PROB-EXISTING-DOCUMENTS-136e24a20edd | Error | unknown | change-impact-studio | Dynamic error message; inspect implementation | unknown | unknown | unknown | Draft | vscode-extension/lib/existing-documents.js:32; vscode-extension/lib/existing-documents.js:40; vscode-extension/lib/existing-documents.js:50; vscode-extension/lib/existing-documents.js:68 |
+| PROB-EXISTING-DOCUMENTS-3c26215cfe53 | Error | unknown | change-impact-studio | This document type has no reconciliation command. | unknown | unknown | unknown | Draft | vscode-extension/lib/existing-documents.js:48 |
 | PROB-EXTENSION-00bcf5aceb19 | Error | unknown | change-impact-studio | The UI direction exceeds the 16 KiB limit. | unknown | unknown | unknown | Draft | vscode-extension/extension.js:1405 |
 | PROB-EXTENSION-085052113504 | Error | unknown | change-impact-studio | A source decision changed. Refresh the wizard and review the current evidence. Your edits are retained. | unknown | unknown | unknown | Draft | vscode-extension/extension.js:505 |
 | PROB-EXTENSION-0a5d417c35e4 | Error | unknown | change-impact-studio | Technical intent is not ready for approval. Review the current findings shown on this page. | unknown | unknown | unknown | Draft | vscode-extension/extension.js:1348 |

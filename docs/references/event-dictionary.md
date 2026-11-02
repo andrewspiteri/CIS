@@ -10,7 +10,7 @@ cis:
 
 # Event Dictionary
 
-Governed by `change-impact-studio:spec:event-dictionary`. CIS seeded 7 row(s) from deterministic repository evidence. Review them before changing this document to Active.
+Governed by `change-impact-studio:spec:event-dictionary`. CIS seeded 8 row(s) from deterministic repository evidence. Review them before changing this document to Active.
 
 | Event ID | Event name | Event type | Producer | Consumers | Triggering command | Payload summary | Ordering / idempotency | Sensitivity | Status | Evidence |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -20,4 +20,5 @@ Governed by `change-impact-studio:spec:event-dictionary`. CIS seeded 7 row(s) fr
 | EVT-CIS-MODULES-DIAGNOSTICS-DIAGNOSTIC-EVENT | DiagnosticEvent | unknown | cis-modules-diagnostics | unknown | unknown | unknown | unknown | unknown | Draft | src/Cis.Modules.Diagnostics/DiagnosticsService.cs |
 | EVT-CIS-MODULES-REFERENCES-TESTS-LIST-CREATED-EVENT | ListCreatedEvent | unknown | cis-modules-references-tests | unknown | unknown | unknown | unknown | unknown | Draft | tests/Cis.Modules.References.Tests/ReferenceGovernanceTests.cs |
 | EVT-CIS-MODULES-REPOSITORY-TESTS-ORDER-CREATED-EVENT | OrderCreatedEvent | unknown | cis-modules-repository-tests | unknown | unknown | unknown | unknown | unknown | Draft | tests/Cis.Modules.Repository.Tests/RepositoryInitializerTests.cs |
+| EVT-CIS-MODULES-REPOSITORY-TESTS-OWNED-CREATED-EVENT | OwnedCreatedEvent | unknown | cis-modules-repository-tests | unknown | unknown | unknown | unknown | unknown | Draft | tests/Cis.Modules.Repository.Tests/ReferencePreparationTests.cs |
 | EVT-CIS-MODULES-REPOSITORY-TESTS-PROGRESS-EVENT | ProgressEvent | unknown | cis-modules-repository-tests | unknown | unknown | unknown | unknown | unknown | Draft | tests/Cis.Modules.Repository.Tests/RepositoryGuidanceReviewRunnerTests.cs |

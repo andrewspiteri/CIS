@@ -10,6 +10,57 @@ namespace Cis.Modules.References.Tests;
 
 public sealed class ReferenceGovernanceTests
 {
+    public static TheoryData<string, string, string, string[]> DoctorObservationContexts => new()
+    {
+        {
+            "permissions-dictionary", "src/Permissions.cs", """
+            private const string Policy = "cis-mstest-4.5.1-net9-vstest-v1";
+            [Authorize(Policy = "read")] public void Read() { }
+            app.RequireAuthorization("write");
+            """, ["PERM-LISTS-READ", "read", "write"]
+        },
+        {
+            "workflow-state-dictionary", "src/Workflow.cs", """
+            const string diagnostics = "CIS-API-STATE-001 CIS-REF-STATE-001 CIS-API-STATE-002";
+            const string descriptions = "State-changing state-dictionary state-machine-segment state-store state-transition state-write";
+            const string identities = "WF-ORDER STATE-ORDER-OPEN";
+            public enum OrderStatus { Open, Closed }
+            """, ["OrderStatus", "STATE-ORDER-OPEN", "WF-ORDER"]
+        },
+        {
+            "screen-route-map", "web/links.js", """
+            assert.doesNotMatch(html, /<img|<script|href=/u);
+            const route = { path: "/features" };
+            router.push("/details");
+            const html = '<a href="/reports">Reports</a><a href=/plain?q=x>Plain</a>';
+            router.push("/search?q=x");
+            const query = { path: "/items?page=2" };
+            const anchor = '<a href="/docs#top">Docs</a>';
+            """, ["/details", "/docs", "/features", "/items", "/plain", "/reports", "/search"]
+        },
+    };
+
+    [Theory]
+    [MemberData(nameof(DoctorObservationContexts))]
+    public void Discover_DoctorCandidatesRequireSourceContext(string kind, string path, string source, string[] expected)
+    {
+        using var repository = ReferenceRepository.Create(aligned: true);
+        repository.Replace(path, source);
+        var services = new ServiceCollection();
+        new ReferencesModule().RegisterServices(services);
+        using var provider = services.BuildServiceProvider();
+        var service = new ReferenceGovernanceService(new CisRepositoryContextResolver(),
+            provider.GetServices<ICisReferenceProvider>().Where(item => item.Kind == kind));
+
+        var discovered = service.Discover(repository.Path);
+
+        Assert.Equal(0, discovered.ExitCode);
+        var family = Assert.Single(discovered.Families);
+        Assert.Equal(expected, family.Observations.Select(item => item.Identity).Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal));
+        Assert.All(family.Observations, item => Assert.True(item.Line > 0));
+    }
+
     [Theory]
     [InlineData("Directory.Build.props", "directory-build")]
     [InlineData("build/Analyzers.targets", "analyzers")]

@@ -959,4 +959,107 @@ Repository shape: **monorepo**.
 - Evidence:
   - tools/function-profiler/Weaver/Weaver.csproj
 
+### cis-mstestadaptercompat-tests
+
+- Root: `tests/Cis.MSTestAdapterCompat.Tests`
+- Languages: csharp
+- Frameworks: dotnet-test, xunit
+- Roles: test-automation
+- Capabilities: configuration, coverage-collector
+- Confidence: high
+- Evidence:
+  - tests/Cis.MSTestAdapterCompat.Tests/Cis.MSTestAdapterCompat.Tests.csproj
+  - tests/Directory.Build.props
+  - Literal .NET test declarations; execution and result production are unverified
+
+### capture
+
+- Root: `tests/fixtures/MSTestAdapterCompat/Capture`
+- Languages: csharp
+- Frameworks: dotnet
+- Roles: tooling
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - tests/fixtures/MSTestAdapterCompat/Capture/Capture.csproj
+
+### production
+
+- Root: `tests/fixtures/MSTestAdapterCompat/Production`
+- Languages: csharp
+- Frameworks: dotnet
+- Roles: shared-library
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - tests/fixtures/MSTestAdapterCompat/Production/Production.csproj
+
+### tests
+
+- Root: `tests/fixtures/MSTestAdapterCompat/Tests`
+- Languages: csharp
+- Frameworks: dotnet-test, mstest
+- Roles: test-automation
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - tests/fixtures/MSTestAdapterCompat/Tests/Tests.csproj
+  - tests/fixtures/MSTestAdapterCompat/Directory.Build.props
+  - Literal .NET test declarations; execution and result production are unverified
+
+### cis-incrementalvalidation-tool
+
+- Root: `tools/Cis.IncrementalValidation.Tool`
+- Languages: csharp
+- Frameworks: dotnet
+- Roles: tooling
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - tools/Cis.IncrementalValidation.Tool/Cis.IncrementalValidation.Tool.csproj
+
+### cis-mstestadaptercompat-runtime
+
+- Root: `tools/Cis.MSTestAdapterCompat/Runtime`
+- Languages: csharp
+- Frameworks: dotnet
+- Roles: shared-library
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - tools/Cis.MSTestAdapterCompat/Runtime/Cis.MSTestAdapterCompat.Runtime.csproj
+
+### cis-mstestadaptercompat-tool
+
+- Root: `tools/Cis.MSTestAdapterCompat/Tool`
+- Languages: csharp
+- Frameworks: dotnet
+- Roles: tooling
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - tools/Cis.MSTestAdapterCompat/Tool/Cis.MSTestAdapterCompat.Tool.csproj
+
+### cis-processsafety-nativefixture
+
+- Root: `tools/Cis.ProcessSafety.NativeFixture`
+- Languages: csharp
+- Frameworks: dotnet
+- Roles: tooling
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - tools/Cis.ProcessSafety.NativeFixture/Cis.ProcessSafety.NativeFixture.csproj
+
+### cis-testing-nativefixture
+
+- Root: `tools/Cis.Testing.NativeFixture`
+- Languages: csharp
+- Frameworks: dotnet
+- Roles: tooling
+- Capabilities: configuration
+- Confidence: high
+- Evidence:
+  - tools/Cis.Testing.NativeFixture/Cis.Testing.NativeFixture.csproj
+
 This profile was deterministically classified by `cis repo init`. Review classification changes before applying them.

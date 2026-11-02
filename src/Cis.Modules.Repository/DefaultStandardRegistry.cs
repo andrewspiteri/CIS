@@ -175,6 +175,23 @@ internal static class DefaultStandardRegistry
 
                 ## Test authoring and execution
 
+                Choose the verification cadence before running commands. A task should state its
+                behavioral outcome, relevant native tests, time/storage budget and stop rule.
+
+                | Change | Verification |
+                | --- | --- |
+                | Ordinary edit | Affected build and focused native tests |
+                | Coherent repair or feature batch | Affected regression and one review |
+                | Documentation-only correction | Relevant documentation and generation checks |
+                | Mutation fixture or adapter change | Small baseline/kill/survivor/infrastructure/cleanup pilot before expansion |
+                | Feature candidate | Full affected-module mutation and applicable checks |
+                | Release candidate | All required families, platforms, compatibility and package checks |
+
+                Broader checks apply at their corresponding checkpoint. Keep implementation,
+                execution on a named platform and release qualification as separate statuses.
+                Changing relevant source, tests or configuration invalidates affected evidence;
+                documentation changes require production tests only when they change executable inputs.
+
                 - Prefer focused tests with one primary reason to fail, clear arrange/act/assert structure, deterministic data, and observable contract or invariant assertions.
                 - Treat AI-generated tests as candidates. Reject tautological tests, excessive mocks, presence-only interaction checks, and snapshot updates with no explained behavioral change.
                 - Run the smallest meaningful affected layer during iteration, then broaden according to impact and release risk.

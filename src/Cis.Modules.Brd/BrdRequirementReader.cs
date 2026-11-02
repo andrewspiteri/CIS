@@ -50,8 +50,13 @@ internal static class BrdRequirementReader
             if (string.IsNullOrWhiteSpace(priority) && mandatoryTitleScope && assertionOptional)
                 errors.Add($"BRD requirement {identity} has conflicting delivery scope in its title and assertion. Retain both passages and review their scope.");
             var deferredTitle = Regex.IsMatch(titleClause, @"\bdeferred\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-            var conditionalConstraint = deferredTitle && Regex.IsMatch(assertionClause, @"\A(?:when|if|provided that)\b",
-                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+            // A provision condition constrains the deferred capability;
+            // a condition governing an actual delivery obligation retains its modal.
+            var provisionCondition = deferredTitle
+                ? Regex.Match(assertionClause, @"\A(?:when|if)\b[^,;.]*?\bprovided\b",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
+                : Match.Empty;
+            var conditionalConstraint = provisionCondition.Success && !PriorityModality(provisionCondition.Value).Success;
             var modality = titleModality.Success ? titleModality : conditionalConstraint ? Match.Empty : assertionModality;
             var optional = titleOptional || !mandatoryTitle && !titleModality.Success && assertionOptional;
             var explicitPriority = !string.IsNullOrWhiteSpace(priority) || mandatoryTitle || modality.Success && !optional;

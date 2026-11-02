@@ -3,7 +3,7 @@ title: "CIS mutation assurance workflow"
 type: workflow-definition
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-10-26"
+last_reviewed: "2026-10-29"
 review_cadence: "on mutation scope, threshold, runner, or evidence change"
 cis:
   stable_id: change-impact-studio:workflow:mutation-assurance
@@ -13,7 +13,7 @@ cis:
 
 Qualify the native runner on a small representative scope before spending time on
 a broad mutation campaign. Use bounded diagnostic iterations to improve tests or
-execution, then run the complete declared scope for the release gate. A canary or
+execution, then run the complete declared scope for the applicable candidate gate. A canary or
 partial diagnostic result cannot satisfy that gate.
 
 Use the shared [`cis test mutation run`](../manual/cis_test_mutation_run.md) command
@@ -21,6 +21,13 @@ with a repository-owned JSON profile for any module. The profile declares native
 commands, exact production scope, relevant test/configuration inputs, threshold and
 limits. The default diagnostic kind exposes progress without claiming qualification.
 A qualification runs its separate canary first and stops on failure.
+
+When compilation dominates, group sources sharing a compilation and compatible
+test context in a small number of stable native profiles. The generic command
+accepts that multi-file scope; the current incremental mutation service selects
+one source file per invocation. Keep one immutable candidate and include relevant
+production, tests, build/configuration, tool and platform identities. Zero-definition
+files remain in scope without requiring their own compilation.
 
 CIS's own release-tier profile is `tools/mutation-profile.json`. Build the current
 CLI with `dotnet build src/Cis.Host -c Release`, then use
@@ -85,6 +92,13 @@ writers finish. Additional profiles need their own reviewed retention-family pat
    selection before expanding scope. Do not start another broad campaign to
    investigate a runner or fixture that already fails this prerequisite.
 
+The correctness pilot must also demonstrate a known survivor/control, reject a
+genuine infrastructure failure and finish with healthy restored execution and
+cleanup. A positive kill count alone cannot reject an adapter that falsely reports
+every mutant killed. Validate coverage-analysis and early-bail changes on the
+actual adapter/async path before broad execution. Estimate the full-run budget from
+the pilot before launching it; budget exhaustion stops expansion.
+
 ## Diagnostic iterations
 
 Use native early bail after a failing test by default; do not require every selected
@@ -125,10 +139,18 @@ actual infrastructure/cleanup failures separately. Stronger already-adopted evid
 policy still applies; changing it requires its own reviewed change and cannot
 retroactively qualify an old run.
 
-Only the final full-scope run with valid evidence and the unchanged required
-threshold may satisfy the release gate. Keep its raw report, conservative assessment
+Only complete current full-scope evidence with the unchanged required
+threshold may satisfy the release gate. Keep raw reports, conservative assessment
 and execution-health result separate. Never turn a diagnostic pass, timeout or
 recovered artifact into gate success.
+
+A repository's receiving rules may combine disjoint native group reports for that
+complete scope. Sum outcomes rather than averaging percentages; keep timeouts,
+compile failures, exclusions and unresolved misses explicit, with no invented kill
+credit. A group's percentage need not independently reach the full-scope threshold.
+The receiver must verify scope, current inputs and execution health. A pilot report
+may contribute when those same rules admit it; partial scope alone never closes
+the gate. The generic runner does not infer a repository's group-union acceptance.
 
 ## Compact evidence and storage
 
@@ -138,9 +160,17 @@ exact command/configuration, tool versions and a small outcome/limitations summa
 Link existing artifacts instead of copying them into each task. A source hash alone
 does not preserve an unavailable dirty change, so retain that small diff when needed.
 
+For grouped evidence, keep one unchanged native report per group, one compact
+candidate manifest and one reviewed miss table. Bind each miss to source and
+definition/operator/span/replacement, raw status, requirement, decision and the
+authorized reviewer. An arbitrary approval Boolean is insufficient. Keep historical
+reports under their original interpretation when prospective receiving rules change.
+
 Delete successful canary captures, duplicate reports and superseded diagnostic
 attempts when they are no longer useful. Once the issue is fixed, remove its
 remaining diagnostic artifacts; a brief outcome and commit reference can remain.
+Retain any current pilot report admitted as group evidence for a candidate gate
+until that gate's retention obligation ends.
 Do not create a permanent evidence bundle for each iteration. Keep raw evidence
 for a current qualification or release only under its explicit retention requirement.
 Cleanup is reviewed after writers finish; the runner does not detect issue resolution.

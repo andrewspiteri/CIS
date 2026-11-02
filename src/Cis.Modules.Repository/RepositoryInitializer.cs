@@ -895,7 +895,15 @@ public sealed partial class RepositoryInitializer : Cis.Abstractions.ICisObserve
         if (HasEquivalentContent(currentContent, artifact.Content))
         {
             retained.Add(artifact.RelativePath);
-            nextArtifacts[artifact.RelativePath] = next;
+            nextArtifacts[artifact.RelativePath] = previousArtifacts.TryGetValue(artifact.RelativePath, out var equivalent)
+                && string.Equals(equivalent.Ownership, "human", StringComparison.OrdinalIgnoreCase)
+                ? next with
+                {
+                    AppliedHash = currentHash,
+                    Ownership = equivalent.Ownership,
+                    GuidanceTemplateHash = equivalent.GuidanceTemplateHash,
+                }
+                : next;
             return;
         }
 

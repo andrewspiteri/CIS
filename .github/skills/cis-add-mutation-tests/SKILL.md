@@ -19,6 +19,11 @@ that the native mutation runner and fixtures can execute the selected scope.
    native iteration and `--kind qualification` for the complete declared profile.
    Keep relevant tests/build/tool configuration in the profile's input pins; target
    details belong in profiles rather than new mutation controllers.
+   When compilation dominates, group sources with a shared compilation and compatible
+   test context in one native invocation. Use the generic profile command above or
+   the documented direct native route; the incremental service currently selects
+   mutation work one source file at a time. Include zero-definition files in scope
+   without a separate compilation for each.
 2. Qualify a small representative canary through the native mutation runner: healthy
    baseline passes; an intentional mutant produces the intended failed test. Include
    a real child-process/transport path when relevant, with actual cleanup. Record
@@ -27,6 +32,10 @@ that the native mutation runner and fixtures can execute the selected scope.
    work. If the adapter continues running queued cases, stop and repair test
    selection or adapter behavior, then measure again before a broad campaign.
    Stop on a failed prerequisite before any broad campaign.
+   Also demonstrate a known survivor/control, rejection of an infrastructure failure
+   and healthy restored execution. Qualify coverage-analysis and early-bail changes
+   on the actual adapter/async path. A positive kill count alone is insufficient.
+   Estimate the full-run budget from the pilot before expansion.
 3. Use native early bail by default. Distinguish runner-recorded intentional bail
    from timeout, crash, cancellation and missing protocol evidence. Do not require
    every selected test to execute after a mutant has been detected.
@@ -51,6 +60,16 @@ versions, native report and hashes, distinct status counts, execution failures,
 unrun checks and residual risk. Keep native reports unchanged. Add bounded failure
 diagnostics only when needed; source/runtime copies and per-mutant controllers are
 not routine evidence.
+Bind relevant production, test, build/configuration and tool inputs, including
+reproducible relevant untracked inputs. For disjoint native groups, retain one
+unchanged report per group and apply the adopted complete-scope threshold to summed
+outcomes rather than averaging percentages. Repository receiving rules must verify
+complete scope and current inputs before any pilot report contributes to that gate.
+Include platform identity in one compact candidate manifest. Keep timeouts and
+unresolved misses explicit without kill credit.
+Use compact candidate-bound miss rows naming the definition/operator/span/replacement,
+raw status, requirement, decision and authorized reviewer; an approval Boolean alone
+does not establish review authority. Keep these rows in one reviewed miss table.
 Successful captures are transient: discard them after assessment. Keep failed
 diagnostics only while useful for an unresolved issue, then remove resolved,
 superseded and duplicate attempts under the repository retention policy. A later

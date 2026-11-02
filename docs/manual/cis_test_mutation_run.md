@@ -3,7 +3,7 @@ title: "cis test mutation run"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-10-26"
+last_reviewed: "2026-10-29"
 review_cadence: "on mutation runner contract change"
 cis:
   stable_id: change-impact-studio:manual:cis-test-mutation-run
@@ -15,9 +15,12 @@ Execute a native mutation command through CIS's shared process and storage guard
 Each target supplies a JSON profile; CIS does not contain target-specific assertion
 rules, source offsets or test controllers.
 
-For routine iterations that reuse completed unit and mutation work across file
-batches, use [`cis test incremental`](cis_test_incremental.md). The command here
-continues to execute and assess one complete native invocation.
+When compilation dominates, use this generic command or the documented direct
+native runner to group sources sharing a compilation and compatible test context.
+The profile can declare multiple `sourceFiles`; the current
+[`cis test incremental`](cis_test_incremental.md) mutation path selects one source
+file per invocation. Choose it when that granularity is useful. This generic
+command executes and assesses one complete native invocation.
 
 ```text
 cis test mutation run --profile <repository-relative.json> [--kind diagnostic|canary|qualification] [--repo <path>] [--format human|json|agent]
@@ -81,6 +84,9 @@ the fresh owned run directory. `reportPath` is relative to that directory.
 Include relevant tests, project/build configuration and tool manifests in
 `configFiles`. CIS hashes these inputs and the profile, without copying their trees.
 Commit dirty inputs when they must remain reproducible after local work changes.
+Alternatively, retain the relevant dirty patch and untracked inputs with the
+candidate. Production hashes alone do not identify the tests or build that produced
+a result. The runner hashes only the inputs declared by the profile.
 For isolated .NET campaigns, disable background build-worker reuse as shown above;
 otherwise an SDK worker can outlive the native command and trigger the owned-child
 cleanup hold. The runner still refuses genuine leftover children.

@@ -1142,6 +1142,130 @@ components:
   - tests/Cis.Modules.UiDirection.Tests/Cis.Modules.UiDirection.Tests.csproj
   - tests/Directory.Build.props
   - Literal .NET test declarations; execution and result production are unverified
+- id: cis-mstestadaptercompat-tests
+  root: tests/Cis.MSTestAdapterCompat.Tests
+  languages:
+  - csharp
+  frameworks:
+  - dotnet-test
+  - xunit
+  roles:
+  - test-automation
+  capabilities:
+  - configuration
+  - coverage-collector
+  confidence: high
+  evidence:
+  - tests/Cis.MSTestAdapterCompat.Tests/Cis.MSTestAdapterCompat.Tests.csproj
+  - tests/Directory.Build.props
+  - Literal .NET test declarations; execution and result production are unverified
+- id: capture
+  root: tests/fixtures/MSTestAdapterCompat/Capture
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - tooling
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - tests/fixtures/MSTestAdapterCompat/Capture/Capture.csproj
+- id: production
+  root: tests/fixtures/MSTestAdapterCompat/Production
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - shared-library
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - tests/fixtures/MSTestAdapterCompat/Production/Production.csproj
+- id: tests
+  root: tests/fixtures/MSTestAdapterCompat/Tests
+  languages:
+  - csharp
+  frameworks:
+  - dotnet-test
+  - mstest
+  roles:
+  - test-automation
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - tests/fixtures/MSTestAdapterCompat/Tests/Tests.csproj
+  - tests/fixtures/MSTestAdapterCompat/Directory.Build.props
+  - Literal .NET test declarations; execution and result production are unverified
+- id: cis-incrementalvalidation-tool
+  root: tools/Cis.IncrementalValidation.Tool
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - tooling
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - tools/Cis.IncrementalValidation.Tool/Cis.IncrementalValidation.Tool.csproj
+- id: cis-mstestadaptercompat-runtime
+  root: tools/Cis.MSTestAdapterCompat/Runtime
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - shared-library
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - tools/Cis.MSTestAdapterCompat/Runtime/Cis.MSTestAdapterCompat.Runtime.csproj
+- id: cis-mstestadaptercompat-tool
+  root: tools/Cis.MSTestAdapterCompat/Tool
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - tooling
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - tools/Cis.MSTestAdapterCompat/Tool/Cis.MSTestAdapterCompat.Tool.csproj
+- id: cis-processsafety-nativefixture
+  root: tools/Cis.ProcessSafety.NativeFixture
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - tooling
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - tools/Cis.ProcessSafety.NativeFixture/Cis.ProcessSafety.NativeFixture.csproj
+- id: cis-testing-nativefixture
+  root: tools/Cis.Testing.NativeFixture
+  languages:
+  - csharp
+  frameworks:
+  - dotnet
+  roles:
+  - tooling
+  capabilities:
+  - configuration
+  confidence: high
+  evidence:
+  - tools/Cis.Testing.NativeFixture/Cis.Testing.NativeFixture.csproj
 - id: fixture
   root: tools/function-profiler/Fixture
   languages:
@@ -1212,6 +1336,12 @@ managed_artifacts:
   template_version: 1
   applied_hash: sha256:8af15d974838cf12f363ac3253d72d83ca2d62b3c86846507c5a2fe1da977bb7
   ownership: managed
+- id: guidance.instruction.csharp.capture
+  path: .github/instructions/capture-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:0169cb7e7181d52871f77fa44ee5a0cfc28ae55e14f8007c93c3f6881c890089
+  ownership: managed
 - id: guidance.instruction.csharp.cis-abstractions
   path: .github/instructions/cis-abstractions-csharp.instructions.md
   definition: guidance.instruction.csharp
@@ -1246,7 +1376,7 @@ managed_artifacts:
   path: .github/instructions/cis-business-requirements.instructions.md
   definition: guidance.instruction.business-requirements
   template_version: 2
-  applied_hash: sha256:7f0a430e26edc92836c1ca8e5da174b0a97c0d1e0d7fd36922f9b3d00eb3ddaf
+  applied_hash: sha256:a9b769ee27debd006eb6e0a39ab5c22810f97dea4b6bbe33c65b76e0d8c99d36
   ownership: human
 - id: guidance.instruction.change-delivery
   path: .github/instructions/cis-change-delivery.instructions.md
@@ -1307,6 +1437,12 @@ managed_artifacts:
   definition: guidance.instruction.human-readable-content
   template_version: 2
   applied_hash: sha256:9470da9f98cabc8236565eabb518c6dcd76e69ced78bc3bc7970e25a947dbdd8
+  ownership: managed
+- id: guidance.instruction.csharp.cis-incrementalvalidation-tool
+  path: .github/instructions/cis-incrementalvalidation-tool-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:a287f0d4d397373f931a5f99143aa02fa239d295cd3dafe343e009fe333a654b
   ownership: managed
 - id: guidance.instruction.local-artifact-retention
   path: .github/instructions/cis-local-artifact-retention.instructions.md
@@ -1674,6 +1810,30 @@ managed_artifacts:
   template_version: 1
   applied_hash: sha256:eb552920318418124dbb0f11d61970e3d43a9b1d9540cd61a26c31b7f68996cc
   ownership: managed
+- id: guidance.instruction.csharp.cis-mstestadaptercompat-runtime
+  path: .github/instructions/cis-mstestadaptercompat-runtime-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:9fa12a5241c700429efff657c2c57468c96ac96fb14cfee2641d69e643d72362
+  ownership: managed
+- id: guidance.instruction.csharp.cis-mstestadaptercompat-tests
+  path: .github/instructions/cis-mstestadaptercompat-tests-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:9f446d4603b586f6bc3e231223b59125166131ec7060a967909f6fc514cf5bdb
+  ownership: managed
+- id: guidance.instruction.csharp.cis-mstestadaptercompat-tool
+  path: .github/instructions/cis-mstestadaptercompat-tool-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:9e8fc6195a1e520f601b38a5d2339f09d7da12562bab67bc59945a9374f27243
+  ownership: managed
+- id: guidance.instruction.csharp.cis-processsafety-nativefixture
+  path: .github/instructions/cis-processsafety-nativefixture-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:6b41e1d6c2c97eacbdd3a5fddda129d1f7cb8a4ec2bae44c3c5371627e1a75cb
+  ownership: managed
 - id: guidance.instruction.csharp.cis-providers-agent-claude
   path: .github/instructions/cis-providers-agent-claude-csharp.instructions.md
   definition: guidance.instruction.csharp
@@ -1714,7 +1874,7 @@ managed_artifacts:
   path: .github/instructions/cis-repository.instructions.md
   definition: guidance.instruction.repository
   template_version: 2
-  applied_hash: sha256:204e63ddd0da75eebd298e4e8e6042487477bb3fb450fbe9c9e4bd148f3e7c2a
+  applied_hash: sha256:4d8b0e666958b72c7b1eb54b386fcef565f23d6b0b1c58f1aee9a98bfda549a2
   ownership: human
 - id: guidance.instruction.security-testing
   path: .github/instructions/cis-security-testing.instructions.md
@@ -1738,8 +1898,14 @@ managed_artifacts:
   path: .github/instructions/cis-technical-intent.instructions.md
   definition: guidance.instruction.technical-intent
   template_version: 2
-  applied_hash: sha256:ebb7a6a35938f741f1107711595358621fadb8a8f3c6a6de84562a840aaf042d
+  applied_hash: sha256:920d537e74faa91620aa83b93b1acb64739004aa2131114a33e5b3a118ecd5dc
   ownership: human
+- id: guidance.instruction.csharp.cis-testing-nativefixture
+  path: .github/instructions/cis-testing-nativefixture-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:0844a9d643179110fee8fa4b5f331e8d2ff60dc5be3b5c117bf62bf82bfe84fa
+  ownership: managed
 - id: guidance.instruction.toolkit-parity-evidence
   path: .github/instructions/cis-toolkit-evidence.instructions.md
   definition: guidance.instruction.toolkit-parity-evidence
@@ -1824,11 +1990,23 @@ managed_artifacts:
   template_version: 1
   applied_hash: sha256:04385da9bebdc9fc84ef2d42cb0176203de924a862c5056b88e05bdaae109bfd
   ownership: managed
+- id: guidance.instruction.csharp.production
+  path: .github/instructions/production-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:78e4e959a6b759e777c0f49d0ef63fa4c4f2eccf38c0dbdccd41c939223e79fc
+  ownership: managed
 - id: guidance.instruction.csharp.runtime
   path: .github/instructions/runtime-csharp.instructions.md
   definition: guidance.instruction.csharp
   template_version: 1
   applied_hash: sha256:74a37187542f8d611d0d98479bea8403c98e057787ec114c0c670163b1e990ee
+  ownership: managed
+- id: guidance.instruction.csharp.tests
+  path: .github/instructions/tests-csharp.instructions.md
+  definition: guidance.instruction.csharp
+  template_version: 1
+  applied_hash: sha256:8578d586907f93795a454a73e5e7d11bf642aa108c584de9741385af8697ab6c
   ownership: managed
 - id: guidance.instruction.csharp.weaver
   path: .github/instructions/weaver-csharp.instructions.md
@@ -1870,7 +2048,7 @@ managed_artifacts:
   path: .github/skills/cis-add-mutation-tests/SKILL.md
   definition: guidance.skill.add-mutation-tests
   template_version: 1
-  applied_hash: sha256:1a53470c73aedce285fc0f501e48541c7394f4b1e6191a143e782aeaa19a02c3
+  applied_hash: sha256:c0f8d83bae0fe659d78a8a31b58cd8b6cc0aa594d209dd025f395484721742f7
   ownership: managed
 - id: guidance.skill.add-unit-tests
   path: .github/skills/cis-add-unit-tests/SKILL.md
@@ -1966,7 +2144,7 @@ managed_artifacts:
   path: .github/skills/cis-dotnet-test/SKILL.md
   definition: guidance.skill.dotnet-test
   template_version: 1
-  applied_hash: sha256:92d17e7419fc6e8fc5ea8fbc89374a5fe00552e04fbac91371e04470e640af51
+  applied_hash: sha256:ed077a08aab93c4107da8712eb76c5ef3e885db9a87785b2227ef250687f7c2c
   ownership: human
 - id: guidance.skill.external-tracker-sync
   path: .github/skills/cis-external-tracker-sync/SKILL.md
@@ -1996,7 +2174,7 @@ managed_artifacts:
   path: .github/skills/cis-govern-business-requirements/SKILL.md
   definition: guidance.skill.govern-business-requirements
   template_version: 2
-  applied_hash: sha256:a5c7bbae10bd95153fe8a42a3d94a1a042007e0d3d54ce0b052ad57419be0bed
+  applied_hash: sha256:dc12b901c4a6cd8e904175ab1a9187f587548dcd6b9eac2d35c66246fd43dcb9
   ownership: human
 - id: guidance.skill.govern-solution-design
   path: .github/skills/cis-govern-solution-design/SKILL.md
@@ -2008,7 +2186,7 @@ managed_artifacts:
   path: .github/skills/cis-govern-technical-intent/SKILL.md
   definition: guidance.skill.govern-technical-intent
   template_version: 2
-  applied_hash: sha256:bdec1ca8dd1a3fa96fea53359fcab887bbb47c34d4f5563899e526184af19cb9
+  applied_hash: sha256:951b3b5e70a78d3cb5d39c54b422ef70f96b142bb67bb5b1f757f5e4153ff43e
   ownership: human
 - id: guidance.skill.govern-ui-direction
   path: .github/skills/cis-govern-ui-direction/SKILL.md
@@ -2122,7 +2300,7 @@ managed_artifacts:
   path: .github/skills/cis-tooling-evidence/SKILL.md
   definition: guidance.skill.tooling-evidence
   template_version: 1
-  applied_hash: sha256:16c319e9dded403ed060738d5d3fe0dd0f5b9fbf9139aed6391e32063844aa7b
+  applied_hash: sha256:785dfa66ac65ac534af965bed9474a120ed25aade88f29ddc4d6c516da3906de
   ownership: human
 - id: guidance.skill.ux-writing
   path: .github/skills/cis-ux-writing/SKILL.md
@@ -2140,7 +2318,7 @@ managed_artifacts:
   path: .github/skills/cis-verification/SKILL.md
   definition: guidance.skill.verification
   template_version: 1
-  applied_hash: sha256:61bdaa5bdbf08ca4860a11350192561d705e0f875a0066bd35ab85096f877f62
+  applied_hash: sha256:a7171d49f93ffad548fb0367501ab72a093623d52955c87636e4a646fe36b173
   ownership: human
 - id: guidance.skill.write-adr
   path: .github/skills/cis-write-adr/SKILL.md
@@ -2152,7 +2330,7 @@ managed_artifacts:
   path: AGENTS.md
   definition: guidance.host.agents
   template_version: 2
-  applied_hash: sha256:1987655cab1311a3c47403786d02ebed5b0192db3edec850a3eb924a80856b6f
+  applied_hash: sha256:ee022c0dac4ddedddcd0d80970dca8418ae27cd91b91f285fd24a66f349cdc0b
   ownership: human
 - id: guidance.host.claude
   path: CLAUDE.md
@@ -2194,7 +2372,7 @@ managed_artifacts:
   path: docs/references/api-dictionary.md
   definition: reference.api-dictionary
   template_version: 1
-  applied_hash: sha256:2cf3afc84038c917a16324757168ca034a7b9f8df69b6a2861b2554095803d1e
+  applied_hash: sha256:47dd57d0bd4ba7c82e41fcff9f4f7895e27d97bbfa2a9578d9c7e78b09fd591f
   ownership: managed
 - id: reference.api-governance-profile
   path: docs/references/api-governance-profile.md
@@ -2206,7 +2384,7 @@ managed_artifacts:
   path: docs/references/business-invariant-catalogue.md
   definition: reference.business-invariant-catalogue
   template_version: 1
-  applied_hash: sha256:31d74a21966a1cea6695656d9e10530192035419acdea7b7c92a32c45a0fa426
+  applied_hash: sha256:f8def50c4fba2f88f504cb5fca7f282da5bb1095cc8aacb8b4334e5671f2caeb
   ownership: managed
 - id: reference.command-dictionary.reference
   path: docs/references/command-dictionary.md
@@ -2218,13 +2396,13 @@ managed_artifacts:
   path: docs/references/configuration-dictionary.md
   definition: reference.configuration-dictionary
   template_version: 1
-  applied_hash: sha256:26839a79a42483b3bd0694dc869d395e534fa119e9ae7b3d4aba2313e571d71c
+  applied_hash: sha256:46044e51733f391d3cc9156de52579f1cba93099ac1a5179b0e9c586ccd3c552
   ownership: human
 - id: reference.data-dictionary.reference
   path: docs/references/data-dictionary.md
   definition: reference.data-dictionary
   template_version: 1
-  applied_hash: sha256:58b723cb35278382975b8f5ebf31ee9167ee4ca57876ce5e4bc496d0e4bae532
+  applied_hash: sha256:6b5386db4ae2859593d61d2ffcfebdb7c728ee60f6904fe165f51deedd3305f7
   ownership: managed
 - id: reference.diagnostics-profile
   path: docs/references/diagnostics-profile.md
@@ -2242,7 +2420,7 @@ managed_artifacts:
   path: docs/references/event-dictionary.md
   definition: reference.event-dictionary
   template_version: 1
-  applied_hash: sha256:86813f8ffdc0794fd397de59211730a62346f8b2fb535b534e54e2a531b75720
+  applied_hash: sha256:ae3d0242a91a537b0c5645f2627e731e1578db251be024188cb98a68e21df38b
   ownership: managed
 - id: reference.external-tracker-profile
   path: docs/references/external-tracker-profile.md
@@ -2278,43 +2456,43 @@ managed_artifacts:
   path: docs/references/local-artifact-retention.md
   definition: reference.local-artifact-retention
   template_version: 1
-  applied_hash: sha256:2d6e5254cfc7b778a2111eeef0f511d9ed84a480756f6fc90716ba7d3cb4474a
+  applied_hash: sha256:3c42edeccddc31b7e9ed1ae067d58acdc54d0ad69c43f9ad568d18c58d5d2c1f
   ownership: human
 - id: reference.module-ownership-map.reference
   path: docs/references/module-ownership-map.md
   definition: reference.module-ownership-map
   template_version: 1
-  applied_hash: sha256:58bb67a2179691f3e64f3b05f7428f5844324b8e285ab4428db41225b42b9aaa
+  applied_hash: sha256:2922534c25cb59c4ad524acc71825ba3f5951d81d224831a5ce215b60a623491
   ownership: human
 - id: reference.package-catalogue.reference
   path: docs/references/package-catalogue.md
   definition: reference.package-catalogue
   template_version: 1
-  applied_hash: sha256:96edbbe1bbeb934b5631ef315747ec60ab19cc032d5b519345e967bd9fcc7528
+  applied_hash: sha256:35afb323a1c0a6bc32a04ba2979b7a0a87b1254933f013df7ae8896ff283ee55
   ownership: human
 - id: reference.permissions-dictionary.reference
   path: docs/references/permissions-dictionary.md
   definition: reference.permissions-dictionary
   template_version: 1
-  applied_hash: sha256:eae7f67cdab00d5b219e87d0bd8a2c7f38ace61c6b1c88f64231fd2b3007ef48
+  applied_hash: sha256:f5c7432beb0e29cbb4559e5fc8c96b491f4965ef18111cf76291d3cca741f135
   ownership: human
 - id: reference.problem-details-catalogue.reference
   path: docs/references/problem-details-catalogue.md
   definition: reference.problem-details-catalogue
   template_version: 1
-  applied_hash: sha256:a4ef3ddba82eddb73822a7e29438572d73aff25d8a50c12271cab1471097faf2
+  applied_hash: sha256:eb38a78670b0106b5b520a58d1926d42682f88e05e9299924d27c9269e833705
   ownership: managed
 - id: reference.projection-dictionary.reference
   path: docs/references/projection-dictionary.md
   definition: reference.projection-dictionary
   template_version: 1
-  applied_hash: sha256:b3fc55067fde16b9b6f790b309b29b8d591d73230462e2e449a8c650ba365702
+  applied_hash: sha256:a13e7bd9cb5674cc6d3b286134d08b361a62dea2102adb58e740d2f85fdc6262
   ownership: managed
 - id: repository.profile
   path: docs/references/repository-profile.md
   definition: repository.profile
   template_version: 1
-  applied_hash: sha256:cc159d7437a95985342d4e5f902791b9de1bf18b89802a555ff75b4b8ae91cab
+  applied_hash: sha256:f9ea43af4748f3b83ca0af1ffc859207211360b73c9e9520c4ec842578f76dfc
   ownership: human
 - id: reference.security-suite-profile
   path: docs/references/security-suite-profile.md
@@ -2344,7 +2522,7 @@ managed_artifacts:
   path: docs/references/test-suite-profile.md
   definition: reference.test-suite-profile
   template_version: 1
-  applied_hash: sha256:4d6d003c20107bd976bcc8eba1feaf9ade3f1f11235d5f195278c77b0857c08f
+  applied_hash: sha256:f688d062fc7f904a5bf03fd2d232c2d3d8d95448ba81729082a70bcdbd27ee76
   ownership: human
 - id: reference.traceability-matrix.reference
   path: docs/references/traceability-matrix.md
@@ -2356,7 +2534,7 @@ managed_artifacts:
   path: docs/references/workflow-state-dictionary.md
   definition: reference.workflow-state-dictionary
   template_version: 1
-  applied_hash: sha256:4c924717c823db45218be2e2ac26c6ed1891bfc1260577ad66d0bef2a4f7080c
+  applied_hash: sha256:821ea2e3b043ffe04a29fbb7597f81fd3e4c4be02e609f989f92b084d08947e1
   ownership: managed
 - id: specification.api-design-and-governance
   path: docs/specs/api-design-and-governance-spec.md
@@ -2566,7 +2744,7 @@ managed_artifacts:
   path: docs/standards/testing-standard.md
   definition: standard.default.testing
   template_version: 1
-  applied_hash: sha256:04af5eed3886219c2ff7ece4c761c580a8abdaa8e77f5234c007bac6e945b5c9
+  applied_hash: sha256:56ddbdb1419d3da2d7c19edcdc0d1a723ee0ccd26daba45ba285352f4e93afea
   ownership: human
 - id: template.adr
   path: docs/templates/adr-template.md

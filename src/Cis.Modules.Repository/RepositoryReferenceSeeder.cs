@@ -8,6 +8,7 @@ internal static partial class RepositoryReferenceSeeder
 {
     private static readonly HashSet<string> ExcludedDirectories = new(StringComparer.OrdinalIgnoreCase)
     {
+        ".artifacts",
         ".cis",
         ".codex-tmp",
         ".git",
@@ -17,6 +18,7 @@ internal static partial class RepositoryReferenceSeeder
         ".output",
         ".svelte-kit",
         ".vs",
+        "artifacts",
         "bin",
         "coverage",
         "dist",

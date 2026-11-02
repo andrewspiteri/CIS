@@ -139,6 +139,41 @@ public sealed class ReferencePreparationTests
         Assert.Equal(active, File.ReadAllText(path));
     }
 
+    [Theory]
+    [InlineData("artifacts")]
+    [InlineData(".artifacts")]
+    public void References_ExcludeArtifactCopiesAndRetainOwnedSource(string artifactRoot)
+    {
+        using var repository = new Fixture();
+        const string ownedSource = """
+            app.MapGet("/owned", () => Results.Ok());
+            public sealed record OwnedCreatedEvent;
+            public enum OwnedStatus { Draft, Complete }
+            public sealed class OwnedProjection { }
+            public sealed class OwnedException : Exception { }
+            public sealed class OwnedContext { public DbSet<OwnedEntity> Entities { get; set; } }
+            """;
+        const string ownedRule = "if (!permitted) { throw new Error('Owned rule'); }";
+        repository.Write("src/Orders/Cache/owned.cs", ownedSource);
+        repository.Write("src/Orders/Cache/owned.ts", ownedRule);
+        repository.Write(artifactRoot + "/copied.cs", ownedSource.Replace("Owned", "Copied").Replace("/owned", "/copied"));
+        repository.Write(artifactRoot + "/copied.ts", ownedRule.Replace("permitted", "copiedPermission"));
+
+        var seeds = RepositoryReferenceSeeder.Seed(repository.Path, new RepositoryClassifier().Classify(repository.Path));
+
+        foreach (var reference in new[]
+                 {
+                     "api-dictionary", "business-invariant-catalogue", "data-dictionary", "event-dictionary",
+                     "problem-details-catalogue", "projection-dictionary", "workflow-state-dictionary",
+                 })
+        {
+            var observed = string.Join('\n', seeds[reference].SelectMany(row => row));
+            Assert.Contains("src/Orders/Cache/owned.", observed, StringComparison.Ordinal);
+            Assert.DoesNotContain(artifactRoot + "/", observed, StringComparison.Ordinal);
+            Assert.DoesNotContain("Copied", observed, StringComparison.Ordinal);
+        }
+    }
+
     [Fact]
     public void TypeScriptBehavior_ExtractsObservedContractsWithoutQuotedExamplesOrSecretValues()
     {

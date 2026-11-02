@@ -297,10 +297,42 @@ public sealed partial class BrdWorkflowTests
     }
 
     [Fact]
-    public void AuthoritativeImport_RemainingParser_DeferredTitleConstraintCannotReplaceReviewedPriority()
+    public void AuthoritativeImport_DeferredTitleRetainsConditionalDeliveryPriority()
     {
         using var environment = WorkspaceEnvironment.Create(1);
-        SelectedImportSource(environment, "## Requirements\n\n**REQ-01 Deferred exports.** When provided, they must omit sensitive data.");
+        const string requirement = "When phase 2 starts, the service should provide exports.";
+        SelectedImportSource(environment, "## Requirements\n\n**REQ-01 Deferred exports.** " + requirement);
+        Assert.True(environment.Service.Reconcile(environment.Authority.Path).Validation!.Valid);
+        Assert.Contains(requirement, File.ReadAllText(environment.CanonicalPath));
+        Assert.Equal(0, environment.Service.Approve(environment.Authority.Path, "Fixture owner", "Adopt synthetic conditional export delivery.").ExitCode);
+        var backlog = ImportedBacklog(environment);
+        var built = backlog.Build(environment.Authority.Path);
+        Assert.Equal(0, built.ExitCode);
+        var item = Assert.Single(built.Items);
+        Assert.Equal("Should", item.Priority);
+        Assert.Equal("REQ-01", item.RequirementId);
+        Assert.Equal("Deferred exports", item.Outcome);
+        Assert.Equal(0, backlog.Approve(environment.Authority.Path, "Fixture owner", "Adopt synthetic backlog.").ExitCode);
+        var feature = backlog.StartFeature(environment.Authority.Path, item.Id);
+        Assert.Equal(0, feature.ExitCode);
+        Assert.Contains("Satisfy the source acceptance intent: " + requirement,
+            File.ReadAllText(Path.Combine(environment.Authority.Path, feature.RelativePath!)));
+        var rebuilt = backlog.Build(environment.Authority.Path);
+        Assert.Equal(0, rebuilt.ExitCode);
+        var reopened = Assert.Single(rebuilt.Items);
+        Assert.Equal(item.RequirementId, reopened.RequirementId);
+        Assert.Equal(item.Outcome, reopened.Outcome);
+        Assert.Equal("Should", reopened.Priority);
+        Assert.Contains(requirement, File.ReadAllText(environment.CanonicalPath));
+    }
+
+    [Theory]
+    [InlineData("When provided, they must omit sensitive data.")]
+    [InlineData("When exports are provided, they must omit sensitive data.")]
+    public void AuthoritativeImport_RemainingParser_DeferredTitleConstraintCannotReplaceReviewedPriority(string requirement)
+    {
+        using var environment = WorkspaceEnvironment.Create(1);
+        SelectedImportSource(environment, "## Requirements\n\n**REQ-01 Deferred exports.** " + requirement);
         Assert.True(environment.Service.Reconcile(environment.Authority.Path).Validation!.Valid);
         Assert.Equal(0, environment.Service.Approve(environment.Authority.Path, "Fixture owner", "Adopt synthetic deferred delivery scope.").ExitCode);
         var backlog = ImportedBacklog(environment);
@@ -313,7 +345,7 @@ public sealed partial class BrdWorkflowTests
         Assert.Equal("Active", reopened.Validation!.EffectiveStatus);
         var feature = backlog.StartFeature(environment.Authority.Path, Assert.Single(reopened.Items).Id);
         Assert.Equal(0, feature.ExitCode);
-        Assert.Contains("When provided, they must omit sensitive data.", File.ReadAllText(Path.Combine(environment.Authority.Path, feature.RelativePath!)));
+        Assert.Contains(requirement, File.ReadAllText(Path.Combine(environment.Authority.Path, feature.RelativePath!)));
     }
 
     [Theory]

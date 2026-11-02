@@ -25,7 +25,7 @@ internal static class ImplementationSkillPackRegistry
             [
                 Skill("dotnet-test", "Build and test affected .NET projects with bounded commands and preserved evidence. Use when changing C# or .NET code.",
                     "Verify .NET changes without turning a targeted edit into an unbounded solution-wide run.",
-                    ["Identify affected projects, adopted native framework, runner/platform and direct test projects; inspect inherited configuration. If no framework is adopted, consult .cis/local/examples/dotnet-engineering/README.md when installed and the engineering-defaults reference; verify compatibility before adopting a harness. The local example is reference material, not project implementation or passing project evidence.", "Run the native formatter and SDK/Sonar analyzers or adopted alternatives with declared blocking severities.", "Build the narrowest project boundary with warnings visible.", "Run the applicable unit, component, architecture, integration, compatibility, regression, business, browser and security layers; record justified inapplicability separately. Use bounded coverage and mutation with actual reports.", "Enable correlated test-mode logs, metrics and traces without changing application/authentication behavior; preserve partial evidence and first failures.", "Record exact commands, versions, source identity, results and unavailable prerequisites. Reassess required gates independently of the configured command list before completion."],
+                    ["Identify affected projects, adopted native framework, runner/platform and direct test projects; inspect inherited configuration. If no framework is adopted, consult .cis/local/examples/dotnet-engineering/README.md when installed and the engineering-defaults reference; verify compatibility before adopting a harness. The local example is reference material, not project implementation or passing project evidence.", "Run the native formatter and SDK/Sonar analyzers or adopted alternatives with declared blocking severities.", "Build the narrowest project boundary with warnings visible.", "Match execution to the checkpoint: ordinary edits use affected builds/focused native tests; coherent batches use affected regression and one review; documentation-only corrections use documentation/generation checks; mutation fixture/adapter changes require a small correctness pilot; feature candidates require full affected-module mutation and applicable checks; release candidates retain all required families/platforms/compatibility/package checks. State the behavioral outcome, relevant tests, time/storage budget and stop rule. Record justified inapplicability separately.", "Enable correlated test-mode logs, metrics and traces without changing application/authentication behavior; preserve partial evidence and first failures.", "Record exact commands, versions, source identity, results and unavailable prerequisites. Reassess required gates independently of the configured command list before completion."],
                     "Do not report a build as proof that behavior or architecture tests passed."),
             ], declared: classification.DeclaredStack == "csharp");
 
@@ -42,9 +42,94 @@ internal static class ImplementationSkillPackRegistry
                     ["Read ADRs, module ownership, and existing architecture-test conventions.", "Express one stable boundary rule per test.", "Include a deliberate negative fixture when the framework permits it.", "Run the architecture-test project and preserve the command output.", "Link the rule to its governing decision or specification."],
                     "Do not encode transient namespaces as architecture without a canonical rule."),
                 Skill("add-mutation-tests", "Use mutation testing to challenge important unit-test assertions. Use when risk or independent assurance requires evidence beyond line coverage.",
-                    "Find assertion gaps after qualifying the native mutation runner and representative fixture lifecycle.",
-                    ["Read the adopted mutation profile, threshold and stronger evidence policy; fix source/configuration/tool identities, scope, wall time, maximum diagnostic attempts, artifact caps and free-space reserve. Use cis test mutation run --profile <path> --kind diagnostic for bounded iterations and --kind qualification for the complete declared profile; pin relevant tests/build/tool configuration. Target details belong in profiles rather than new controllers.", "Run a small native-runner canary: healthy baseline passes and an intentional mutant produces the intended failed test; include real child-process or transport cleanup when applicable. Record selected and executed case counts and elapsed time. Verify that early bail reduces the remaining queued work; a stop request alone does not prove saved work. If the adapter continues running queued cases, stop and repair test selection or adapter behavior, then measure again before broad execution. Stop on failed prerequisites before broad execution.", "Use native early bail by default; distinguish runner-recorded intentional bail from timeout, crash, cancellation and missing protocol evidence.", "Test one bounded diagnostic hypothesis at a time; inspect setup fan-out, host startup and cleanup before repeating a broad campaign. Stop at the iteration budget or a repeated failure without new information.", "Compare distinct mutant outcomes in the same source scope, not diagnostic row counts. Review survivors against exact source and contracts without inventing equivalence, exclusions or accepted limitations.", "Keep unchanged native reports, conservative assessment and execution health separate. Ordinary native assertions and failed-test exceptions need no bespoke whitelist or every-row direct proof unless stronger adopted policy requires it.", "Only a complete final run of the required scope with the unchanged threshold can satisfy the gate; canaries and partial diagnostics cannot.", "Link compact source commit/dirty diff, commands/configuration, versions, native report, hashes and limitations. Capture extra failure material only under a bounded retention decision; full source/runtime copies and per-mutant controllers are not routine evidence. Discard successful captures; keep failed diagnostics only while useful for an open issue, then remove resolved, superseded and duplicate attempts under the retention policy. A later failed or running attempt must not leave an older passing score looking current."],
-                    "Do not hide survivors, relax thresholds, convert timeouts into kills or repeat identical campaigns. Stop on unmet storage caps; archives are not unlimited storage and protected evidence cannot be silently deleted. Preserve stronger adopted policy."),
+                    """
+                    Find behavior that tests execute but do not meaningfully assert, after checking
+                    that the native mutation runner and fixtures can execute the selected scope.
+                    """,
+                    [
+                        """
+                        Read the adopted mutation profile, threshold and stronger evidence rules. Fix
+                           source/configuration/tool identities, scope, wall time, maximum diagnostic
+                           attempts, artifact budget and free-space reserve before execution.
+                           Use `cis test mutation run --profile <path> --kind diagnostic` for a bounded
+                           native iteration and `--kind qualification` for the complete declared profile.
+                           Keep relevant tests/build/tool configuration in the profile's input pins; target
+                           details belong in profiles rather than new mutation controllers.
+                           When compilation dominates, group sources with a shared compilation and compatible
+                           test context in one native invocation. Use the generic profile command above or
+                           the documented direct native route; the incremental service currently selects
+                           mutation work one source file at a time. Include zero-definition files in scope
+                           without a separate compilation for each.
+                        """,
+                        """
+                        Qualify a small representative canary through the native mutation runner: healthy
+                           baseline passes; an intentional mutant produces the intended failed test. Include
+                           a real child-process/transport path when relevant, with actual cleanup. Record
+                           selected and executed case counts and elapsed time. Verify that early bail
+                           reduces the remaining queued work; a stop request alone does not prove saved
+                           work. If the adapter continues running queued cases, stop and repair test
+                           selection or adapter behavior, then measure again before a broad campaign.
+                           Stop on a failed prerequisite before any broad campaign.
+                           Also demonstrate a known survivor/control, rejection of an infrastructure failure
+                           and healthy restored execution. Qualify coverage-analysis and early-bail changes
+                           on the actual adapter/async path. A positive kill count alone is insufficient.
+                           Estimate the full-run budget from the pilot before expansion.
+                        """,
+                        """
+                        Use native early bail by default. Distinguish runner-recorded intentional bail
+                           from timeout, crash, cancellation and missing protocol evidence. Do not require
+                           every selected test to execute after a mutant has been detected.
+                        """,
+                        """
+                        Run one bounded diagnostic hypothesis at a time. Investigate shared setup,
+                           selection fan-out, host startup and cleanup when execution dominates. Stop at the
+                           declared iteration budget or a repeated failure without new information.
+                        """,
+                        """
+                        Compare distinct mutant outcomes in the same source scope. Diagnostic row counts
+                           are not additional kills. Review survivors against exact source and contracts;
+                           never invent equivalence, exclusions or accepted limitations.
+                        """,
+                        """
+                        Record native counts, conservative assessment and execution health separately.
+                           Normal native assertions and failed-test exceptions need no bespoke whitelist or
+                           every-row direct-assertion proof; preserve actual infrastructure failures and any
+                           stronger adopted policy.
+                        """,
+                        """
+                        After focused improvements and a healthy runner, execute the full required scope
+                           for the final gate with its unchanged threshold. A canary, partial run or timeout
+                           cannot satisfy that gate.
+                        """
+                    ],
+                    """
+                    Do not hide survivors, relax thresholds or convert timeouts into kills. Preflight
+                    scratch and retained-storage caps; stop rather than accumulating archives or
+                    deleting protected evidence without authorization. Do not repeat a broad campaign
+                    until the failed prerequisite or hypothesis changes. Stronger adopted policy wins.
+                    """,
+                    completionEvidence:
+                    """
+                    Link a compact record of source commit/dirty diff, command/configuration, tool
+                    versions, native report and hashes, distinct status counts, execution failures,
+                    unrun checks and residual risk. Keep native reports unchanged. Add bounded failure
+                    diagnostics only when needed; source/runtime copies and per-mutant controllers are
+                    not routine evidence.
+                    Bind relevant production, test, build/configuration and tool inputs, including
+                    reproducible relevant untracked inputs. For disjoint native groups, retain one
+                    unchanged report per group and apply the adopted complete-scope threshold to summed
+                    outcomes rather than averaging percentages. Repository receiving rules must verify
+                    complete scope and current inputs before any pilot report contributes to that gate.
+                    Include platform identity in one compact candidate manifest. Keep timeouts and
+                    unresolved misses explicit without kill credit.
+                    Use compact candidate-bound miss rows naming the definition/operator/span/replacement,
+                    raw status, requirement, decision and authorized reviewer; an approval Boolean alone
+                    does not establish review authority. Keep these rows in one reviewed miss table.
+                    Successful captures are transient: discard them after assessment. Keep failed
+                    diagnostics only while useful for an unresolved issue, then remove resolved,
+                    superseded and duplicate attempts under the repository retention policy. A later
+                    failed or running attempt must not leave an older passing score looking current.
+                    """),
             ]);
 
         AddWhen(selected, classification, "business-assurance", "Business acceptance assurance",
@@ -223,7 +308,8 @@ internal static class ImplementationSkillPackRegistry
         string description,
         string purpose,
         IReadOnlyList<string> workflow,
-        string guardrail)
+        string guardrail,
+        string completionEvidence = "Preserve affected scope, exact commands, outcomes, generated artifacts, skipped checks, and residual risk in the canonical task or verification record.")
     {
         var steps = string.Join("\n", workflow.Select((step, index) => $"{index + 1}. {step}"));
         var content = $"""
@@ -244,7 +330,7 @@ internal static class ImplementationSkillPackRegistry
 
             ## Completion evidence
 
-            Preserve affected scope, exact commands, outcomes, generated artifacts, skipped checks, and residual risk in the canonical task or verification record.
+            {completionEvidence}
 
             ## Guardrails
 

@@ -117,7 +117,7 @@ internal sealed class PermissionReferenceProvider : BuiltInReferenceProvider
 {
     private static readonly Regex Stable = new("\\b(?<key>PERM-[A-Z0-9][A-Z0-9_-]*)\\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex Policy = new(
-        "(?:\\bPolicy\\s*=\\s*|\\b(?:RequireAuthorization|HasPermission|hasPermission|can)\\s*\\(\\s*)\"(?<key>[A-Za-z][A-Za-z0-9:._-]{1,127})\"",
+        "(?:\\bAuthorize(?:Attribute)?\\s*\\([^)]*?\\bPolicy\\s*=\\s*|\\b(?:RequireAuthorization|HasPermission|hasPermission|can)\\s*\\(\\s*)\"(?<key>[A-Za-z][A-Za-z0-9:._-]{1,127})\"",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
     public override string Kind => "permissions-dictionary";
     public override string Description => "Authorization policies and permission codes used by source.";
@@ -165,7 +165,7 @@ internal sealed class ProjectionReferenceProvider : TypeReferenceProvider
 
 internal sealed class WorkflowStateReferenceProvider : BuiltInReferenceProvider
 {
-    private static readonly Regex Stable = new("\\b(?<key>(?:WF|STATE)-[A-Z0-9][A-Z0-9_-]*)\\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex Stable = new("(?<![A-Za-z0-9_-])(?<key>(?:WF|STATE)-[A-Z0-9][A-Z0-9_-]*)(?![A-Za-z0-9_-])", RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly Regex Enum = new("\\benum\\s+(?<name>[A-Za-z_][A-Za-z0-9_]*(?:State|Status))\\b", RegexOptions.Compiled);
     public override string Kind => "workflow-state-dictionary";
     public override string Description => "Workflow and lifecycle state identities.";
@@ -210,7 +210,8 @@ internal sealed class PackageReferenceProvider : BuiltInReferenceProvider
         {
             var package = m.Groups["name"].Value;
             return ($"{package}@{component}", package, Aliases($"{package}@{component}"));
-        })).ToList();
+        }
+        )).ToList();
         if (!source.RelativePath.EndsWith("package.json", StringComparison.OrdinalIgnoreCase)) return result;
         try
         {
@@ -249,7 +250,10 @@ internal sealed class PackageReferenceProvider : BuiltInReferenceProvider
 
 internal sealed class ScreenRouteReferenceProvider : BuiltInReferenceProvider
 {
-    private static readonly Regex Route = new("(?:path\\s*:\\s*|href\\s*=\\s*|router\\.(?:push|replace)\\s*\\()\"?(?<route>/[A-Za-z0-9_./:{}\\[\\]-]*)", RegexOptions.Compiled);
+    private static readonly Regex Route = new(
+        "(?:\\bpath\\s*:\\s*|\\bhref\\s*=\\s*|\\brouter\\.(?:push|replace)\\s*\\(\\s*)[\"'`](?<route>/[A-Za-z0-9_./:{}\\[\\]-]*)(?=[\"'`?#])"
+        + "|<[A-Za-z][A-Za-z0-9:-]*\\s+[^<>]*?\\bhref\\s*=\\s*(?<route>/[A-Za-z0-9_./:{}\\[\\]-]*)(?=[\\s>?#])",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
     public override string Kind => "screen-route-map";
     public override string Description => "Frontend and native navigation routes.";
     public override bool Supports(string relativePath)
@@ -320,5 +324,6 @@ internal sealed class ErdReferenceProvider : BuiltInReferenceProvider
         {
             var target = m.Groups["target"].Success ? m.Groups["target"].Value : m.Groups["target2"].Value;
             return (target, target, Aliases(target));
-        }));
+        }
+    ));
 }

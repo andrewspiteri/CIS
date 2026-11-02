@@ -5,6 +5,88 @@ namespace Cis.Modules.Brd.Tests;
 
 public sealed partial class BrdWorkflowTests
 {
+    [Fact]
+    public void AuthoritativeImport_SeparateExceptionReachesGeneratedFeatureAcceptance()
+    {
+        using var environment = WorkspaceEnvironment.Create(1);
+        SelectedImportSource(environment, """
+            ## Requirements
+
+            The service must delete observations after 30 days.
+
+            Records subject to a legal hold are exempt from this deletion rule.
+            """);
+        Assert.True(environment.Service.Reconcile(environment.Authority.Path).Validation!.Valid);
+        Assert.Equal(0, environment.Service.Approve(environment.Authority.Path, "Fixture owner", "Adopt synthetic retention policy.").ExitCode);
+        var backlog = ImportedBacklog(environment);
+        var item = Assert.Single(backlog.Build(environment.Authority.Path).Items);
+        const string requirement = "The service must delete observations after 30 days. Records subject to a legal hold are exempt from this deletion rule.";
+        Assert.Equal(requirement, item.Outcome);
+        Assert.Equal(0, backlog.Approve(environment.Authority.Path, "Fixture owner", "Adopt synthetic backlog.").ExitCode);
+        var feature = backlog.StartFeature(environment.Authority.Path, item.Id);
+        Assert.Equal(0, feature.ExitCode);
+        var generated = File.ReadAllText(Path.Combine(environment.Authority.Path, feature.RelativePath!));
+        Assert.Contains("Satisfy the source acceptance intent: " + requirement, generated);
+    }
+
+    [Fact]
+    public void AuthoritativeImport_QualificationDoesNotJoinIndependentObligationsOrIdentifiedSections()
+    {
+        using var environment = WorkspaceEnvironment.Create(1);
+        SelectedImportSource(environment, """
+            ## Requirements
+
+            ### Retention
+            The service must delete observations after 30 days.
+
+            Records subject to a legal hold are exempt from this deletion rule.
+
+            The service must preserve operator identifiers.
+
+            ### REQ-02 Reporting
+            The service should display the observation count.
+            """);
+        Assert.True(environment.Service.Reconcile(environment.Authority.Path).Validation!.Valid);
+        Assert.Equal(0, environment.Service.Approve(environment.Authority.Path, "Fixture owner", "Adopt synthetic requirements.").ExitCode);
+        var items = ImportedBacklog(environment).Build(environment.Authority.Path).Items;
+        Assert.Equal(3, items.Count);
+        Assert.Contains("legal hold", items[0].Outcome);
+        Assert.DoesNotContain("operator identifiers", items[0].Outcome);
+        Assert.Equal("The service must preserve operator identifiers.", items[1].Outcome);
+        Assert.Equal("REQ-02", items[2].RequirementId);
+        Assert.DoesNotContain("legal hold", items[2].Outcome);
+    }
+
+    [Theory]
+    [InlineData("Optional exports are deferred until phase 2; when provided, they must omit sensitive data.", "Could")]
+    [InlineData("The service must provide exports in phase 2; they must omit sensitive data.", "Must")]
+    [InlineData("The service must export observations with an optional correlation field.", "Must")]
+    public void AuthoritativeImport_DeliveryScopeIsNotPromotedByConditionalConstraints(string requirement, string priority)
+    {
+        using var environment = WorkspaceEnvironment.Create(1);
+        SelectedImportSource(environment, "## Requirements\n\nREQ-01: " + requirement);
+        Assert.True(environment.Service.Reconcile(environment.Authority.Path).Validation!.Valid);
+        Assert.Equal(0, environment.Service.Approve(environment.Authority.Path, "Fixture owner", "Adopt synthetic export scope.").ExitCode);
+        var backlog = ImportedBacklog(environment);
+        var built = backlog.Build(environment.Authority.Path);
+        var item = Assert.Single(built.Items);
+        Assert.Equal(priority, item.Priority);
+        Assert.Equal(requirement, item.Outcome);
+        if (priority != "Could") return;
+
+        var backlogPath = Path.Combine(environment.Authority.Path, built.RelativePath!);
+        File.WriteAllText(backlogPath, File.ReadAllText(backlogPath).Replace("| Could |", "| Should |", StringComparison.Ordinal));
+        Assert.Equal(0, backlog.Approve(environment.Authority.Path, "Fixture owner", "Review the export delivery priority.").ExitCode);
+        var reopened = backlog.Build(environment.Authority.Path);
+        Assert.Equal(0, reopened.ExitCode);
+        Assert.Equal("Should", Assert.Single(reopened.Items).Priority);
+        Assert.Equal("Active", reopened.Validation!.EffectiveStatus);
+        var feature = backlog.StartFeature(environment.Authority.Path, item.Id);
+        Assert.Equal(0, feature.ExitCode);
+        Assert.Contains("Satisfy the source acceptance intent: " + requirement,
+            File.ReadAllText(Path.Combine(environment.Authority.Path, feature.RelativePath!)));
+    }
+
     [Theory]
     [InlineData("- The operator must retain observations for 30 days unless a legal hold applies.\n- Optional exports may be added in phase 2.")]
     [InlineData("1. The operator must retain observations for 30 days unless a legal hold applies.\n2. Optional exports may be added in phase 2.")]

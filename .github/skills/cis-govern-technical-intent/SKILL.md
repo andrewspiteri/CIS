@@ -42,6 +42,8 @@ A stale token returns a conflict without saving the decision. Re-read the curren
 
 Inspect structured readiness and errors as well as the command exit code. Imported working direction, accepted facts, unresolved choices, source conflicts and required baseline adoption remain distinct. Direct low-level status after adoption remains useful for domain diagnostics; selected working facts outside the coordinator retain their unadopted status.
 
+Source adoption preserves the supplied facts without settling missing choices. Necessary unresolved `TI-Q-*` choices block dependent technical work even after adoption; absent optional capabilities remain nonblocking. Inspect the identified remaining choices and record only authorised answers through the procedure above.
+
 Treat the workspace as authority for exactly one product. Derive product technology and
 module direction only from owned repositories. Record producer, consumer, and
 bidirectional dependency repositories as bounded integration evidence; never infer their

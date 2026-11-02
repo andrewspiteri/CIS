@@ -5,6 +5,35 @@ namespace Cis.Modules.Brd.Tests;
 public sealed partial class FeatureIntakeTests
 {
     [Fact]
+    public void AcceptedPlatformRetainsSeparateExceptionWithoutTakingUnrelatedDirection()
+    {
+        using var fixture = new Fixture(); CreateIntake(fixture);
+        SelectTechnicalDocument(fixture, """
+            # Accepted product choices
+
+            Runtime: use .NET for the product.
+
+            Except for the standalone command-line utility, which remains on Python.
+
+            Operators retain observations for 30 days.
+
+            ## Recovery
+            Recovery retries use the accepted product defaults.
+            """);
+        var before = fixture.Snapshot();
+        var platform = fixture.Service.Wizard(fixture.Authority, "referrals").Pages.Single(page => page.Id == "technical")
+            .Fields.Single(field => field.Id == "technical-platform");
+        Assert.True(platform.Inherited);
+        Assert.False(platform.Required);
+        Assert.Contains("Runtime: use .NET for the product.", platform.SuggestedAnswer);
+        Assert.Contains("Except for the standalone command-line utility, which remains on Python.", platform.SuggestedAnswer);
+        Assert.DoesNotContain("Operators retain", platform.SuggestedAnswer);
+        Assert.DoesNotContain("Recovery retries", platform.SuggestedAnswer);
+        Assert.Contains("selected.md@sha256:", Assert.Single(platform.SourceReferences));
+        Assert.Equal(before, fixture.Snapshot());
+    }
+
+    [Fact]
     public void AcceptedFactsOutsideEmptyHeadingsResolveFieldsWithCompleteSourceAndNoHumanRecord()
     {
         using var f = new Fixture(); CreateIntake(f);

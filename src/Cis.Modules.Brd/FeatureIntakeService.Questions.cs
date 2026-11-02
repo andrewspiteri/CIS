@@ -176,7 +176,10 @@ public sealed partial class FeatureIntakeService
             RegexOptions.Multiline | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
         {
             if (ranges.Any(range => paragraph.Index >= range.Start && paragraph.Index < range.End)) continue;
-            if (Regex.IsMatch(paragraph.Value, terms, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
+            var qualifiedPrevious = BrdRequirementReader.ContinuesPreviousDirection(paragraph.Value)
+                && ranges.Any(range => range.End <= paragraph.Index
+                    && string.IsNullOrWhiteSpace(visible[range.End..paragraph.Index]));
+            if ((qualifiedPrevious || Regex.IsMatch(paragraph.Value, terms, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
                 && paragraph.Value.Split('\n').Any(line => !line.TrimStart().StartsWith('#') && !string.IsNullOrWhiteSpace(line)))
                 ranges.Add((paragraph.Index, paragraph.Index + paragraph.Length));
         }

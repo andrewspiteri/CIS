@@ -3510,6 +3510,8 @@ internal sealed partial class RepositoryStarterBinder
         A stale token returns a conflict without saving the decision. Re-read the current item and its relevant changes before requesting or recording renewed authority. Saving a resolution preserves its actor and provenance and does not approve the Technical Intent. Reopening uses the same workspace and persistent state; do not edit managed JSON, frontmatter or session records to progress.
 
         Inspect structured readiness and errors as well as the command exit code. Imported working direction, accepted facts, unresolved choices, source conflicts and required baseline adoption remain distinct. Direct low-level status after adoption remains useful for domain diagnostics; selected working facts outside the coordinator retain their unadopted status.
+
+        Source adoption preserves the supplied facts without settling missing choices. Necessary unresolved `TI-Q-*` choices block dependent technical work even after adoption; absent optional capabilities remain nonblocking. Inspect the identified remaining choices and record only authorised answers through the procedure above.
         """;
 
 
@@ -4195,6 +4197,7 @@ internal sealed partial class RepositoryStarterBinder
         - The workspace authority owns one canonical product-scoped technical intent; participant repositories retain repository-scoped supporting intent documents.
         - For supplied direction, follow `.github/skills/cis-govern-technical-intent/SKILL.md` and its linked supplied-input procedure before authoring or questionnaire generation. Use `definition status --format json` for selected working facts pending baseline adoption; the graphical wizard is optional.
         - Preserve the applicable BRD, graph and approval prerequisites. Interpret a selected supplied intent before assessing its factual questionnaire; a completed questionnaire remains the generation prerequisite when no supplied intent exists. Baseline adoption and downstream approval controls remain required.
+        - Adopting supplied facts does not settle missing `TI-Q-*` choices. Necessary unresolved choices block dependent technical work; absent optional capabilities remain nonblocking. Use the owning skill's authorised-answer procedure rather than transcribing known source facts.
         - Infer product frameworks, architecture, databases, and modules only from product-owned repositories. Record dependency repositories as directional integration points with declared component scope; never absorb their implementation choices as product direction or route writes to them.
         - Reuse explicit source-derived facts and evidence-supported implementation facts with their provenance. Only necessary unresolved choices require human input, including in greenfield projects. Selected working facts remain pending adoption; advisory directions become decisions only through explicit human authority.
         - Initialization interprets selected supplied direction or creates a genuinely new Draft from questionnaire answers, the BRD, classifications, graph, and Active standards, including logical components, BRD-derived product modules, detailed responsibility profiles, and stable integration points. Preserve supplied narrative and source-linked facts.

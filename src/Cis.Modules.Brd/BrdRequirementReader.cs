@@ -34,10 +34,16 @@ internal static class BrdRequirementReader
                 return;
             }
             identity ??= "BRD-IMPORT-" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(identityText)))[..16].ToUpperInvariant();
-            var modality = Regex.Match(title + " " + text, @"\b(must|shall|should|may|could)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-            var optional = !modality.Success && Regex.IsMatch(text, @"\A(?:optional|deferred)\b|\b(?:is|are)\s+(?:explicitly\s+)?(?:optional|deferred)\b",
+            // A condition constrains an optional capability without requiring its
+            // delivery. Only the delivery clause can supply an obligation priority;
+            // inferred optional scope must not replace a reviewed backlog priority.
+            var deliveryClause = Regex.Split((title + " " + text).Trim(), @";|\b(?:when|if|provided that)\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))[0];
+            var modality = Regex.Match(deliveryClause, @"\b(must|shall|should|may|could)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+            var optionalScope = Regex.Match(deliveryClause, @"\Aoptional\b|\b(?:is|are)\s+(?:explicitly\s+)?optional\b",
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-            var explicitPriority = !string.IsNullOrWhiteSpace(priority) || modality.Success || optional;
+            var optional = optionalScope.Success && (!modality.Success || optionalScope.Index < modality.Index);
+            var explicitPriority = !string.IsNullOrWhiteSpace(priority) || modality.Success && !optional;
             priority = !string.IsNullOrWhiteSpace(priority) ? priority : optional ? "Could" : modality.Value.ToLowerInvariant() switch
             {
                 "should" => "Should",
@@ -113,7 +119,14 @@ internal static class BrdRequirementReader
             }
             if (string.IsNullOrWhiteSpace(line))
             {
-                if (anonymous && listIndent < 0) Flush();
+                if (anonymous && listIndent < 0)
+                {
+                    var next = lineIndex + 1;
+                    while (next < lines.Length && string.IsNullOrWhiteSpace(lines[next])) next++;
+                    if (next == lines.Length || !ContinuesPreviousDirection(lines[next])) Flush();
+                    else body.AppendLine();
+                    lineIndex = next - 1;
+                }
                 else if (id is not null || anonymous) body.AppendLine();
                 continue;
             }
@@ -125,6 +138,17 @@ internal static class BrdRequirementReader
         foreach (var duplicate in requirements.GroupBy(requirement => requirement.Id, StringComparer.Ordinal).Where(group => group.Count() > 1))
             errors.Add($"BRD requirement identity occurs more than once: {duplicate.Key}. Resolve the duplicate before preparing delivery.");
         return new(requirements, errors);
+    }
+
+    // These explicit back-references qualify the immediately preceding passage.
+    // Independent obligations, identified requirements and headings remain boundaries.
+    internal static bool ContinuesPreviousDirection(string paragraph)
+    {
+        var text = paragraph.TrimStart();
+        if (Regex.IsMatch(text, $@"\A(?:#|[-*+]\s|\d+[.)]\s|\||(?:\*\*)?{Identity}(?=\s|[:.]))",
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))) return false;
+        return Regex.IsMatch(text, @"\A(?:except\b|unless\b|provided that\b)|\b(?:is|are)\s+exempt\s+from\s+(?:this|that)\b",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
     }
 
     private static bool[] IdentifiedBlocks(string[] lines)

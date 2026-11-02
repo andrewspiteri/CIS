@@ -266,6 +266,14 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck, ICis
                 .Append("An Active, current workspace technical intent is required. Run `cis technical-intent status`.")
                 .Distinct(StringComparer.Ordinal)
                 .ToArray();
+        if (ready)
+        {
+            // Source adoption preserves its supplied facts; readiness also needs
+            // the necessary choices that the adopted source did not settle.
+            errors = new TechnicalIntentQuestionnaireService(_workspaceRegistry, _repositoryResolver, _brd, _catalogMerger, _clock)
+                .ReadinessErrors(repositoryPath).ToArray();
+            ready = errors.Length == 0;
+        }
         return new ChangeReadinessResult("technical-intent", Applicable: true, ready, errors);
     }
 

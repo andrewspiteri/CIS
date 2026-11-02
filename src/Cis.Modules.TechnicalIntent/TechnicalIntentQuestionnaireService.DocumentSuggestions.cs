@@ -39,6 +39,9 @@ public sealed partial class TechnicalIntentQuestionnaireService
             var documents = IncludeRecordedStoreAnswer(authority, expectedBrdVersion,
                 ReadInputDocuments(authority, expectedBrdVersion, brdAccepted, warnings, errors));
             var conflicts = FindSourceConflicts(documents, errors, includeSelectedDraft: true);
+            // Broken extraction affects the document; a category-specific issue
+            // below stays focused on its question instead of adding optional scope.
+            var documentImportProblem = errors.Any(error => error.StartsWith("Input import problem:", StringComparison.Ordinal));
             var result = questions.Select(question =>
             {
                 // Manual answers retain their existing authority. A source-derived
@@ -46,7 +49,7 @@ public sealed partial class TechnicalIntentQuestionnaireService
                 if (question.ResolutionSource == "human" && !conflicts.Contains(question.Id)
                     || !DocumentTopics.TryGetValue(question.Id, out var topic)) return question;
                 var chosen = documents.SelectMany(document => document.Passages
-                    .Where(passage => TopicMatches(passage, topic))
+                    .Where(passage => TopicMatches(question.Id, passage, topic))
                     .Select(passage => (Document: document, Passage: passage))).ToArray();
                 var accepted = chosen.Where(item => (item.Document.Accepted || item.Document.Working) && IsExplicitDirection(item.Passage)).ToArray();
                 var sourceDerived = question.ResolutionSource is "accepted-document" or "selected-document" or "scope-not-requested" or "selected-scope-not-requested";
@@ -55,7 +58,7 @@ public sealed partial class TechnicalIntentQuestionnaireService
                     // Absence of optional scope is not an exclusion or a technical
                     // choice. Retain the field without asking the user to add scope.
                     var acceptedScope = documents.FirstOrDefault(document => document.Technical && document.Selected && (document.Accepted || document.Working));
-                    if (acceptedScope is not null && errors.Count == 0 && question.Id is "TI-Q-007" or "TI-Q-011" or "TI-Q-015")
+                    if (acceptedScope is not null && !documentImportProblem && question.Id is "TI-Q-007" or "TI-Q-011" or "TI-Q-015")
                         return question with
                         {
                             Status = "Not requested",
@@ -72,6 +75,21 @@ public sealed partial class TechnicalIntentQuestionnaireService
                     return sourceDerived ? UnresolveSourceQuestion(question) : question;
                 }
                 var evidence = chosen.Select(item => $"{item.Document.Path}:{item.Passage.Line} — {item.Passage.Heading} ({item.Document.Digest})").ToArray();
+                var uninterpreted = chosen.Where(item => (item.Document.Selected || item.Document.Accepted)
+                    && IsSupportingServiceCategory(question.Id, item.Passage)
+                    && !AnswersFactualQuestion(question.Id, item.Passage) && !IsUnresolvedDirection(item.Passage)).ToArray();
+                if (uninterpreted.Length > 0)
+                {
+                    errors.Add($"Input import problem: {question.Id} contains relevant supporting-service direction that could not be safely interpreted: "
+                        + string.Join("; ", uninterpreted.Select(item => $"{item.Document.Path}:{item.Passage.Line} — {item.Passage.Heading} — {item.Passage.Text}")));
+                    return UnresolveSourceQuestion(question) with
+                    {
+                        Status = "Import problem",
+                        ResolutionSource = "import-problem",
+                        SuggestedAnswer = string.Join("\n\n", chosen.Select(item => item.Passage.Text)),
+                        Evidence = evidence,
+                    };
+                }
                 if (conflicts.Contains(question.Id))
                     return (question.ResolutionSource == "human" ? question : UnresolveSourceQuestion(question)) with
                     {
@@ -105,7 +123,7 @@ public sealed partial class TechnicalIntentQuestionnaireService
                     Evidence = evidence,
                 };
             }).ToArray();
-            return errors.Any(error => error.StartsWith("Input import problem:", StringComparison.Ordinal))
+            return documentImportProblem
                 ? result.Select(question => IsResolved(question) ? question : question with { Status = "Import problem", ResolutionSource = "import-problem" }).ToArray()
                 : result;
         }
@@ -132,7 +150,7 @@ public sealed partial class TechnicalIntentQuestionnaireService
 
     internal static string ImportedDirectionsFor(string content, IReadOnlyList<string> ids)
         => string.Join("\n\n", ReadDocumentPassages(content).Where(passage => ids.Any(id =>
-            DocumentTopics.TryGetValue(id, out var topic) && TopicMatches(passage, topic)))
+            DocumentTopics.TryGetValue(id, out var topic) && TopicMatches(id, passage, topic)))
             .Select(passage => passage.Text).Distinct(StringComparer.Ordinal));
 
     internal static string ImportedDecisionClosure(string content)
@@ -140,26 +158,39 @@ public sealed partial class TechnicalIntentQuestionnaireService
             @"\b(?:technical\s+)?(?:choices|decisions)\s+(?:are\s+)?(?:now\s+)?closed\b|\bno\s+(?:open|unresolved)\s+technical\s+decisions\b",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))).Select(passage => passage.Text));
 
-    private static bool TopicMatches(DocumentPassage passage, (string Content, string Heading) topic)
+    private static bool TopicMatches(string id, DocumentPassage passage, (string Content, string Heading) topic)
         => Regex.IsMatch(passage.Text, topic.Content, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
+           || IsSupportingServiceCategory(id, passage)
            || Regex.IsMatch(passage.Heading, topic.Heading, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
                && Regex.IsMatch(passage.Text, @"\b(?:Rust|Go|Java|Python|TypeScript|JavaScript|Ruby|PHP|Kotlin|Swift|React|Vue|Angular|Svelte|None)\b",
                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
 
+    // An unambiguous question-category heading supplies context for its body;
+    // recognizing relevant content must not depend on an unrelated framework name.
+    // Broad headings such as exclusions still require a topical body match.
+    private static bool IsSupportingServiceCategory(string id, DocumentPassage passage)
+        => id == "TI-Q-007" && Regex.IsMatch(passage.Heading,
+            @"\b(?:supporting|additional)\s+(?:data\s+)?(?:services?|stores?)\b",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+
     private static bool IsUnresolvedDirection(DocumentPassage passage)
         => Regex.IsMatch(Regex.Replace(passage.Text, @"\b(?:no|without)\s+(?:open|unresolved)\b|\bmay not\b", "", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)),
-            @"\b(?:TODO|TBD|unresolved|to be decided|under consideration|proposed|recommend(?:ed|ation)?|consider using|may|could|optional)\b|\?",
+            @"\b(?:TODO|TBD|unresolved|undecided|to be decided|under consideration|proposed|recommend(?:ed|ation)?|consider using)\b|\b(?:may|could)\s+(?:use|adopt|choose|select|run|deploy|become|be\s+(?:used|adopted|chosen|selected|required))\b|\?",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
 
     private static bool AnswersFactualQuestion(string id, DocumentPassage passage)
     {
+        if (id == "TI-Q-006")
+            return ReadPrimaryStoreClaims(passage).Any() || Regex.IsMatch(passage.Text,
+                @"\b(?:no durable application data|no database (?:is )?required|database (?:is )?not applicable)\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
         var pattern = id switch
         {
             "TI-Q-001" => @"\b(?:CLI|command.line|browser UI|desktop|mobile|APIs?)\b",
             "TI-Q-002" => @"\b(?:React|Angular|Vue|Svelte|SwiftUI|MAUI)\b|\b(?:no|excluded|not applicable|deferred)\b.*\b(?:frontend|browser UI|web UI)\b|\b(?:frontend|browser UI|web UI)\b.*\b(?:not required|excluded|not applicable|deferred)\b",
             "TI-Q-003" => @"C#|\.NET|ASP\.NET|Node\.js|Spring Boot|FastAPI|\b(?:Java|Python|Rust|Go|PHP|Ruby|Kotlin)\b|\bno backend\b|\bbackend\s+(?:is )?not applicable\b",
             "TI-Q-004" => @"\b(?:monolith|microservices?|serverless|event.driven services|client.only|existing architecture)\b",
-            "TI-Q-006" => @"\b(?:primary (?:database|data store|transactional store)|system of record)\s*(?:is|will be|must be|:|\|)\s*(?:PostgreSQL|SQLite|SQL Server|MySQL|MariaDB)\b|\buse\s+(?:PostgreSQL|SQLite|SQL Server|MySQL|MariaDB)\b|\b(?:no durable application data|no database (?:is )?required|database (?:is )?not applicable)\b|^\s*(?:PostgreSQL|SQLite|SQL Server|MySQL|MariaDB)\.?\s*$|^\s*\|\s*(?:primary (?:database|data store|transactional store)|system of record|database|persistence)\s*\|\s*`?(?:PostgreSQL|SQLite|SQL Server|MySQL|MariaDB)\b",
+            "TI-Q-007" => @"\b(?:Redis|cache|search(?: index)?|object storage|blob storage|graph (?:database|store)|analytics warehouse|vector store|message broker|disk spool|supporting store|none)\b|\bno\s+(?:additional|supporting)\s+(?:data\s+)?(?:services?|stores?)\b",
             "TI-Q-008" => @"\b(?:HTTP|JSON|gRPC|GraphQL|WebSocket|files|batches|in.process|events|messages|SDKs?)\b",
             "TI-Q-015" => @"\b(?:AI|learned models?)\b.*\b(?:excluded|not applicable|not required|deferred)\b|\bno\s+(?:AI|learned models?)\b|\b(?:local model|managed model API|self.hosted model|model hosting|model provider|model governance|human approval required)\b",
             _ => null,
@@ -183,7 +214,7 @@ public sealed partial class TechnicalIntentQuestionnaireService
 
     private static bool IsExplicitDirection(DocumentPassage passage)
         => !IsUnresolvedDirection(passage) && Regex.IsMatch(passage.Text,
-            @"\b(?:use[sd]?|must|shall|will|is|are|required|excluded|deferred|not applicable|no|none|only|preserve|retain|default|selected|chosen)\b|\||^\s*(?:Rust|Go|Java|Python|TypeScript|JavaScript|Ruby|PHP|Kotlin|Swift|React|Vue|Angular|Svelte)\.?\s*$",
+            @"\b(?:use[sd]?|must|shall|will|is|are|required|excluded|deferred|not applicable|no|none|only|preserve|retain|default|selected|chosen|may|can|permitted|allowed)\b|\||^\s*(?:Rust|Go|Java|Python|TypeScript|JavaScript|Ruby|PHP|Kotlin|Swift|React|Vue|Angular|Svelte)\.?\s*$",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
 
     private static IReadOnlyList<InputDocument> IncludeRecordedStoreAnswer(CisWorkspaceRepository authority,
@@ -256,22 +287,8 @@ public sealed partial class TechnicalIntentQuestionnaireService
         var primaryStores = new List<(string Value, string Scope, string Citation, string Text)>();
         foreach (var document in documents.Where(item => item.Accepted || includeSelectedDraft && item.Selected))
             foreach (var passage in document.Passages)
-                foreach (var statement in Regex.Split(passage.Text, @"(?<=[.!?])\s+|\r?\n(?=\s*(?:[-*+]|\d+[.)])\s)", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
-                {
-                    // Deliberately bounded, explicit scalar claims. Mentioning an adapter,
-                    // migration, exception, test store or a later phase is not a contradiction.
-                    if (Regex.IsMatch(statement, @"\b(?:deferred|phase\s*[2-9]|later phase|future|migration|adapter|except|proposed|consider)\b",
-                            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))) continue;
-                    var scope = Regex.Match(statement, @"\b(?:production|testing|tests|development)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)).Value.ToLowerInvariant();
-                    var citation = $"{document.Path}:{passage.Line} — {passage.Heading}";
-                    if (document.Manual && Regex.Match(statement.Trim(), @"\A`?(?<value>PostgreSQL|SQLite|SQL Server|MySQL|MariaDB)`?\.?\z",
-                            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)) is { Success: true } manual)
-                        primaryStores.Add((manual.Groups["value"].Value, scope, citation, statement));
-                    foreach (Match match in Regex.Matches(statement,
-                                 @"\b(?:primary (?:database|data store|transactional store)|system of record)\s*(?:is|will be|must be|:|\|)\s*(?<value>PostgreSQL|SQLite|SQL Server|MySQL|MariaDB)\b",
-                                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
-                        primaryStores.Add((match.Groups["value"].Value, scope, citation, statement));
-                }
+                foreach (var claim in ReadPrimaryStoreClaims(passage, forConflict: true))
+                    primaryStores.Add((claim.Value, claim.Scope, $"{document.Path}:{passage.Line} — {passage.Heading}", claim.Text));
         var conflicting = primaryStores.GroupBy(item => item.Scope, StringComparer.Ordinal)
             .Where(group => group.Select(item => item.Value).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1).SelectMany(group => group).ToArray();
         if (conflicting.Length > 0)
@@ -281,6 +298,33 @@ public sealed partial class TechnicalIntentQuestionnaireService
                 + string.Join("; ", conflicting.Select(item => $"{item.Citation} — {item.Text}")));
         }
         return conflicts;
+    }
+
+    // One bounded scalar interpretation is used for source derivation and for
+    // comparison with recorded answers. Scope qualifications still control
+    // whether an otherwise recognized claim can contradict another claim.
+    private static IEnumerable<(string Value, string Scope, string Text)> ReadPrimaryStoreClaims(DocumentPassage passage, bool forConflict = false)
+    {
+        const string values = "PostgreSQL|SQLite|SQL Server|MySQL|MariaDB";
+        foreach (var statement in Regex.Split(passage.Text, @"(?<=[.!?])\s+|\r?\n(?=\s*(?:[-*+]|\d+[.)])\s)", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
+        {
+            if (forConflict && Regex.IsMatch(statement, @"\b(?:deferred|phase\s*[2-9]|later phase|future|migration|adapter|except|proposed|consider)\b",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))) continue;
+            var scope = Regex.Match(statement, @"\b(?:production|testing|tests|development)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)).Value.ToLowerInvariant();
+            if (scope == "tests") scope = "testing";
+            var row = Regex.Match(statement,
+                @"^\s*\|\s*(?:primary (?:database|data store|transactional store)|system of record|database|datastore|persistence)\s*\|\s*(?<direction>[^|]+)\|?\s*$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+            var direction = row.Success ? row.Groups["direction"].Value : statement;
+            if (forConflict && Regex.IsMatch(direction,
+                    @"\buse\s+`?(?:" + values + @")`?\s+(?:as|for)\s+(?:(?:a|an|the|local)\s+)*(?:cache|search index|analytics|supporting store)\b",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))) continue;
+            var pattern = @"\b(?:primary (?:database|data store|transactional store)|system of record)\s*(?:is|will be|must be|:)\s*`?(?<value>" + values
+                + @")\b|\buse\s+`?(?<value>" + values + @")\b|^\s*`?(?<value>" + values
+                + @")`?(?:\s+in\s+(?:production|testing|tests|development))?\.?\s*$";
+            foreach (Match match in Regex.Matches(direction, pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
+                yield return (match.Groups["value"].Value, scope, statement);
+        }
     }
 
     private static IReadOnlyList<DocumentPassage> ReadDocumentPassages(string content, List<string>? issues = null)

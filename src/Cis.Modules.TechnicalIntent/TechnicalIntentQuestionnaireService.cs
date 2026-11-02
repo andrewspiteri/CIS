@@ -146,6 +146,36 @@ public sealed partial class TechnicalIntentQuestionnaireService
     public TechnicalIntentQuestionnaireResult Status(string workspacePath)
         => StatusInternal(workspacePath, "status", false);
 
+    internal IReadOnlyList<string> ReadinessErrors(string workspacePath)
+    {
+        var state = Resolve(workspacePath);
+        if (state.Errors.Count > 0) return state.Errors;
+        if (!state.BrdReady)
+            return ["An Active, current BRD is required before assessing technical choices."];
+
+        var errors = new List<string>();
+        IReadOnlyList<TechnicalIntentQuestion> questions;
+        if (File.Exists(state.Path!))
+        {
+            var status = StatusInternal(workspacePath, "status", false);
+            if (status.Current && status.Complete) return [];
+            errors.AddRange(status.Errors);
+            if (!status.Current)
+                errors.AddRange(status.Warnings.DefaultIfEmpty("The technical questionnaire is not current. Run `cis technical-intent questions init`."));
+            questions = status.Questions;
+        }
+        else
+        {
+            // Assess supplied facts without requiring or creating a questionnaire.
+            // The same interpretation and resolution rules apply after persistence.
+            questions = ApplyDocumentDirections(state.Authority!, Definitions.Select(definition => ToQuestion(definition, null, null, null)).ToArray(),
+                [], errors, state.BrdVersion!, state.BrdReady);
+        }
+        errors.AddRange(questions.Where(question => !IsResolved(question))
+            .Select(question => $"{question.Id}: {question.Question}"));
+        return errors.Distinct(StringComparer.Ordinal).ToArray();
+    }
+
     public TechnicalIntentQuestionnaireResult Answer(string workspacePath, string id, string answer, string actor)
     {
         if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(answer) || string.IsNullOrWhiteSpace(actor))

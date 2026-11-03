@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Cis.Abstractions;
 using Cis.Modules.Brd;
+using Cis.Modules.Docs;
 
 namespace Cis.Modules.TechnicalIntent;
 
@@ -65,6 +66,16 @@ public sealed partial class TechnicalIntentQuestionnaireService
                     && (IsExplicitDirection(item.Passage) || explicitCategories.Contains((item.Document, item.Passage.HeadingLine)))).ToArray();
                 var sourceDerived = question.ResolutionSource is "accepted-document" or "selected-document" or "scope-not-requested" or "selected-scope-not-requested";
                 var retainedFact = RetainedAcceptedSourceFact(question, documents);
+                var settledDirection = accepted.Any(item => AnswersFactualQuestion(question.Id, item.Passage))
+                    && !chosen.Any(item => (item.Document.Accepted || item.Document.Working) && IsUnresolvedDirection(item.Passage));
+                // Selection and copied approval metadata cannot replace historical
+                // authority. The existing adoption must also bind this product's
+                // canonical technical role to B, and B must actually answer the fact.
+                var adoptedReplacement = !documentImportProblem && settledDirection
+                    && accepted.Any(item => item.Document.Adopted && AnswersFactualQuestion(question.Id, item.Passage));
+                if (retainedFact is not null && !adoptedReplacement && documents.Any(document => document.Adopted))
+                    retainedFact = RetainSourceFact(retainedFact, retainedFact.SourceFactAuthority?.Basis, "NeedsReview",
+                        $"The adopted replacement does not provide settled direction for {question.Id}. The predecessor's answer and provenance remain historical; resolve the replacement's missing or unresolved direction before renewing this fact.");
                 if (chosen.Length == 0)
                 {
                     if (retainedFact is not null) return retainedFact;
@@ -126,10 +137,9 @@ public sealed partial class TechnicalIntentQuestionnaireService
                         Evidence = evidence,
                     };
                 }
-                if (retainedFact is not null)
+                if (retainedFact is not null && !adoptedReplacement)
                     return retainedFact with { SuggestedAnswer = string.Join("\n\n", chosen.Select(item => item.Passage.Text)) };
-                if (accepted.Any(item => AnswersFactualQuestion(question.Id, item.Passage))
-                    && !chosen.Any(item => (item.Document.Accepted || item.Document.Working) && IsUnresolvedDirection(item.Passage)))
+                if (settledDirection)
                     return question with
                     {
                         Status = "Derived",
@@ -363,9 +373,26 @@ public sealed partial class TechnicalIntentQuestionnaireService
             if (item.Technical && !accepted)
                 warnings.Add($"The aggregate baseline for {relative} needs review or adoption. Retained accepted facts keep their original provenance; new or changed direction is not accepted until adoption.");
             result.Add(new(relative, Hash(content), accepted, selected, working, item.Technical, passages,
-                Content: content, ApprovedContent: item.Technical && TechnicalIntentService.HasCurrentApproval(content)));
+                Content: content, ApprovedContent: item.Technical && TechnicalIntentService.HasCurrentApproval(content),
+                Adopted: item.Technical && selected && accepted && HasAdoptedTechnicalRole(authority, item.Path, content)));
         }
         return result;
+    }
+
+    private static bool HasAdoptedTechnicalRole(CisWorkspaceRepository authority, string path, string content)
+    {
+        var stableId = $"{authority.Id}:spec:technical-intent";
+        if (CisFrontMatter.Read(content, "stable_id", nested: true)?.Trim('"', '\'') != stableId) return false;
+        var catalogPath = Path.Combine(authority.RepositoryPath,
+            authority.DocumentationRoot.Replace('/', Path.DirectorySeparatorChar), "catalog.yml");
+        if (CisPathSafety.ContainsReparsePoint(authority.RepositoryPath, catalogPath)) return false;
+        var catalog = new DocumentationCatalogReader().Read(catalogPath);
+        if (!catalog.IsSuccess || catalog.Catalog is not { SchemaVersion: 1 } current) return false;
+        var bindings = current.Documents.Where(document => string.Equals(document.Id, stableId, StringComparison.OrdinalIgnoreCase)).ToArray();
+        return bindings is [{ Type: "repository-specification", Authority: "canonical", Status: "active" } binding]
+            && string.Equals(CisProductDocumentPaths.ValidatePath(authority.RepositoryPath, binding.Path), path, CisPathSafety.PlatformComparison)
+            && current.Documents.Count(document => CisPathSafety.TryResolveUnderRoot(authority.RepositoryPath, document.Path, out var documentPath)
+                && string.Equals(documentPath, path, CisPathSafety.PlatformComparison)) == 1;
     }
 
     private static HashSet<string> FindSourceConflicts(IReadOnlyList<InputDocument> documents, List<string> errors, bool includeSelectedDraft = false)
@@ -568,5 +595,5 @@ public sealed partial class TechnicalIntentQuestionnaireService
 
     private sealed record DocumentPassage(string Text, string Heading, int Line, int HeadingLine = 0);
     private sealed record InputDocument(string Path, string Digest, bool Accepted, bool Selected, bool Working, bool Technical,
-        IReadOnlyList<DocumentPassage> Passages, bool Manual = false, string Content = "", bool ApprovedContent = false);
+        IReadOnlyList<DocumentPassage> Passages, bool Manual = false, string Content = "", bool ApprovedContent = false, bool Adopted = false);
 }

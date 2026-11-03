@@ -211,4 +211,140 @@ public sealed partial class DefinitionWizardTests
         Assert.Equal(approvedTechnicalBytes, File.ReadAllBytes(technicalPath));
         Assert.Equal(sourceBytes, File.ReadAllBytes(sourcePath));
     }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AcceptedTechnicalInput_AdoptedReplacementSupersedesPreviousWorkingCopy(bool changedMeaning)
+    {
+        using var repository = TemporaryRepository.Create();
+        using var sources = TemporaryRepository.Create();
+        using var application = CreateApplication();
+        Assert.Equal(0, Invoke(application, ["workspace", "init", "--repo", repository.Path, "--root", "docs/cis",
+            "--ecosystem", "sample", "--product", "sample", "--yes", "--format", "json"]).ExitCode);
+        JsonElement Run(CisApplication app, params string[] args)
+        {
+            var result = Invoke(app, [.. args, "--workspace", repository.Path, "--format", "json"]);
+            Assert.True(result.ExitCode == 0, result.Output + result.Error);
+            using var document = JsonDocument.Parse(result.Output);
+            return document.RootElement.Clone();
+        }
+        JsonElement Questions(CisApplication app, bool requireCurrent)
+        {
+            var result = Invoke(app, ["technical-intent", "questions", "status", "--workspace", repository.Path, "--format", "json"]);
+            using var document = JsonDocument.Parse(result.Output);
+            if (requireCurrent)
+            {
+                Assert.True(result.ExitCode == 0, result.Output + result.Error);
+                Assert.Empty(document.RootElement.GetProperty("errors").EnumerateArray());
+            }
+            else
+            {
+                Assert.Contains(result.ExitCode, new[] { 0, 2, 5 });
+                Assert.All(document.RootElement.GetProperty("errors").EnumerateArray(),
+                    error => Assert.Contains("conflict", error.GetString(), StringComparison.OrdinalIgnoreCase));
+            }
+            return document.RootElement.Clone();
+        }
+        static JsonElement Store(JsonElement questionnaire) => questionnaire.GetProperty("questions").EnumerateArray()
+            .Single(question => question.GetProperty("id").GetString() == "TI-Q-006").Clone();
+
+        Run(application, "graph", "build");
+        Run(application, "brd", "init", "--title", "Source replacement fixture");
+        var brdPath = Path.Combine(repository.Path, "docs/cis/specs/business-requirements.md");
+        var brd = Regex.Replace(File.ReadAllText(brdPath), "(?m)^TODO: Complete .+$", "Stakeholders recorded complete and testable requirements.");
+        brd = Regex.Replace(brd, "(?ms)^## Functional requirements\\s*$.*?(?=^## )",
+            "## Functional requirements\n\n| ID | Requirement | Priority | Acceptance intent |\n| --- | --- | --- | --- |\n| BRD-FR-001 | A user shall view the product. | Must | The product view is available. |\n\n");
+        File.WriteAllText(brdPath, brd + "\n## Current-phase exclusions\n\nAI and learned models are excluded from this phase.\n");
+        Run(application, "graph", "build");
+        Run(application, "brd", "approve", "--reviewer", "Fixture product owner", "--reason", "Accept requirements that permit either supported primary store.");
+        var technicalA = AuthoritativeTechnicalSource.Replace("#### Runtime architecture",
+            "| Models | AI and learned models are explicitly excluded from this phase. |\n#### Runtime architecture", StringComparison.Ordinal);
+        var sourceA = Path.Combine(sources.Path, "Supplied Technical Intent.md");
+        File.WriteAllText(sourceA, technicalA); var originalA = File.ReadAllBytes(sourceA);
+        Run(application, "definition", "documents", "--role", "technical", "--source", sourceA);
+        var relativeA = CisProductDocumentPaths.Read(repository.Path)["technical"];
+        var workingA = Path.Combine(repository.Path, relativeA);
+        Run(application, "graph", "build");
+        Run(application, "technical-intent", "init");
+        Run(application, "technical-intent", "approve", "--reviewer", "Fixture technical owner", "--reason", "Adopt the supplied first technical baseline.");
+        Run(application, "technical-intent", "questions", "init");
+        var acceptedA = Store(Questions(application, true));
+        Assert.Equal("accepted-document", acceptedA.GetProperty("resolutionSource").GetString());
+        Assert.Contains("PostgreSQL", acceptedA.GetProperty("answer").GetString(), StringComparison.Ordinal);
+        Assert.Contains(acceptedA.GetProperty("evidence").EnumerateArray(), evidence => evidence.GetString()!.StartsWith(relativeA + ":", StringComparison.Ordinal));
+        var adoptedA = File.ReadAllBytes(workingA);
+
+        var sourceB = changedMeaning ? Path.Combine(sources.Path, "Replacement Technical Intent.md") : sourceA;
+        if (changedMeaning) File.WriteAllText(sourceB, technicalA.Replace("primary data store is PostgreSQL", "primary data store is SQLite", StringComparison.Ordinal));
+        if (changedMeaning) Assert.NotEqual(technicalA, File.ReadAllText(sourceB));
+        var originalB = File.ReadAllBytes(sourceB);
+        Run(application, "definition", "documents", "--role", "technical", "--source", sourceB);
+        var relativeB = CisProductDocumentPaths.Read(repository.Path)["technical"];
+        var workingB = Path.Combine(repository.Path, relativeB);
+        Assert.NotEqual(relativeA, relativeB);
+        Assert.Equal(originalB, File.ReadAllBytes(workingB));
+        var beforeAdoption = Store(Questions(application, false));
+        Assert.Equal(acceptedA.GetProperty("answer").GetString(), beforeAdoption.GetProperty("answer").GetString());
+        Assert.Equal(acceptedA.GetProperty("evidence").GetRawText(), beforeAdoption.GetProperty("evidence").GetRawText());
+        Assert.Contains(beforeAdoption.GetProperty("sourceFactAuthority").GetProperty("basis").EnumerateObject(), entry => entry.Name == relativeA);
+        Assert.DoesNotContain(beforeAdoption.GetProperty("sourceFactAuthority").GetProperty("basis").EnumerateObject(), entry => entry.Name == relativeB);
+        Assert.Equal(originalB, File.ReadAllBytes(workingB));
+        Assert.Equal(adoptedA, File.ReadAllBytes(workingA));
+
+        // This fixture explicitly authorizes B's adoption; document selection alone did not.
+        Run(application, "technical-intent", "init");
+        var adoptedB = Run(application, "technical-intent", "approve", "--reviewer", "Fixture technical owner", "--reason", "Adopt the explicitly selected replacement baseline.");
+        Assert.Equal(relativeB, adoptedB.GetProperty("canonicalPath").GetString());
+        Assert.Equal("Active", adoptedB.GetProperty("validation").GetProperty("effectiveStatus").GetString());
+        var directlyAdopted = Store(Questions(application, true));
+        var refreshed = Store(Run(application, "technical-intent", "questions", "init"));
+        var expectedStore = changedMeaning ? "SQLite" : "PostgreSQL";
+        foreach (var effective in new[] { directlyAdopted, refreshed })
+        {
+            Assert.Equal("Derived", effective.GetProperty("status").GetString());
+            Assert.Equal("accepted-document", effective.GetProperty("resolutionSource").GetString());
+            Assert.Equal("Current", effective.GetProperty("assessmentStatus").GetString());
+            Assert.Contains(expectedStore, effective.GetProperty("answer").GetString(), StringComparison.Ordinal);
+            if (changedMeaning) Assert.DoesNotContain("PostgreSQL", effective.GetProperty("answer").GetString(), StringComparison.Ordinal);
+            Assert.Contains(effective.GetProperty("evidence").EnumerateArray(), evidence => evidence.GetString()!.StartsWith(relativeB + ":", StringComparison.Ordinal));
+            Assert.DoesNotContain(effective.GetProperty("evidence").EnumerateArray(), evidence => evidence.GetString()!.StartsWith(relativeA + ":", StringComparison.Ordinal));
+            var authority = effective.GetProperty("sourceFactAuthority");
+            Assert.Equal("Current", authority.GetProperty("assessmentStatus").GetString());
+            Assert.Contains(authority.GetProperty("basis").EnumerateObject(), entry => entry.Name == relativeB);
+            Assert.DoesNotContain(authority.GetProperty("basis").EnumerateObject(), entry => entry.Name == relativeA);
+            Assert.Equal(JsonValueKind.Null, effective.GetProperty("answeredBy").ValueKind);
+            Assert.Equal(JsonValueKind.Null, effective.GetProperty("answeredAtUtc").ValueKind);
+        }
+
+        using var restarted = CreateApplication();
+        Run(restarted, "technical-intent", "init");
+        Run(restarted, "technical-intent", "questions", "init");
+        var questionsPath = Path.Combine(repository.Path, "docs/cis/specs/technical-intent-questionnaire.md");
+        var snapshots = new[] { workingA, workingB, sourceA, sourceB, brdPath, questionsPath,
+            Path.Combine(repository.Path, CisProductDocumentPaths.SelectionFile), Path.Combine(repository.Path, ".cis/local/definition-wizard/session.json") }
+            .Distinct(StringComparer.Ordinal).ToDictionary(path => path, path => File.Exists(path) ? File.ReadAllBytes(path) : null);
+        var resumed = Store(Questions(restarted, true));
+        Assert.Equal(refreshed.GetProperty("answer").GetString(), resumed.GetProperty("answer").GetString());
+        Assert.Equal(refreshed.GetProperty("sourceFactAuthority").GetRawText(), resumed.GetProperty("sourceFactAuthority").GetRawText());
+        var definition = Run(restarted, "definition", "status");
+        var projected = Store(definition.GetProperty("technicalQuestions"));
+        Assert.Equal("accepted-document", projected.GetProperty("resolutionSource").GetString());
+        Assert.Equal("Current", projected.GetProperty("assessmentStatus").GetString());
+        Assert.Equal(refreshed.GetProperty("answer").GetString(), projected.GetProperty("answer").GetString());
+        Assert.Contains(projected.GetProperty("evidence").EnumerateArray(), evidence => evidence.GetString()!.StartsWith(relativeB + ":", StringComparison.Ordinal));
+        Run(restarted, "definition", "status");
+        foreach (var snapshot in snapshots)
+        {
+            Assert.Equal(snapshot.Value is not null, File.Exists(snapshot.Key));
+            if (snapshot.Value is not null) Assert.Equal(snapshot.Value, File.ReadAllBytes(snapshot.Key));
+        }
+        Run(restarted, "technical-intent", "init");
+        Assert.Equal("unchanged", Run(restarted, "technical-intent", "questions", "init").GetProperty("status").GetString());
+        foreach (var snapshot in snapshots)
+            if (snapshot.Value is not null) Assert.Equal(snapshot.Value, File.ReadAllBytes(snapshot.Key));
+        Assert.Equal(originalA, File.ReadAllBytes(sourceA));
+        Assert.Equal(originalB, File.ReadAllBytes(sourceB));
+        Assert.Equal(adoptedA, File.ReadAllBytes(workingA));
+    }
 }

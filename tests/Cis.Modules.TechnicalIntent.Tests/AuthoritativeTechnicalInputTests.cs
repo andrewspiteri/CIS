@@ -122,6 +122,97 @@ No open technical decisions remain. All technical choices are closed for the cur
     }
 
     [Fact]
+    public void ImportedAuthority_AcceptedReplacementMissingStoreRetainsOnlyHistoricalFact()
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true, includeImplementation: false, completeQuestionnaire: false);
+        var sourceA = SelectTechnicalDirection(environment, SuppliedTechnicalDirection);
+        AdoptTechnicalDirection(environment);
+        var recorded = environment.Questionnaire.Initialize(environment.Authority.Path).Questions.Single(question => question.Id == "TI-Q-006");
+        Assert.Contains("PostgreSQL", recorded.Answer, StringComparison.Ordinal);
+        var sourceABytes = File.ReadAllBytes(sourceA);
+        var originals = Directory.GetFiles(Path.Combine(environment.Authority.Path, ".cis/local/document-import"))
+            .ToDictionary(path => path, File.ReadAllBytes, StringComparer.Ordinal);
+        const string relativeB = "docs/imports/technical/replacement.md";
+        var sourceB = Path.Combine(environment.Authority.Path, relativeB);
+        var suppliedB = SuppliedTechnicalDirection.Replace("| Persistence | The primary data store is PostgreSQL. |\n", "", StringComparison.Ordinal);
+        File.WriteAllText(sourceB, suppliedB);
+        File.WriteAllText(Path.Combine(environment.Authority.Path, CisProductDocumentPaths.SelectionFile),
+            JsonSerializer.Serialize(new Dictionary<string, string> { ["technical"] = relativeB }));
+        Assert.NotEqual(sourceA, sourceB);
+        AdoptTechnicalDirection(environment);
+
+        var refreshed = environment.Questionnaire.Initialize(environment.Authority.Path);
+        var missing = refreshed.Questions.Single(question => question.Id == recorded.Id);
+
+        Assert.Empty(refreshed.Errors);
+        Assert.False(refreshed.Complete);
+        Assert.Equal("accepted-document", missing.ResolutionSource);
+        Assert.Equal(recorded.Answer, missing.Answer);
+        Assert.Equal(recorded.Evidence, missing.Evidence);
+        Assert.NotEqual("Current", missing.AssessmentStatus);
+        Assert.Null(missing.AnsweredBy); Assert.Null(missing.AnsweredAtUtc);
+        Assert.DoesNotContain(missing.Evidence!, evidence => evidence.StartsWith(relativeB + ":", StringComparison.Ordinal));
+        Assert.False(FreshIntent(environment).Evaluate(environment.Authority.Path).Ready);
+        var questionnairePath = Path.Combine(environment.Authority.Path, "docs/specs/technical-intent-questionnaire.md");
+        var persisted = File.ReadAllBytes(questionnairePath);
+        var restarted = FreshQuestionnaire(environment).Status(environment.Authority.Path).Questions.Single(question => question.Id == recorded.Id);
+        Assert.Equal(recorded.Answer, restarted.Answer);
+        Assert.Equal(recorded.Evidence, restarted.Evidence);
+        Assert.NotEqual("Current", restarted.AssessmentStatus);
+        Assert.Equal(persisted, File.ReadAllBytes(questionnairePath));
+        Assert.Equal(sourceABytes, File.ReadAllBytes(sourceA));
+        Assert.Contains(suppliedB, File.ReadAllText(sourceB), StringComparison.Ordinal);
+        foreach (var original in originals) Assert.Equal(original.Value, File.ReadAllBytes(original.Key));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ImportedAuthority_CopiedApprovedSelectionDoesNotSupersedeWithoutCanonicalAdoption(bool ambiguousCatalog)
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true, includeImplementation: false, completeQuestionnaire: false);
+        var sourceA = SelectTechnicalDirection(environment, SuppliedTechnicalDirection);
+        AdoptTechnicalDirection(environment);
+        var recorded = environment.Questionnaire.Initialize(environment.Authority.Path).Questions.Single(question => question.Id == "TI-Q-004");
+        var approved = File.ReadAllBytes(sourceA);
+        const string relativeB = "docs/imports/technical/copied-approval.md";
+        var sourceB = Path.Combine(environment.Authority.Path, relativeB);
+        File.WriteAllBytes(sourceB, approved);
+        File.WriteAllText(Path.Combine(environment.Authority.Path, CisProductDocumentPaths.SelectionFile),
+            JsonSerializer.Serialize(new Dictionary<string, string> { ["technical"] = relativeB }));
+        var catalogPath = environment.Resolver.Resolve(environment.Authority.Path).Context!.CatalogPath;
+        if (ambiguousCatalog)
+        {
+            var expectedId = environment.Registry.Resolve(environment.Authority.Path).Workspace!.AuthorityRepository!.Id + ":spec:technical-intent";
+            var content = File.ReadAllText(catalogPath);
+            var entry = Regex.Match(content, $@"(?ms)^[ \t]*- id: {Regex.Escape(expectedId)}[ \t]*\r?$\n.*?(?=^[ \t]*- id:|\z)",
+                RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+            Assert.True(entry.Success);
+            var rebound = Regex.Replace(entry.Value, @"(?m)^(?<key>[ \t]*path:)[^\r\n]*",
+                match => match.Groups["key"].Value + " " + relativeB, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+            var duplicate = entry.Value.Replace("- id: " + expectedId, "- id: " + expectedId.ToUpperInvariant(), StringComparison.Ordinal);
+            File.WriteAllText(catalogPath, content[..entry.Index] + rebound + duplicate + content[(entry.Index + entry.Length)..]);
+        }
+        var catalog = File.ReadAllBytes(catalogPath);
+        var questionnairePath = Path.Combine(environment.Authority.Path, "docs/specs/technical-intent-questionnaire.md");
+        var questionnaire = File.ReadAllBytes(questionnairePath);
+
+        var status = FreshQuestionnaire(environment).Status(environment.Authority.Path);
+        var retained = status.Questions.Single(question => question.Id == recorded.Id);
+
+        Assert.Equal(recorded.Answer, retained.Answer);
+        Assert.Equal(recorded.Evidence, retained.Evidence);
+        Assert.Equal("accepted-document", retained.ResolutionSource);
+        Assert.NotEqual("Current", retained.AssessmentStatus);
+        Assert.DoesNotContain(retained.Evidence!, evidence => evidence.StartsWith(relativeB + ":", StringComparison.Ordinal));
+        Assert.Null(retained.AnsweredBy); Assert.Null(retained.AnsweredAtUtc);
+        Assert.Equal(approved, File.ReadAllBytes(sourceA));
+        Assert.Equal(approved, File.ReadAllBytes(sourceB));
+        Assert.Equal(catalog, File.ReadAllBytes(catalogPath));
+        Assert.Equal(questionnaire, File.ReadAllBytes(questionnairePath));
+    }
+
+    [Fact]
     public void ImportedAuthority_CompatibleBrdAmendmentRetainsAcceptedFactsWithoutRefreshingSource()
     {
         using var environment = WorkspaceEnvironment.Create(approveBrd: true, includeImplementation: false, completeQuestionnaire: false);

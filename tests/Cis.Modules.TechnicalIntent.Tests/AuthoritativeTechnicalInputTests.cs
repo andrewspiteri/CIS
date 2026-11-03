@@ -122,6 +122,96 @@ No open technical decisions remain. All technical choices are closed for the cur
     }
 
     [Fact]
+    public void ImportedAuthority_CompatibleBrdAmendmentRetainsAcceptedFactsWithoutRefreshingSource()
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true, includeImplementation: false, completeQuestionnaire: false);
+        var source = SelectTechnicalDirection(environment, SuppliedTechnicalDirection);
+        AdoptTechnicalDirection(environment);
+        var recorded = environment.Questionnaire.Initialize(environment.Authority.Path).Questions.Single(question => question.Id == "TI-Q-004");
+        Assert.Equal("accepted-document", recorded.ResolutionSource);
+        var sourceBytes = File.ReadAllBytes(source);
+        var brdPath = Path.Combine(environment.Authority.Path, "docs/specs/business-requirements.md");
+        File.AppendAllText(brdPath, "\n## AI governance\n\nBRD-FR-016: AI remains excluded from the current phase; any future AI proposal requires separate approval.\n");
+        Assert.Equal(0, environment.Brd.Approve(environment.Authority.Path, "Product owner", "Preserve current exclusions and add future AI governance.").ExitCode);
+        var questionnairePath = Path.Combine(environment.Authority.Path, "docs/specs/technical-intent-questionnaire.md");
+        var questionBytes = File.ReadAllBytes(questionnairePath);
+
+        var status = FreshQuestionnaire(environment).Status(environment.Authority.Path);
+        var architecture = status.Questions.Single(question => question.Id == recorded.Id);
+
+        Assert.Contains(status.Warnings, warning => warning.Contains("Retained accepted facts keep their original provenance", StringComparison.Ordinal));
+        Assert.Equal("Derived", architecture.Status);
+        Assert.Equal("accepted-document", architecture.ResolutionSource);
+        Assert.Equal("Current", architecture.AssessmentStatus);
+        Assert.Equal(recorded.Answer, architecture.Answer);
+        Assert.Equal(recorded.Confidence, architecture.Confidence);
+        Assert.Equal(recorded.Evidence, architecture.Evidence);
+        Assert.Null(architecture.AnsweredBy); Assert.Null(architecture.AnsweredAtUtc);
+        Assert.Equal(sourceBytes, File.ReadAllBytes(source));
+        Assert.Equal(questionBytes, File.ReadAllBytes(questionnairePath));
+        var aggregate = FreshIntent(environment).Status(environment.Authority.Path);
+        Assert.Equal("Stale", aggregate.Validation!.EffectiveStatus);
+        Assert.False(aggregate.Validation.Current);
+        Assert.False(FreshIntent(environment).Evaluate(environment.Authority.Path).Ready);
+        Assert.Equal(sourceBytes, File.ReadAllBytes(source));
+        environment.Intent.Initialize(environment.Authority.Path);
+        var afterRefresh = FreshQuestionnaire(environment).Status(environment.Authority.Path).Questions.Single(question => question.Id == recorded.Id);
+        Assert.Equal("accepted-document", afterRefresh.ResolutionSource);
+        Assert.Equal("Current", afterRefresh.AssessmentStatus);
+        Assert.Equal(recorded.Answer, afterRefresh.Answer);
+        Assert.Equal(recorded.Evidence, afterRefresh.Evidence);
+        Assert.NotEqual("Active", FreshIntent(environment).Status(environment.Authority.Path).Validation!.EffectiveStatus);
+        File.WriteAllText(source, File.ReadAllText(source).Replace("Use a modular monolith with explicit module boundaries.",
+            "Use independently deployed microservices with explicit service boundaries.", StringComparison.Ordinal));
+        var changed = FreshQuestionnaire(environment).Status(environment.Authority.Path).Questions.Single(question => question.Id == recorded.Id);
+        Assert.Equal("accepted-document", changed.ResolutionSource);
+        Assert.Equal("NeedsReview", changed.AssessmentStatus);
+        Assert.Equal(recorded.Answer, changed.Answer);
+        Assert.Equal(recorded.Evidence, changed.Evidence);
+        Assert.Contains("microservices", changed.SuggestedAnswer, StringComparison.Ordinal);
+        Assert.Contains("source direction changed", changed.AssessmentReason, StringComparison.Ordinal);
+        Assert.False(FreshIntent(environment).Evaluate(environment.Authority.Path).Ready);
+    }
+
+    [Fact]
+    public void ImportedAuthority_LegacyDecisionBookkeepingDoesNotReassessRetainedSourceFacts()
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true, includeImplementation: false, completeQuestionnaire: false);
+        var source = SelectTechnicalDirection(environment, SuppliedTechnicalDirection + "\n\n## Open technical decisions\n\n"
+            + "| ID | Decision | Required before | Status | Resolution or rationale |\n| --- | --- | --- | --- | --- |\n"
+            + "| TI-DEC-001 | Implementation shape, surfaces, bounded components, ownership, runtime processes, and dependency direction. | Change dossier creation | Open | Review the module ownership before approval. |\n");
+        Assert.Equal(0, environment.Intent.Initialize(environment.Authority.Path).ExitCode);
+        var decision = environment.Intent.Status(environment.Authority.Path).Validation!.Decisions.Single(item => item.Id == "TI-DEC-001");
+        Assert.Equal(0, environment.Intent.ResolveDecision(environment.Authority.Path,
+            new(decision.Id, "Use the reviewed modular monolith and explicit module boundaries.", "Architecture reviewed.", decision.ReviewToken!, "Architect")).ExitCode);
+        var legacy = Regex.Replace(File.ReadAllText(source), @"(?m)^<!-- cis:technical-decision-review (?<record>.+) -->\r?$", match =>
+        {
+            var record = System.Text.Json.Nodes.JsonNode.Parse(match.Groups["record"].Value)!.AsObject();
+            if (record["Id"]!.GetValue<string>() != decision.Id) return match.Value;
+            record.Remove("SupportingBasis");
+            return "<!-- cis:technical-decision-review " + record.ToJsonString() + " -->";
+        });
+        File.WriteAllText(source, legacy);
+        var approved = environment.Intent.Approve(environment.Authority.Path, "Technical owner", "Accept the supplied baseline and the reviewed legacy decision.");
+        Assert.Equal(0, approved.ExitCode); Assert.Equal("Active", approved.Validation!.EffectiveStatus);
+        var original = environment.Questionnaire.Initialize(environment.Authority.Path).Questions.Single(question => question.Id == "TI-Q-004");
+        var brdPath = Path.Combine(environment.Authority.Path, "docs/specs/business-requirements.md");
+        File.AppendAllText(brdPath, "\n## AI governance\n\nBRD-FR-016: AI remains excluded from the current phase; any future AI proposal requires separate approval.\n");
+        Assert.Equal(0, environment.Brd.Approve(environment.Authority.Path, "Product owner", "Preserve exclusions and govern future AI proposals.").ExitCode);
+        Assert.Equal("Current", FreshQuestionnaire(environment).Status(environment.Authority.Path).Questions.Single(question => question.Id == original.Id).AssessmentStatus);
+
+        environment.Intent.Initialize(environment.Authority.Path);
+
+        Assert.Contains("\"LegacyBaselines\":", File.ReadAllText(source), StringComparison.Ordinal);
+        var retained = FreshQuestionnaire(environment).Status(environment.Authority.Path).Questions.Single(question => question.Id == original.Id);
+        Assert.Equal("Current", retained.AssessmentStatus);
+        Assert.Equal("accepted-document", retained.ResolutionSource);
+        Assert.Equal(original.Answer, retained.Answer); Assert.Equal(original.Evidence, retained.Evidence);
+        Assert.False(FreshIntent(environment).Evaluate(environment.Authority.Path).Ready);
+        Assert.NotEqual("Active", FreshIntent(environment).Status(environment.Authority.Path).Validation!.EffectiveStatus);
+    }
+
+    [Fact]
     public void ImportedAuthority_EmptyCanonicalSectionUsesExplicitDirectionElsewhere()
     {
         using var environment = WorkspaceEnvironment.Create(approveBrd: true, includeImplementation: false, completeQuestionnaire: false);
@@ -145,8 +235,11 @@ No open technical decisions remain. All technical choices are closed for the cur
 
         Assert.False(stale.Complete);
         var data = stale.Questions.Single(question => question.Id == "TI-Q-006");
-        Assert.Equal("Unanswered", data.Status);
-        Assert.Null(data.Answer);
+        Assert.Equal("Derived", data.Status);
+        Assert.Equal("accepted-document", data.ResolutionSource);
+        Assert.Equal("NeedsReview", data.AssessmentStatus);
+        Assert.Contains("PostgreSQL", data.Answer, StringComparison.Ordinal);
+        Assert.Contains("source direction changed", data.AssessmentReason, StringComparison.Ordinal);
         Assert.Contains("SQLite", data.SuggestedAnswer, StringComparison.Ordinal);
         Assert.Equal("Stale", environment.Intent.Status(environment.Authority.Path).Validation!.EffectiveStatus);
         AdoptTechnicalDirection(environment);

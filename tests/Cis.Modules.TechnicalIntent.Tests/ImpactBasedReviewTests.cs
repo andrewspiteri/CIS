@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using System.Text.Json.Nodes;
 using Cis.Abstractions;
 using Cis.Modules.Graph;
 using Cis.Modules.TechnicalIntent;
@@ -199,6 +200,81 @@ public sealed partial class TechnicalIntentWorkflowTests
         });
         environment.Questionnaire.Initialize(environment.Authority.Path);
         Assert.Contains(FreshQuestionnaire(environment).Status(environment.Authority.Path).Questions, item => item.AssessmentStatus == "Unknown");
+    }
+
+    [Fact]
+    public void LegacyDecision_RebaselineCannotRenewUnknownAssessment()
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true);
+        Assert.Equal(0, environment.Intent.Initialize(environment.Authority.Path).ExitCode);
+        var decision = environment.Intent.Status(environment.Authority.Path).Validation!.Decisions.Single(item => item.Id == "TI-DEC-001");
+        Assert.Equal(0, environment.Intent.ResolveDecision(environment.Authority.Path,
+            new(decision.Id, "Keep the reviewed module ownership.", "Original architecture review.", decision.ReviewToken!, "Architect")).ExitCode);
+        var document = File.ReadAllText(environment.TechnicalIntentPath);
+        document = Regex.Replace(document, @"(?m)^<!-- cis:technical-decision-review (?<record>.+) -->\r?$", match =>
+        {
+            var record = JsonNode.Parse(match.Groups["record"].Value)!.AsObject();
+            if (record["Id"]!.GetValue<string>() != decision.Id) return match.Value;
+            record.Remove("SupportingBasis");
+            return "<!-- cis:technical-decision-review " + record.ToJsonString() + " -->";
+        });
+        File.WriteAllText(environment.TechnicalIntentPath, document);
+        Assert.Equal(0, environment.Intent.Approve(environment.Authority.Path, "Technical owner", "Accept the legacy architecture record.").ExitCode);
+        var original = FreshIntent(environment).Status(environment.Authority.Path).Validation!.Decisions.Single(item => item.Id == decision.Id);
+        Assert.False(original.NeedsReview);
+        Assert.False(environment.Intent.Initialize(environment.Authority.Path).Applied);
+        Assert.Equal(0, environment.Questionnaire.Answer(environment.Authority.Path, "TI-Q-004", "Independent event-driven services.", "Technical owner").ExitCode);
+        var stale = FreshIntent(environment).Status(environment.Authority.Path).Validation!.Decisions.Single(item => item.Id == decision.Id);
+        Assert.True(stale.NeedsReview); Assert.Equal("Unknown", stale.AssessmentStatus);
+
+        environment.Intent.Initialize(environment.Authority.Path);
+        var retained = FreshIntent(environment).Status(environment.Authority.Path).Validation!.Decisions.Single(item => item.Id == decision.Id);
+
+        Assert.True(retained.NeedsReview); Assert.Equal("Unknown", retained.AssessmentStatus);
+        Assert.Equal(original.RecordedResolution, retained.RecordedResolution);
+        Assert.Equal(original.RecordedBy, retained.RecordedBy);
+        Assert.Equal(original.RecordedAtUtc, retained.RecordedAtUtc);
+        var renewed = FreshIntent(environment).ResolveDecision(environment.Authority.Path,
+            new(decision.Id, original.RecordedResolution!, "Reassessed the changed architecture answer.", retained.ReviewToken!, "Architect"));
+        Assert.True(renewed.Applied);
+        Assert.False(FreshIntent(environment).Status(environment.Authority.Path).Validation!.Decisions.Single(item => item.Id == decision.Id).NeedsReview);
+        var bytes = File.ReadAllBytes(environment.TechnicalIntentPath);
+        Assert.False(FreshIntent(environment).Initialize(environment.Authority.Path).Applied);
+        Assert.False(FreshIntent(environment).Status(environment.Authority.Path).Validation!.Decisions.Single(item => item.Id == decision.Id).NeedsReview);
+        Assert.Equal(bytes, File.ReadAllBytes(environment.TechnicalIntentPath));
+    }
+
+    [Fact]
+    public void LegacyDecision_CompatibleApprovalCarryForwardKeepsLegacyAssessmentCurrent()
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true);
+        Assert.Equal(0, environment.Intent.Initialize(environment.Authority.Path).ExitCode);
+        var decision = environment.Intent.Status(environment.Authority.Path).Validation!.Decisions.Single(item => item.Id == "TI-DEC-001");
+        Assert.Equal(0, environment.Intent.ResolveDecision(environment.Authority.Path,
+            new(decision.Id, "Keep the reviewed module ownership.", "Original architecture review.", decision.ReviewToken!, "Architect")).ExitCode);
+        var document = Regex.Replace(File.ReadAllText(environment.TechnicalIntentPath), @"(?m)^<!-- cis:technical-decision-review (?<record>.+) -->\r?$", match =>
+        {
+            var record = JsonNode.Parse(match.Groups["record"].Value)!.AsObject();
+            if (record["Id"]!.GetValue<string>() != decision.Id) return match.Value;
+            record.Remove("SupportingBasis");
+            return "<!-- cis:technical-decision-review " + record.ToJsonString() + " -->";
+        });
+        File.WriteAllText(environment.TechnicalIntentPath, document);
+        Assert.Equal(0, environment.Intent.Approve(environment.Authority.Path, "Technical owner", "Accept the legacy architecture record.").ExitCode);
+        var original = FreshIntent(environment).Status(environment.Authority.Path).Validation!.Decisions.Single(item => item.Id == decision.Id);
+        document = Regex.Replace(File.ReadAllText(environment.TechnicalIntentPath), @"(?m)^(\| repository \| [^|]+ \| )sha256:[a-f0-9]{64}( \|)",
+            "$1sha256:0000000000000000000000000000000000000000000000000000000000000000$2");
+        File.WriteAllText(environment.TechnicalIntentPath, document);
+
+        var refreshed = environment.Intent.Initialize(environment.Authority.Path);
+
+        Assert.Equal("Active", refreshed.Validation!.EffectiveStatus);
+        var carried = FreshIntent(environment).Status(environment.Authority.Path).Validation!.Decisions.Single(item => item.Id == decision.Id);
+        Assert.False(carried.NeedsReview, string.Join("\n", carried.Issues)); Assert.Equal("Current", carried.AssessmentStatus);
+        Assert.Equal(original.RecordedBy, carried.RecordedBy); Assert.Equal(original.RecordedAtUtc, carried.RecordedAtUtc);
+        var bytes = File.ReadAllBytes(environment.TechnicalIntentPath);
+        Assert.False(FreshIntent(environment).Initialize(environment.Authority.Path).Applied);
+        Assert.Equal(bytes, File.ReadAllBytes(environment.TechnicalIntentPath));
     }
 
     private static TechnicalIntentService FreshIntent(WorkspaceEnvironment environment)

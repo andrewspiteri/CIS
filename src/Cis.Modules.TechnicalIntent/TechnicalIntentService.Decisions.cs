@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Cis.Abstractions;
 
 namespace Cis.Modules.TechnicalIntent;
@@ -113,7 +114,8 @@ public sealed partial class TechnicalIntentService
                 reason = "Supporting input changed: " + string.Join(", ", changed) + ". The accepted resolution is retained; reassess this decision.";
             }
         }
-        else if (!review.NeedsReview && !LegacyDecisionBasisMatches(state, document))
+        else if (!review.NeedsReview && !LegacyDecisionBasisMatches(state,
+            audit?.LegacyBaselines ?? generatedBasis?.LegacyBaselines ?? ParseBaselines(CisTechnicalIntentPresentation.RestoreManagedEvidence(document))))
         {
             assessment = "Unknown";
             reason = "This retained decision predates scoped supporting evidence and its recorded aggregate baseline differs. Review this decision against the current inputs.";
@@ -176,15 +178,73 @@ public sealed partial class TechnicalIntentService
         return basis;
     }
 
-    private static bool LegacyDecisionBasisMatches(State state, string document)
+    private static bool LegacyDecisionBasisMatches(State state, IReadOnlyDictionary<string, string> recorded)
     {
-        var recorded = ParseBaselines(CisTechnicalIntentPresentation.RestoreManagedEvidence(document));
         return state.Baselines.Count > 0 && recorded.Count == state.Baselines.Count && state.Baselines.All(baseline =>
             recorded.TryGetValue(baseline.Kind + "\u001f" + baseline.Id, out var version) && version == baseline.Version);
     }
 
+    private static string PreserveLegacyDecisionBaselines(State state, string document)
+    {
+        var recorded = ParseBaselines(document);
+        if (LegacyDecisionBasisMatches(state, recorded)) return document;
+        var lines = document.Split('\n').ToList();
+        var decisions = ParseDecisionRows(ExtractSection(document, "Open technical decisions"));
+        foreach (var decision in decisions.Where(item => item.Status is "Resolved" or "Accepted" or "Deferred"))
+        {
+            var locations = lines.Select((line, index) => (Cells: Cells(line), Index: index))
+                .Where(item => item.Cells.Length == 5 && item.Cells[0] == decision.Id).ToArray();
+            if (locations.Length != 1) continue;
+            var index = locations[0].Index;
+            var rowHash = Hash(lines[index].TrimEnd('\r'));
+            var next = index + 1 < lines.Count ? lines[index + 1] : "";
+            if (ReadDecisionAudit(next) is { } audit && audit.Id == decision.Id && audit.RowHash == rowHash)
+            {
+                if (audit.SupportingBasis is null && audit.LegacyBaselines is null)
+                    lines[index + 1] = DecisionAuditPrefix + JsonSerializer.Serialize(audit with { LegacyBaselines = recorded }) + " -->";
+                continue;
+            }
+            if (ReadDecisionBasis(next) is { } basis && basis.Id == decision.Id && basis.RowHash == rowHash
+                && (basis.SupportingBasis is not null || basis.LegacyBaselines is not null)) continue;
+            // Capture the original aggregate compatibility proof, never a new
+            // scoped approval. Replacing document baselines cannot renew it.
+            lines.Insert(index + 1, DecisionBasisPrefix + JsonSerializer.Serialize(new DecisionBasisRecord(decision.Id, rowHash, null)
+            { LegacyBaselines = recorded }) + " -->");
+        }
+        return string.Join('\n', lines);
+    }
+
     private static string RenderDecisionBasis(State state, string id, string decision, string gate, string row)
         => DecisionBasisPrefix + JsonSerializer.Serialize(new DecisionBasisRecord(id, Hash(row), DecisionBasis(state, decision, gate))) + " -->";
+
+    internal static string WithoutDecisionAssessmentMetadata(string document)
+    {
+        var lines = document.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+        var omitted = new HashSet<int>();
+        var fence = '\0'; var fenceLength = 0;
+        for (var index = 0; index < lines.Length; index++)
+        {
+            var trimmed = lines[index].Trim();
+            if (fence != '\0')
+            {
+                var close = trimmed.TakeWhile(character => character == fence).Count();
+                if (close >= fenceLength && trimmed.AsSpan(close).Trim().Length == 0) fence = '\0';
+                continue;
+            }
+            if (trimmed.StartsWith("```", StringComparison.Ordinal) || trimmed.StartsWith("~~~", StringComparison.Ordinal))
+            { fence = trimmed[0]; fenceLength = trimmed.TakeWhile(character => character == fence).Count(); continue; }
+            if (lines[index].Trim() == PreserveReviewedContent) { omitted.Add(index); continue; }
+            if (index == 0) continue;
+            var cells = Cells(lines[index - 1]);
+            if (cells.Length != 5) continue;
+            var audit = ReadDecisionAudit(lines[index]);
+            var basis = ReadDecisionBasis(lines[index]);
+            var id = audit?.Id ?? basis?.Id;
+            var rowHash = audit?.RowHash ?? basis?.RowHash;
+            if (id == cells[0] && rowHash == Hash(lines[index - 1])) omitted.Add(index);
+        }
+        return string.Join('\n', lines.Where((_, index) => !omitted.Contains(index)));
+    }
 
     private static DecisionBasisRecord? ReadDecisionBasis(string line)
     {
@@ -235,6 +295,15 @@ public sealed partial class TechnicalIntentService
     };
 
     private sealed record DecisionAudit(string Id, string Resolution, string Reason, string Actor, string RecordedAtUtc, string RowHash,
-        IReadOnlyDictionary<string, string>? SupportingBasis = null, IReadOnlyList<DecisionAudit>? History = null);
-    private sealed record DecisionBasisRecord(string Id, string RowHash, IReadOnlyDictionary<string, string> SupportingBasis);
+        IReadOnlyDictionary<string, string>? SupportingBasis = null, IReadOnlyList<DecisionAudit>? History = null)
+    {
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public IReadOnlyDictionary<string, string>? LegacyBaselines { get; init; }
+    }
+    private sealed record DecisionBasisRecord(string Id, string RowHash,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyDictionary<string, string>? SupportingBasis)
+    {
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public IReadOnlyDictionary<string, string>? LegacyBaselines { get; init; }
+    }
 }

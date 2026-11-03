@@ -145,6 +145,7 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck, ICis
             }
             approvalCanCarryForward = HasCurrentApproval(existing)
                 && BaselinesCanCarryForward(existing, state.Baselines, state.Brd?.Content);
+            if (!approvalCanCarryForward) content = PreserveLegacyDecisionBaselines(state, content);
             if (approvalCanCarryForward)
             {
                 // Carry-forward authorizes provenance changes only. Regenerating

@@ -25,13 +25,21 @@ public sealed partial class FeatureIntakeService
         {
             var (repository, absolute) = DeliveryReference(state, path);
             if (!request.Owners.Contains(repository.Id)) throw new InvalidDataException("An implementation reference must belong to one of the selected owners.");
-            evidence[path] = FileHash(absolute);
+            var inventoried = input.Files.FirstOrDefault(file => SamePath(file.Absolute, absolute));
+            if (inventoried is null)
+                throw new InvalidDataException("Select code in the supported implementation inventory. Excluded scripts, tests, migrations and generated paths cannot supply reviewed dependency coverage.");
+            evidence[inventoried.RepositoryId + "/" + inventoried.Path] = FileHash(inventoried.Absolute);
         }
         if (request.Treatment is "reuse" or "extend" && evidence.Count == 0)
             throw new InvalidDataException("Select supporting code or enter a repository-relative code path before recording reuse or extension. New work does not require an existing implementation reference.");
         var review = new CisFeatureDeliveryReview(story.Id, story.Story.Title, request.Treatment, request.Owners.Order(StringComparer.Ordinal).ToArray(), request.Plan.Trim(), evidence,
-            input.Hash, answer.Actor.Trim(), DateTimeOffset.UtcNow.ToString("O"))
-        { Basis = DeliveryReviewBasis(input, story.Id, request.Owners, evidence) };
+            input.Hash, answer.Actor.Trim(), DateTimeOffset.UtcNow.ToString("O"));
+        // Compute the prospective selection with the dependency roots used after
+        // persistence. Preserve the original full input token for the existing
+        // concurrent-write check rather than rebinding it to this new selection.
+        var reviewedState = state with { Review = state.Review with { DeliveryReviews = [.. state.Review.DeliveryReviews ?? [], review] } };
+        var reviewedInput = ReadDeliveryInput(reviewedState);
+        review = review with { Basis = DeliveryReviewBasis(reviewedInput, story.Id, request.Owners, evidence) };
         var previous = state.Review.DeliveryReviews?.LastOrDefault(item => item.StoryId == story.Id);
         return DeliveryReviewEquivalent(previous, review) ? previous! : review;
     }
@@ -55,7 +63,10 @@ public sealed partial class FeatureIntakeService
     {
         var separator = reference.IndexOf('/');
         var repository = separator < 1 ? null : state.Workspace.Repositories.FirstOrDefault(r => r.Id == reference[..separator] && r.IsProductOwned && r.Role == "participant");
-        if (repository is null || !CisPathSafety.TryResolveUnderRoot(repository.RepositoryPath, reference[(separator + 1)..], out var path)
+        var segments = reference[(separator + 1)..].Replace('\\', '/').Split('/');
+        var relative = string.Join('/', segments.Where(segment => segment != "."));
+        if (repository is null || segments.Any(segment => segment is ".." or "")
+            || !CisPathSafety.TryResolveUnderRoot(repository.RepositoryPath, relative, out var path)
             || !SafeAbsolutePath(path) || !File.Exists(path) || !DeliveryExtensions.Contains(Path.GetExtension(path)))
             throw new InvalidDataException("Use an existing code path in the form repository-id/path/to/file. Paths outside owned repositories are not accepted.");
         return (repository, path);

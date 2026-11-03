@@ -57,8 +57,12 @@ public sealed record TechnicalIntentQuestion(
     public IReadOnlyDictionary<string, string>? SupportingBasis { get; init; }
     public string? AssessmentStatus { get; init; }
     public string? AssessmentReason { get; init; }
+    public TechnicalIntentSourceFactAuthority? SourceFactAuthority { get; init; }
     public IReadOnlyList<TechnicalIntentAnswerHistory> History { get; init; } = [];
 }
+
+public sealed record TechnicalIntentSourceFactAuthority(IReadOnlyDictionary<string, string>? Basis,
+    string AssessmentStatus = "Current", string? AssessmentReason = null);
 
 public sealed record TechnicalIntentAnswerHistory(string? Answer, string? AnsweredBy, string? AnsweredAtUtc,
     string ResolutionSource, IReadOnlyDictionary<string, string>? SupportingBasis);

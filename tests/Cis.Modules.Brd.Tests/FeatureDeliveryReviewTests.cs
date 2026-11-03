@@ -476,6 +476,43 @@ public sealed partial class FeatureIntakeTests
         Assert.Equal(choice.Plan, stale.Stories.Single().Review!.Plan);
     }
 
+    [Fact]
+    public void DeliverySelectedRootAssetChangeDuringFinalSaveCheckRejectsTheDecision()
+    {
+        using var f = new Fixture(); File.WriteAllText(f.Request.SourcePath, PrivacyStory);
+        var archive = AddDeliveryCode(f, "backend", "archive.ts", "import './styles.css';\nexport function run() { return 1; }\n");
+        var root = Path.GetDirectoryName(archive)!;
+        var asset = Path.Combine(root, "styles.css"); File.WriteAllText(asset, ".capture { color: red; }");
+        var contract = Path.Combine(root, "retention-contract.md"); File.WriteAllText(contract, "# Contract\nPreserve owned runtime boundaries.\n");
+        CreateIntake(f);
+        var graph = new DeliveryDependencyGraph(root, archive, contract);
+        var generation = new DeliveryGeneration();
+        var service = DeliveryService(f, generation, graphReader: graph);
+        var wizard = service.Wizard(f.Authority, "referrals");
+        var delivery = service.Delivery(f.Authority, "referrals", false);
+        Assert.Empty(delivery.Evidence);
+        var choice = new CisFeatureDeliveryReviewRequest(delivery.Stories.Single().Id, "extend", ["backend"],
+            "Extend the reviewed handler while retaining its imported presentation contract.", ["backend/archive.ts"], delivery.InputHash!);
+        var requestPath = Path.Combine(f.Authority, wizard.Plan!.RequestPath);
+        var original = File.ReadAllBytes(requestPath);
+        var reads = 0;
+        graph.BeforeRead = () =>
+        {
+            // The old-input read and prospective-root read have completed.
+            // Mutate the asset during the final prewrite validation read.
+            if (++reads == 3) File.WriteAllText(asset, ".capture { color: tan; }");
+        };
+        var rejected = service.SaveWizard(f.Authority,
+            new("referrals", "delivery", new(), "Reviewer", wizard.Revision!) { DeliveryReview = choice });
+        Assert.True(reads >= 3);
+        Assert.NotEmpty(rejected.Errors);
+        Assert.Equal(original, File.ReadAllBytes(requestPath));
+        var reopened = DeliveryService(f, generation).Delivery(f.Authority, "referrals", false);
+        Assert.Empty(reopened.Errors);
+        Assert.Null(reopened.Stories.Single().Review);
+        Assert.Equal(0, generation.Calls);
+    }
+
     private sealed class DeliveryDependencyGraph : ICisGraphSnapshotReader
     {
         private readonly string root;
@@ -484,6 +521,7 @@ public sealed partial class FeatureIntakeTests
         private readonly string? contractHeading;
         public string BuildId { get; set; } = "initial-build";
         public string Freshness { get; set; } = "fresh";
+        public Action? BeforeRead { get; set; }
         public DeliveryDependencyGraph(string root, string archive, string contract, string? contractHeading = null)
         {
             this.root = root; files = [archive, contract]; this.contractHeading = contractHeading; Rebuild();
@@ -498,6 +536,7 @@ public sealed partial class FeatureIntakeTests
         {
             if (!string.Equals(Path.GetFullPath(root), Path.GetFullPath(repositoryPath), StringComparison.OrdinalIgnoreCase))
                 return new("missing", 4, repositoryPath, "missing", null, null, [], [], []);
+            BeforeRead?.Invoke();
             var build = new CisGraphBuildMetadata(BuildId, "backend", "same-head", true, "complete");
             CisGraphNode Node(string id, string path) => new(id, "backend", "component", "implementation", id, id, [], "discovered", "active",
                 [new(path, id == "retention" && contractHeading is not null ? "heading" : "file", id == "retention" ? contractHeading ?? "" : "")], new Dictionary<string, string>(), []);

@@ -6,6 +6,51 @@ namespace Cis.Modules.Brd.Tests;
 public sealed partial class FeatureIntakeTests
 {
     [Theory]
+    [InlineData("trailing-space")]
+    [InlineData("line-endings")]
+    public void EquivalentFindingTextHasOneIdentityAndPreservesResponseAcrossOccurrences(string variation)
+    {
+        using var f = new Fixture(); File.WriteAllText(f.Request.SourcePath, PrivacyStory);
+        AddDeliveryCode(f, "backend", "archive.ts", "export class Archive { getDocumentVersion() {} }");
+        AddDeliveryCode(f, "customer-ui", "privacy.ts", "export class Privacy { acknowledgeDocumentVersion() {} }");
+        var findings = variation == "trailing-space"
+            ? new[] { "backend: minor — Missing acceptance evidence. Verify retention.", "backend: minor — Missing acceptance evidence. Verify retention. " }
+            : new[] { "backend: minor — Missing acceptance evidence.\r\nVerify retention.", "backend: minor — Missing acceptance evidence.\nVerify retention." };
+        CreateIntake(f); var executor = new RepeatingFindingExecutor { FindingsOverride = findings };
+        var service = DeliveryService(f, new StoryTaskGeneration(), executor);
+        var id = service.Navigation(f.Authority).Features.Single().Stories.Single().Id;
+        var read = service.Story(f.Authority, "referrals", id, false);
+        var plan = service.Story(f.Authority, "referrals", id, true, read.InputHash);
+        var current = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "approve", plan.PlanHash!, plan.Revision!, "Reviewer", "Reviewed");
+        CisFeatureStoryResult Execute(CisFeatureStoryResult state)
+        {
+            var preview = service.ExecuteStoryTask(f.Authority, "referrals", id, "T1", cancellation: TestContext.Current.CancellationToken);
+            Assert.Empty(preview.Errors);
+            var result = service.ExecuteStoryTask(f.Authority, "referrals", id, "T1", true, state.PlanHash, state.Revision,
+                preview.ExecutionPlan!.Hash, "Reviewer", true, TestContext.Current.CancellationToken);
+            Assert.Empty(result.Errors); return result;
+        }
+        current = Execute(current);
+        var finding = Assert.Single(current.TaskProgress[0].ReviewFeedback!);
+        Assert.Equal(findings, current.TaskProgress[0].Execution!.Findings);
+        const string answer = "Verify the retained document versions before completion.";
+        current = service.SaveStoryFeedback(f.Authority, new("referrals", id, "T1", current.PlanHash!, current.Revision!, "Reviewer", new() { [finding.Id] = answer })
+        { ExpectedBasisHashes = new Dictionary<string, string> { [finding.Id] = finding.BasisHash! } });
+        Assert.Empty(current.Errors); Assert.True(current.Applied);
+        var accepted = Assert.Single(current.TaskProgress[0].ReviewFeedback!);
+        Assert.Equal(answer, accepted.Answer); Assert.Equal("Reviewer", accepted.Actor);
+        var unchanged = service.SaveStoryFeedback(f.Authority, new("referrals", id, "T1", current.PlanHash!, current.Revision!, "Reviewer", new() { [finding.Id] = answer })
+        { ExpectedBasisHashes = new Dictionary<string, string> { [finding.Id] = accepted.BasisHash! } });
+        Assert.Empty(unchanged.Errors); Assert.False(unchanged.Applied); Assert.Equal(current.Revision, unchanged.Revision);
+        executor.Reverse = true; current = Execute(unchanged);
+        var recurring = Assert.Single(DeliveryService(f, new StoryTaskGeneration(), executor).Story(f.Authority, "referrals", id, false).TaskProgress[0].ReviewFeedback!);
+        Assert.Equal(finding.Id, recurring.Id); Assert.Equal(answer, recurring.Answer);
+        Assert.Equal(accepted.Actor, recurring.Actor); Assert.Equal(accepted.SavedAt, recurring.SavedAt);
+        Assert.Equal(new[] { "review-1", "review-2" }, recurring.RunIds);
+        Assert.False(current.TaskProgress[0].CanComplete); Assert.False(current.TaskProgress[0].Execution!.Applied);
+    }
+
+    [Theory]
     [InlineData("implementation")]
     [InlineData("review-evidence")]
     [InlineData("severity")]
@@ -101,6 +146,7 @@ public sealed partial class FeatureIntakeTests
         private int calls;
         public bool Reverse { get; set; }
         public bool DuplicateEvidence { get; set; }
+        public IReadOnlyList<string>? FindingsOverride { get; init; }
         public string Validation { get; set; } = "Version-retention assertion remains unverified.";
         public string Severity { get; set; } = "High";
         public CisStoryExecutionPlan SelectModels(CisStoryTaskWork work) => new("execution-hash", "Low", [],
@@ -109,7 +155,7 @@ public sealed partial class FeatureIntakeTests
             CancellationToken cancellationToken, Action<CisAgentProviderEvent>? progress)
         {
             calls++; Assert.True(stillCurrent());
-            string[] findings = [Severity + ": Missing acceptance evidence.", "Medium: Acknowledgement timestamp still needs verification."];
+            string[] findings = FindingsOverride?.ToArray() ?? [Severity + ": Missing acceptance evidence.", "Medium: Acknowledgement timestamp still needs verification."];
             if (Reverse) Array.Reverse(findings);
             var run = new CisStoryExecutionRun("review-" + calls, "backend", "review", "codex", "test", "changes-requested", "", "Review of document retention.", [Validation]);
             return new("changes-requested", selection,

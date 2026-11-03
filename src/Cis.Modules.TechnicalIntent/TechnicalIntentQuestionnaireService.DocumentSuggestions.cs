@@ -41,6 +41,7 @@ public sealed partial class TechnicalIntentQuestionnaireService
             var documents = IncludeRecordedStoreAnswer(authority, expectedBrdVersion,
                 ReadInputDocuments(authority, expectedBrdVersion, brdAccepted, warnings, errors));
             var conflicts = FindSourceConflicts(documents, errors, includeSelectedDraft: true);
+            var brdBases = SupportingBases(authority);
             // Broken extraction affects the document; a category-specific issue
             // below stays focused on its question instead of adding optional scope.
             var documentImportProblem = errors.Any(error => error.StartsWith("Input import problem:", StringComparison.Ordinal));
@@ -63,8 +64,10 @@ public sealed partial class TechnicalIntentQuestionnaireService
                     && !IsUnresolvedDirection(item.Passage)
                     && (IsExplicitDirection(item.Passage) || explicitCategories.Contains((item.Document, item.Passage.HeadingLine)))).ToArray();
                 var sourceDerived = question.ResolutionSource is "accepted-document" or "selected-document" or "scope-not-requested" or "selected-scope-not-requested";
+                var retainedFact = RetainedAcceptedSourceFact(question, documents);
                 if (chosen.Length == 0)
                 {
+                    if (retainedFact is not null) return retainedFact;
                     // Absence of optional scope is not an exclusion or a technical
                     // choice. Retain the field without asking the user to add scope.
                     var acceptedScope = documents.FirstOrDefault(document => document.Technical && document.Selected && (document.Accepted || document.Working));
@@ -95,6 +98,11 @@ public sealed partial class TechnicalIntentQuestionnaireService
                 {
                     errors.Add($"Input import problem: {question.Id} contains relevant supporting-service direction that could not be safely interpreted: "
                         + string.Join("; ", uninterpreted.Select(item => $"{item.Document.Path}:{item.Passage.Line} — {item.Passage.Heading} — {item.Passage.Text}")));
+                    if (retainedFact is not null)
+                        return RetainSourceFact(retainedFact, retainedFact.SourceFactAuthority?.Basis, "Unknown",
+                            "The accepted source fact is retained, but relevant supporting-service direction could not be safely interpreted. Resolve the reported input import problem before renewing this assessment.")
+                            with
+                        { Status = "Import problem", SuggestedAnswer = string.Join("\n\n", chosen.Select(item => item.Passage.Text)) };
                     return UnresolveSourceQuestion(question) with
                     {
                         Status = "Import problem",
@@ -104,6 +112,12 @@ public sealed partial class TechnicalIntentQuestionnaireService
                     };
                 }
                 if (conflicts.Contains(question.Id))
+                {
+                    if (question.ResolutionSource == "accepted-document" && !string.IsNullOrWhiteSpace(question.Answer))
+                        return RetainSourceFact(question, question.SourceFactAuthority?.Basis, "NeedsReview",
+                            "The accepted source fact is retained, but current authoritative inputs conflict. Reconcile the cited source statements before renewing its assessment.")
+                            with
+                        { Status = "Conflict", SuggestedAnswer = string.Join("\n\n", chosen.Select(item => item.Passage.Text)) };
                     return (question.ResolutionSource == "human" ? question : UnresolveSourceQuestion(question)) with
                     {
                         Status = "Conflict",
@@ -111,6 +125,9 @@ public sealed partial class TechnicalIntentQuestionnaireService
                         SuggestedAnswer = string.Join("\n\n", chosen.Select(item => item.Passage.Text)),
                         Evidence = evidence,
                     };
+                }
+                if (retainedFact is not null)
+                    return retainedFact with { SuggestedAnswer = string.Join("\n\n", chosen.Select(item => item.Passage.Text)) };
                 if (accepted.Any(item => AnswersFactualQuestion(question.Id, item.Passage))
                     && !chosen.Any(item => (item.Document.Accepted || item.Document.Working) && IsUnresolvedDirection(item.Passage)))
                     return question with
@@ -122,6 +139,9 @@ public sealed partial class TechnicalIntentQuestionnaireService
                         ResolutionSource = accepted.All(item => item.Document.Accepted) ? "accepted-document" : "selected-document",
                         Confidence = accepted.All(item => item.Document.Accepted) ? "source-explicit" : "source-explicit-proposal",
                         Evidence = accepted.Select(item => $"{item.Document.Path}:{item.Passage.Line} — {item.Passage.Heading} ({item.Document.Digest})").ToArray(),
+                        SourceFactAuthority = accepted.All(item => item.Document.Accepted)
+                            ? new(SourceFactBasis(accepted.Select(item => item.Document).Distinct(), question.Id)) : null,
+                        SupportingBasis = brdBases[question.Id],
                     };
                 if (IsResolved(question) && !sourceDerived) return question;
                 return question with
@@ -137,14 +157,16 @@ public sealed partial class TechnicalIntentQuestionnaireService
                 };
             }).ToArray();
             return documentImportProblem
-                ? result.Select(question => IsResolved(question) ? question : question with { Status = "Import problem", ResolutionSource = "import-problem" }).ToArray()
+                ? result.Select(question => IsResolved(question) || question.SourceFactAuthority is not null ? question : question with { Status = "Import problem", ResolutionSource = "import-problem" }).ToArray()
                 : result;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or JsonException or RegexMatchTimeoutException)
         {
             errors.Add("Input import problem: the selected direction could not be interpreted: " + exception.Message);
-            return questions.Select(question => question.ResolutionSource is "accepted-document" or "selected-document" or "scope-not-requested" or "selected-scope-not-requested" ? UnresolveSourceQuestion(question) : question)
-                .Select(question => IsResolved(question) ? question : question with { Status = "Import problem", ResolutionSource = "import-problem" }).ToArray();
+            return questions.Select(question => question.ResolutionSource == "accepted-document" && !string.IsNullOrWhiteSpace(question.Answer)
+                    ? RetainSourceFact(question, question.SourceFactAuthority?.Basis, "Unknown", "The accepted source fact is retained, but its current input could not be interpreted. Resolve the reported import problem before renewing its assessment.") with { Status = "Import problem" }
+                    : question.ResolutionSource is "selected-document" or "scope-not-requested" or "selected-scope-not-requested" ? UnresolveSourceQuestion(question) : question)
+                .Select(question => IsResolved(question) || question.SourceFactAuthority is not null ? question : question with { Status = "Import problem", ResolutionSource = "import-problem" }).ToArray();
         }
     }
 
@@ -157,9 +179,46 @@ public sealed partial class TechnicalIntentQuestionnaireService
             AnsweredAtUtc = null,
             ResolutionSource = "unresolved",
             Confidence = null,
+            SourceFactAuthority = null,
             Evidence = [],
             SuggestedAnswer = Definitions.FirstOrDefault(definition => definition.Id == question.Id)?.SuggestedAnswer ?? question.SuggestedAnswer
         };
+
+    private static TechnicalIntentQuestion RetainSourceFact(TechnicalIntentQuestion question,
+        IReadOnlyDictionary<string, string>? basis, string status, string? reason)
+        => question with { SourceFactAuthority = new(basis, status, reason), AssessmentStatus = status, AssessmentReason = reason };
+
+    private static IReadOnlyDictionary<string, string> SourceFactBasis(IEnumerable<InputDocument> documents, string id)
+        => documents.ToDictionary(document => document.Path, document => Hash(string.Join("\n\n", document.Passages
+            .Where(passage => TopicMatches(id, passage, DocumentTopics[id], document.Technical)).Select(passage => passage.Text))
+            + "\n" + string.Join("\n\n", ReadAssessmentRawSections(TechnicalIntentService.WithoutDecisionAssessmentMetadata(document.Content)).Where(passage =>
+                AssessmentTopics.Value[id].Content.IsMatch(passage.Text) || AssessmentTopics.Value[id].Heading.IsMatch(passage.Heading))
+                .Select(passage => passage.Text))), StringComparer.Ordinal);
+
+    private static TechnicalIntentQuestion? RetainedAcceptedSourceFact(TechnicalIntentQuestion question, IReadOnlyList<InputDocument> documents)
+    {
+        if (question.ResolutionSource != "accepted-document" || string.IsNullOrWhiteSpace(question.Answer)) return null;
+        var basis = question.SourceFactAuthority?.Basis;
+        var originals = basis is null ? documents.Where(document => (question.Evidence ?? []).Any(evidence =>
+            evidence.StartsWith(document.Path + ":", StringComparison.Ordinal))).ToArray()
+            : documents.Where(document => basis.ContainsKey(document.Path)).ToArray();
+        if (originals.Length > 0 && originals.All(document => document.Accepted)
+            && (basis is null || originals.Length == basis.Count)) return null;
+        if (basis is null)
+        {
+            var evidence = question.Evidence ?? [];
+            if (originals.Length == 0 || evidence.Any(item => !originals.Any(document =>
+                item.StartsWith(document.Path + ":", StringComparison.Ordinal) && item.EndsWith("(" + document.Digest + ")", StringComparison.Ordinal)))
+                || originals.Any(document => !document.ApprovedContent && !document.Accepted))
+                return RetainSourceFact(question, null, "Unknown", "The accepted source fact is retained, but its original scoped source compatibility cannot be established. Review the changed source; its historical provenance is preserved.");
+            basis = SourceFactBasis(originals, question.Id);
+        }
+        var current = SourceFactBasis(originals, question.Id);
+        var changed = ChangedBasis(basis, current);
+        return RetainSourceFact(question, basis, changed.Length == 0 ? "Current" : "NeedsReview", changed.Length == 0 ? null
+            : "The accepted source fact is retained, but relevant source direction changed: " + string.Join(", ", changed)
+                + ". Review and adopt the changed source before replacing this recorded fact.");
+    }
 
     internal static string ImportedDirectionsFor(string content, IReadOnlyList<string> ids)
         => string.Join("\n\n", ReadDocumentPassages(content).Where(passage => ids.Any(id =>
@@ -302,8 +361,9 @@ public sealed partial class TechnicalIntentQuestionnaireService
             var working = !accepted && selected && brdAccepted && CisDefinitionDraftScope.IsActive
                 && (!item.Technical || TechnicalIntentService.IsPreparedSelectedInput(content, expectedBrdVersion));
             if (item.Technical && !accepted)
-                warnings.Add($"Directions from {relative} remain proposals until the document baseline is adopted and current; source-derived answers are not manual approvals.");
-            result.Add(new(relative, Hash(content), accepted, selected, working, item.Technical, passages));
+                warnings.Add($"The aggregate baseline for {relative} needs review or adoption. Retained accepted facts keep their original provenance; new or changed direction is not accepted until adoption.");
+            result.Add(new(relative, Hash(content), accepted, selected, working, item.Technical, passages,
+                Content: content, ApprovedContent: item.Technical && TechnicalIntentService.HasCurrentApproval(content)));
         }
         return result;
     }
@@ -507,5 +567,6 @@ public sealed partial class TechnicalIntentQuestionnaireService
     }
 
     private sealed record DocumentPassage(string Text, string Heading, int Line, int HeadingLine = 0);
-    private sealed record InputDocument(string Path, string Digest, bool Accepted, bool Selected, bool Working, bool Technical, IReadOnlyList<DocumentPassage> Passages, bool Manual = false);
+    private sealed record InputDocument(string Path, string Digest, bool Accepted, bool Selected, bool Working, bool Technical,
+        IReadOnlyList<DocumentPassage> Passages, bool Manual = false, string Content = "", bool ApprovedContent = false);
 }

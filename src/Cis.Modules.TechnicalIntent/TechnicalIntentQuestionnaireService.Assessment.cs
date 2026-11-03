@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Cis.Abstractions;
 
@@ -84,7 +85,7 @@ public sealed partial class TechnicalIntentQuestionnaireService
                 if (close >= fenceLength && trimmed.AsSpan(close).Trim().Length == 0) fence = '\0';
                 continue;
             }
-            if (!comment && (trimmed is "<!-- cis:baseline:start -->" or "<!-- cis:sources:start -->" or "<!-- cis:feature-traceability:start -->"))
+            if (!comment && (trimmed is "<!-- cis:baseline:start -->" or "<!-- cis:sources:start -->" or "<!-- cis:feature-traceability:start -->" or "<!-- cis:technical-intent-baseline:start -->"))
             { managedEnd = trimmed.Replace(":start -->", ":end -->", StringComparison.Ordinal); continue; }
             if (!comment && (trimmed.StartsWith("```", StringComparison.Ordinal) || trimmed.StartsWith("~~~", StringComparison.Ordinal)))
             {
@@ -121,12 +122,14 @@ public sealed partial class TechnicalIntentQuestionnaireService
         return questions.Select(question =>
         {
             var basis = bases[question.Id];
-            if (question.ResolutionSource != "human" || string.IsNullOrWhiteSpace(question.Answer))
+            if (question.SourceFactAuthority is { AssessmentStatus: not "Current" } source)
+                return question with { AssessmentStatus = source.AssessmentStatus, AssessmentReason = source.AssessmentReason };
+            if (question.ResolutionSource is not ("human" or "accepted-document") || string.IsNullOrWhiteSpace(question.Answer))
                 return question with { SupportingBasis = basis, AssessmentStatus = "Current", AssessmentReason = null };
             if (question.SupportingBasis is null)
                 return recordedBrd == currentBrd && question.AssessmentStatus != "Unknown"
                     ? question with { SupportingBasis = basis, AssessmentStatus = "Current", AssessmentReason = null }
-                    : question with { AssessmentStatus = "Unknown", AssessmentReason = "The retained human answer predates scoped supporting evidence and its recorded BRD baseline differs. Review this answer against the current BRD; its author and time are preserved." };
+                    : question with { AssessmentStatus = "Unknown", AssessmentReason = "The retained answer predates scoped supporting evidence and its recorded BRD baseline differs. Review this answer against the current BRD; its original authority and provenance are preserved." };
             var changed = ChangedBasis(question.SupportingBasis, basis);
             var unknown = changed.Any(key => key.StartsWith("BRD:unmapped:", StringComparison.Ordinal)
                 || key == "BRD:uninterpretable-input");
@@ -175,7 +178,7 @@ public sealed partial class TechnicalIntentQuestionnaireService
     }
 
     private static string RenderAssessment(TechnicalIntentQuestion question)
-        => JsonSerializer.Serialize(new QuestionAssessment(question.SupportingBasis, question.AssessmentStatus, question.AssessmentReason, question.History));
+        => JsonSerializer.Serialize(new QuestionAssessment(question.SupportingBasis, question.AssessmentStatus, question.AssessmentReason, question.History, question.SourceFactAuthority));
 
     private static QuestionAssessment? ReadAssessment(string body)
     {
@@ -186,5 +189,6 @@ public sealed partial class TechnicalIntentQuestionnaireService
     }
 
     private sealed record QuestionAssessment(IReadOnlyDictionary<string, string>? SupportingBasis,
-        string? Status, string? Reason, IReadOnlyList<TechnicalIntentAnswerHistory>? History);
+        string? Status, string? Reason, IReadOnlyList<TechnicalIntentAnswerHistory>? History,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TechnicalIntentSourceFactAuthority? SourceFactAuthority = null);
 }

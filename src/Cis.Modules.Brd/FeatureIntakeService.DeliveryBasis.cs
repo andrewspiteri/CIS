@@ -31,6 +31,12 @@ public sealed partial class FeatureIntakeService
 
     private static string DeliveryMeaning(string value) => value.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Trim();
 
+    private static string DeliveryLanguageFamily(string path) => Path.GetExtension(path).ToLowerInvariant() switch
+    {
+        ".ts" or ".tsx" or ".js" or ".jsx" => "ecmascript",
+        var extension => extension
+    };
+
     private static bool IsDeliveryCompilerSymbol(CisGraphNode node)
         => node.Kind == "symbol" && node.Facets.Contains("csharp", StringComparer.Ordinal)
             && node.Facets.Contains("compiler-bound", StringComparer.Ordinal) && node.Properties.GetValueOrDefault("binding") == "compiler"
@@ -248,19 +254,20 @@ public sealed partial class FeatureIntakeService
             }
             var parsed = ReadDeliverySymbols(file, content);
             var searchable = DeliveryNonCode.Replace(content, " ");
+            var scriptImports = DeliveryLanguageFamily(file.Path) is "ecmascript" or ".vue" or ".svelte";
             var projection = new DeliveryNativeSource(file,
                 input.Drafts.Where(draft => MatchDeliveryCode(parsed, queries[draft.Id]) is not null).Select(draft => draft.Id).ToArray(),
-                Regex.Matches(content, "(?:from\\s*|require\\s*\\(\\s*|import\\s*\\(\\s*|import\\s*)[\"'](?<path>\\.[^\"']+)[\"']")
-                    .Select(match => match.Groups["path"].Value).Distinct(StringComparer.Ordinal).ToArray(),
+                scriptImports ? Regex.Matches(content, "(?:from\\s*|require\\s*\\(\\s*|import\\s*\\(\\s*|import\\s*)[\"'](?<path>\\.[^\"']+)[\"']")
+                    .Select(match => match.Groups["path"].Value).Distinct(StringComparer.Ordinal).ToArray() : [],
                 Regex.Matches(searchable, @"\b(?:class|interface|record|struct|enum|type)\s+(?<name>[A-Za-z_]\w*)")
                     .Select(match => match.Groups["name"].Value).Distinct(StringComparer.Ordinal).ToArray(),
                 Regex.Matches(searchable, @"\bnamespace\s+(?<name>[A-Za-z_]\w*(?:\.\w+)*)")
                     .Select(match => match.Groups["name"].Value).Distinct(StringComparer.Ordinal).ToArray(),
                 Regex.Matches(searchable, @"(?m)^\s*using\s+(?<name>[A-Za-z_]\w*(?:\.\w+)*)\s*;")
                     .Select(match => match.Groups["name"].Value).Distinct(StringComparer.Ordinal).ToArray(),
-                Regex.IsMatch(content, "\\b(?:import|require)\\s*\\(\\s*[^\\s\"']"),
-                Regex.Matches(content, "(?:from\\s*|require\\s*\\(\\s*|import\\s*)[\"'](?<path>[^.][^\"']*)[\"']")
-                    .Select(match => match.Groups["path"].Value).Distinct(StringComparer.Ordinal).ToArray(),
+                scriptImports && Regex.IsMatch(content, "\\b(?:import|require)\\s*\\(\\s*[^\\s\"']"),
+                scriptImports ? Regex.Matches(content, "(?:from\\s*|require\\s*\\(\\s*|import\\s*)[\"'](?<path>[^.][^\"']*)[\"']")
+                    .Select(match => match.Groups["path"].Value).Distinct(StringComparer.Ordinal).ToArray() : [],
                 Path.GetExtension(file.Path) == ".cs" ? Regex.Matches(searchable, @"\b[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+\b")
                     .SelectMany(match => match.Value.Split('.').SkipLast(1)).Distinct(StringComparer.Ordinal).ToArray() : [],
                 Path.GetExtension(file.Path) == ".cs" ? Regex.Matches(searchable, @"\b(?:typeof|sizeof)\s*\((?<type>[^)\r\n]+)\)|(?m)^\s*(?:global\s+)?using\s+(?<alias>[A-Za-z_]\w*)\s*=\s*(?<type>[^;\r\n]+)")
@@ -404,7 +411,8 @@ public sealed partial class FeatureIntakeService
                 .Select(match => match.Value).Where(declarations.ContainsKey).Distinct(StringComparer.Ordinal);
             foreach (var name in identifiers)
             {
-                var candidates = (declarations.GetValueOrDefault(name) ?? []).Where(target => code[target].File.RepositoryId == source.File.RepositoryId).ToArray();
+                var candidates = (declarations.GetValueOrDefault(name) ?? []).Where(target => code[target].File.RepositoryId == source.File.RepositoryId
+                    && DeliveryLanguageFamily(code[target].File.Path) == DeliveryLanguageFamily(source.File.Path)).ToArray();
                 if (candidates.Length > 1 && Path.GetExtension(source.File.Path) == ".cs")
                 {
                     var explicitReferences = source.ExplicitTypeReferences.Select(reference => reference.Split('=', 2))
@@ -494,7 +502,21 @@ public sealed partial class FeatureIntakeService
             var contract = StoryContractBasis(state, input, draft.Id);
             contracts[draft.Id] = contract;
             var basis = new SortedDictionary<string, string>(contract.ToDictionary(item => item.Key, item => item.Value), StringComparer.Ordinal);
-            var seeds = code.Where(item => item.Value.StoryIds.Contains(draft.Id)).Select(item => item.Key).ToArray();
+            var selectedRoots = (state.Review.DeliveryReviews?.LastOrDefault(review => review.StoryId == draft.Id)?.EvidenceHashes.Keys ?? [])
+                .Select(reference =>
+                {
+                    try
+                    {
+                        var absolute = DeliveryReference(state, reference).Absolute;
+                        var file = files.FirstOrDefault(file => SamePath(file.Absolute, absolute));
+                        return file is null ? reference : file.RepositoryId + "/" + file.Path;
+                    }
+                    catch (InvalidDataException) { return reference; }
+                }).ToArray();
+            var seeds = code.Where(item => item.Value.StoryIds.Contains(draft.Id)).Select(item => item.Key)
+                .Concat(selectedRoots.Where(code.ContainsKey)).Distinct(StringComparer.Ordinal).ToArray();
+            if (selectedRoots.Any(path => !code.ContainsKey(path) && !omitted.ContainsKey(path)))
+                reasons[draft.Id] = unboundReasons[draft.Id] = "A retained selected implementation is outside or unavailable in the supported dependency inventory. Restore missing owned source, or renew this decision using an inventoried owned implementation reference; excluded scripts, tests and migrations cannot supply dependency coverage.";
             var pending = new Queue<string>(seeds); var scope = new HashSet<string>(StringComparer.Ordinal);
             while (pending.TryDequeue(out var path))
             {
@@ -516,6 +538,26 @@ public sealed partial class FeatureIntakeService
                 foreach (var target in links[candidate]) candidatePending.Enqueue(target);
             }
             scope.UnionWith(candidateScope);
+            // These languages have declaration evidence, without adequate native
+            // import/binding coverage. Compare the owned same-family bytes,
+            // including safe scripts/tests omitted from search, conservatively.
+            foreach (var familyScope in scope.Select(path => code[path].File)
+                .Where(file => DeliveryLanguageFamily(file.Path) is not (".cs" or "ecmascript"))
+                .GroupBy(file => (file.RepositoryId, Family: DeliveryLanguageFamily(file.Path))))
+            {
+                var familyKey = familyScope.Key.RepositoryId + "/" + familyScope.Key.Family;
+                var uncertain = input.ConservativeFiles.Where(file => file.RepositoryId == familyScope.Key.RepositoryId
+                    && DeliveryLanguageFamily(file.Path) == familyScope.Key.Family).ToArray();
+                var note = "Dependency interpretation for " + familyKey
+                    + " is uncertain; owned same-language files are compared conservatively. Verify imported and runtime contracts before qualifying implementation evidence.";
+                reasons[draft.Id] = note;
+                basis["uncertain-dependency-coverage/" + familyKey] = note;
+                foreach (var file in uncertain) basis["uncertain-dependency/" + file.RepositoryId + "/" + file.Path] = file.ContentHash;
+                var repository = input.Repositories.Single(repository => repository.Id == familyScope.Key.RepositoryId);
+                foreach (var config in DeliveryConfigurationBasis(repository, uncertain.Select(file => file.Absolute))) basis[config.Key] = config.Value;
+                if (input.ConservativeLimits.TryGetValue(familyKey, out var limit))
+                    reasons[draft.Id] = unboundReasons[draft.Id] = limit;
+            }
             var relevantRepositories = scope.Select(path => code[path].File.RepositoryId).Distinct(StringComparer.Ordinal).ToArray();
             if (omitted.Count > 0)
                 reasons[draft.Id] = "A potentially relevant implementation input was not searched: " + string.Join("; ", omitted.Values
@@ -632,7 +674,8 @@ public sealed partial class FeatureIntakeService
         if (code.Values.Any(item => item.File.RepositoryId == source.File.RepositoryId
             && item.Namespaces.Any(value => value == reference || value.StartsWith(reference + ".", StringComparison.Ordinal)))) return true;
         var parts = reference.Split('.'); var name = parts[^1];
-        foreach (var candidate in code.Values.Where(item => item.File.RepositoryId == source.File.RepositoryId && item.DeclaredTypes.Contains(name, StringComparer.Ordinal)))
+        foreach (var candidate in code.Values.Where(item => item.File.RepositoryId == source.File.RepositoryId
+            && DeliveryLanguageFamily(item.File.Path) == DeliveryLanguageFamily(source.File.Path) && item.DeclaredTypes.Contains(name, StringComparer.Ordinal)))
         {
             if (parts.Length == 1 || parts[..^1].All(candidate.DeclaredTypes.Contains)) return true;
             foreach (var ns in candidate.Namespaces)

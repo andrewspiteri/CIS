@@ -51,17 +51,19 @@ public sealed partial class FeatureIntakeService
                 .DistinctBy(run => JsonSerializer.Serialize(run, Json), StringComparer.Ordinal)
                 .OrderBy(run => run.RepositoryId, StringComparer.Ordinal).ThenBy(run => run.Stage, StringComparer.Ordinal).ThenBy(run => run.Summary, StringComparer.Ordinal), Json)
         };
-        return execution.Findings.Distinct(StringComparer.Ordinal).Select(finding =>
+        return execution.Findings.GroupBy(DeliveryMeaning, StringComparer.Ordinal).Select(group =>
         {
-            var id = Hash(Encoding.UTF8.GetBytes(record.Plan.StoryId + "\n" + taskId + "\n" + DeliveryMeaning(finding)));
-            var findingBasis = new SortedDictionary<string, string>(context, StringComparer.Ordinal) { ["finding"] = DeliveryMeaning(finding) };
+            var finding = group.First();
+            var meaning = group.Key;
+            var id = Hash(Encoding.UTF8.GetBytes(record.Plan.StoryId + "\n" + taskId + "\n" + meaning));
+            var findingBasis = new SortedDictionary<string, string>(context, StringComparer.Ordinal) { ["finding"] = meaning };
             var basisHash = DeliveryBasisHash(findingBasis);
-            var legacyId = Hash(Encoding.UTF8.GetBytes(taskId + "\n" + string.Join('|', execution.Runs.Select(run => run.RunId)) + "\n" + finding));
-            var saved = record.Events.Where(item => item.TaskId == taskId).SelectMany(item => item.Feedback ?? []).LastOrDefault(item => item.Id == id || item.Id == legacyId);
+            var legacyIds = group.Select(item => Hash(Encoding.UTF8.GetBytes(taskId + "\n" + string.Join('|', execution.Runs.Select(run => run.RunId)) + "\n" + item))).ToHashSet(StringComparer.Ordinal);
+            var saved = record.Events.Where(item => item.TaskId == taskId).SelectMany(item => item.Feedback ?? []).LastOrDefault(item => item.Id == id || legacyIds.Contains(item.Id));
             var unknown = input.BasisReasonsByStory.GetValueOrDefault(record.Plan.StoryId);
             var unbound = input.UnboundBasisReasonsByStory.GetValueOrDefault(record.Plan.StoryId);
             var applicable = saved is not null && saved.BasisHash == basisHash && unbound is null;
-            var runs = record.Events.Where(item => item.TaskId == taskId && item.Execution?.Findings.Any(item => DeliveryMeaning(item) == DeliveryMeaning(finding)) == true)
+            var runs = record.Events.Where(item => item.TaskId == taskId && item.Execution?.Findings.Any(item => DeliveryMeaning(item) == meaning) == true)
                 .SelectMany(item => item.Execution!.Runs.Select(run => run.RunId)).Concat(execution.Runs.Select(run => run.RunId))
                 .Concat(saved?.RunIds ?? []).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
             var suggestion = cache?.Answers.FirstOrDefault(item => item.Id == id);

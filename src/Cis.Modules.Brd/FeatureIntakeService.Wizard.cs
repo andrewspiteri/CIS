@@ -124,7 +124,7 @@ public sealed partial class FeatureIntakeService
             try
             {
                 File.WriteAllText(temporary, content, new UTF8Encoding(false));
-                if (deliveryReview is not null && ReadDeliveryInput(ReadWizard(workspacePath, answer.Slug)).Hash != deliveryReview.InputHash)
+                if (deliveryReview is not null && !DeliveryReviewEquivalent(deliveryReview, CheckDeliveryReview(ReadWizard(workspacePath, answer.Slug), answer)))
                     return WizardError("Implementation or direction changed while saving the story decision. Refresh and review the current evidence.");
                 if (File.ReadAllText(state.RequestPath).Replace("\r\n", "\n", StringComparison.Ordinal) != state.Content
                     || state.Inputs.Any(input => FileHash(input.Key) != input.Value)) return WizardError("The feature or its inputs changed while saving. Refresh before retrying.");

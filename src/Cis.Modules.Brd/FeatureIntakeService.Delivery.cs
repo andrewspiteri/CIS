@@ -18,6 +18,9 @@ public sealed partial class FeatureIntakeService
     private sealed record DeliveryInput(string Hash, IReadOnlyList<DeliveryDraft> Drafts, IReadOnlyList<CisFeatureDeliveryEvidence> Evidence,
         IReadOnlyList<CisWorkspaceRepository> Repositories, string Direction, string Constraints, string Ownership, IReadOnlyList<string> Warnings)
     {
+        public IReadOnlyList<DeliveryFile> Files { get; init; } = [];
+        public IReadOnlyList<DeliveryFile> ConservativeFiles { get; init; } = [];
+        public IReadOnlyDictionary<string, string> ConservativeLimits { get; init; } = new Dictionary<string, string>(StringComparer.Ordinal);
         public IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>> ContractBasisByStory { get; init; } = new Dictionary<string, IReadOnlyDictionary<string, string>>();
         public IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>> MaterialBasisByStory { get; init; } = new Dictionary<string, IReadOnlyDictionary<string, string>>();
         public IReadOnlyDictionary<string, string> BasisReasonsByStory { get; init; } = new Dictionary<string, string>();
@@ -113,6 +116,9 @@ public sealed partial class FeatureIntakeService
             new DeliveryDraft(Hash(Encoding.UTF8.GetBytes(story.Source + "|" + story.Title))[7..23], group.Key, story))).Take(80).ToArray();
         var repositories = state.Workspace.Repositories.Where(r => r.IsProductOwned && r.Role == "participant").OrderBy(r => r.Id, StringComparer.Ordinal).ToArray();
         var files = new List<DeliveryFile>();
+        var conservativeFiles = new List<DeliveryFile>();
+        var conservativeLimits = new Dictionary<string, string>(StringComparer.Ordinal);
+        var conservativeCounts = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var repo in repositories)
         {
             if (!Directory.Exists(repo.RepositoryPath) || !SafeAbsolutePath(repo.RepositoryPath))
@@ -129,10 +135,32 @@ public sealed partial class FeatureIntakeService
                     else if (entry is FileInfo file && DeliveryExtensions.Contains(file.Extension))
                     {
                         var path = Path.GetRelativePath(repo.RepositoryPath, file.FullName).Replace('\\', '/');
+                        DeliveryFile? conservative = null;
+                        var family = DeliveryLanguageFamily(path);
+                        if (family is not (".cs" or "ecmascript"))
+                        {
+                            var familyKey = repo.Id + "/" + family;
+                            if (conservativeCounts.GetValueOrDefault(familyKey) >= 4096)
+                                conservativeLimits.TryAdd(familyKey, "Conservative dependency coverage for " + familyKey + " exceeded its 4,096-file bound. Narrow and verify this dependency scope.");
+                            else
+                            {
+                                conservativeCounts[familyKey] = conservativeCounts.GetValueOrDefault(familyKey) + 1;
+                                try
+                                {
+                                    conservative = new(repo.Id, path, file.FullName, file.Length, file.LastWriteTimeUtc.Ticks) { ContentHash = DeliveryContentHash(file.FullName) };
+                                    conservativeFiles.Add(conservative);
+                                }
+                                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                                {
+                                    conservativeLimits[familyKey] = "Conservative dependency coverage cannot read " + repo.Id + "/" + path
+                                        + ". Restore this owned input before relying on " + familyKey + " dependency coverage.";
+                                }
+                            }
+                        }
                         if (path.StartsWith(repo.DocumentationRoot.TrimEnd('/') + "/", StringComparison.OrdinalIgnoreCase)
                             || Regex.IsMatch(path, @"(?:^|/)(?:tests?|__tests__|e2e|migrations?|fixtures?|scripts?|seeds?|mock-api)(?:/|\.|[-_])|\.(?:test|spec|d|generated|mock)\.|[-_]tests?\.", RegexOptions.IgnoreCase)) continue;
                         if (++count > 20000) { pending.Clear(); warnings.Add($"Implementation inventory for {repo.Id} exceeded 20,000 files; review coverage."); break; }
-                        files.Add(new(repo.Id, path, file.FullName, file.Length, file.LastWriteTimeUtc.Ticks) { ContentHash = DeliveryContentHash(file.FullName) });
+                        files.Add(conservative ?? new(repo.Id, path, file.FullName, file.Length, file.LastWriteTimeUtc.Ticks) { ContentHash = DeliveryContentHash(file.FullName) });
                     }
                 }
             }
@@ -161,13 +189,15 @@ public sealed partial class FeatureIntakeService
             direction,
             repositories,
             files = files.OrderBy(f => f.RepositoryId).ThenBy(f => f.Path).Select(f => new { f.RepositoryId, f.Path, f.ContentHash }),
+            conservativeFiles = conservativeFiles.OrderBy(f => f.RepositoryId).ThenBy(f => f.Path).Select(f => new { f.RepositoryId, f.Path, f.ContentHash }),
+            conservativeLimits = conservativeLimits.OrderBy(item => item.Key, StringComparer.Ordinal),
             evidence
         }, Json)));
         if (drafts.Length == 80) warnings.Add("Story coverage is bounded to 80 candidates. Split the feature before planning further requirements.");
         warnings.Add("This is a proposed comparison with selected code excerpts, not proof of complete implementation. Review acceptance coverage and ownership before saving.");
         var input = new DeliveryInput(hash, drafts, evidence, repositories, direction, constraints,
             state.Review.Pages.GetValueOrDefault("delivery")?.Answers.GetValueOrDefault("delivery-ownership") ?? "", warnings);
-        return ReadDeliveryBasis(state, input, files);
+        return ReadDeliveryBasis(state, input with { Files = files, ConservativeFiles = conservativeFiles, ConservativeLimits = conservativeLimits }, files);
     }
 
     private static HashSet<string> DeliveryWords(string value)

@@ -220,6 +220,7 @@ public sealed partial class TechnicalIntentQuestionnaireService
                 ResolutionSource = "human",
                 Confidence = "confirmed",
                 Evidence = [],
+                SourceFactAuthority = null,
                 SupportingBasis = currentBasis,
                 AssessmentStatus = "Current",
                 AssessmentReason = null,
@@ -736,6 +737,7 @@ This governed pre-intent record captures high-level technology and architecture 
                 AssessmentStatus = assessment?.Status,
                 AssessmentReason = assessment?.Reason,
                 History = assessment?.History ?? [],
+                SourceFactAuthority = assessment?.SourceFactAuthority,
             };
         }
         return result;

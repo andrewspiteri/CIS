@@ -31,6 +31,11 @@ test('saved choices and stale evidence remain distinguishable from automated fin
     review:{treatment:'new',plan:'Build acknowledgement recording.',owners:['referrals'],actor:'Andrew',evidenceHashes:{}},reviewCurrent:true};
   assert.match(deliveryAssessment({status:'current',stories:[story],repositoryIds:['referrals']}),/New work · Decision saved/u);
   assert.match(deliveryAssessment({status:'stale',stories:[{...story,reviewCurrent:false}],repositoryIds:['referrals']}),/Saved decision needs recheck/u);
+  const bounded = deliveryAssessment({status:'current',stories:[{...story,assessmentState:'unknown',
+    assessmentReason:'A bounded file is omitted from automated inspection.',reviewReason:'Human choice retains the exact reviewed material basis.'}],repositoryIds:['referrals']});
+  assert.match(bounded,/A bounded file is omitted from automated inspection/u);
+  assert.match(bounded,/Human choice retains the exact reviewed material basis/u);
+  assert.match(deliveryAssessment({status:'stale',stories:[{...story,review:null,reviewCurrent:false,assessmentState:'unknown'}],repositoryIds:['referrals']}),/Impact is unknown/u);
 });
 
 test('new work is explicitly a proposal and prefills its proposed owner without unrelated code references', () => {

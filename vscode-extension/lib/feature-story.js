@@ -30,16 +30,17 @@ function openFeatureStory(vscode, { cli, authority, root, slug, storyId, taskId,
   };
   const action = async (command, value) => {
     if (disposed) return;
-    if (command === 'remember-feedback' || command === 'use-feedback') {
+    if (command === 'remember-feedback' || command === 'use-feedback' || command === 'retain-feedback') {
       try {
         assertAuthority();
         const payload = JSON.parse(value);
         const feedback = model.result?.taskProgress?.find(task => task.id === payload.taskId)?.reviewFeedback || [];
-        const answers = command === 'use-feedback' ? { [payload.id]: feedback.find(item => item.id === payload.id)?.suggestedAnswer } : payload.answers;
+        const answers = command === 'use-feedback' ? { [payload.id]: feedback.find(item => item.id === payload.id)?.suggestedAnswer }
+          : command === 'retain-feedback' ? { [payload.id]: feedback.find(item => item.id === payload.id)?.retainedAnswer } : payload.answers;
         if (!answers || Object.keys(answers).length > 100 || Object.entries(answers).some(([id, text]) => !feedback.some(item => item.id === id) || typeof text !== 'string' || text.length > 8000)) return;
         model.feedbackDrafts[payload.taskId] = { ...model.feedbackDrafts[payload.taskId], ...answers };
         await persistFeedback();
-        if (command === 'use-feedback') render();
+        if (command !== 'remember-feedback') render();
       } catch { /* Ignore malformed draft messages; no canonical state is changed. */ }
       return;
     }
@@ -76,12 +77,16 @@ function openFeatureStory(vscode, { cli, authority, root, slug, storyId, taskId,
           const answers = Object.fromEntries(Object.entries(model.feedbackDrafts[value] || {}).filter(([id, text]) =>
             progress.reviewFeedback.some(item => item.id === id && text !== (item.answer || ''))));
           if (!Object.keys(answers).length) throw new Error('Enter an answer or use a suggested answer before saving.');
+          const expectedBasisHashes = Object.fromEntries(progress.reviewFeedback.filter(item => Object.hasOwn(answers, item.id)
+            && typeof item.basisHash === 'string' && item.basisHash.length > 0).map(item => [item.id, item.basisHash]));
+          if (Object.keys(expectedBasisHashes).length !== Object.keys(answers).length)
+            throw new Error('The CIS executable did not return a current basis for this finding. Update CIS and refresh the task before saving.');
           const actor = await actorIdentity?.(); if (!actor) return;
           assertAuthority(); if (disposed) return;
           const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'cis-story-feedback-'));
           const input = path.join(directory, 'answers.json');
           try {
-            fs.writeFileSync(input, JSON.stringify({ slug, storyId, taskId: value, expectedPlanHash: result.planHash, expectedRevision: result.revision, actor, answers }), { encoding: 'utf8', mode: 0o600 });
+            fs.writeFileSync(input, JSON.stringify({ slug, storyId, taskId: value, expectedPlanHash: result.planHash, expectedRevision: result.revision, expectedBasisHashes, actor, answers }), { encoding: 'utf8', mode: 0o600 });
             updated = await cli.query(['brd', 'feature', 'wizard', 'story', 'feedback-save', '--workspace', root, '--input', input],
               { repository: false, cache: false, interactive: true, acceptStructuredFailure: true });
           } finally { if (fs.existsSync(input)) fs.unlinkSync(input); fs.rmdirSync(directory); }
@@ -293,8 +298,10 @@ function renderReviewFeedback(model, task, progress) {
     <button type="button" data-command="suggest-feedback" data-value="${h(task.id)}" ${disabled ? 'disabled' : ''}>Suggest answers with selected model…</button>
     ${feedback.map((item, index) => `<article><h3>Finding ${index + 1}</h3><p style="white-space:pre-wrap">${h(item.finding)}</p>
       ${item.suggestedAnswer ? `<div><h4>Suggested answer</h4><p style="white-space:pre-wrap">${h(item.suggestedAnswer)}</p><p class="muted">Suggested by ${h(item.suggestionModel)}</p><details><summary>Supporting source excerpt</summary><p style="white-space:pre-wrap">${h(item.suggestionReason)}</p></details><button type="button" data-command="use-feedback" data-value="${h(JSON.stringify({ taskId: task.id, id: item.id }))}" ${disabled ? 'disabled' : ''}>Use suggested answer</button></div>` : '<p class="muted">No supported suggestion is currently available. Enter your answer or request suggestions.</p>'}
-      <label for="feedback-${h(index)}">Your answer or direction</label><textarea id="feedback-${h(index)}" data-finding="${h(item.id)}" rows="5" maxlength="8000" ${disabled ? 'disabled' : ''}>${h(drafts[item.id] ?? item.answer ?? '')}</textarea>
-      ${item.actor ? `<p class="muted">Saved by ${h(item.actor)} · ${h(item.savedAt)}</p>` : '<p class="muted">Not yet saved.</p>'}</article>`).join('')}
+      <label for="feedback-${h(index)}">Your answer or direction</label><textarea id="feedback-${h(index)}" data-finding="${h(item.id)}" rows="5" maxlength="8000" ${disabled ? 'disabled' : ''}>${h(drafts[item.id] ?? item.answer ?? item.retainedAnswer ?? '')}</textarea>
+      ${item.applicabilityReason ? `<p class="notice ${item.applicabilityState === 'current' ? '' : 'warning'}">${h(item.applicabilityReason)}</p>` : ''}
+      ${item.retainedAnswer && !item.answer ? `<button type="button" data-command="retain-feedback" data-value="${h(JSON.stringify({ taskId: task.id, id: item.id }))}" ${disabled ? 'disabled' : ''}>Keep retained answer as draft for this basis</button>` : ''}
+      ${item.actor ? `<p class="muted">${item.retainedAnswer && !item.answer ? 'Retained answer by' : 'Saved by'} ${h(item.actor)} · ${h(item.savedAt)}</p>` : '<p class="muted">Not yet saved.</p>'}</article>`).join('')}
     <button type="button" data-command="save-feedback" data-value="${h(task.id)}" ${disabled ? 'disabled' : ''}>Save answers</button><p>After saving, use Retry implementation and review below to apply the direction and check the outcome.</p>
     ${Object.entries(drafts).filter(([id]) => !feedback.some(item => item.id === id)).map(([, text]) => `<details><summary>Retained draft from an earlier review</summary><p>The finding changed. Copy any still-relevant text into a current answer before saving.</p><p style="white-space:pre-wrap">${h(text)}</p></details>`).join('')}</section>`;
 }

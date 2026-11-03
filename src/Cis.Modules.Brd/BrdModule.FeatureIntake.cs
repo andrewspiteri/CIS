@@ -133,6 +133,7 @@ public sealed partial class BrdModule
                     Console.WriteLine("definition=" + Clean(result.Definition));
                     foreach (var criterion in result.Story?.Requirements ?? []) Console.WriteLine("acceptance=" + Clean(criterion));
                     foreach (var task in result.Tasks) Console.WriteLine($"task={task.Id};title={Clean(task.Title)};repositories={Clean(string.Join(',', task.RepositoryIds))}");
+                    WriteStoryReviewState(result);
                     foreach (var error in result.Errors) Console.WriteLine("error=" + Clean(error));
                 }
                 return result.ExitCode;
@@ -165,7 +166,7 @@ public sealed partial class BrdModule
                 else
                 {
                     Console.WriteLine($"status={result.Status};planState={result.PlanState};planHash={result.PlanHash};revision={result.Revision}");
-                    foreach (var progress in result.TaskProgress) Console.WriteLine($"task={progress.Id};status={progress.Status};blocked={Clean(progress.BlockedReason ?? "")}");
+                    WriteStoryReviewState(result);
                     foreach (var context in result.CompletionContexts)
                     {
                         Console.WriteLine($"repository={context.RepositoryId};receipt={context.ReceiptPath}");
@@ -220,8 +221,7 @@ public sealed partial class BrdModule
             else
             {
                 Console.WriteLine($"status={result.Status};planState={result.PlanState};revision={result.Revision}");
-                foreach (var feedback in result.TaskProgress.SelectMany(item => item.ReviewFeedback ?? []))
-                    Console.WriteLine($"finding={feedback.Id};answered={!string.IsNullOrWhiteSpace(feedback.Answer)};suggested={!string.IsNullOrWhiteSpace(feedback.SuggestedAnswer)}");
+                WriteStoryReviewState(result);
                 foreach (var error in result.Errors) Console.WriteLine("error=" + Clean(error));
             }
             return result.ExitCode;
@@ -285,7 +285,8 @@ public sealed partial class BrdModule
                 else
                 {
                     Console.WriteLine($"status={result.Status};stories={result.Stories.Count};cached={result.Cached};provider={result.Provider};model={result.Model};exitCode={result.ExitCode}");
-                    foreach (var story in result.Stories) Console.WriteLine($"story={story.Id};title={Clean(story.Title)};treatment={story.Treatment};owners={Clean(string.Join(',', story.Owners))}");
+                    foreach (var story in result.Stories)
+                        Console.WriteLine($"story={story.Id};title={Clean(story.Title)};treatment={story.Treatment};owners={Clean(string.Join(',', story.Owners))};assessment={story.AssessmentState};basis={Clean(story.AssessmentReason)};assessmentProvider={Clean(story.AssessmentProvider ?? "")};assessmentModel={Clean(story.AssessmentModel ?? "")};review={story.ReviewState};reviewReason={Clean(story.ReviewReason)}");
                     foreach (var warning in result.Warnings) Console.WriteLine("warning=" + Clean(warning));
                     foreach (var error in result.Errors) Console.WriteLine("error=" + Clean(error));
                 }
@@ -354,6 +355,20 @@ public sealed partial class BrdModule
             root.Subcommands.Add(command);
         }
         return root;
+    }
+
+    private static void WriteStoryReviewState(CisFeatureStoryResult result)
+    {
+        if (result.Applied is { } applied) Console.WriteLine($"applied={applied}");
+        if (result.Story is { } story)
+            Console.WriteLine($"assessment={story.AssessmentState};basis={Clean(story.AssessmentReason)};assessmentProvider={Clean(story.AssessmentProvider ?? "")};assessmentModel={Clean(story.AssessmentModel ?? "")};review={story.ReviewState};reviewReason={Clean(story.ReviewReason)}");
+        foreach (var progress in result.TaskProgress)
+        {
+            Console.WriteLine($"task={progress.Id};status={progress.Status};blocked={Clean(progress.BlockedReason ?? "")}");
+            foreach (var feedback in progress.ReviewFeedback ?? [])
+                Console.WriteLine($"finding={feedback.Id};applicability={feedback.ApplicabilityState};answered={!string.IsNullOrWhiteSpace(feedback.Answer)};retained={!string.IsNullOrWhiteSpace(feedback.RetainedAnswer)};basisHash={feedback.BasisHash};reason={Clean(feedback.ApplicabilityReason ?? "")};actor={Clean(feedback.Actor ?? "")};suggested={!string.IsNullOrWhiteSpace(feedback.SuggestedAnswer)}");
+        }
+        foreach (var warning in result.Warnings) Console.WriteLine("warning=" + Clean(warning));
     }
 
     private static Command CreateFeatureIntakeCommand(FeatureIntakeService service)

@@ -14,9 +14,17 @@ public sealed record CisStoryReviewFeedback(string Id, string Finding, string? A
     public string? SuggestedAnswer { get; init; }
     public string? SuggestionReason { get; init; }
     public string? SuggestionModel { get; init; }
+    public string? BasisHash { get; init; }
+    public IReadOnlyList<string> RunIds { get; init; } = [];
+    public string ApplicabilityState { get; init; } = "unanswered";
+    public string? ApplicabilityReason { get; init; }
+    public string? RetainedAnswer { get; init; }
 }
 public sealed record CisStoryFeedbackRequest(string Slug, string StoryId, string TaskId, string ExpectedPlanHash,
-    string ExpectedRevision, string Actor, Dictionary<string, string> Answers);
+    string ExpectedRevision, string Actor, Dictionary<string, string> Answers)
+{
+    public IReadOnlyDictionary<string, string>? ExpectedBasisHashes { get; init; }
+}
 public sealed record CisStoryModelChoice(string Provider, string Model, bool IsLocal);
 public sealed record CisStoryExecutionPlan(string Hash, string Complexity, IReadOnlyList<string> Reasons,
     CisStoryModelChoice? Implementation, CisStoryModelChoice? Review, IReadOnlyList<string> Errors);

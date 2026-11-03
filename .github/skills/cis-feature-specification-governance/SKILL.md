@@ -13,7 +13,9 @@ description: Author, validate, review, approve, and refresh classification-aware
 6. Define layered test obligations: unit, component, integration, business, architecture, frontend component, browser, security, operational, coverage, and mutation where applicable. Credential-dependent provider smoke may be explicitly unavailable; it is never silently passed.
 7. Run `cis brd feature validate --item <high-level-item>`. Resolve structural, currency, traceability, and cross-document findings before requesting review.
 8. Only after explicit human authorization run `cis brd feature approve --item <high-level-item> --reviewer <human> --reason <rationale>`.
-9. A material change anywhere in the consolidated product-definition baseline makes the feature binding stale and requires reconciliation. Mechanical validation with no semantic change adds no approval gate.
+9. Inspect feature/wizard status and CIS impact before renewing a review. Reuse current page decisions, story plans and qualifying evidence; reassess only the named changed requirements, contracts, ownership or dependencies. An unknown impact needs the reported missing evidence, not a blanket reset. Identical saves and equivalent bookkeeping preserve applicable reviews. The aggregate feature/product activation and native completion gates still require their full applicable scope.
+
+Keep headless document intake available through `cis brd feature intake`. Source updates retain immutable revisions and unchanged decisions; inspect `cis brd feature wizard reimport` previews before applying a changed source. Use the existing graph/impact coverage and local reasons; an empty or bounded traversal alone does not prove no impact. Never silently rebaseline an approved change dossier or treat unqualified incremental evidence as final evidence.
 
 Preserve stable identities, approval evidence, exclusions, and history. Never approve for the user, silently broaden MVP scope, treat a generated draft as current, or report an unexecuted test obligation as passed.
 

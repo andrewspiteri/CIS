@@ -3507,7 +3507,7 @@ internal sealed partial class RepositoryStarterBinder
         cis definition status --workspace "<workspace>" --format json
         ```
 
-        A stale token returns a conflict without saving the decision. Re-read the current item and its relevant changes before requesting or recording renewed authority. Saving a resolution preserves its actor and provenance and does not approve the Technical Intent. Reopening uses the same workspace and persistent state; do not edit managed JSON, frontmatter or session records to progress.
+        A stale token returns a conflict without saving the decision. Reload the current token and inspect `assessmentStatus` and `assessmentReason`; concurrency does not itself invalidate the human decision. Reuse current answers and resolutions. For `NeedsReview` or `Unknown`, inspect the named supporting input or missing coverage and renew only that affected scope. Retained answers keep their actor/time and are not unanswered questions. Identical saves preserve their records; equivalent refreshes do not create a new decision. Saving a resolution does not approve the Technical Intent. Reopening uses the same workspace and persistent state; do not edit managed JSON, frontmatter or session records to progress.
 
         Inspect structured readiness and errors as well as the command exit code. Imported working direction, accepted facts, unresolved choices, source conflicts and required baseline adoption remain distinct. Direct low-level status after adoption remains useful for domain diagnostics; selected working facts outside the coordinator retain their unadopted status.
 
@@ -3680,7 +3680,7 @@ internal sealed partial class RepositoryStarterBinder
 
         # CIS feature specification governance
 
-        1. Read the active BRD, technical intent, approved high-level backlog item, repository profiles, standards, references, and applicable public/customer/backoffice frontend classification.
+        1. Run `cis definition status`. When a wizard session exists, require its final consolidated activation, then read the digest-bound BRD, technical questionnaire and intent, solution design, architecture diagrams, component sheet, dictionary index and dictionaries, UI questionnaire and direction, visual preview, approved high-level backlog item, repository profiles, standards, references, and applicable public/customer/backoffice frontend classification.
         2. Start or locate the feature with `cis brd backlog start --item <high-level-item>` and `cis brd feature status --item <high-level-item>`; do not invent a second source of truth.
         3. Replace a generated scaffold through bounded agent authoring with `cis agent author feature --item <high-level-item> --provider <provider> --actor <human>`, or complete it manually. Agent authoring may edit only the feature file and cannot approve it.
         4. Specify actors, outcomes, business rules, state transitions, contracts, authorization and non-disclosure, caching, persistence, migration/recovery, accessibility, observability, rollout, exclusions, and measurable acceptance criteria proportionate to the feature. Use only the controlled surfaces `frontend`, `backend`, `full-stack`, `mobile`, `native`, `api`, `contract`, `data`, `security`, `delivery`, or `documentation`, and frontend types `public`, `customer`, `backoffice`, or `not-applicable`; put descriptive boundary names in requirement text.
@@ -3688,7 +3688,9 @@ internal sealed partial class RepositoryStarterBinder
         6. Define layered test obligations: unit, component, integration, business, architecture, frontend component, browser, security, operational, coverage, and mutation where applicable. Credential-dependent provider smoke may be explicitly unavailable; it is never silently passed.
         7. Run `cis brd feature validate --item <high-level-item>`. Resolve structural, currency, traceability, and cross-document findings before requesting review.
         8. Only after explicit human authorization run `cis brd feature approve --item <high-level-item> --reviewer <human> --reason <rationale>`.
-        9. A material BRD or technical-intent change makes the feature stale and requires reconciliation. Mechanical validation with no semantic change adds no approval gate.
+        9. Inspect feature/wizard status and CIS impact before renewing a review. Reuse current page decisions, story plans and qualifying evidence; reassess only the named changed requirements, contracts, ownership or dependencies. An unknown impact needs the reported missing evidence, not a blanket reset. Identical saves and equivalent bookkeeping preserve applicable reviews. The aggregate feature/product activation and native completion gates still require their full applicable scope.
+
+        Keep headless document intake available through `cis brd feature intake`. Source updates retain immutable revisions and unchanged decisions; inspect `cis brd feature wizard reimport` previews before applying a changed source. Use the existing graph/impact coverage and local reasons; an empty or bounded traversal alone does not prove no impact. Never silently rebaseline an approved change dossier or treat unqualified incremental evidence as final evidence.
 
         Preserve stable identities, approval evidence, exclusions, and history. Never approve for the user, silently broaden MVP scope, treat a generated draft as current, or report an unexecuted test obligation as passed.
         """;

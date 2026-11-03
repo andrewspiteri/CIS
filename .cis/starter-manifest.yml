@@ -2156,7 +2156,7 @@ managed_artifacts:
   path: .github/skills/cis-feature-specification-governance/SKILL.md
   definition: guidance.skill.feature-specification-governance
   template_version: 2
-  applied_hash: sha256:68d2452ea47fe4ad60168380c8b3009507b67890dc0b7c3781ea72df9f1a2862
+  applied_hash: sha256:d16ef46f2b2a1a1cfa9c8205cb4c18b40c79a683c381145359067301949f0c57
   ownership: human
 - id: guidance.skill.feedback-loop
   path: .github/skills/cis-feedback-loop/SKILL.md
@@ -2186,7 +2186,7 @@ managed_artifacts:
   path: .github/skills/cis-govern-technical-intent/SKILL.md
   definition: guidance.skill.govern-technical-intent
   template_version: 2
-  applied_hash: sha256:951b3b5e70a78d3cb5d39c54b422ef70f96b142bb67bb5b1f757f5e4153ff43e
+  applied_hash: sha256:9bf22807b221fc541d70245e32b6e93df622cb32809df561c97d656b789da7b1
   ownership: human
 - id: guidance.skill.govern-ui-direction
   path: .github/skills/cis-govern-ui-direction/SKILL.md
@@ -2384,7 +2384,7 @@ managed_artifacts:
   path: docs/references/business-invariant-catalogue.md
   definition: reference.business-invariant-catalogue
   template_version: 1
-  applied_hash: sha256:f8def50c4fba2f88f504cb5fca7f282da5bb1095cc8aacb8b4334e5671f2caeb
+  applied_hash: sha256:548e5c9f62c24a65a30fcc5bfac867afbbd624f30ffe36897be6d0ac09a7950e
   ownership: managed
 - id: reference.command-dictionary.reference
   path: docs/references/command-dictionary.md
@@ -2480,7 +2480,7 @@ managed_artifacts:
   path: docs/references/problem-details-catalogue.md
   definition: reference.problem-details-catalogue
   template_version: 1
-  applied_hash: sha256:eb38a78670b0106b5b520a58d1926d42682f88e05e9299924d27c9269e833705
+  applied_hash: sha256:c00310542f08daace80745fedd61b237694f009fa21114a8ee58324c255cd3de
   ownership: managed
 - id: reference.projection-dictionary.reference
   path: docs/references/projection-dictionary.md

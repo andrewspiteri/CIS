@@ -10,7 +10,7 @@ cis:
 
 # Problem Details Catalogue
 
-Governed by `change-impact-studio:spec:problem-details-catalogue`. CIS seeded 208 row(s) from deterministic repository evidence. Review them before changing this document to Active.
+Governed by `change-impact-studio:spec:problem-details-catalogue`. CIS seeded 209 row(s) from deterministic repository evidence. Review them before changing this document to Active.
 
 | Problem ID | Problem type / reason | HTTP status | Raised by | Meaning | Frontend handling | Sensitive fields | Related commands / workflows | Status | Evidence |
 |---|---|---|---|---|---|---|---|---|---|
@@ -140,8 +140,8 @@ Governed by `change-impact-studio:spec:problem-details-catalogue`. CIS seeded 20
 | PROB-EXTENSION-f878f3ee17ed | Error | unknown | change-impact-studio | The question answer submitted by the page is malformed. | unknown | unknown | unknown | Draft | vscode-extension/extension.js:1239 |
 | PROB-EXTENSION-f95660f428a8 | Error | unknown | change-impact-studio | The BRD source table changed. Refresh the wizard before opening this decision. | unknown | unknown | unknown | Draft | vscode-extension/extension.js:738 |
 | PROB-EXTENSION-fc2fb2b7e25c | Error | unknown | change-impact-studio | This is repository implementation evidence, not a source document. | unknown | unknown | unknown | Draft | vscode-extension/extension.js:741 |
-| PROB-FEATURE-DELIVERY-16771856d2ce | Error | unknown | change-impact-studio | Reconcile current implementation before using these stories. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-delivery.js:55 |
-| PROB-FEATURE-DELIVERY-3e10cdf32048 | Error | unknown | change-impact-studio | The reconciled lists are unavailable or exceed the answer limit. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-delivery.js:58 |
+| PROB-FEATURE-DELIVERY-16771856d2ce | Error | unknown | change-impact-studio | Reconcile current implementation before using these stories. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-delivery.js:56 |
+| PROB-FEATURE-DELIVERY-3e10cdf32048 | Error | unknown | change-impact-studio | The reconciled lists are unavailable or exceed the answer limit. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-delivery.js:59 |
 | PROB-FEATURE-INTAKE-0195c257f270 | Error | unknown | change-impact-studio | Choose a planned treatment before saving this story decision. Your repository selections and other edits are retained. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-intake.js:378 |
 | PROB-FEATURE-INTAKE-056b2a1725df | Error | unknown | change-impact-studio | A feature can contain at most 100 repository features. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-intake.js:347 |
 | PROB-FEATURE-INTAKE-0a7ac64875ae | Error | unknown | change-impact-studio | Feature wizard input is too large. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-intake.js:242 |
@@ -185,19 +185,20 @@ Governed by `change-impact-studio:spec:problem-details-catalogue`. CIS seeded 20
 | PROB-FEATURE-INTAKE-ee0d1551655e | Error | unknown | change-impact-studio | Feature wizard input is invalid. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-intake.js:244 |
 | PROB-FEATURE-INTAKE-f0f8ee1c22e5 | Error | unknown | change-impact-studio | The selected authority changed. Reopen Add feature for that authority. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-intake.js:59 |
 | PROB-FEATURE-INTAKE-faaba4e28ff4 | Error | unknown | change-impact-studio | Save or discard the unsaved feature-page edits before recording the final review. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-intake.js:113 |
-| PROB-FEATURE-STORY-023712823847 | Error | unknown | change-impact-studio | The task plan changed. Refresh before starting. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-story.js:134 |
-| PROB-FEATURE-STORY-023ec5ffaef3 | Error | unknown | change-impact-studio | Enter an answer or use a suggested answer before saving. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-story.js:78 |
+| PROB-FEATURE-STORY-023712823847 | Error | unknown | change-impact-studio | The task plan changed. Refresh before starting. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-story.js:139 |
+| PROB-FEATURE-STORY-023ec5ffaef3 | Error | unknown | change-impact-studio | Enter an answer or use a suggested answer before saving. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-story.js:79 |
 | PROB-FEATURE-STORY-0c0dcf24e1be | Error | unknown | change-impact-studio | The selected product changed. Reopen this story from its product. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-story.js:28 |
-| PROB-FEATURE-STORY-34aad3b57188 | Error | unknown | change-impact-studio | CIS returned a different or unavailable story. Refresh the story list. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-story.js:181 |
-| PROB-FEATURE-STORY-37987c1feb90 | Error | unknown | change-impact-studio | Refresh a task with pending review findings before responding. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-story.js:65 |
-| PROB-FEATURE-STORY-4e12a4ec60b3 | Error | unknown | change-impact-studio | Save your review answers before retrying so both models receive them. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-story.js:129 |
-| PROB-FEATURE-STORY-6bf0bf4a9d2c | Error | unknown | change-impact-studio | CIS could not select distinct implementation and review models. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-story.js:136 |
-| PROB-FEATURE-STORY-7d9acdffd233 | Error | unknown | change-impact-studio | Refresh this plan before recording a decision. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-story.js:114 |
-| PROB-FEATURE-STORY-947106d29380 | Error | unknown | change-impact-studio | Dynamic error message; inspect implementation | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-story.js:125; vscode-extension/lib/feature-story.js:133; vscode-extension/lib/feature-story.js:180; vscode-extension/lib/feature-story.js:214; vscode-extension/lib/feature-story.js:90 |
-| PROB-FEATURE-STORY-aec135e114f8 | Error | unknown | change-impact-studio | Refresh the story before generating its task breakdown. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-story.js:102 |
-| PROB-FEATURE-STORY-b2c1a0d946a7 | Error | unknown | change-impact-studio | No models are available. Configure a CIS AI provider and retry. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-story.js:209 |
+| PROB-FEATURE-STORY-34aad3b57188 | Error | unknown | change-impact-studio | CIS returned a different or unavailable story. Refresh the story list. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-story.js:186 |
+| PROB-FEATURE-STORY-37987c1feb90 | Error | unknown | change-impact-studio | Refresh a task with pending review findings before responding. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-story.js:66 |
+| PROB-FEATURE-STORY-4e12a4ec60b3 | Error | unknown | change-impact-studio | Save your review answers before retrying so both models receive them. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-story.js:134 |
+| PROB-FEATURE-STORY-6bf0bf4a9d2c | Error | unknown | change-impact-studio | CIS could not select distinct implementation and review models. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-story.js:141 |
+| PROB-FEATURE-STORY-7d9acdffd233 | Error | unknown | change-impact-studio | Refresh this plan before recording a decision. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-story.js:119 |
+| PROB-FEATURE-STORY-947106d29380 | Error | unknown | change-impact-studio | Dynamic error message; inspect implementation | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-story.js:130; vscode-extension/lib/feature-story.js:138; vscode-extension/lib/feature-story.js:185; vscode-extension/lib/feature-story.js:219; vscode-extension/lib/feature-story.js:95 |
+| PROB-FEATURE-STORY-a22941215992 | Error | unknown | change-impact-studio | The CIS executable did not return a current basis for this finding. Update CIS and refresh the task before saving. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-story.js:83 |
+| PROB-FEATURE-STORY-aec135e114f8 | Error | unknown | change-impact-studio | Refresh the story before generating its task breakdown. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-story.js:107 |
+| PROB-FEATURE-STORY-b2c1a0d946a7 | Error | unknown | change-impact-studio | No models are available. Configure a CIS AI provider and retry. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-story.js:214 |
 | PROB-FEATURE-STORY-c2def098abad | Error | unknown | change-impact-studio | Trust the workspace before loading or generating story tasks. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-story.js:29 |
-| PROB-FEATURE-STORY-dc60be90daa2 | Error | unknown | change-impact-studio | CIS returned a different story. Your drafts are retained. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-story.js:91 |
+| PROB-FEATURE-STORY-dc60be90daa2 | Error | unknown | change-impact-studio | CIS returned a different story. Your drafts are retained. | unknown | unknown | unknown | Draft | vscode-extension/lib/feature-story.js:96 |
 | PROB-MEASURE-62c86bfad795 | Error | unknown | repository | Invalid command entry. | unknown | unknown | unknown | Draft | tools/function-profiler/measure.cjs:35 |
 | PROB-MEASURE-71f516c40314 | Error | unknown | repository | Usage: node measure.cjs <build directory> <authority> <new output directory> [commands.json] | unknown | unknown | unknown | Draft | tools/function-profiler/measure.cjs:6 |
 | PROB-MEASURE-834fc1e50605 | Error | unknown | repository | Dynamic error message; inspect implementation | unknown | unknown | unknown | Draft | tools/function-profiler/measure.cjs:56 |

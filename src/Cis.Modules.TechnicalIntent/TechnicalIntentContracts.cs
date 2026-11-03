@@ -52,7 +52,16 @@ public sealed record TechnicalIntentQuestion(
     string? AnsweredAtUtc,
     string ResolutionSource = "human",
     string? Confidence = null,
-    IReadOnlyList<string>? Evidence = null);
+    IReadOnlyList<string>? Evidence = null)
+{
+    public IReadOnlyDictionary<string, string>? SupportingBasis { get; init; }
+    public string? AssessmentStatus { get; init; }
+    public string? AssessmentReason { get; init; }
+    public IReadOnlyList<TechnicalIntentAnswerHistory> History { get; init; } = [];
+}
+
+public sealed record TechnicalIntentAnswerHistory(string? Answer, string? AnsweredBy, string? AnsweredAtUtc,
+    string ResolutionSource, IReadOnlyDictionary<string, string>? SupportingBasis);
 
 public sealed record TechnicalIntentQuestionnaireResult(
     string Status,
@@ -69,5 +78,7 @@ public sealed record TechnicalIntentQuestionnaireResult(
     IReadOnlyList<string> Errors,
     bool Applied)
 {
-    public int ExitCode => Status == "blocked" ? 5 : Errors.Count > 0 ? 2 : Status == "missing" ? 4 : Current ? 0 : 5;
+    public int ReassessmentCount { get; init; }
+    public int ExitCode => Status == "blocked" ? 5 : Errors.Count > 0 ? 2 : Status == "missing" ? 4
+        : Status is "answered" or "unchanged" ? 0 : Current ? 0 : 5;
 }

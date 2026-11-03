@@ -3,7 +3,7 @@ title: "cis technical-intent questions"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-01"
+last_reviewed: "2026-11-02"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-technical-intent-questions
@@ -51,7 +51,12 @@ are detected, nor does it invent security, compliance, or product constraints fr
 `cis technical-intent init` then consumes the exact answer set into a schema-4 technical intent,
 including the high-level choice table with human or repository provenance, logical components, primary interactions, architecture
 guidelines, and accepted `TI-DEC-*` records. A changed questionnaire digest makes an approved
-technical intent stale and requires regeneration and renewed review.
+aggregate technical intent stale and requires reconciliation. Individual answers and document
+decisions use their supporting basis: an unrelated answer does not reopen a current decision.
+`assessmentStatus` and `assessmentReason` identify affected or unknown scope. Retained answers
+keep their actor/time and count as recorded; `reassessmentCount` is separate from unanswered
+questions. Renew only the named affected answers after reviewing the changed inputs. Identical
+same-actor saves return `unchanged` without moving their timestamps.
 
 `status --summary` omits individual question text and answers while retaining lifecycle,
 currency, completion counts, paths, versions, warnings, and errors. Workspace projections

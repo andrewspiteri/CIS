@@ -24,7 +24,16 @@ public sealed partial class DefinitionWizardService
         else
         {
             if (!initialized) reasons.Add("The technical questionnaire has not been prepared yet.");
-            else if (!questions.Complete) reasons.Add($"{questions.UnansweredCount} questionnaire answers still need to be recorded.");
+            else
+            {
+                if (questions.UnansweredCount > 0) reasons.Add($"{questions.UnansweredCount} questionnaire answers still need to be recorded.");
+                if (questions.ReassessmentCount > 0)
+                {
+                    reasons.Add($"{questions.ReassessmentCount} retained questionnaire answers need reassessment; their original actors and timestamps are preserved.");
+                    reasons.AddRange(questions.Questions.Where(question => question.AssessmentStatus is "NeedsReview" or "Unknown")
+                        .Select(question => $"{question.Id}: {question.AssessmentReason}"));
+                }
+            }
             if (!exists) reasons.Add("The technical-intent document has not been created yet.");
             if (pending > 0) reasons.Add($"{pending} technical decision{(pending == 1 ? "" : "s")} in the document still need review, separately from the questionnaire answers.");
             if (stale) reasons.Add("The questionnaire or technical-intent evidence is out of date. Refresh it and review the changes.");
@@ -33,15 +42,18 @@ public sealed partial class DefinitionWizardService
             if (stale) reasons.AddRange(validation?.Warnings ?? []);
             if (!complete && reasons.Count == 0) reasons.Add("Review the technical-intent validation findings before continuing.");
         }
-        var next = !checkedState ? "doctor" : !initialized || stale ? "prepare-technical" : !questions.Complete ? "questions"
+        var next = !checkedState ? "doctor" : !initialized ? "prepare-technical" : questions.ReassessmentCount > 0 ? "questions"
+            : stale ? "prepare-technical" : !questions.Complete ? "questions"
             : !exists ? hasImplementation ? "infer-technical" : "prepare-technical" : pending > 0 ? "decisions"
             : !complete ? "open-intent" : "continue";
         var actions = new List<CisDefinitionActionGuidance>
         {
-            new("questions", answersReady ? "Review questionnaire answers" : "Complete questionnaire answers",
+            new("questions", questions.ReassessmentCount > 0 ? "Reassess affected retained answers" : answersReady ? "Review questionnaire answers" : "Complete questionnaire answers",
                 !initialized ? "Later" : answersReady ? "Complete" : "Needed",
                 answersReady ? $"All {questions.Questions.Count} questionnaire answers are resolved and current. The document's open technical decisions are checked separately."
-                    : !initialized ? "Prepare the questionnaire first." : "Record the remaining answers, then review the technical-intent document."),
+                    : !initialized ? "Prepare the questionnaire first." : questions.ReassessmentCount > 0
+                        ? "Review the named changed supporting inputs, retain or update the affected answers, then save those answers to renew their assessment."
+                        : "Record the remaining answers, then review the technical-intent document."),
             new("decisions", pending > 0 ? $"Review {pending} technical decisions" : "Review technical decisions",
                 !exists ? "Later" : pending > 0 ? "Needed" : "Complete",
                 !exists ? "Create the technical-intent document first." : pending > 0

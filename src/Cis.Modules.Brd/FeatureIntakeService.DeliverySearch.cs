@@ -9,12 +9,17 @@ public sealed partial class FeatureIntakeService
 {
     private sealed record DeliveryRoute(string StoryId, string RepositoryId, string Path, string Hash);
     private sealed record DeliverySearchCache(string Key, IReadOnlyList<DeliveryRoute> Routes, IReadOnlyList<string> Warnings);
+    private sealed record DeliveryEvidenceMatch(int Score, CisFeatureDeliveryEvidence Evidence);
 
     private static IReadOnlyList<CisFeatureDeliveryEvidence> ReadDeliveryCode(WizardState state, IReadOnlyList<DeliveryFile> files,
         IReadOnlyList<DeliveryDraft> drafts, List<string> warnings, bool persistSearch)
     {
-        var key = Hash(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { DeliveryVersion, state.Record.Plan.SourceHash,
-            files = files.Select(f => new { f.RepositoryId, f.Path, f.Length, f.Modified }) }, Json)));
+        var key = Hash(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
+        {
+            DeliveryVersion,
+            state.Record.Plan.SourceHash,
+            files = files.Select(f => new { f.RepositoryId, f.Path, f.ContentHash })
+        }, Json)));
         var cachePath = Path.Combine(state.Authority.RepositoryPath, ".cis/local/feature-delivery", state.Record.Plan.Slug, "code-search.json");
         if (!SafeAbsolutePath(cachePath)) throw new InvalidDataException("The code search cache uses an unsafe path.");
         try
@@ -70,29 +75,37 @@ public sealed partial class FeatureIntakeService
     private static IReadOnlyList<CisFeatureDeliveryEvidence> SearchDeliveryCode(IReadOnlyList<DeliveryFile> files,
         IReadOnlyList<DeliveryDraft> drafts, List<string> warnings)
     {
-        var code = new List<DeliveryCode>();
-        long bytes = 0; var oversized = 0; var sensitive = 0;
+        var queries = drafts.ToDictionary(draft => draft.Id, DeliveryQueryFor, StringComparer.Ordinal);
+        var selected = drafts.ToDictionary(draft => draft.Id, _ => new List<DeliveryEvidenceMatch>(), StringComparer.Ordinal);
+        var oversized = 0; var sensitive = 0;
         foreach (var file in files.OrderBy(f => f.RepositoryId, StringComparer.Ordinal).ThenBy(f => f.Path, StringComparer.Ordinal))
         {
             if (file.Length > 262144) { oversized++; continue; }
-            if (bytes + file.Length > 41_943_040) { warnings.Add("Code search reached its 40 MiB limit. Unsearched code may contain relevant implementation."); break; }
-            bytes += file.Length;
             if (!SafeAbsolutePath(file.Absolute)) continue;
             var content = File.ReadAllText(file.Absolute);
             if (DeliverySensitive(content)) { sensitive++; continue; }
-            code.Add(ReadDeliverySymbols(file, content));
+            var code = ReadDeliverySymbols(file, content);
+            foreach (var draft in drafts)
+            {
+                var match = MatchDeliveryCode(code, queries[draft.Id]);
+                if (match is null) continue;
+                // Retain bounded excerpts, not the text/symbols of every searched
+                // file. Later relevant files are classified independently of the
+                // size or ordering of earlier, unrelated implementation.
+                selected[draft.Id].Add(new(match.Score, DeliveryEvidence(match, draft.Id, "")));
+                selected[draft.Id] = selected[draft.Id].GroupBy(item => item.Evidence.RepositoryId)
+                    .SelectMany(group => group.OrderByDescending(item => item.Score).ThenBy(item => item.Evidence.Path, StringComparer.Ordinal).Take(2))
+                    .OrderByDescending(item => item.Score).ThenBy(item => item.Evidence.RepositoryId, StringComparer.Ordinal)
+                    .ThenBy(item => item.Evidence.Path, StringComparer.Ordinal).Take(8).ToList();
+            }
         }
         if (oversized > 0) warnings.Add($"Code search omitted {oversized} files larger than 256 KiB.");
         if (sensitive > 0) warnings.Add($"Code search omitted {sensitive} files with sensitive-looking content.");
         var evidence = new List<CisFeatureDeliveryEvidence>();
         foreach (var draft in drafts)
         {
-            var query = DeliveryQueryFor(draft);
-            var matches = code.Select(c => MatchDeliveryCode(c, query)).OfType<DeliveryMatch>()
-                .GroupBy(c => c.Code.File.RepositoryId).SelectMany(g => g.OrderByDescending(c => c.Score).ThenBy(c => c.Code.File.Path, StringComparer.Ordinal).Take(2))
-                .OrderByDescending(c => c.Score).ThenBy(c => c.Code.File.RepositoryId, StringComparer.Ordinal).ThenBy(c => c.Code.File.Path, StringComparer.Ordinal).Take(8);
-            foreach (var match in matches)
-                evidence.Add(DeliveryEvidence(match, draft.Id, "E" + (evidence.Count + 1)));
+            foreach (var match in selected[draft.Id])
+                evidence.Add(match.Evidence with { Id = "E" + (evidence.Count + 1) });
         }
         return evidence;
     }

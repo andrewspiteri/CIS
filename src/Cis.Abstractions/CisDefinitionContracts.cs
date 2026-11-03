@@ -67,7 +67,11 @@ public sealed record CisDefinitionPreview(
 public sealed record CisDefinitionQuestion(
     string Id, string Area, string Question, string Why, IReadOnlyList<string> CommonOptions,
     string SuggestedAnswer, string Status, string? Answer, string? AnsweredBy, string? AnsweredAtUtc,
-    string ResolutionSource, string? Confidence, IReadOnlyList<string> Evidence);
+    string ResolutionSource, string? Confidence, IReadOnlyList<string> Evidence)
+{
+    public string? AssessmentStatus { get; init; }
+    public string? AssessmentReason { get; init; }
+}
 
 public sealed record CisDefinitionQuestionnaire(
     string Status, bool Current, bool Complete, IReadOnlyList<CisDefinitionQuestion> Questions,

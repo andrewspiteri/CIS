@@ -324,6 +324,7 @@ function renderDefinitionPageBody(webview, root, model, page, vscode) {
 
 function technicalQuestionState(question) {
   const status = String(question.status || '').toLowerCase();
+  const reassessment = ['needsreview', 'unknown'].includes(String(question.assessmentStatus || '').toLowerCase());
   const notRequested = status === 'not requested' && ['scope-not-requested', 'selected-scope-not-requested'].includes(question.resolutionSource) && question.answer == null;
   const proposedScope = notRequested && question.resolutionSource === 'selected-scope-not-requested';
   const derived = status === 'derived';
@@ -331,10 +332,10 @@ function technicalQuestionState(question) {
   const accepted = derived && question.resolutionSource === 'accepted-document';
   const recordedOverride = status === 'conflict' && typeof question.answer === 'string' && question.answer.trim().length > 0
     && typeof question.answeredBy === 'string' && question.answeredBy.trim().length > 0;
-  return { notRequested, proposedScope, derived, supplied, accepted, inputProblem: status === 'import problem' || status === 'conflict',
+  return { notRequested, proposedScope, derived, supplied, accepted, reassessment, inputProblem: status === 'import problem' || status === 'conflict',
     conflict: status === 'conflict', recordedOverride, answered: status === 'answered',
-    resolved: status === 'answered' || derived || notRequested,
-    label: proposedScope ? 'Not requested; awaiting adoption' : notRequested ? 'Not requested' : supplied ? 'Supplied; awaiting adoption' : accepted ? 'From accepted source'
+    resolved: !reassessment && (status === 'answered' || derived || notRequested),
+    label: reassessment ? 'Retained; reassessment needed' : proposedScope ? 'Not requested; awaiting adoption' : notRequested ? 'Not requested' : supplied ? 'Supplied; awaiting adoption' : accepted ? 'From accepted source'
       : derived ? 'Derived from project' : status === 'answered' ? 'Answered' : status === 'conflict' ? 'Source conflict'
         : status === 'import problem' ? 'Import problem' : 'Decision required' };
 }
@@ -371,7 +372,7 @@ function renderWizardQuestions(questions, page) {
       return `<article class="question-card"><div class="question-heading"><div><span class="eyebrow">${escapeHtml(question.id || '')} · ${escapeHtml(question.area || '')}</span><h3>${escapeHtml(question.question || '')}</h3></div><span class="badge good">${escapeHtml(state.label)}</span></div><p>${escapeHtml(question.suggestedAnswer || 'This optional capability is not requested in the supplied scope. No exclusion or implementation choice is recorded.')}</p>${state.proposedScope ? '<p class="muted">This draft scope still requires final baseline adoption.</p>' : ''}${evidence ? `<details><summary>${state.proposedScope ? 'Supplied scope' : 'Accepted scope'}</summary><ul>${evidence}</ul></details>` : ''}</article>`;
     const imported = !resolved && question.resolutionSource === 'technical-intent-document'
       ? `<section class="suggestion"><strong>From imported technical intent</strong><p>Review these source excerpts, edit if needed, then save your direction. They are not recorded answers yet.</p><details><summary>Source passages</summary><ul>${(question.evidence || []).map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul></details></section>` : '';
-    return `<article class="question-card"><div class="question-heading"><div><span class="eyebrow">${escapeHtml(question.id || '')} · ${escapeHtml(question.area || '')}</span><h3>${escapeHtml(question.question || '')}</h3></div><span class="badge ${resolved ? 'good' : 'warn'}">${state.supplied || state.accepted ? escapeHtml(state.label) : resolved ? 'Resolved' : escapeHtml(state.label)}</span></div><p>${escapeHtml(question.why || '')}</p>${sourceDirection}${imported}<label for="wizard-${escapeHtml(question.id || '')}">${state.supplied || state.accepted ? 'Source direction — edit to override' : 'Direction'}</label><textarea id="wizard-${escapeHtml(question.id || '')}" data-page="${escapeHtml(page)}" data-question="${escapeHtml(question.id || '')}" rows="4" maxlength="16384">${escapeHtml(value)}</textarea><div class="actions"><button type="button" data-save-question="${escapeHtml(question.id || '')}" data-page="${escapeHtml(page)}">${state.supplied || state.accepted ? 'Save an override' : 'Save direction'}</button></div></article>`;
+    return `<article class="question-card"><div class="question-heading"><div><span class="eyebrow">${escapeHtml(question.id || '')} · ${escapeHtml(question.area || '')}</span><h3>${escapeHtml(question.question || '')}</h3></div><span class="badge ${resolved ? 'good' : 'warn'}">${state.supplied || state.accepted ? escapeHtml(state.label) : resolved ? 'Resolved' : escapeHtml(state.label)}</span></div><p>${escapeHtml(question.why || '')}</p>${question.assessmentReason ? `<p class="notice warning">${escapeHtml(question.assessmentReason)}</p>` : ''}${sourceDirection}${imported}<label for="wizard-${escapeHtml(question.id || '')}">${state.supplied || state.accepted ? 'Source direction — edit to override' : 'Direction'}</label><textarea id="wizard-${escapeHtml(question.id || '')}" data-page="${escapeHtml(page)}" data-question="${escapeHtml(question.id || '')}" rows="4" maxlength="16384">${escapeHtml(value)}</textarea><div class="actions"><button type="button" data-save-question="${escapeHtml(question.id || '')}" data-page="${escapeHtml(page)}">${state.supplied || state.accepted ? 'Save an override' : 'Save direction'}</button></div></article>`;
   }).join('')}</section>`;
 }
 
@@ -485,7 +486,7 @@ function renderTechnicalIntentQuestionsHtml(webview, status, scriptNonce) {
       : `<section class="suggestion"><h3>Advisory starting direction</h3><p>${escapeHtml(question.suggestedAnswer || 'No suggestion is available.')}</p></section>`;
     return `<article class="question-card" data-question-id="${escapeHtml(question.id || '')}" aria-labelledby="technical-question-${escapeHtml(question.id || '')}">
       <header class="question-heading"><div><span class="eyebrow">${escapeHtml(question.id || '')} · ${escapeHtml(question.area || '')}</span><h2 id="technical-question-${escapeHtml(question.id || '')}">${escapeHtml(question.question || '')}</h2></div><span class="badge ${resolved ? 'answered' : 'unanswered'}">${escapeHtml(state.label)}</span></header>
-      <p>${escapeHtml(question.why || '')}</p><details><summary>Common choices</summary><ul>${options}</ul></details>
+      <p>${escapeHtml(question.why || '')}</p>${question.assessmentReason ? `<p class="notice warning">${escapeHtml(question.assessmentReason)}</p>` : ''}<details><summary>Common choices</summary><ul>${options}</ul></details>
       ${source}
       <section class="answer"><label for="technical-answer-${escapeHtml(question.id || '')}">${derived ? 'Derived direction — edit to override' : answered ? 'Recorded direction' : 'Your direction'}</label>
         <textarea id="technical-answer-${escapeHtml(question.id || '')}" maxlength="16384" rows="5" data-answer>${escapeHtml(startingValue)}</textarea>
@@ -533,7 +534,7 @@ function renderUiDirectionQuestionsHtml(webview, status, scriptNonce) {
       : `<section class="suggestion"><h3>Advisory starting direction</h3><p>${escapeHtml(question.suggestedAnswer || 'No suggestion is available.')}</p></section>`;
     return `<article class="question-card" data-question-id="${escapeHtml(question.id || '')}" aria-labelledby="ui-question-${escapeHtml(question.id || '')}">
       <header class="question-heading"><div><span class="eyebrow">${escapeHtml(question.id || '')} · ${escapeHtml(question.area || '')}</span><h2 id="ui-question-${escapeHtml(question.id || '')}">${escapeHtml(question.question || '')}</h2></div><span class="badge ${resolved ? 'answered' : 'unanswered'}">${derived ? 'Derived from project' : answered ? 'Answered' : 'Decision required'}</span></header>
-      <p>${escapeHtml(question.why || '')}</p><details><summary>Common choices</summary><ul>${options}</ul></details>${source}
+      <p>${escapeHtml(question.why || '')}</p>${question.assessmentReason ? `<p class="notice warning">${escapeHtml(question.assessmentReason)}</p>` : ''}<details><summary>Common choices</summary><ul>${options}</ul></details>${source}
       <section class="answer"><label for="ui-answer-${escapeHtml(question.id || '')}">${derived ? 'Derived direction — edit to override' : answered ? 'Recorded direction' : 'Your direction'}</label>
         <textarea id="ui-answer-${escapeHtml(question.id || '')}" maxlength="16384" rows="5" data-answer>${escapeHtml(startingValue)}</textarea>
         ${answered ? `<p class="muted">Recorded by ${escapeHtml(question.answeredBy || 'unknown')} at ${escapeHtml(question.answeredAtUtc || 'unknown time')}.</p>` : ''}

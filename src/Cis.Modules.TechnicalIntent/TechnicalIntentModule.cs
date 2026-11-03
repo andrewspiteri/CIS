@@ -285,6 +285,7 @@ public sealed class TechnicalIntentModule : ICisModule
                 result.Complete,
                 result.AnsweredCount,
                 result.UnansweredCount,
+                result.ReassessmentCount,
                 result.Warnings,
                 result.Errors,
                 result.Applied,
@@ -295,19 +296,19 @@ public sealed class TechnicalIntentModule : ICisModule
         }
         if (format == "agent")
         {
-            Console.WriteLine($"status={Clean(result.Status)};exitCode={result.ExitCode};applied={result.Applied.ToString().ToLowerInvariant()};current={result.Current.ToString().ToLowerInvariant()};complete={result.Complete.ToString().ToLowerInvariant()};answered={result.AnsweredCount};unanswered={result.UnansweredCount}");
+            Console.WriteLine($"status={Clean(result.Status)};exitCode={result.ExitCode};applied={result.Applied.ToString().ToLowerInvariant()};current={result.Current.ToString().ToLowerInvariant()};complete={result.Complete.ToString().ToLowerInvariant()};answered={result.AnsweredCount};unanswered={result.UnansweredCount};reassessment={result.ReassessmentCount}");
             Console.WriteLine($"workspace={Clean(result.WorkspacePath)}");
             Console.WriteLine($"canonicalPath={Clean(result.CanonicalPath)}");
             Console.WriteLine($"brdVersion={Clean(result.BrdVersion)}");
             foreach (var question in result.Questions)
-                Console.WriteLine($"question={Clean(question.Id)};area={Clean(question.Area)};status={Clean(question.Status)};source={Clean(question.ResolutionSource)};confidence={Clean(question.Confidence)};answer={Clean(question.Answer)};answeredBy={Clean(question.AnsweredBy)};evidence={Clean(string.Join(",", question.Evidence ?? []))}");
+                Console.WriteLine($"question={Clean(question.Id)};area={Clean(question.Area)};status={Clean(question.Status)};assessment={Clean(question.AssessmentStatus)};assessmentReason={Clean(question.AssessmentReason)};source={Clean(question.ResolutionSource)};confidence={Clean(question.Confidence)};answer={Clean(question.Answer)};answeredBy={Clean(question.AnsweredBy)};evidence={Clean(string.Join(",", question.Evidence ?? []))}");
             foreach (var warning in result.Warnings) Console.WriteLine($"warning={Clean(warning)}");
             foreach (var error in result.Errors) Console.WriteLine($"error={Clean(error)}");
             return;
         }
         Console.WriteLine($"Technical questionnaire: {result.Status}");
         Console.WriteLine($"Canonical path: {result.CanonicalPath ?? string.Empty}");
-        Console.WriteLine($"Resolved or not requested: {result.AnsweredCount}/{result.AnsweredCount + result.UnansweredCount}; current: {result.Current}; complete: {result.Complete}");
+        Console.WriteLine($"Recorded or not requested: {result.AnsweredCount}/{result.AnsweredCount + result.UnansweredCount}; requiring reassessment: {result.ReassessmentCount}; current: {result.Current}; complete: {result.Complete}");
         foreach (var warning in result.Warnings) Console.WriteLine($"Warning: {warning}");
         foreach (var error in result.Errors) Console.WriteLine($"Error: {error}");
     }

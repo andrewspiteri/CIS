@@ -3,7 +3,7 @@ title: "cis technical-intent decisions resolve"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-15"
+last_reviewed: "2026-11-02"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-technical-intent-decisions-resolve
@@ -58,3 +58,10 @@ readiness findings remain. It never approves the document or waives downstream g
 reports `status`, `applied`, `errors`, and the existing technical-intent result fields. A successful
 save exits 0; invalid input or conflicting evidence exits 2; unavailable write access exits 5;
 a missing canonical document exits 4. Refresh status to inspect remaining decisions and readiness.
+
+Decision validity is separate from the raw write token. Canonical architecture decisions use
+their mapped questionnaire choices: changing `TI-Q-015` preserves the architecture review,
+while a changed `TI-Q-004` names that input in `assessmentReason`. Existing resolutions and
+actor/time remain visible during reassessment. A same-actor, same-answer, same-rationale save
+on the current basis returns `unchanged` without clearing approval. Legacy records are reused
+only where compatibility can be established; otherwise the local assessment is `Unknown`.

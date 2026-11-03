@@ -12,6 +12,9 @@ public sealed record CisTechnicalDecisionReview(
     public string? RecordedResolution { get; init; }
     public string? RecordedReason { get; init; }
     public string? RecordedBy { get; init; }
+    public string? RecordedAtUtc { get; init; }
+    public string? AssessmentStatus { get; init; }
+    public string? AssessmentReason { get; init; }
 }
 public sealed record CisTechnicalDecisionAnswer(string Id, string Area, string Answer, string Status, string? AnsweredBy);
 public sealed record CisTechnicalDecisionResolution(string Id, string Resolution, string? Reason, string ReviewToken, string Actor);

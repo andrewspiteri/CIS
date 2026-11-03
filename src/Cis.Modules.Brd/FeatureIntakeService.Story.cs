@@ -64,9 +64,16 @@ public sealed partial class FeatureIntakeService
             using var held = new FileStream(cachePath + ".lock", FileMode.OpenOrCreate, FileAccess.Write, FileShare.None);
             var model = modelName!;
             var evidence = DeliveryCandidates(input, draft);
-            var context = JsonSerializer.Serialize(new { definition = draft.Story.Narrative, story,
+            var context = JsonSerializer.Serialize(new
+            {
+                definition = draft.Story.Narrative,
+                story,
                 requirements = story.Requirements.Select((text, index) => new { number = index + 1, text }),
-                repositories = input.Repositories.Select(r => new { r.Id }), input.Direction, input.Constraints, evidence }, Json);
+                repositories = input.Repositories.Select(r => new { r.Id }),
+                input.Direction,
+                input.Constraints,
+                evidence
+            }, Json);
             if (new[] { input.Direction, input.Constraints, draft.Story.Narrative }
                 .Concat(story.Requirements).Concat(evidence.Select(e => e.Excerpt)).Any(DeliverySensitive))
                 throw new InvalidDataException("The selected story context may contain credentials. Remove them before generating tasks.");
@@ -85,7 +92,7 @@ public sealed partial class FeatureIntakeService
             {
                 var generated = textGeneration!.Generate(new(prompt, provider.Name, model, AllowRemote: allowRemote,
                     TimeoutSeconds: provider.IsLocal ? 90 : 300, MaxOutputTokens: 5000, JsonMode: true)
-                    { ContextWindowTokens = 24576, JsonSchema = StoryTaskSchema(input, story) });
+                { ContextWindowTokens = 24576, JsonSchema = StoryTaskSchema(input, story) });
                 if (!generated.IsSuccess || generated.IsLocal != provider.IsLocal || string.IsNullOrWhiteSpace(generated.Text))
                     throw new InvalidDataException(generated.Detail ?? "The selected model could not generate this story's tasks. Check model status and retry.");
                 try
@@ -156,7 +163,8 @@ public sealed partial class FeatureIntakeService
         if (File.Exists(path) && new FileInfo(path).Length <= 2_097_152)
             try { cached = JsonSerializer.Deserialize<CisFeatureDeliveryResult>(File.ReadAllText(path), Json); }
             catch (JsonException) { /* An invalid derived assessment does not replace requirements. */ }
-        return ProjectDelivery(state, input, cached?.InputHash == input.Hash ? cached : ValidateDelivery(input, new([])));
+        return ProjectDelivery(state, input, cached?.InputHash == input.Hash ? cached
+            : CarryDeliveryAssessments(input, cached, ValidateDelivery(input, new([]))));
     }
 
     private static CisFeatureStoryResult? ReadStoryCache(string path)
@@ -222,14 +230,42 @@ public sealed partial class FeatureIntakeService
         var taskId = new { type = "string", @enum = Enumerable.Range(1, 20).Select(number => "T" + number).ToArray() };
         // Codex structured output does not support uniqueItems; ValidateStoryTasks enforces uniqueness.
         object Strings(object item, int min, int max) => new { type = "array", minItems = min, maxItems = max, items = item };
-        return JsonSerializer.Serialize(new { type = "object", additionalProperties = false, required = new[] { "tasks" }, properties = new {
-            tasks = new { type = "array", minItems = 1, maxItems = 20, items = new { type = "object", additionalProperties = false,
-                required = new[] { "id", "title", "description", "repositoryIds", "requirementNumbers", "acceptanceCriteria", "dependsOn" },
-                properties = new { id = taskId, title = Text(160), description = Text(2000),
-                    repositoryIds = Strings(new { type = "string", @enum = input.Repositories.Select(r => r.Id).ToArray() }, 0, 8),
-                    requirementNumbers = new { type = "array", minItems = 1, maxItems = story.Requirements.Count,
-                        items = new { type = "integer", minimum = 1, maximum = story.Requirements.Count } },
-                    acceptanceCriteria = Strings(Text(1000), 1, 10), dependsOn = Strings(taskId, 0, 19) } } }
-        } }, Json);
+        return JsonSerializer.Serialize(new
+        {
+            type = "object",
+            additionalProperties = false,
+            required = new[] { "tasks" },
+            properties = new
+            {
+                tasks = new
+                {
+                    type = "array",
+                    minItems = 1,
+                    maxItems = 20,
+                    items = new
+                    {
+                        type = "object",
+                        additionalProperties = false,
+                        required = new[] { "id", "title", "description", "repositoryIds", "requirementNumbers", "acceptanceCriteria", "dependsOn" },
+                        properties = new
+                        {
+                            id = taskId,
+                            title = Text(160),
+                            description = Text(2000),
+                            repositoryIds = Strings(new { type = "string", @enum = input.Repositories.Select(r => r.Id).ToArray() }, 0, 8),
+                            requirementNumbers = new
+                            {
+                                type = "array",
+                                minItems = 1,
+                                maxItems = story.Requirements.Count,
+                                items = new { type = "integer", minimum = 1, maximum = story.Requirements.Count }
+                            },
+                            acceptanceCriteria = Strings(Text(1000), 1, 10),
+                            dependsOn = Strings(taskId, 0, 19)
+                        }
+                    }
+                }
+            }
+        }, Json);
     }
 }

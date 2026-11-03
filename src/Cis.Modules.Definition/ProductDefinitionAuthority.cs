@@ -77,7 +77,7 @@ public sealed class ProductDefinitionAuthority(ICisRepositoryContextResolver rep
                 errors.Add("The product-definition activation predates baseline binding; reopen and activate the definition once.");
             else if (!sessionActive && !string.IsNullOrWhiteSpace(activatedAt)
                      && string.IsNullOrWhiteSpace(recordedSemanticHash))
-                errors.Add("The product-definition activation predates semantic baseline binding; run `cis definition status` to migrate a still-current approved definition.");
+                errors.Add("The product-definition activation predates semantic baseline binding; inspect `cis definition status`, then explicitly review and activate the consolidated definition. Status retains the legacy activation record without rebinding it.");
             else if (!string.IsNullOrWhiteSpace(recordedSemanticHash)
                      && !string.Equals(recordedSemanticHash, currentHash, StringComparison.Ordinal))
                 errors.Add("The high-level product-definition artifacts changed after consolidated activation.");

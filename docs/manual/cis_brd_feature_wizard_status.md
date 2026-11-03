@@ -3,7 +3,7 @@ title: "cis brd feature wizard status"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-10-05"
+last_reviewed: "2026-11-02"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-brd-feature-wizard-status
@@ -103,11 +103,22 @@ and `--story <story-id>`.
 
 `feedback-save` input contains `slug`, `storyId`, `taskId`, `expectedPlanHash`,
 `expectedRevision`, `actor`, and an `answers` object mapping finding IDs to answers.
+Send `expectedBasisHashes`, mapping every answered finding ID to the displayed `basisHash`.
+Missing or changed hashes are rejected before writing, so a relevant material change requires
+reloading before the response is saved. Existing recorded responses remain in history.
 
 Obtain current hashes and revisions from JSON results rather than inventing values.
 Stale inputs are rejected. Task-plan approval and saved feedback do not by themselves
 establish successful execution or completion. Durable state is stored beside the
 feature request under `story-tasks/<story-id>.json`, separately from generation caches.
+
+Status is observational. Assessments expose their current, changed or unknown supporting scope
+without resetting retained human decisions. Delivery comparisons use content and relevant
+dependencies, including newly relevant and deleted inputs; touching a file or rebuilding an
+equivalent graph does not establish impact. Finding identity is stable across run IDs/order;
+`applicabilityState`, `applicabilityReason` and `retainedAnswer` distinguish a current response
+from history needing renewal. Responses never turn a failed review into a pass. Native execution
+identity, evidence qualification and completion receipt checks remain independent gates.
 
 Approved backlog outcomes can enter this wizard through
 `cis brd feature wizard start-backlog --item <HLT-ID> --actor <human>

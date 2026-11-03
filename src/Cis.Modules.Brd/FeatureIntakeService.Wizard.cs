@@ -77,16 +77,36 @@ public sealed partial class FeatureIntakeService
                 return WizardError("The feature changed while saving. Refresh before retrying.");
             var screenReview = answer.ScreenReview is null ? null : CheckScreenReview(state, answer);
             var deliveryReview = answer.DeliveryReview is null ? null : CheckDeliveryReview(state, answer);
-            var values = state.Review.Pages.ToDictionary(pair => pair.Key,
-                pair => pair.Value.Binding == state.LegacyBinding ? pair.Value with { Binding = state.Binding } : pair.Value,
-                StringComparer.Ordinal);
+            var values = state.Review.Pages.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
             var answers = new Dictionary<string, string>(values.GetValueOrDefault(answer.Page)?.Answers ?? [], StringComparer.Ordinal);
             foreach (var pair in answer.Answers) answers[pair.Key] = pair.Value.Trim();
+            var previous = values.GetValueOrDefault(answer.Page);
+            var work = answer.RepositoryWork ?? state.Review.RepositoryWork;
+            var sameWork = JsonSerializer.Serialize(work ?? [], Json) == JsonSerializer.Serialize(state.Review.RepositoryWork ?? [], Json);
+            var samePage = previous is not null && previous.Actor == answer.Actor.Trim()
+                && previous.Answers.Count == answers.Count && previous.Answers.All(pair => answers.GetValueOrDefault(pair.Key) == pair.Value)
+                && PageBasisReason(previous, state, answer.Page) is null;
+            var sameScreen = screenReview is null || state.Review.ScreenReviews?.LastOrDefault(item => item.Key == screenReview.Key) is { } oldScreen
+                && oldScreen with { Id = screenReview.Id, SavedAt = screenReview.SavedAt } == screenReview;
+            var sameDelivery = deliveryReview is null || state.Review.DeliveryReviews?.LastOrDefault(item => item.StoryId == deliveryReview.StoryId) is { } oldDelivery
+                && JsonSerializer.Serialize(oldDelivery, Json) == JsonSerializer.Serialize(deliveryReview, Json);
+            if (sameWork && (screenReview is not null || deliveryReview is not null ? sameScreen && sameDelivery : samePage))
+                return status with { Status = "unchanged", Applied = false };
+            if (screenReview is null && deliveryReview is null && previous?.History?.Count >= 200)
+                return WizardError("This page has reached its retained review history limit. Preserve and inspect its audit history before another renewal.");
             var now = DateTimeOffset.UtcNow.ToString("O");
-            if (screenReview is null && deliveryReview is null) values[answer.Page] = new(answers, answer.Actor.Trim(), now, state.Binding);
-            // Every substantive page edit requires the final review to be renewed.
-            if (answer.Page != "review") values.Remove("review");
-            var review = state.Review with { Pages = values, RepositoryWork = answer.RepositoryWork ?? state.Review.RepositoryWork };
+            var review = state.Review with { Pages = values, RepositoryWork = work };
+            if (answer.Page == "business" && screenReview is null && deliveryReview is null) review = review with { DecisionChanges = null };
+            if (screenReview is null && deliveryReview is null)
+                values[answer.Page] = new(answers, answer.Actor.Trim(), now, state.Binding)
+                {
+                    Basis = PageBasis(state with { Review = review }, answer.Page),
+                    History = previous is null ? null : (previous.History ?? []).Append(new PageReviewAudit(previous.Answers,
+                        previous.Actor, previous.SavedAt, previous.Binding)
+                    { Basis = previous.Basis }).ToArray()
+                };
+            // Retain the final human review as history. Its aggregate material
+            // basis, rather than an incidental save timestamp, controls validity.
             if (screenReview is not null) review = review with { ScreenReviews = [.. review.ScreenReviews ?? [], screenReview] };
             if (deliveryReview is not null) review = review with { DeliveryReviews = [.. review.DeliveryReviews ?? [], deliveryReview] };
             var content = state.Content;
@@ -106,7 +126,8 @@ public sealed partial class FeatureIntakeService
                 File.WriteAllText(temporary, content, new UTF8Encoding(false));
                 if (deliveryReview is not null && ReadDeliveryInput(ReadWizard(workspacePath, answer.Slug)).Hash != deliveryReview.InputHash)
                     return WizardError("Implementation or direction changed while saving the story decision. Refresh and review the current evidence.");
-                if (File.ReadAllText(state.RequestPath).Replace("\r\n", "\n", StringComparison.Ordinal) != state.Content) return WizardError("The request changed while saving. Refresh before retrying.");
+                if (File.ReadAllText(state.RequestPath).Replace("\r\n", "\n", StringComparison.Ordinal) != state.Content
+                    || state.Inputs.Any(input => FileHash(input.Key) != input.Value)) return WizardError("The feature or its inputs changed while saving. Refresh before retrying.");
                 File.Move(temporary, state.RequestPath, true);
             }
             finally { if (File.Exists(temporary)) File.Delete(temporary); }
@@ -147,6 +168,8 @@ public sealed partial class FeatureIntakeService
             review = JsonSerializer.Deserialize<FeatureReview>(content[(data + ReviewData.Length)..end], Json)
                 ?? throw new InvalidDataException("The feature review metadata is invalid.");
             if (review.Pages is null || review.Pages.Any(page => page.Value?.Answers is null)) throw new InvalidDataException("The feature review metadata is incomplete.");
+            if (review.Pages.Keys.Any(id => id != "review" && !ReviewPages.Any(page => page.Id == id)))
+                throw new InvalidDataException("The feature review metadata contains an unknown page. Preserve and inspect that record before saving.");
         }
         var baseline = CisReadScope.Read(this, "feature-navigation-baseline", authority.RepositoryPath,
             () => definitions.Select(definition => definition.Evaluate(authority.RepositoryPath)).ToArray()).FirstOrDefault(item => item.Applicable);
@@ -167,9 +190,14 @@ public sealed partial class FeatureIntakeService
             throw new InvalidDataException("The managed feature review was edited outside the wizard. Preserve those edits and restore the managed block before saving through the wizard.");
         var requestContext = start < 0 ? content.TrimEnd() : (content[..start] + content[(endReview + ReviewEnd.Length)..]).TrimEnd();
         var prefix = string.Join('|', documentHashes) + baseline?.BaselineHash;
-        var boundary = JsonSerializer.Serialize(new { workspace.Product, workspace.Ecosystem, Authority = authority,
+        var boundary = JsonSerializer.Serialize(new
+        {
+            workspace.Product,
+            workspace.Ecosystem,
+            Authority = authority,
             Repositories = workspace.Repositories.Where(repo => SamePath(repo.RepositoryPath, record.Plan.RepositoryPath)
-                || record.Plan.IntegrationRepositories.Contains(repo.Id, StringComparer.Ordinal)).OrderBy(repo => repo.Id, StringComparer.Ordinal) }, Json);
+                || record.Plan.IntegrationRepositories.Contains(repo.Id, StringComparer.Ordinal)).OrderBy(repo => repo.Id, StringComparer.Ordinal)
+        }, Json);
         var binding = Hash(Encoding.UTF8.GetBytes(prefix + Hash(Encoding.UTF8.GetBytes(boundary)) + requestContext));
         var legacyBinding = Hash(Encoding.UTF8.GetBytes(prefix + inputs[workspace.ConfigurationPath] + requestContext));
         return new(authority, workspace!, requestPath, content, record, review, Encoding.UTF8.GetString(source), binding, baseline, inputs, legacyBinding)
@@ -197,7 +225,8 @@ public sealed partial class FeatureIntakeService
             var attention = new List<string>();
             var unanswered = fields.Count(field => field.Required && !HasAnswer(field.Answer));
             if (unanswered > 0) attention.Add($"{unanswered} answer{(unanswered == 1 ? " requires" : "s require")} your review and save.");
-            if (saved is not null && !MatchesBinding(saved, state)) attention.Add("The feature BRD, product baseline or repository boundary changed. Review the retained answers and save this page again.");
+            if (saved is not null && PageBasisReason(saved, state, definition.Id) is { } reason) attention.Add(reason);
+            if (definition.Id == "business") attention.AddRange(state.Review.DecisionChanges ?? []);
             if (definition.Id == "delivery" && state.Review.RepositoryWork is { } repositoryWork)
                 attention.AddRange(ValidateRepositoryWork(state, repositoryWork));
             var documents = definition.Documents.Select(relative =>
@@ -211,17 +240,22 @@ public sealed partial class FeatureIntakeService
         }
         var current = state.Baseline is { Active: true };
         var final = state.Review.Pages.GetValueOrDefault("review");
-        var reviewed = pages.All(page => page.Complete) && current && final is not null && MatchesBinding(final, state)
+        var reviewed = pages.All(page => page.Complete) && current && final is not null && PageBasisReason(final, state, "review") is null
             && HasAnswer(final.Answers.GetValueOrDefault("summary"));
         var blockers = pages.Where(page => !page.Complete).Select(page => $"Review {page.Title.ToLowerInvariant()}.").ToList();
         if (!current) blockers.Add("The product baseline needs activation or reconciliation. Open the product wizard to resolve its reported findings.");
+        if (final is not null && PageBasisReason(final, state, "review") is { } finalReason) blockers.Add(finalReason);
         if (blockers.Count == 0 && !reviewed) blockers.Add("Record your final review of the proposed feature definition.");
         pages.Add(new("review", "Review and next steps", reviewed ? "Reviewed" : "Needs attention", reviewed, blockers,
             [new("summary", "Record the conclusion of your feature-definition review.", "The proposed feature scope and its business decisions, technical changes, architecture, integrations, UI impact and acceptance criteria have been reviewed. Product backlog approval and the governed feature specification remain the next delivery gates.", final?.Answers.GetValueOrDefault("summary"), true)], []));
         var revision = Hash(Encoding.UTF8.GetBytes(state.Content + state.Binding));
         return new("status", plan, revision, reviewed, current, pages, [], false)
-        { RepositoryWork = state.Review.RepositoryWork ?? [], Repositories = state.Workspace.Repositories,
-            SourceBrds = SourceBrds(plan), Description = FeatureDescription(state.Source), PlanningContext = state.PlanningContext,
+        {
+            RepositoryWork = state.Review.RepositoryWork ?? [],
+            Repositories = state.Workspace.Repositories,
+            SourceBrds = SourceBrds(plan),
+            Description = FeatureDescription(state.Source),
+            PlanningContext = state.PlanningContext,
             SourceHistory = (state.Record.SourceRevisions ?? []).Reverse().SelectMany(revision => new[]
             {
                 new CisFeatureWizardDocument($"BRD before {revision.UpdatedAt} ({revision.Actor})", revision.SourcePath, true),
@@ -229,7 +263,8 @@ public sealed partial class FeatureIntakeService
             }.Concat((revision.SourceBrds ?? []).Select(source => new CisFeatureWizardDocument(
                 $"Source BRD before {revision.UpdatedAt}: {source.Title}", source.Path, true))))
             .DistinctBy(document => document.Path).Where(document => CisPathSafety.TryResolveUnderRoot(state.Authority.RepositoryPath, document.Path, out var path)
-                && SafeAbsolutePath(path) && File.Exists(path)).ToArray() };
+                && SafeAbsolutePath(path) && File.Exists(path)).ToArray()
+        };
     }
 
     private static string SourceExcerpt(string source, string terms)
@@ -314,9 +349,20 @@ public sealed partial class FeatureIntakeService
     private static bool HasAnswer(string? answer) => !string.IsNullOrWhiteSpace(answer)
         && !Regex.IsMatch(answer.Trim(), @"^(?:tbd|todo|unknown|not decided|to be decided|to be confirmed|pending)[.!]?$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)
         && !Regex.IsMatch(answer, @"(?im)^\s*(?:[-*+]\s+)?(?:TODO|TBD)\b", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-    private sealed record PageReview(Dictionary<string, string> Answers, string Actor, string SavedAt, string Binding);
-    private static bool MatchesBinding(PageReview review, WizardState state)
-        => review.Binding == state.Binding || review.Binding == state.LegacyBinding;
+    private sealed record PageReview(Dictionary<string, string> Answers, string Actor, string SavedAt, string Binding)
+    {
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public IReadOnlyDictionary<string, string>? Basis { get; init; }
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? InvalidatedReason { get; init; }
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public IReadOnlyList<PageReviewAudit>? History { get; init; }
+    }
+    private sealed record PageReviewAudit(Dictionary<string, string> Answers, string Actor, string SavedAt, string Binding)
+    {
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public IReadOnlyDictionary<string, string>? Basis { get; init; }
+    }
     private sealed record FeatureReview(Dictionary<string, PageReview> Pages)
     {
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -325,6 +371,8 @@ public sealed partial class FeatureIntakeService
         public IReadOnlyList<CisFeatureScreenReview>? ScreenReviews { get; init; }
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public IReadOnlyList<CisFeatureDeliveryReview>? DeliveryReviews { get; init; }
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public IReadOnlyList<string>? DecisionChanges { get; init; }
     }
     private sealed record WizardState(CisWorkspaceRepository Authority, CisWorkspace Workspace, string RequestPath, string Content,
         IntakeRecord Record, FeatureReview Review, string Source, string Binding, CisProductDefinitionAuthority? Baseline, Dictionary<string, string> Inputs, string LegacyBinding)

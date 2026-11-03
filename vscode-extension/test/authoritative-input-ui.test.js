@@ -24,6 +24,19 @@ function renderWizard(questions) {
   }, 'technical', 'nonce', {});
 }
 
+test('retained technical answers name reassessment without describing them as missing', () => {
+  const questions = [{ id: 'TI-Q-004', area: 'Architecture', question: 'Which architecture?', status: 'Answered',
+    resolutionSource: 'human', answer: 'Modular monolith.', answeredBy: 'Architect',
+    assessmentStatus: 'NeedsReview', assessmentReason: 'BRD-FR-004 ownership changed; reassess this retained answer.' }];
+  for (const html of [renderWizard(questions), renderTechnicalIntentQuestionsHtml({ cspSource: 'test:' },
+    { status: 'current', questions, unansweredCount: 0, reassessmentCount: 1 }, 'nonce')]) {
+    assert.match(html, /Retained; reassessment needed/u);
+    assert.match(html, /BRD-FR-004 ownership changed/u);
+    assert.match(html, /Modular monolith\./u);
+    assert.doesNotMatch(html, /Decision required/u);
+  }
+});
+
 test('wizard reuses source facts with distinct authority labels and keeps absent optional scope nonblocking', () => {
   const html = renderWizard(sourceQuestions());
   assert.match(html, /3 of 3 answers resolved/u);

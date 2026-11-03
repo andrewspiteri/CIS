@@ -745,6 +745,11 @@ public sealed partial class TechnicalIntentWorkflowTests
         Assert.Contains("approved_by: \"Product owner\"",
             File.ReadAllText(Path.Combine(environment.Authority.Path, "docs", "plans", "high-level-backlog.md")),
             StringComparison.Ordinal);
+        var beforeRepeatedRefresh = File.ReadAllBytes(environment.TechnicalIntentPath);
+        var repeated = new GovernanceRefreshService(environment.Brd, environment.Intent, backlog).Refresh(environment.Authority.Path);
+        Assert.Equal("unchanged", repeated.Status);
+        Assert.False(repeated.Applied);
+        Assert.Equal(beforeRepeatedRefresh, File.ReadAllBytes(environment.TechnicalIntentPath));
     }
 
     private static void CompleteTechnicalReview(string path)

@@ -409,9 +409,10 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck, ICis
                 findings.Add($"Technical decision requires a resolution or deferral rationale: {decision.Id}");
             var locations = documentRows[decision.Id].ToArray();
             if (locations.Length != 1) findings.Add($"Technical decision row is ambiguous: {decision.Id}");
-            errors.AddRange(findings);
-            decisions.Add(DescribeDecision(new(decision.Id, decision.Decision, decision.RequiredBefore, decision.Status,
-                decision.Resolution, findings.Count > 0, locations.Length == 1 ? locations[0].Line : null, findings), state, document));
+            var review = DescribeDecision(new(decision.Id, decision.Decision, decision.RequiredBefore, decision.Status,
+                decision.Resolution, findings.Count > 0, locations.Length == 1 ? locations[0].Line : null, findings), state, document);
+            errors.AddRange(review.Issues);
+            decisions.Add(review);
         }
 
         var recorded = ParseBaselines(content);
@@ -508,7 +509,12 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck, ICis
             if (questionnaire is null)
                 readinessErrors.Add("The high-level technical questionnaire is missing. Run `cis technical-intent questions init`.");
             else if (!questionnaire.Current)
-                readinessErrors.Add("The high-level technical questionnaire is stale against the Active BRD. Reinitialize and review its answers.");
+            {
+                var reassessment = questionnaire.Questions.Where(question => question.AssessmentStatus is "NeedsReview" or "Unknown")
+                    .Select(question => $"The high-level technical questionnaire requires reassessment: {question.Id}: {question.AssessmentReason}").ToArray();
+                readinessErrors.AddRange(reassessment.Length > 0 ? reassessment
+                    : ["The high-level technical questionnaire is stale against the Active BRD. Review its reported supporting inputs."]);
+            }
             else if (!questionnaire.Complete)
                 readinessErrors.Add("The high-level technical questionnaire is incomplete. Answer every `TI-Q-*` item before generating technical intent.");
         }
@@ -728,7 +734,8 @@ cis:
                 && content.Contains(IntegrationPointEnd, StringComparison.Ordinal))
                 content = ReplaceBlock(content, IntegrationPointStart, IntegrationPointEnd, RenderIntegrationPointCatalog(state));
             if (!implementationAuthored && content.Contains(DecisionEvidenceStart, StringComparison.Ordinal)
-                && content.Contains(DecisionEvidenceEnd, StringComparison.Ordinal))
+                && content.Contains(DecisionEvidenceEnd, StringComparison.Ordinal)
+                && !ParseDecisionRows(ExtractSection(content, "Open technical decisions")).Any(row => row.Status is "Accepted" or "Resolved" or "Deferred"))
                 content = ReplaceBlock(content, DecisionEvidenceStart, DecisionEvidenceEnd, RenderOpenDecisions(state));
         }
         return content;
@@ -1480,7 +1487,9 @@ cis:
             for (var index = 0; index < groups.Length; index++)
             {
                 var evidence = string.Join("; ", groups[index].Item2.Select(id => $"{id}: {QuestionnaireAnswer(state, id)}"));
-                answered.AppendLine($"| TI-DEC-{index + 1:000} | {Cell(groups[index].Item1)} | Change dossier creation | Accepted | {Cell(evidence)} | ");
+                var id = $"TI-DEC-{index + 1:000}";
+                var row = $"| {id} | {Cell(groups[index].Item1)} | Change dossier creation | Accepted | {Cell(evidence)} |";
+                answered.AppendLine(row).AppendLine(RenderDecisionBasis(state, id, groups[index].Item1, "Change dossier creation", row));
             }
             return answered.ToString().TrimEnd();
         }

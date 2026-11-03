@@ -183,9 +183,34 @@ async function feedbackFixture() {
   Object.assign(f.result, { status: 'current', planState: 'Approved', planHash: 'plan', revision: 'review-revision', approvedBy: 'Reviewer',
     tasks: [{ id: 'T1', title: 'Inventory', description: 'Investigate', repositoryIds: [], dependsOn: [], acceptanceCriteria: ['Reviewed inventory'], requirementNumbers: [1] }],
     taskProgress: [{ id: 'T1', status: 'InProgress', canExecute: true, execution: { status: 'changes-requested', applied: false, findings: ['Choose the owner.'], runs: [] },
-      reviewFeedback: [{ id: 'finding-1', finding: 'Choose the owner.', answer: null, suggestedAnswer: 'Use the existing backend.', suggestionReason: 'The backend owns existing maintenance.', suggestionModel: 'local / strong' }] }] });
+      reviewFeedback: [{ id: 'finding-1', finding: 'Choose the owner.', answer: null, basisHash: 'basis-reviewed', suggestedAnswer: 'Use the existing backend.', suggestionReason: 'The backend owns existing maintenance.', suggestionModel: 'local / strong' }] }] });
   await f.page.reveal('T1'); return f;
 }
+
+test('changed finding basis retains response provenance and requires an explicit draft renewal', async () => {
+  const f = await feedbackFixture();
+  Object.assign(f.result.taskProgress[0].reviewFeedback[0], { suggestedAnswer: null, answer: null,
+    retainedAnswer: 'Keep the backend owner.', actor: 'Original reviewer', savedAt: '2026-10-01T10:00:00Z',
+    basisHash: 'basis-new', applicabilityState: 'needs-review', applicabilityReason: 'Supporting implementation changed.' });
+  await f.page.action('refresh');
+  assert.match(f.page.panel.webview.html, /Retained answer by Original reviewer/u);
+  assert.match(f.page.panel.webview.html, /Supporting implementation changed/u);
+  assert.equal(f.page.model.feedbackDrafts.T1, undefined);
+  await f.page.action('retain-feedback', JSON.stringify({ taskId: 'T1', id: 'finding-1' }));
+  assert.equal(f.page.model.feedbackDrafts.T1['finding-1'], 'Keep the backend owner.');
+  assert.equal(f.calls.some(args => args[4] === 'feedback-save'), false);
+});
+
+test('an older executable without finding basis tokens cannot silently save a response', async () => {
+  const f = await feedbackFixture();
+  delete f.result.taskProgress[0].reviewFeedback[0].basisHash;
+  await f.page.action('refresh');
+  await f.page.action('remember-feedback', JSON.stringify({ taskId: 'T1', answers: { 'finding-1': 'Keep the existing owner.' } }));
+  await f.page.action('save-feedback', 'T1');
+  assert.match(f.page.model.error, /Update CIS and refresh the task/u);
+  assert.equal(f.calls.some(args => args[4] === 'feedback-save'), false);
+  assert.equal(f.page.model.feedbackDrafts.T1['finding-1'], 'Keep the existing owner.');
+});
 
 test('review suggestions require explicit use and save; answers bind the exact review and reach the saved view', async () => {
   const f = await feedbackFixture();
@@ -208,6 +233,7 @@ test('review suggestions require explicit use and save; answers bind the exact r
     temporary = args[args.indexOf('--input') + 1];
     const request = JSON.parse(fs.readFileSync(temporary, 'utf8'));
     assert.equal(request.expectedRevision, 'review-revision'); assert.equal(request.expectedPlanHash, 'plan');
+    assert.deepEqual(request.expectedBasisHashes, { 'finding-1': 'basis-reviewed' });
     assert.equal(request.actor, 'Reviewer'); assert.equal(request.answers['finding-1'], 'Use the existing backend.');
     f.result.taskProgress[0].reviewFeedback[0].answer = request.answers['finding-1'];
     f.result.taskProgress[0].reviewFeedback[0].actor = 'Reviewer'; f.result.revision = 'saved-revision';

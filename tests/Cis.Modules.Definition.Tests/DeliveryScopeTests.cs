@@ -78,6 +78,33 @@ public sealed partial class DefinitionWizardTests
         Assert.Equal(0, activation.ExitCode);
         AssertCurrent(activation.Output);
         AssertCurrent(Run("definition", "status").Output);
+        var checkpointSessionPath = Path.Combine(repository.Path, ".cis/local/definition-wizard/session.json");
+        var activationBytes = File.ReadAllBytes(checkpointSessionPath);
+        var savedQuestion = prepared.RootElement.GetProperty("technicalQuestions").GetProperty("questions").EnumerateArray()
+            .First(item => item.GetProperty("status").GetString() == "Answered");
+        var noop = Run("definition", "answer", "--page", "technical", "--id", savedQuestion.GetProperty("id").GetString()!,
+            "--answer", savedQuestion.GetProperty("answer").GetString()!, "--actor", "Owner");
+        Assert.Equal(0, noop.ExitCode);
+        using (var unchanged = JsonDocument.Parse(noop.Output))
+        {
+            Assert.Equal("unchanged", unchanged.RootElement.GetProperty("status").GetString());
+            Assert.False(unchanged.RootElement.GetProperty("applied").GetBoolean());
+        }
+        Assert.Equal(activationBytes, File.ReadAllBytes(checkpointSessionPath));
+        using (var restarted = CreateApplication())
+            AssertCurrent(Invoke(restarted, ["definition", "status", "--workspace", repository.Path, "--format", "json"]).Output);
+        Assert.Equal(activationBytes, File.ReadAllBytes(checkpointSessionPath));
+        var legacySession = JsonNode.Parse(activationBytes)!.AsObject();
+        legacySession.Remove("semanticBaselineHash");
+        File.WriteAllText(checkpointSessionPath, legacySession.ToJsonString());
+        var legacyBytes = File.ReadAllBytes(checkpointSessionPath);
+        using (var legacyReader = CreateApplication())
+            Assert.Equal(0, Invoke(legacyReader, ["definition", "status", "--workspace", repository.Path, "--format", "json"]).ExitCode);
+        Assert.Equal(legacyBytes, File.ReadAllBytes(checkpointSessionPath));
+        var authority = new ProductDefinitionAuthority(new CisRepositoryContextResolver()).Evaluate(repository.Path);
+        Assert.False(authority.Active);
+        Assert.Contains(authority.Errors, error => error.Contains("explicitly review and activate", StringComparison.Ordinal));
+        File.WriteAllBytes(checkpointSessionPath, activationBytes);
         Assert.NotEqual(oldSource, Regex.Match(File.ReadAllText(diagramPath), "(?m)^  source_hash:.*$").Value);
         using var backlog = JsonDocument.Parse(Run("brd", "backlog", "status").Output);
         Assert.Equal("Active", backlog.RootElement.GetProperty("validation").GetProperty("effectiveStatus").GetString());

@@ -3,7 +3,7 @@ title: "cis brd feature wizard save"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-21"
+last_reviewed: "2026-11-02"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-brd-feature-wizard-save
@@ -55,6 +55,13 @@ repository boundary, so an unrelated repository registration does not invalidate
 Current legacy bindings remain readable and are carried forward on the next explicit save.
 
 See [feature intake](cis_brd_feature_intake.md) for the initial source and repository setup.
+
+Identical effective answers by the same actor preserve save time, final review and task progress;
+the result reports `unchanged`. Revision checks still run first. Each page compares its reviewed
+content and supporting basis, so an unrelated page edit does not reopen it. A changed requirement,
+contract, ownership or prerequisite affects the named dependent pages/tasks. Implementation under
+an approved task can stale evidence without revoking the task contract. Inspect current status for
+the local reason before renewing a review; aggregate activation remains a separate gate.
 
 To review a generated screen, save the `experience` page with empty `answers` and a
 `screenReview`. Take the wizard revision, screen ID, screen revision and preview input

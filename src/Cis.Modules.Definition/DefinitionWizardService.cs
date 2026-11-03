@@ -189,19 +189,21 @@ public sealed partial class DefinitionWizardService
         var normalized = NormalizePage(page);
         if (normalized is not ("technical" or "experience"))
             return Error(state, ["Wizard answers are supported for the technical and experience pages."]);
-        EnsureSession(state, normalized);
         using (CisDefinitionDraftScope.Enter())
         {
             if (normalized == "technical")
             {
                 var result = _technicalQuestions.Answer(state.WorkspacePath!, id, answer, actor);
                 if (result.ExitCode != 0) return Error(state, result.Errors);
+                if (!result.Applied) return StatusInternal(state, "unchanged", false);
+                EnsureSession(state, normalized);
                 if (result.Complete && result.Current) _technicalIntent.Initialize(state.WorkspacePath!);
             }
             else
             {
                 var result = _uiQuestions.Answer(state.WorkspacePath!, id, answer, actor);
                 if (result.ExitCode != 0) return Error(state, result.Errors);
+                EnsureSession(state, normalized);
                 if (result.Complete && result.Current) _uiDirection.Initialize(state.WorkspacePath!);
             }
         }
@@ -294,8 +296,7 @@ public sealed partial class DefinitionWizardService
         timing.Mark("dictionaries");
         var diagrams = ReadDiagrams(state, solution);
         var preview = ReadPreview(state, uiQuestions);
-        var session = MigrateSemanticBaseline(state, ReadSession(state), brd, technicalQuestions,
-            technical, solution, uiQuestions, ui, backlog);
+        var session = ReadSession(state);
         var businessInference = BusinessInference(state, brd);
 
         var existingDocuments = Documents(state.WorkspacePath!);
@@ -354,7 +355,11 @@ public sealed partial class DefinitionWizardService
                 technicalQuestions.Questions.Select(question => new CisDefinitionQuestion(question.Id, question.Area,
                     question.Question, question.Why, question.CommonOptions, question.SuggestedAnswer, question.Status,
                     question.Answer, question.AnsweredBy, question.AnsweredAtUtc, question.ResolutionSource,
-                    question.Confidence, question.Evidence ?? [])).ToArray(), technicalQuestions.Errors),
+                    question.Confidence, question.Evidence ?? [])
+                {
+                    AssessmentStatus = question.AssessmentStatus,
+                    AssessmentReason = question.AssessmentReason,
+                }).ToArray(), technicalQuestions.Errors),
             UiQuestions = new(uiQuestions.Status, uiQuestions.Current, uiQuestions.Complete,
                 uiQuestions.Questions.Select(question => new CisDefinitionQuestion(question.Id, question.Area,
                     question.Question, question.Why, question.CommonOptions, question.SuggestedAnswer, question.Status,
@@ -778,40 +783,6 @@ The preview is derived from the current high-level UI questionnaire and directio
             BaselineHash = null,
             SemanticBaselineHash = null,
         }, JsonOptions));
-    }
-
-    private static WizardSession? MigrateSemanticBaseline(
-        State state,
-        WizardSession? session,
-        BrdResult brd,
-        TechnicalIntentQuestionnaireResult technicalQuestions,
-        TechnicalIntentResult technical,
-        SolutionDesignResult solution,
-        UiDirectionQuestionnaireResult uiQuestions,
-        UiDirectionResult ui,
-        BrdBacklogResult backlog)
-    {
-        if (session is null || session.Active || string.IsNullOrWhiteSpace(session.ActivatedAtUtc)
-            || string.IsNullOrWhiteSpace(session.BaselineHash) || !string.IsNullOrWhiteSpace(session.SemanticBaselineHash)
-            || state.DocumentationPath is null || state.SessionPath is null)
-            return session;
-        var coreCurrent = Accepted(brd.Validation?.Valid, brd.Validation?.Current, brd.Validation?.EffectiveStatus)
-            && technicalQuestions.Complete && technicalQuestions.Current
-            && Accepted(technical.Validation?.Valid, technical.Validation?.Current, technical.Validation?.EffectiveStatus)
-            && Accepted(solution.Validation?.Valid, solution.Validation?.Current, solution.Validation?.EffectiveStatus)
-            && uiQuestions.Complete && uiQuestions.Current
-            && Accepted(ui.Validation?.Valid, ui.Validation?.Current, ui.Validation?.EffectiveStatus)
-            && Accepted(backlog.Validation?.Valid, backlog.Validation?.Current, backlog.Validation?.EffectiveStatus);
-        if (!coreCurrent) return session;
-        var semanticHash = ProductDefinitionAuthority.ComputeBaselineHash(state.DocumentationPath, out var missing);
-        if (missing.Count > 0) return session;
-        var migrated = session with
-        {
-            SchemaVersion = 2,
-            SemanticBaselineHash = semanticHash,
-        };
-        WriteAtomic(state.SessionPath, JsonSerializer.Serialize(migrated, JsonOptions));
-        return migrated;
     }
 
     private State Resolve(string workspacePath)

@@ -7,6 +7,7 @@ const { renderTechnicalDecisionForm } = require('./technical-decision-form');
 function renderTechnicalPage(root, page, model, action, renderQuestions) {
   const questionnaire = model.technicalQuestions;
   const questions = questionnaire?.questions || [];
+  const reassessment = questions.filter(question => ['NeedsReview', 'Unknown'].includes(question.assessmentStatus)).length;
   const resolved = questions.filter(question => ['answered', 'derived'].includes(String(question.status).toLowerCase())
     || question.status === 'Not requested' && ['scope-not-requested', 'selected-scope-not-requested'].includes(question.resolutionSource) && question.answer == null).length;
   const answersReady = questionnaire?.complete && questionnaire?.current;
@@ -20,7 +21,7 @@ function renderTechnicalPage(root, page, model, action, renderQuestions) {
       ? `<p class="notice" role="status">${escape(saved.id)} saved and resolved. ${pending ? `${pending} other decision${pending === 1 ? ' still needs' : 's still need'} review.` : 'No document decisions need review.'}</p>`
       : `<p class="notice warning" role="status">${escape(saved.id)} was saved. ${savedDecision ? 'Review the remaining findings shown for this decision.' : 'The decision is no longer in the current document; review the latest technical intent.'}</p>`;
   const file = page.primaryPath && resolveWithin(root, page.primaryPath);
-  const progress = `<section class="card"><span class="eyebrow">Questionnaire answers</span><h3>${resolved} of ${questions.length} answers resolved <span class="badge ${answersReady ? 'good' : 'warn'}">${answersReady ? 'Complete' : questionnaire?.complete ? 'Needs refresh' : 'Incomplete'}</span></h3><p>The questionnaire records high-level choices. The technical-intent document has its own decisions and validation checks.</p>${action('questions', 'Review questionnaire answers')}</section>`;
+  const progress = `<section class="card"><span class="eyebrow">Questionnaire answers</span><h3>${resolved} of ${questions.length} answers ${reassessment ? 'recorded' : 'resolved'} <span class="badge ${answersReady ? 'good' : 'warn'}">${reassessment ? `${reassessment} retained answers need reassessment` : answersReady ? 'Complete' : questionnaire?.complete ? 'Needs refresh' : 'Incomplete'}</span></h3><p>The questionnaire records high-level choices. The technical-intent document has its own decisions and validation checks.</p>${action('questions', 'Review questionnaire answers')}</section>`;
   const renderDecision = decision => {
     const label = `${decision.id} — ${decision.decision}`;
     const title = file ? `<a class="source-document-link" href="${escape(pathToFileURL(file).href)}${Number.isSafeInteger(decision.documentLine) ? '#L' + decision.documentLine : ''}" target="_blank" rel="noopener" data-command="open-technical-decision" data-value="${escape(decision.id)}">${escape(label)} ↗</a>` : escape(label);

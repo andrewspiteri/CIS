@@ -31,17 +31,31 @@ public sealed partial class FeatureIntakeService
         var previous = state.Record.Plan;
         if (sourceHash == previous.SourceHash) return new("unchanged", null, [], false);
         var decisions = OpenDecisions(source);
-        // Ordinal answer IDs cannot be carried across reordered or deleted questions. Only
-        // a unique, unchanged question is evidence that an answer belongs to a new ordinal.
+        // Ordinals are presentation, never decision identity. Prefer an explicit
+        // unique source ID; legacy questions require exact, unique meaning.
         var mapping = new Dictionary<string, string>(StringComparer.Ordinal);
+        var decisionChanges = new List<string>();
         for (var i = 0; i < previous.OpenDecisions.Count; i++)
         {
             var question = previous.OpenDecisions[i];
-            if (previous.OpenDecisions.Count(item => item == question) != 1 || decisions.Count(item => item == question) != 1) continue;
-            var next = decisions.ToList().IndexOf(question);
+            var identity = DecisionIdentity(question);
+            var candidates = decisions.Select((item, index) => (Question: item, Index: index))
+                .Where(item => identity is not null ? DecisionIdentity(item.Question) == identity : item.Question == question).ToArray();
+            var uniqueOld = identity is not null ? previous.OpenDecisions.Count(item => DecisionIdentity(item) == identity) == 1
+                : previous.OpenDecisions.Count(item => item == question) == 1;
+            if (!uniqueOld || candidates.Length != 1)
+            {
+                decisionChanges.Add($"Decision '{question}' was {(candidates.Length == 0 ? "removed or changed without a stable identity" : "ambiguous after the source update")}. Any prior answer and reviewer remain in source history; resolve only this decision's current applicability.");
+                continue;
+            }
+            var next = candidates[0].Index;
             mapping[$"decision-{i + 1:000}"] = $"decision-{next + 1:000}";
+            if (DecisionMeaning(question) != DecisionMeaning(candidates[0].Question))
+                decisionChanges.Add($"Decision '{identity}' changed its question. Any recorded answer is retained under that identity; reassess this changed meaning before renewing business review.");
         }
-        var pages = state.Review.Pages.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        var pages = state.Review.Pages.ToDictionary(pair => pair.Key, pair =>
+            pair.Value.Basis is null && PageBasisReason(pair.Value, state, pair.Key) is null
+                ? pair.Value with { Basis = PageBasis(state, pair.Key) } : pair.Value, StringComparer.Ordinal);
         var retained = 0;
         if (pages.TryGetValue("business", out var business))
         {
@@ -52,7 +66,11 @@ public sealed partial class FeatureIntakeService
                 { answers[pair.Value] = answer; if (HasAnswer(answer)) retained++; }
             pages["business"] = business with { Answers = answers };
         }
-        var review = state.Review with { Pages = pages };
+        var review = state.Review with
+        {
+            Pages = pages,
+            DecisionChanges = (state.Review.DecisionChanges ?? []).Concat(decisionChanges).Distinct(StringComparer.Ordinal).ToArray() is { Length: > 0 } changes ? changes : null
+        };
         var requestBytes = File.ReadAllBytes(state.RequestPath);
         if (Encoding.UTF8.GetString(requestBytes).TrimStart('\uFEFF').Replace("\r\n", "\n", StringComparison.Ordinal) != state.Content)
             throw new InvalidDataException("The feature changed while preparing the update. Preview again.");
@@ -66,17 +84,40 @@ public sealed partial class FeatureIntakeService
             decisions.Where(question => !previous.OpenDecisions.Contains(question, StringComparer.Ordinal)).ToArray(),
             previous.OpenDecisions.Where(question => !decisions.Contains(question, StringComparer.Ordinal)).ToArray(),
             retained, ReviewPages.Select(page => page.Title).Append("Final review").ToArray());
-        var updatedPlan = previous with { SourcePath = retainedSource, SourceHash = sourceHash, OpenDecisions = decisions, PlanHash = planHash,
-            SourceBrds = [BrdSource(incoming, retainedSource, sourceHash)] };
+        var updatedPlan = previous with
+        {
+            SourcePath = retainedSource,
+            SourceHash = sourceHash,
+            OpenDecisions = decisions,
+            PlanHash = planHash,
+            SourceBrds = [BrdSource(incoming, retainedSource, sourceHash)]
+        };
         var fingerprint = Hash(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
         {
-            title = previous.Title, previous.Slug, sourceHash, repository = previous.RepositoryPath,
-            previous.DocumentationRoot, integrations = previous.IntegrationRepositories, actor = state.Record.Actor
+            title = previous.Title,
+            previous.Slug,
+            sourceHash,
+            repository = previous.RepositoryPath,
+            previous.DocumentationRoot,
+            integrations = previous.IntegrationRepositories,
+            actor = state.Record.Actor
         }, Json)));
-        var record = state.Record with { Plan = updatedPlan, Fingerprint = fingerprint,
+        var record = state.Record with
+        {
+            Plan = updatedPlan,
+            Fingerprint = fingerprint,
             SourceRevisions = (state.Record.SourceRevisions ?? []).Append(new SourceRevision(previous.SourcePath,
-                previous.SourceHash, history, actor.Trim(), DateTimeOffset.UtcNow.ToString("O")) { SourceBrds = SourceBrds(previous) }).ToArray() };
+                previous.SourceHash, history, actor.Trim(), DateTimeOffset.UtcNow.ToString("O"))
+            { SourceBrds = SourceBrds(previous) }).ToArray()
+        };
         var content = ReplaceSourceInRequest(state, record, review);
+        var updatedState = state with { Source = source, Record = record, Review = review, Content = content };
+        foreach (var page in pages.ToArray())
+            if (page.Value.InvalidatedReason is null && PageBasisReason(page.Value, updatedState, page.Key) is { } reason)
+                pages[page.Key] = page.Value with { InvalidatedReason = reason };
+        content = ReplaceSourceInRequest(state, record, review);
+        var projected = ProjectWizard(state with { Source = source, Record = record, Review = review, Content = content });
+        plan = plan with { PagesRequiringReview = projected.Pages.Where(page => page.Id != "foundation" && !page.Complete).Select(page => page.Title).ToArray() };
         // Validate all destinations even on preview; the preview never writes files.
         var destination = SourceUpdatePath(state, retainedSource);
         var historyPath = SourceUpdatePath(state, history);

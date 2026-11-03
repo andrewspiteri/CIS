@@ -3,7 +3,7 @@ title: "cis definition answer"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-15"
+last_reviewed: "2026-11-02"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-definition-answer
@@ -19,6 +19,11 @@ Saves or replaces one technical- or experience-direction answer with named human
 Existing and source-derived answers remain editable. When the last answer is resolved, CIS
 regenerates the dependent technical intent or UI direction against the new questionnaire digest.
 Empty answers, missing actors, unknown IDs, and unsupported pages fail closed.
+
+For technical answers, an identical current answer by the same actor returns `unchanged` with
+`applied: false`, preserving final activation and dependent records. An affected retained answer
+includes `assessmentStatus` and `assessmentReason`; review that supporting input and save the
+answer to renew its basis. A recorded answer needing reassessment is distinct from a missing answer.
 
 The result includes the updated wizard pages, questionnaires and preview. The VS Code wizard
 uses this response directly after saving: one save operation and one page update, without

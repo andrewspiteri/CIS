@@ -38,7 +38,7 @@ cis definition prepare --workspace "<workspace>" --page technical --format json
 cis definition status --workspace "<workspace>" --format json
 ```
 
-A stale token returns a conflict without saving the decision. Re-read the current item and its relevant changes before requesting or recording renewed authority. Saving a resolution preserves its actor and provenance and does not approve the Technical Intent. Reopening uses the same workspace and persistent state; do not edit managed JSON, frontmatter or session records to progress.
+A stale token returns a conflict without saving the decision. Reload the current token and inspect `assessmentStatus` and `assessmentReason`; concurrency does not itself invalidate the human decision. Reuse current answers and resolutions. For `NeedsReview` or `Unknown`, inspect the named supporting input or missing coverage and renew only that affected scope. Retained answers keep their actor/time and are not unanswered questions. Identical saves preserve their records; equivalent refreshes do not create a new decision. Saving a resolution does not approve the Technical Intent. Reopening uses the same workspace and persistent state; do not edit managed JSON, frontmatter or session records to progress.
 
 Inspect structured readiness and errors as well as the command exit code. Imported working direction, accepted facts, unresolved choices, source conflicts and required baseline adoption remain distinct. Direct low-level status after adoption remains useful for domain diagnostics; selected working facts outside the coordinator retain their unadopted status.
 

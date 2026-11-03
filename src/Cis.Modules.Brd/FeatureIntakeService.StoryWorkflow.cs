@@ -14,7 +14,11 @@ public sealed partial class FeatureIntakeService
         public IReadOnlyList<CisStoryReviewFeedback>? Feedback { get; init; }
     }
     private sealed record StoryPlanRecord(string ScopeHash, CisFeatureStoryResult Plan, string Actor, string Reason,
-        string ApprovedAt, IReadOnlyList<StoryTaskEvent> Events);
+        string ApprovedAt, IReadOnlyList<StoryTaskEvent> Events)
+    {
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public IReadOnlyDictionary<string, string>? Basis { get; init; }
+    }
 
     private static string StoryRecordPath(WizardState state, string storyId)
     {
@@ -36,6 +40,9 @@ public sealed partial class FeatureIntakeService
     // Implementation edits are expected during delivery. Approval binds the feature's
     // saved scope and repository identities, while retaining the original evidence hash.
     private static string StoryScopeHash(WizardState state, DeliveryInput input, string storyId)
+        => DeliveryBasisHash(StoryContractBasis(state, input, storyId));
+
+    private static string LegacyStoryScopeHash(WizardState state, DeliveryInput input, string storyId)
         => Hash(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
         {
             state.Content,
@@ -45,6 +52,49 @@ public sealed partial class FeatureIntakeService
             input.Constraints,
             repositories = input.Repositories.Select(r => new { r.Id, r.RepositoryPath })
         }, Json)));
+
+    private static bool StoryScopeMatches(StoryPlanRecord record, WizardState state, DeliveryInput input, string storyId)
+        => record.Basis is not null ? record.ScopeHash == DeliveryBasisHash(ApprovedStoryBasis(state, input, storyId, record.Plan.Tasks))
+            : record.ScopeHash == LegacyStoryScopeHash(state, input, storyId);
+
+    private static IReadOnlyDictionary<string, string> ApprovedStoryBasis(WizardState state, DeliveryInput input,
+        string storyId, IReadOnlyList<CisFeatureStoryTask> tasks)
+    {
+        var basis = new SortedDictionary<string, string>(StoryContractBasis(state, input, storyId).ToDictionary(item => item.Key, item => item.Value), StringComparer.Ordinal);
+        var decision = state.Review.DeliveryReviews?.LastOrDefault(item => item.StoryId == storyId);
+        basis["story delivery decision"] = decision is null ? "none" : JsonSerializer.Serialize(new
+        { decision.Treatment, Owners = decision.Owners.Order(StringComparer.Ordinal), decision.Plan }, Json);
+        foreach (var id in decision?.Owners ?? [])
+            basis["delivery decision ownership/" + id] = DeliveryRepositoryIdentity(input.Repositories.FirstOrDefault(repository => repository.Id == id));
+        foreach (var task in tasks)
+            basis["task contract/" + task.Id] = JsonSerializer.Serialize(task, Json);
+        foreach (var id in tasks.SelectMany(task => task.RepositoryIds).Distinct(StringComparer.Ordinal))
+            basis["task ownership/" + id] = DeliveryRepositoryIdentity(input.Repositories.FirstOrDefault(repository => repository.Id == id));
+        var owners = tasks.SelectMany(task => task.RepositoryIds).ToHashSet(StringComparer.Ordinal);
+        var work = state.Review.RepositoryWork ?? [];
+        var pending = new Queue<string>(work.Where(item => owners.Contains(item.RepositoryId)).Select(item => item.Id));
+        var included = new HashSet<string>(StringComparer.Ordinal);
+        while (pending.TryDequeue(out var id))
+        {
+            if (!included.Add(id)) continue;
+            var item = work.SingleOrDefault(item => item.Id == id);
+            basis["task repository prerequisite/" + id] = item is null ? "missing" : JsonSerializer.Serialize(new
+            { item.Id, item.RepositoryId, item.Title, item.Scope, DependsOn = item.DependsOn.Order(StringComparer.Ordinal), ChangeIds = item.ChangeIds.Order(StringComparer.Ordinal) }, Json);
+            foreach (var prerequisite in item?.DependsOn ?? []) pending.Enqueue(prerequisite);
+        }
+        return basis;
+    }
+
+    private static string StoryScopeReason(StoryPlanRecord record, WizardState state, DeliveryInput input, string storyId)
+    {
+        if (record.Basis is null)
+            return "The saved task plan has a legacy whole-feature basis whose compatibility cannot be established. Its approval and task history are retained; review a current task contract before further execution or completion.";
+        var current = ApprovedStoryBasis(state, input, storyId, record.Plan.Tasks);
+        var changed = record.Basis.Keys.Concat(current.Keys).Distinct(StringComparer.Ordinal)
+            .Where(key => record.Basis.GetValueOrDefault(key) != current.GetValueOrDefault(key)).Order(StringComparer.Ordinal);
+        return "Changed task contract: " + string.Join("; ", changed)
+            + ". The original approval and progress are retained; review only this story's current task plan before further execution or completion.";
+    }
     private static string StoryTasksHash(CisFeatureStoryResult result)
         => Hash(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { result.InputHash, result.Tasks }, Json)));
     private static string StoryApprovalHash(string scopeHash, CisFeatureStoryResult result)
@@ -55,7 +105,7 @@ public sealed partial class FeatureIntakeService
     private static CisFeatureStoryResult ProjectStoryWorkflow(WizardState state, DeliveryInput input, CisFeatureStoryResult result)
     {
         var record = ReadStoryRecord(state, result.StoryId);
-        var approved = record is not null && record.ScopeHash == StoryScopeHash(state, input, result.StoryId);
+        var approved = record is not null && StoryScopeMatches(record, state, input, result.StoryId);
         var historical = !approved && record is not null && result.Status != "current";
         if (historical)
             result = result with
@@ -66,7 +116,7 @@ public sealed partial class FeatureIntakeService
                 Definition = record.Plan.Definition,
                 Provider = record.Plan.Provider,
                 Model = record.Plan.Model,
-                Warnings = result.Warnings.Append("The saved task plan belongs to an earlier feature scope or product baseline. Its work and review history remain visible; execution and completion are disabled until a current plan is reviewed.").ToArray()
+                Warnings = result.Warnings.Append(StoryScopeReason(record, state, input, result.StoryId)).ToArray()
             };
         if (approved)
         {
@@ -78,7 +128,7 @@ public sealed partial class FeatureIntakeService
             var last = approved || historical ? record!.Events.LastOrDefault(item => item.TaskId == task.Id) : null;
             var remaining = task.DependsOn.Where(id => !approved || record!.Events.LastOrDefault(item => item.TaskId == id)?.Status != "Complete").ToArray();
             var status = last?.Status ?? (approved ? remaining.Length == 0 ? "Ready" : "Blocked" : "Proposed");
-            var reason = historical ? "This is retained task history. The feature scope or product baseline changed; review a current plan before further execution or completion."
+            var reason = historical ? StoryScopeReason(record!, state, input, result.StoryId)
                 : !approved ? result.Status == "current" ? "Approve the task plan before starting work." : "The plan needs regeneration and review."
                 : remaining.Length > 0 ? "Complete dependencies first: " + string.Join(", ", remaining) + "." : null;
             var execution = approved || historical ? record!.Events.LastOrDefault(item => item.TaskId == task.Id && item.Execution is not null)?.Execution : null;
@@ -86,7 +136,7 @@ public sealed partial class FeatureIntakeService
                 approved && status == "InProgress" && (execution is null || execution.Applied), reason, last?.Evidence)
             {
                 Execution = execution,
-                ReviewFeedback = execution is null ? null : StoryFeedback(state, record!, task.Id, execution),
+                ReviewFeedback = execution is null ? null : StoryFeedback(state, input, record!, task.Id, execution),
                 CanExecute = approved && (status is "Ready" or "InProgress") && remaining.Length == 0 && execution?.Applied != true
             };
         }).ToArray();
@@ -124,11 +174,25 @@ public sealed partial class FeatureIntakeService
             IReadOnlyList<CisStoryCompletionContext> completionContexts = [];
             if (operation == "approve")
             {
-                if (result.PlanState != "Proposed") throw new InvalidDataException("This task plan is already approved.");
+                if (result.PlanState != "Proposed")
+                {
+                    if (record is not null && (result.PlanState is "Approved" or "Complete")
+                        && record.Actor == actor.Trim() && record.Reason == reason?.Trim())
+                    {
+                        var current = Story(workspacePath, slug, storyId, false);
+                        var latest = ReadWizard(workspacePath, slug);
+                        if (current.Errors.Count > 0 || current.PlanHash != expectedPlanHash || current.Revision != expectedRevision
+                            || !StoryScopeMatches(record, latest, ReadDeliveryInput(latest, false), storyId))
+                            throw new InvalidDataException("The story changed while confirming the existing approval. Refresh and retry.");
+                        return current with { Applied = false };
+                    }
+                    throw new InvalidDataException("This task plan is already approved.");
+                }
                 if (!SingleLine(reason, 2000)) throw new InvalidDataException("Record why this task plan is approved.");
                 if (result.Story!.Conflict is not null && !result.Story.ReviewCurrent || result.Story.ReviewCurrent && result.Story.Review?.Treatment == "out-of-scope")
                     throw new InvalidDataException("Resolve the story's scope decision before approving its tasks.");
-                record = new(StoryScopeHash(state, input, storyId), result, actor.Trim(), reason!.Trim(), now, []);
+                var approvedBasis = ApprovedStoryBasis(state, input, storyId, result.Tasks);
+                record = new(DeliveryBasisHash(approvedBasis), result, actor.Trim(), reason!.Trim(), now, []) { Basis = approvedBasis };
             }
             else
             {
@@ -166,7 +230,7 @@ public sealed partial class FeatureIntakeService
             }
             var checkedResult = Story(workspacePath, slug, storyId, false);
             if (checkedResult.Errors.Count > 0 || checkedResult.PlanHash != expectedPlanHash || checkedResult.Revision != expectedRevision
-                || StoryScopeHash(ReadWizard(workspacePath, slug), input, storyId) != record.ScopeHash)
+                || !StoryScopeMatches(record, ReadWizard(workspacePath, slug), input, storyId))
                 throw new InvalidDataException("The story changed while saving. Refresh and retry.");
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             if (operation == "approve" && File.Exists(path))

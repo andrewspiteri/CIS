@@ -97,7 +97,6 @@ public sealed partial class TechnicalIntentQuestionnaireService
 
         var existing = File.Exists(state.Path!) ? File.ReadAllText(state.Path) : null;
         var previous = existing is null ? new Dictionary<string, TechnicalIntentQuestion>(StringComparer.Ordinal) : ParseQuestions(existing);
-        var brdChanged = existing is not null && ReadNested(existing, "brd_version") != state.BrdVersion;
         var profile = AnalyzeWorkspace(state.Workspace!);
         var questions = profile.Definitions.Select(definition =>
         {
@@ -109,12 +108,7 @@ public sealed partial class TechnicalIntentQuestionnaireService
                     return profile.Derived.TryGetValue(definition.Id, out var refreshed)
                         ? ToDerivedQuestion(definition, refreshed)
                         : ToQuestion(definition, null, null, null);
-                if (brdChanged)
-                    return ToQuestion(definition with
-                    {
-                        SuggestedAnswer = $"Previously recorded direction — recheck against the renewed BRD before accepting or editing: {item.Answer}",
-                    }, null, null, null);
-                return ToQuestion(definition, item.Answer, item.AnsweredBy, item.AnsweredAtUtc);
+                return item;
             }
             return profile.Derived.TryGetValue(definition.Id, out var derived)
                 ? ToDerivedQuestion(definition, derived)
@@ -123,6 +117,7 @@ public sealed partial class TechnicalIntentQuestionnaireService
         var sourceWarnings = new List<string>();
         var sourceErrors = new List<string>();
         questions = ApplyDocumentDirections(state.Authority!, questions, sourceWarnings, sourceErrors, state.BrdVersion!, state.BrdReady);
+        questions = AssessQuestions(state.Authority!, questions, existing is null ? state.BrdVersion : ReadNested(existing, "brd_version"), state.BrdVersion!);
         if (sourceErrors.Count > 0) return Result("input-problem", state, questions, false, sourceErrors.ToArray()) with { Warnings = sourceWarnings };
         var complete = state.BrdReady && questions.All(IsResolved);
         var content = Render(state.Authority!.Id, state.BrdVersion!, complete, questions);
@@ -172,7 +167,7 @@ public sealed partial class TechnicalIntentQuestionnaireService
                 [], errors, state.BrdVersion!, state.BrdReady);
         }
         errors.AddRange(questions.Where(question => !IsResolved(question))
-            .Select(question => $"{question.Id}: {question.Question}"));
+            .Select(question => NeedsReassessment(question) ? $"{question.Id}: {question.AssessmentReason}" : $"{question.Id}: {question.Question}"));
         return errors.Distinct(StringComparer.Ordinal).ToArray();
     }
 
@@ -195,9 +190,26 @@ public sealed partial class TechnicalIntentQuestionnaireService
             if (initialized.ExitCode != 0) return initialized;
             state = Resolve(workspacePath);
         }
-        var questions = ParseQuestions(File.ReadAllText(state.Path!));
+        var sources = QuestionnaireSourceHashes(state.Authority!);
+        var brdPath = CisProductDocumentPaths.Resolve(Path.Combine(state.Authority!.RepositoryPath,
+            state.Authority.DocumentationRoot.Replace('/', Path.DirectorySeparatorChar)), "specs", "business-requirements.md");
+        if (!File.Exists(brdPath) || "semantic-v1:" + BrdDocumentDigest.Compute(File.ReadAllText(brdPath)) != state.BrdVersion)
+            return Result("conflict", state, [], false, "The BRD changed while preparing this answer. Refresh before retrying.");
+        var original = File.ReadAllText(state.Path!);
+        var questions = AssessQuestions(state.Authority!, ParseQuestions(original).Values,
+            ReadNested(original, "brd_version"), state.BrdVersion!).ToDictionary(item => item.Id, StringComparer.Ordinal);
         if (!questions.TryGetValue(id.Trim(), out var question))
             return Result("invalid", state, questions.Values.ToArray(), false, $"Unknown technical-intent question '{id.Trim()}'.");
+        // Validation and source reconciliation precede an idempotent save. An
+        // identical answer also renews a stale assessment exactly once.
+        var projection = StatusInternal(workspacePath, "status", false);
+        if (!QuestionnaireSourcesMatch(state.Authority!, sources))
+            return Result("conflict", state, questions.Values.ToArray(), false, "Authoritative direction changed while assessing this answer. Refresh before retrying.");
+        if (question.Answer == answer.Trim() && question.AnsweredBy == actor.Trim()
+            && question.ResolutionSource == "human" && !NeedsReassessment(question)
+            && File.ReadAllText(state.Path!) == original)
+            return projection with { Status = "unchanged" };
+        var currentBasis = SupportingBases(state.Authority!)[question.Id];
         var updated = questions.Values.Select(item => item.Id == question.Id
             ? item with
             {
@@ -208,9 +220,16 @@ public sealed partial class TechnicalIntentQuestionnaireService
                 ResolutionSource = "human",
                 Confidence = "confirmed",
                 Evidence = [],
+                SupportingBasis = currentBasis,
+                AssessmentStatus = "Current",
+                AssessmentReason = null,
+                History = string.IsNullOrWhiteSpace(item.Answer) ? item.History : item.History.Append(
+                    new TechnicalIntentAnswerHistory(item.Answer, item.AnsweredBy, item.AnsweredAtUtc, item.ResolutionSource, item.SupportingBasis)).ToArray(),
             }
             : item).OrderBy(item => item.Id, StringComparer.Ordinal).ToArray();
         var content = Render(state.Authority!.Id, state.BrdVersion!, updated.All(IsResolved), updated);
+        if (File.ReadAllText(state.Path!) != original || !QuestionnaireSourcesMatch(state.Authority!, sources))
+            return Result("conflict", state, questions.Values.ToArray(), false, "The questionnaire changed while saving. Refresh before retrying.");
         Write(state.Path!, content);
 
         var effective = StatusInternal(state.Workspace!.WorkspacePath, "answered", true);
@@ -236,9 +255,13 @@ public sealed partial class TechnicalIntentQuestionnaireService
         var version = ReadNested(content, "brd_version");
         var sourceErrors = new List<string>();
         if (authority is not null)
+        {
             questions = ApplyDocumentDirections(authority, questions, [], sourceErrors, expectedBrdVersion, brdAccepted);
+            questions = AssessQuestions(authority, questions, version, expectedBrdVersion);
+        }
         return new QuestionnaireSnapshot(path, Hash(content), version ?? string.Empty,
-            version == expectedBrdVersion && sourceErrors.Count == 0, questions.Length == Definitions.Count && questions.All(IsResolved) && sourceErrors.Count == 0, questions);
+            (authority is not null ? questions.All(question => !NeedsReassessment(question)) : version == expectedBrdVersion) && sourceErrors.Count == 0,
+            questions.Length == Definitions.Count && questions.All(IsResolved) && sourceErrors.Count == 0, questions);
     }
 
     private TechnicalIntentQuestionnaireResult StatusInternal(string workspacePath, string operation, bool applied)
@@ -251,17 +274,21 @@ public sealed partial class TechnicalIntentQuestionnaireService
         var errors = new List<string>();
         if (questions.Length != Definitions.Count) errors.Add($"The questionnaire contains {questions.Length} of {Definitions.Count} required questions. Run `cis technical-intent questions init`.");
         var recordedBrd = ReadNested(content, "brd_version");
-        var current = state.BrdReady && recordedBrd == state.BrdVersion;
+        var current = state.BrdReady;
         var warnings = new List<string>();
         questions = ApplyDocumentDirections(state.Authority!, questions, warnings, errors, state.BrdVersion!, state.BrdReady);
-        current = current && errors.Count == 0;
+        questions = AssessQuestions(state.Authority!, questions, recordedBrd, state.BrdVersion!);
+        current = current && errors.Count == 0 && questions.All(question => !NeedsReassessment(question));
         var complete = questions.Length == Definitions.Count && questions.All(IsResolved) && errors.Count == 0;
-        if (!current) warnings.Add("The technical questionnaire does not match the current Active BRD. Reinitialize and review its answers.");
-        if (!complete) warnings.Add($"{questions.Count(item => !IsResolved(item))} high-level technical decision(s) remain unanswered.");
+        warnings.AddRange(questions.Where(NeedsReassessment).Select(question => $"{question.Id}: {question.AssessmentReason}"));
+        if (!state.BrdReady) warnings.Add("The technical questionnaire requires a current accepted BRD.");
+        var unanswered = questions.Count(item => !IsResolved(item) && !NeedsReassessment(item));
+        if (unanswered > 0) warnings.Add($"{unanswered} high-level technical decision(s) remain unanswered.");
         return new TechnicalIntentQuestionnaireResult(operation, state.Workspace!.WorkspacePath, state.Authority!.Id,
             Normalize(Path.GetRelativePath(state.Authority.RepositoryPath, state.Path)), state.BrdVersion, current, complete,
-            questions.Count(IsResolved), questions.Count(item => !IsResolved(item)), questions,
-            warnings, errors, applied);
+            questions.Count(item => IsResolved(item) || NeedsReassessment(item)), unanswered, questions,
+            warnings, errors, applied)
+        { ReassessmentCount = questions.Count(NeedsReassessment) };
     }
 
     private QuestionnaireState Resolve(string workspacePath)
@@ -296,7 +323,8 @@ public sealed partial class TechnicalIntentQuestionnaireService
             "repository-evidence", derived.Confidence, derived.Evidence);
 
     private static bool IsResolved(TechnicalIntentQuestion question)
-        => (question.ResolutionSource is not ("selected-document" or "selected-scope-not-requested") || CisDefinitionDraftScope.IsActive)
+        => !NeedsReassessment(question)
+           && (question.ResolutionSource is not ("selected-document" or "selected-scope-not-requested") || CisDefinitionDraftScope.IsActive)
            && (question.Status is "Answered" or "Derived" && !string.IsNullOrWhiteSpace(question.Answer)
                || question.Status == "Not requested" && (question.ResolutionSource is "scope-not-requested" or "selected-scope-not-requested") && question.Answer is null);
 
@@ -666,6 +694,7 @@ This governed pre-intent record captures high-level technology and architecture 
                 .AppendLine($"- Resolution source: {question.ResolutionSource}")
                 .AppendLine($"- Confidence: {question.Confidence ?? "Not assessed"}")
                 .AppendLine($"- Evidence: {string.Join("; ", question.Evidence ?? []) switch { "" => "Not recorded", var value => value }}")
+                .AppendLine($"- Assessment record: {RenderAssessment(question)}")
                 .AppendLine().AppendLine("#### Recorded answer").AppendLine()
                 .AppendLine(question.Answer ?? "Not answered.").AppendLine();
         }
@@ -697,10 +726,17 @@ This governed pre-intent record captures high-level technology and architecture 
             var evidence = (ReadBullet(body, "Evidence") ?? string.Empty)
                 .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Where(value => value != "Not recorded").ToArray();
+            var assessment = ReadAssessment(body);
             result[id] = new TechnicalIntentQuestion(definition.Id, definition.Area, definition.Question, definition.Why,
                 options, suggested, resolvedStatus, resolvedStatus is "Answered" or "Derived" ? answer : null,
                 NullIfMissing(ReadBullet(body, "Answered by")), NullIfMissing(ReadBullet(body, "Answered at")),
-                resolutionSource, NullIfMissing(ReadBullet(body, "Confidence")), evidence);
+                resolutionSource, NullIfMissing(ReadBullet(body, "Confidence")), evidence)
+            {
+                SupportingBasis = assessment?.SupportingBasis,
+                AssessmentStatus = assessment?.Status,
+                AssessmentReason = assessment?.Reason,
+                History = assessment?.History ?? [],
+            };
         }
         return result;
     }
@@ -721,8 +757,9 @@ This governed pre-intent record captures high-level technology and architecture 
         IReadOnlyList<TechnicalIntentQuestion> questions, bool applied, params string[] errors)
         => new(status, state.Workspace?.WorkspacePath, state.Authority?.Id,
             state.Path is null || state.Authority is null ? null : Normalize(Path.GetRelativePath(state.Authority.RepositoryPath, state.Path)),
-            state.BrdVersion, false, false, questions.Count(IsResolved),
-            questions.Count(item => !IsResolved(item)), questions, [], errors.Length > 0 ? errors : state.Errors, applied);
+            state.BrdVersion, false, false, questions.Count(item => IsResolved(item) || NeedsReassessment(item)),
+            questions.Count(item => !IsResolved(item) && !NeedsReassessment(item)), questions, [], errors.Length > 0 ? errors : state.Errors, applied)
+        { ReassessmentCount = questions.Count(NeedsReassessment) };
 
     private static string UpdateCatalogStatus(string catalog, string id, string status)
     {

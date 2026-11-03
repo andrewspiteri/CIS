@@ -1,5 +1,6 @@
 using Cis.Abstractions;
 using Cis.Host;
+using System.Text.Json;
 
 namespace Cis.Modules.Brd.Tests;
 
@@ -94,6 +95,124 @@ public sealed partial class FeatureIntakeTests
         Assert.All(after.Pages.Single(page => page.Id == "business").Fields.Skip(1), field => Assert.Null(field.Answer));
         var history = File.ReadAllText(Path.Combine(f.Authority, preview.Plan.PreviousRequestPath));
         Assert.Contains("Support team.", history); Assert.Contains("Yes, before redirect.", history);
+        Assert.Contains(after.Pages.Single(page => page.Id == "business").Attention, message => message.Contains("ambiguous", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void SourceReorderingPreservesReviewsAndUnrelatedTechnicalAdditionRetainsDecisionsAndProvenance()
+    {
+        using var f = new Fixture();
+        var metadata = "---\nstatus: Active\nlast_reviewed: 2026-11-01\ncis:\n  approved_by: First source reviewer\n  approved_at: 2026-11-01\n  approval_reason: Source reviewed\n  approved_content_hash: old-digest\n---\n\n";
+        File.WriteAllText(f.Request.SourcePath, metadata + "# Feature\n\n## Requirements\n\nFR-001 Preserve the exact source.\n\n## Open decisions\n\n1. DEC-01: Who owns support?\n2. DEC-02: Is direct handoff recorded?\n\n## References\n\nSource reference.\n");
+        CreateIntake(f); var status = CompleteWizard(f);
+        var originalBusiness = ReviewPage(f, status, "business");
+        var originalTechnical = ReviewPage(f, status, "technical").GetRawText();
+        File.WriteAllText(f.Request.SourcePath, metadata.Replace("First source reviewer", "Second source reviewer", StringComparison.Ordinal)
+            .Replace("2026-11-01", "2026-11-02", StringComparison.Ordinal).Replace("old-digest", "new-digest", StringComparison.Ordinal)
+            + "# Feature\n\n## Requirements\n\nFR-001 Preserve the exact source.\n\n## Open decisions\n\n- **DEC-02**: Is direct handoff recorded?\n- **DEC-01**: Who owns support?\n\n## References\n\nSource reference.\n");
+        var preview = Reimport(f);
+        Assert.Empty(preview.Errors); Assert.Equal(2, preview.Plan!.RetainedDecisionAnswers);
+        Assert.Empty(preview.Plan.PagesRequiringReview);
+        Assert.True(Reimport(f, false, preview.Plan.PlanHash).Applied);
+        var fresh = new FeatureIntakeService(f.Registry, f.Importer, new DocumentationCatalogMerger(), [f.Baseline]);
+        var reopened = fresh.Wizard(f.Authority, "referrals");
+        Assert.Empty(reopened.Errors); Assert.True(reopened.Reviewed);
+        var business = reopened.Pages.Single(page => page.Id == "business");
+        Assert.Contains("direct handoff", business.Fields.Single(field => field.Id == "decision-001").Answer, StringComparison.Ordinal);
+        Assert.Contains("support", business.Fields.Single(field => field.Id == "decision-002").Answer, StringComparison.Ordinal);
+        var retained = ReviewPage(f, reopened, "business");
+        Assert.Equal(originalBusiness.GetProperty("actor").GetString(), retained.GetProperty("actor").GetString());
+        Assert.Equal(originalBusiness.GetProperty("savedAt").GetString(), retained.GetProperty("savedAt").GetString());
+        Assert.Equal(originalTechnical, ReviewPage(f, reopened, "technical").GetRawText());
+        Assert.Equal(2, reopened.SourceHistory.Count);
+        File.AppendAllText(f.Request.SourcePath, "\n## Runtime deployment\n\nThe runtime uses the retained deployment platform.\n");
+        preview = Reimport(f); Assert.True(Reimport(f, false, preview.Plan!.PlanHash).Applied);
+        var changed = fresh.Wizard(f.Authority, "referrals");
+        Assert.False(changed.Reviewed);
+        Assert.True(changed.Pages.Single(page => page.Id == "business").Complete);
+        Assert.False(changed.Pages.Single(page => page.Id == "technical").Complete);
+        Assert.Equal(originalBusiness.GetProperty("savedAt").GetString(), ReviewPage(f, changed, "business").GetProperty("savedAt").GetString());
+    }
+
+    [Fact]
+    public void ChangedDecisionMeaningRetainsStableIdentityAnswerAndOnlyAffectedReviewNeedsRenewal()
+    {
+        using var f = new Fixture();
+        var source = "# Feature\n\n## Requirements\n\nFR-001 Preserve the exact source.\n\n## Open decisions\n\n1. DEC-01: Who owns support?\n2. DEC-02: Is direct handoff recorded?\n";
+        File.WriteAllText(f.Request.SourcePath, source); CreateIntake(f);
+        var status = CompleteWizard(f);
+        var before = ReviewPage(f, status, "business");
+        File.WriteAllText(f.Request.SourcePath, source.Replace("DEC-01: Who owns support?", "DEC-01: Who owns privileged support access?", StringComparison.Ordinal));
+        var preview = Reimport(f);
+        Assert.Equal(2, preview.Plan!.RetainedDecisionAnswers);
+        Assert.Contains("Business definition", preview.Plan.PagesRequiringReview);
+        Assert.Contains("Review and next steps", preview.Plan.PagesRequiringReview);
+        Assert.DoesNotContain("Technical direction", preview.Plan.PagesRequiringReview);
+        Assert.True(Reimport(f, false, preview.Plan.PlanHash).Applied);
+        var after = f.Service.Wizard(f.Authority, "referrals");
+        Assert.False(after.Reviewed);
+        Assert.True(after.Pages.Single(page => page.Id == "technical").Complete);
+        var business = after.Pages.Single(page => page.Id == "business");
+        Assert.False(business.Complete);
+        Assert.Contains(business.Attention, message => message.Contains("DEC-01", StringComparison.Ordinal) && message.Contains("changed its question", StringComparison.Ordinal));
+        Assert.Contains("Who owns support?", business.Fields.Single(field => field.Id == "decision-001").Answer, StringComparison.Ordinal);
+        Assert.Equal(before.GetProperty("savedAt").GetString(), ReviewPage(f, after, "business").GetProperty("savedAt").GetString());
+        var renewed = f.Service.SaveWizard(f.Authority, new("referrals", "business",
+            business.Fields.ToDictionary(field => field.Id, field => field.Answer!), "Reviewer", after.Revision!));
+        Assert.True(renewed.Pages.Single(page => page.Id == "business").Complete);
+        Assert.False(renewed.Reviewed);
+    }
+
+    [Fact]
+    public void StableDecisionMovedToDifferentSupportedScopeRetainsAnswerButNeedsLocalReview()
+    {
+        using var f = new Fixture();
+        const string intro = "# Feature\n\n## Requirements\n\nFR-001 Preserve the exact source.\n\n## Open decisions\n\n";
+        File.WriteAllText(f.Request.SourcePath, intro + "#### MVP scope\n1. DEC-01: Who owns support?\n2. DEC-02: Is direct handoff recorded?\n\n#### Post-MVP scope\n");
+        CreateIntake(f); var reviewed = CompleteWizard(f);
+        var before = ReviewPage(f, reviewed, "business");
+        File.WriteAllText(f.Request.SourcePath, intro + "#### MVP scope\n- DEC-02: Is direct handoff recorded?\n- DEC-01: Who owns support?\n\n#### Post-MVP scope\n");
+        var preview = Reimport(f); Assert.True(Reimport(f, false, preview.Plan!.PlanHash).Applied);
+        Assert.True(f.Service.Wizard(f.Authority, "referrals").Reviewed);
+        File.WriteAllText(f.Request.SourcePath, intro + "#### MVP scope\n- DEC-02: Is direct handoff recorded?\n\n#### Post-MVP scope\n- DEC-01: Who owns support?\n");
+        preview = Reimport(f); Assert.Equal(2, preview.Plan!.RetainedDecisionAnswers);
+        Assert.True(Reimport(f, false, preview.Plan.PlanHash).Applied);
+        var changed = f.Service.Wizard(f.Authority, "referrals");
+        var business = changed.Pages.Single(page => page.Id == "business");
+        Assert.False(changed.Reviewed); Assert.False(business.Complete);
+        Assert.True(changed.Pages.Single(page => page.Id == "technical").Complete);
+        Assert.False(changed.Pages.Single(page => page.Id == "delivery").Complete);
+        Assert.Contains(business.Attention, message => message.Contains("business decision context DEC-01", StringComparison.Ordinal));
+        Assert.Contains("Who owns support?", business.Fields.Single(field => field.Id == "decision-002").Answer, StringComparison.Ordinal);
+        Assert.Equal(before.GetProperty("savedAt").GetString(), ReviewPage(f, changed, "business").GetProperty("savedAt").GetString());
+    }
+
+    [Fact]
+    public void UnassignedDecisionContextUsesConservativeLocalBasisWithoutInventingQuestions()
+    {
+        using var f = new Fixture();
+        var source = "# Feature\n\n## Requirements\n\nFR-001 Preserve the exact source.\n\n## Open decisions\n\n```csharp\nconst string policy = \"read  only\";\n```\n";
+        File.WriteAllText(f.Request.SourcePath, source); CreateIntake(f);
+        var reviewed = CompleteWizard(f);
+        Assert.Single(reviewed.Pages.Single(page => page.Id == "business").Fields);
+        File.WriteAllText(f.Request.SourcePath, source.Replace("\"read  only\"", "\"read only\"", StringComparison.Ordinal));
+        var preview = Reimport(f); Assert.True(Reimport(f, false, preview.Plan!.PlanHash).Applied);
+        var changed = f.Service.Wizard(f.Authority, "referrals");
+        var business = changed.Pages.Single(page => page.Id == "business");
+        Assert.Single(business.Fields); Assert.NotNull(business.Fields[0].Answer);
+        Assert.False(business.Complete); Assert.False(changed.Reviewed);
+        Assert.True(changed.Pages.Single(page => page.Id == "technical").Complete);
+        Assert.Contains(business.Attention, reason => reason.Contains("unassigned source context (impact is conservative)", StringComparison.Ordinal));
+    }
+
+    private static JsonElement ReviewPage(Fixture f, CisFeatureWizardResult status, string page)
+    {
+        var content = File.ReadAllText(Path.Combine(f.Authority, status.Plan!.RequestPath)).Replace("\r\n", "\n", StringComparison.Ordinal);
+        const string marker = "<!-- cis:feature-review-data\n";
+        var start = content.IndexOf(marker, StringComparison.Ordinal) + marker.Length;
+        var end = content.IndexOf("\n-->", start, StringComparison.Ordinal);
+        using var document = JsonDocument.Parse(content[start..end]);
+        return document.RootElement.GetProperty("pages").GetProperty(page).Clone();
     }
 
     [Theory]
@@ -120,6 +239,8 @@ public sealed partial class FeatureIntakeTests
     public void ReimportCanReturnToAnEarlierSourceWithoutRevivingOldReview()
     {
         using var f = new Fixture(); CreateIntake(f);
+        var reviewed = CompleteWizard(f);
+        var originalReviewer = ReviewPage(f, reviewed, "business").GetProperty("savedAt").GetString();
         var original = File.ReadAllBytes(f.Request.SourcePath);
         File.AppendAllText(f.Request.SourcePath, "\nRevision two.\n");
         var first = Reimport(f); Assert.True(Reimport(f, false, first.Plan!.PlanHash).Applied);
@@ -128,6 +249,8 @@ public sealed partial class FeatureIntakeTests
         var status = f.Service.Wizard(f.Authority, "referrals");
         Assert.Empty(status.Errors); Assert.Equal(4, status.SourceHistory.Count); Assert.False(status.Reviewed);
         Assert.Equal(original, File.ReadAllBytes(Path.Combine(f.Authority, status.Plan!.SourcePath)));
+        Assert.Equal(originalReviewer, ReviewPage(f, status, "business").GetProperty("savedAt").GetString());
+        Assert.NotNull(status.Pages.Single(page => page.Id == "business").Fields[0].Answer);
     }
 
     [Fact]

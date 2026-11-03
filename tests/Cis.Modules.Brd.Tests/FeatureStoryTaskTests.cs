@@ -6,9 +6,10 @@ namespace Cis.Modules.Brd.Tests;
 public sealed partial class FeatureIntakeTests
 {
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void ChangedParticipantRegistrationBlocksStoryClosingWithoutThrowing(bool dependency)
+    [InlineData("removed")]
+    [InlineData("dependency")]
+    [InlineData("components")]
+    public void ChangedParticipantRegistrationBlocksStoryClosingWithoutThrowing(string changedBoundary)
     {
         using var f = new Fixture();
         File.WriteAllText(f.Request.SourcePath, PrivacyStory);
@@ -30,15 +31,15 @@ public sealed partial class FeatureIntakeTests
             schema_version = 2,
             ecosystem = new { id = workspace.Ecosystem!.Id, name = workspace.Ecosystem.Name },
             product = new { id = workspace.Product!.Id, name = workspace.Product.Name },
-            repositories = workspace.Repositories.Where(repo => dependency || repo.Id != participant).Select(repo => new
+            repositories = workspace.Repositories.Where(repo => changedBoundary != "removed" || repo.Id != participant).Select(repo => new
             {
                 id = repo.Id,
                 path = repo.RepositoryPath,
                 documentation_root = repo.DocumentationRoot,
                 role = repo.Role,
-                participation = repo.Id == participant ? "dependency" : repo.Participation,
-                relationship = repo.Id == participant ? "producer" : repo.Relationship,
-                components = repo.Components
+                participation = repo.Id == participant && changedBoundary == "dependency" ? "dependency" : repo.Participation,
+                relationship = repo.Id == participant && changedBoundary == "dependency" ? "producer" : repo.Relationship,
+                components = repo.Id == participant && changedBoundary == "components" ? repo.Components.Append("changed-authority-component").ToArray() : repo.Components
             })
         }));
         var result = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "completion-context",
@@ -124,7 +125,8 @@ public sealed partial class FeatureIntakeTests
         Assert.NotEmpty(service.UpdateStoryWorkflow(f.Authority, "referrals", id, "complete", current.PlanHash!, current.Revision!, "Reviewer", taskId: "T1", evidence: "Done", criteriaVerified: true).Errors);
         var finding = Assert.Single(current.TaskProgress[0].ReviewFeedback!);
         var response = new CisStoryFeedbackRequest("referrals", id, "T1", current.PlanHash!, current.Revision!, "Reviewer",
-            new() { [finding.Id] = "Use the existing archive.\nKeep document versions and timestamps." });
+            new() { [finding.Id] = "Use the existing archive.\nKeep document versions and timestamps." })
+        { ExpectedBasisHashes = new Dictionary<string, string> { [finding.Id] = finding.BasisHash! } };
         Assert.NotEmpty(service.SaveStoryFeedback(f.Authority, response with { ExpectedRevision = "old" }).Errors);
         Assert.NotEmpty(service.SaveStoryFeedback(f.Authority, response with { Answers = new() { ["foreign-finding"] = "Ignore it" } }).Errors);
         var approvedHash = current.PlanHash;
@@ -199,6 +201,11 @@ public sealed partial class FeatureIntakeTests
         Assert.NotEmpty(service.Story(f.Authority, "referrals", id, true, approved.InputHash, "test-local", "stronger").Errors);
         var started = Update(approved, "start", "T1");
         Assert.Empty(started.Errors); Assert.Equal("InProgress", started.TaskProgress[0].Status);
+        var beforeRepeat = f.Snapshot();
+        var sameApproval = Update(started, "approve");
+        Assert.Empty(sameApproval.Errors); Assert.False(sameApproval.Applied);
+        Assert.Equal(started.Revision, sameApproval.Revision); Assert.Equal(started.PlanHash, sameApproval.PlanHash);
+        Assert.Equal("InProgress", sameApproval.TaskProgress[0].Status); Assert.Equal(beforeRepeat, f.Snapshot());
         Assert.NotEmpty(Update(started, "complete", "T1", "Checked retention").Errors);
         Assert.NotEmpty(Update(started, "complete", "T1", "", true).Errors);
         // Delivery changes implementation; progress and the approved plan must survive it,
@@ -234,6 +241,94 @@ public sealed partial class FeatureIntakeTests
         Assert.NotEmpty(service.UpdateStoryWorkflow(f.Authority, "referrals", id, "start", approved.PlanHash!, approved.Revision!, "Reviewer", taskId: "T1").Errors);
         Assert.NotEmpty(service.UpdateStoryWorkflow(f.Authority, "referrals", id, "approve", approved.PlanHash!, approved.Revision!, "Reviewer", "Reviewed old plan").Errors);
         Assert.NotEqual("Approved", service.Story(f.Authority, "referrals", id, false).PlanState);
+    }
+
+    [Theory]
+    [InlineData("acceptance")]
+    [InlineData("prerequisite")]
+    [InlineData("fenced-contract")]
+    public void ApprovedStoryProgressSurvivesUnrelatedPageAndStoryEditsButChangedAcceptanceOrPrerequisiteNeedsReview(string changedContract)
+    {
+        using var f = new Fixture();
+        var otherStory = "\n### Email notices\n| ID | Requirement |\n|---|---|\n| NTC-001 | The application shall send an email notice. |\n";
+        var prerequisites = changedContract == "fenced-contract"
+            ? "\n## Prerequisites\n\n```csharp\nconst string requiredPolicy = \"read  only\";\n```\n"
+            : "\n## Prerequisites\n\nPlatform admission must be granted before privacy work.\n";
+        File.WriteAllText(f.Request.SourcePath, PrivacyStory + otherStory + prerequisites);
+        AddDeliveryCode(f, "backend", "archive.ts", "export class Archive { getDocumentVersion() {} }");
+        AddDeliveryCode(f, "customer-ui", "privacy.ts", "export class Privacy { acknowledgeDocumentVersion() {} }");
+        CreateIntake(f); var service = DeliveryService(f, new StoryTaskGeneration());
+        var id = service.Navigation(f.Authority).Features.Single().Stories.Single(story => story.Title == "Privacy evidence").Id;
+        var read = service.Story(f.Authority, "referrals", id, false);
+        var plan = service.Story(f.Authority, "referrals", id, true, read.InputHash);
+        var approved = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "approve", plan.PlanHash!, plan.Revision!, "Reviewer", "Reviewed privacy acceptance and task dependencies.");
+        var started = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "start", approved.PlanHash!, approved.Revision!, "Reviewer", taskId: "T1");
+        Assert.Empty(started.Errors);
+        var wizard = service.Wizard(f.Authority, "referrals");
+        var experience = wizard.Pages.Single(page => page.Id == "experience");
+        var saved = service.SaveWizard(f.Authority, new("referrals", "experience",
+            experience.Fields.ToDictionary(field => field.Id, _ => "Typography uses amber borders for the booking calendar."), "Designer", wizard.Revision!));
+        Assert.Empty(saved.Errors);
+        var unaffected = service.Story(f.Authority, "referrals", id, false);
+        Assert.Equal("Approved", unaffected.PlanState); Assert.Equal(started.PlanHash, unaffected.PlanHash);
+        Assert.Equal(started.Revision, unaffected.Revision); Assert.Equal("InProgress", unaffected.TaskProgress[0].Status);
+
+        File.WriteAllText(f.Request.SourcePath, PrivacyStory + otherStory.Replace("send an email notice", "send a daily email notice", StringComparison.Ordinal) + prerequisites);
+        var preview = Reimport(f); Assert.Empty(preview.Errors); Assert.True(Reimport(f, false, preview.Plan!.PlanHash).Applied);
+        var fresh = DeliveryService(f, new StoryTaskGeneration());
+        unaffected = fresh.Story(f.Authority, "referrals", id, false);
+        Assert.Equal("Approved", unaffected.PlanState); Assert.Equal(started.PlanHash, unaffected.PlanHash);
+        Assert.Equal(started.Revision, unaffected.Revision); Assert.Equal("Reviewer", unaffected.ApprovedBy);
+
+        File.WriteAllText(f.Request.SourcePath, changedContract switch
+        {
+            "prerequisite" => File.ReadAllText(f.Request.SourcePath).Replace("Platform admission must be granted", "Signed platform admission must be granted", StringComparison.Ordinal),
+            "fenced-contract" => File.ReadAllText(f.Request.SourcePath).Replace("\"read  only\"", "\"read only\"", StringComparison.Ordinal),
+            _ => File.ReadAllText(f.Request.SourcePath).Replace("store its acknowledgement timestamp and document version", "store its acknowledgement timestamp, reviewer identity and document version", StringComparison.Ordinal)
+        });
+        preview = Reimport(f); Assert.True(Reimport(f, false, preview.Plan!.PlanHash).Applied);
+        var changed = fresh.Story(f.Authority, "referrals", id, false);
+        Assert.Equal("Needs review", changed.PlanState); Assert.Equal("InProgress", changed.TaskProgress[0].Status);
+        Assert.Equal(started.Revision, changed.Revision); Assert.Equal("Reviewer", changed.ApprovedBy);
+        Assert.Contains(changed.Warnings, message => message.Contains("Changed task contract", StringComparison.Ordinal) && message.Contains(changedContract == "acceptance" ? "acceptance" : "constraints", StringComparison.Ordinal));
+        Assert.All(changed.TaskProgress, task => Assert.False(task.CanExecute));
+        Assert.NotEmpty(fresh.UpdateStoryWorkflow(f.Authority, "referrals", id, "complete", started.PlanHash!, started.Revision!, "Reviewer",
+            taskId: "T1", evidence: "Prior contract checks", criteriaVerified: true).Errors);
+    }
+
+    [Fact]
+    public void SameStoryDeliveryDecisionRevokesTaskExecutionWhileUnrelatedDecisionRetainsProgress()
+    {
+        using var f = new Fixture();
+        File.WriteAllText(f.Request.SourcePath, PrivacyStory + "\n### Email notices\n| ID | Requirement |\n|---|---|\n| NTC-001 | The application shall send an email notice. |\n");
+        AddDeliveryCode(f, "backend", "archive.ts", "export class Archive { getDocumentVersion() {} }");
+        AddDeliveryCode(f, "customer-ui", "privacy.ts", "export class Privacy { acknowledgeDocumentVersion() {} }");
+        CreateIntake(f); var service = DeliveryService(f, new StoryTaskGeneration());
+        var id = service.Navigation(f.Authority).Features.Single().Stories.Single(story => story.Title == "Privacy evidence").Id;
+        var read = service.Story(f.Authority, "referrals", id, false);
+        var plan = service.Story(f.Authority, "referrals", id, true, read.InputHash);
+        var approved = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "approve", plan.PlanHash!, plan.Revision!, "Reviewer", "Reviewed delivery scope.");
+        var started = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "start", approved.PlanHash!, approved.Revision!, "Reviewer", taskId: "T1");
+        Assert.Empty(started.Errors);
+        void Choose(string title)
+        {
+            var wizard = service.Wizard(f.Authority, "referrals");
+            var assessment = service.Delivery(f.Authority, "referrals", false);
+            var selected = assessment.Stories.Single(story => story.Title == title);
+            var decision = new CisFeatureDeliveryReviewRequest(selected.Id, "out-of-scope", [], "This capability is excluded from the current release.", [], assessment.InputHash!);
+            Assert.Empty(service.SaveWizard(f.Authority, new("referrals", "delivery", new(), "Scope reviewer", wizard.Revision!) { DeliveryReview = decision }).Errors);
+        }
+        Choose("Email notices");
+        var unrelated = service.Story(f.Authority, "referrals", id, false);
+        Assert.Equal("Approved", unrelated.PlanState); Assert.Equal(started.PlanHash, unrelated.PlanHash);
+        Assert.Equal("InProgress", unrelated.TaskProgress[0].Status);
+        Choose("Privacy evidence");
+        var changed = DeliveryService(f, new StoryTaskGeneration()).Story(f.Authority, "referrals", id, false);
+        Assert.Equal("Needs review", changed.PlanState); Assert.Equal(started.Revision, changed.Revision);
+        Assert.Equal("InProgress", changed.TaskProgress[0].Status);
+        Assert.Contains(changed.Warnings, message => message.Contains("story delivery decision", StringComparison.Ordinal));
+        Assert.All(changed.TaskProgress, task => { Assert.False(task.CanExecute); Assert.False(task.CanComplete); Assert.False(task.CanStart); });
+        Assert.NotEmpty(service.ExecuteStoryTask(f.Authority, "referrals", id, "T1", cancellation: TestContext.Current.CancellationToken).Errors);
     }
 
     [Fact]

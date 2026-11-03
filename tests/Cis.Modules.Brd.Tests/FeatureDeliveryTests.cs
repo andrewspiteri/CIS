@@ -96,6 +96,8 @@ public sealed partial class FeatureIntakeTests
         Assert.False(generation.LastRequest!.AllowRemote);
         Assert.DoesNotContain("external-products", generation.LastPrompt);
         File.WriteAllText(Path.Combine(Path.GetDirectoryName(code)!, "products-ui.ts"), "export class ProductsUi {}");
+        Assert.Equal("current", service.Delivery(f.Authority, "referrals", false).Status); // Inventory-only addition has no operation supporting this story.
+        File.WriteAllText(Path.Combine(Path.GetDirectoryName(code)!, "products-ui.ts"), "export class ProductsUi { createProduct() {} }");
         Assert.Equal("stale", service.Delivery(f.Authority, "referrals", false).Status);
         Assert.True(File.Exists(excluded));
     }
@@ -136,11 +138,11 @@ public sealed partial class FeatureIntakeTests
     }
 
     private static FeatureIntakeService DeliveryService(Fixture f, ICisTextGenerationService generation, ICisStoryTaskExecutor? executor = null,
-        ICisStoryEngineeringCompletion? completion = null)
+        ICisStoryEngineeringCompletion? completion = null, ICisGraphSnapshotReader? graphReader = null)
     {
         // Existing participants retain their lifecycle; dedicated completion fixtures exercise adoption.
         return new(f.Registry, f.Importer, new DocumentationCatalogMerger(), [f.Baseline], textGeneration: generation,
-            storyExecutor: executor, storyCompletion: completion);
+            storyExecutor: executor, storyCompletion: completion, graphReader: graphReader);
     }
 
     private static string AddDeliveryCode(Fixture f, string name, string file, string content, string participation = "owned")
@@ -155,13 +157,15 @@ public sealed partial class FeatureIntakeTests
     {
         public int Calls { get; private set; }
         public string Mode { get; init; } = "extend";
+        public string ProviderName { get; init; } = "test-local";
+        public string ModelName { get; init; } = "test";
         public string[]? OwnerOverride { get; init; }
         public bool Remote { get; init; }
         public string LastPrompt { get; private set; } = "";
         public List<string> Prompts { get; } = [];
         public CisTextGenerationRequest? LastRequest { get; private set; }
         public Action? DuringGeneration { get; set; }
-        public CisAiStatus GetStatus() => new([new("test-local", "available", "http://localhost", !Remote, [new("test", 1)], null)]);
+        public CisAiStatus GetStatus() => new([new(ProviderName, "available", "http://localhost", !Remote, [new(ModelName, 1)], null)]);
         public CisTextGenerationResult Generate(CisTextGenerationRequest request)
         {
             Calls++; LastPrompt = request.Prompt; LastRequest = request; Prompts.Add(request.Prompt);
@@ -176,7 +180,8 @@ public sealed partial class FeatureIntakeTests
             {
                 id = s.GetProperty("id").GetString(),
                 treatment = Mode is "conflict" or "new" or "reuse" ? Mode : "extend",
-                existingCapability = Mode == "hook-overclaim" ? "Click Tracking is already implemented in the frontend component." : Mode == "hook-grounded" ? "selectProduct navigates to the deposit page." : "Existing product maintenance is available.",
+                existingCapability = Mode == "hook-overclaim" ? "Click Tracking is already implemented in the frontend component." : Mode == "hook-grounded" ? "selectProduct navigates to the deposit page."
+                    : Mode == "document-grounded" ? "getDocumentVersion retrieves the retained document version." : "Existing product maintenance is available.",
                 remainingWork = "Add only the integration and required policy fields.",
                 owners = OwnerOverride ?? new[] { Mode == "foreign-owner" ? "unknown" : owner },
                 evidenceIds = Mode == "missing-evidence" || !found ? Array.Empty<string>() : new[] { evidenceId },
@@ -184,7 +189,7 @@ public sealed partial class FeatureIntakeTests
                 confidence = Mode == "low-confidence" ? "low" : "medium"
             }).ToArray();
             DuringGeneration?.Invoke();
-            return new("generated", "test-local", "test", JsonSerializer.Serialize(new { stories }), null, true);
+            return new("generated", ProviderName, ModelName, JsonSerializer.Serialize(new { stories }), null, true);
         }
     }
 }

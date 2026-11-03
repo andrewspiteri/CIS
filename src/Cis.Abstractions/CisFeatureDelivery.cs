@@ -17,6 +17,13 @@ public sealed record CisFeatureDeliveryStory(string Id, string Phase, string Tit
     public IReadOnlyList<CisFeatureDeliveryRequirementCheck> RequirementChecks { get; init; } = [];
     public CisFeatureDeliveryReview? Review { get; init; }
     public bool ReviewCurrent { get; init; }
+    public string ReviewState { get; init; } = "not-reviewed";
+    public string ReviewReason { get; init; } = "";
+    public IReadOnlyDictionary<string, string>? AssessmentBasis { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? AssessmentProvider { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? AssessmentModel { get; init; }
 }
 
 public sealed record CisFeatureDeliveryRequirementCheck(int Number, string Requirement, IReadOnlyList<string> EvidenceIds);
@@ -34,4 +41,8 @@ public sealed record CisFeatureDeliveryResult(string Status, string? InputHash, 
 public sealed record CisFeatureDeliveryReviewRequest(string StoryId, string Treatment, IReadOnlyList<string> Owners,
     string Plan, IReadOnlyList<string> EvidencePaths, string ExpectedInputHash);
 public sealed record CisFeatureDeliveryReview(string StoryId, string Title, string Treatment, IReadOnlyList<string> Owners,
-    string Plan, IReadOnlyDictionary<string, string> EvidenceHashes, string InputHash, string Actor, string SavedAt);
+    string Plan, IReadOnlyDictionary<string, string> EvidenceHashes, string InputHash, string Actor, string SavedAt)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyDictionary<string, string>? Basis { get; init; }
+}

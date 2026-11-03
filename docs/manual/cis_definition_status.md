@@ -3,7 +3,7 @@ title: "cis definition status"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-10-05"
+last_reviewed: "2026-11-02"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-definition-status
@@ -187,3 +187,8 @@ Add `--summary` to JSON status output to retain page identity, status, completen
 currency, primary paths, warnings and errors while omitting full documents, questions
 and artifact payloads. `detailsOmitted=true` identifies this projection. Use the same
 command without `--summary` for the complete result; existing full JSON is unchanged.
+
+Status does not migrate or rebind an activation. A legacy activation without a semantic basis
+remains recorded and requires explicit consolidated review/activation; inspection cannot create
+that approval. Technical questions expose retained answers and local `assessmentStatus` /
+`assessmentReason`, independently of whole-product readiness.

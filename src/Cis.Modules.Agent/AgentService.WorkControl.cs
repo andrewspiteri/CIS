@@ -241,7 +241,8 @@ public sealed partial class AgentService
         return result with { Work = current };
     }
 
-    private (CisAgentWorkExecution? Accounting, (int Id, string? Started)[] Processes) RetainedOwnedProcesses(
+    private (CisAgentWorkExecution? Accounting, (int Id, string? Started)[] Processes,
+        (int Id, string? Started)[] CancellationCandidates) RetainedOwnedProcesses(
         CisRepositoryContext context, AgentRunView view, List<string> ownershipDiagnostics, List<string> accountingDiagnostics)
     {
         var events = view.Events.Where(item => item.Attempt == view.Manifest.Attempt
@@ -265,15 +266,25 @@ public sealed partial class AgentService
         var completeEventIds = completeEvents.Select(item => item.ProcessId!.Value).ToHashSet();
         var incomplete = events.Any(item => item.ProcessId is null
             || item.ProcessStartedAtUtc is null && !completeEventIds.Contains(item.ProcessId.Value) && execution?.ProcessId != item.ProcessId);
-        if (events.Length > 0 && view.Manifest.ProcessId is { } manifestId && view.Manifest.ProcessStartedAtUtc is { } manifestStarted
-            && !completeEvents.Any(item => item.ProcessId == manifestId && item.ProcessStartedAtUtc == manifestStarted)
-            && !(execution?.ProcessId == manifestId && execution.ProcessStartedAtUtc == manifestStarted))
+        var completeManifest = view.Manifest.ProcessId is not null && view.Manifest.ProcessStartedAtUtc is not null;
+        var supportedManifest = completeManifest && (events.Length == 0
+            || completeEvents.Any(item => item.ProcessId == view.Manifest.ProcessId && item.ProcessStartedAtUtc == view.Manifest.ProcessStartedAtUtc)
+            || execution?.ProcessId == view.Manifest.ProcessId && execution?.ProcessStartedAtUtc == view.Manifest.ProcessStartedAtUtc);
+        if (events.Length > 0 && completeManifest && !supportedManifest)
             incomplete = true;
+        // Candidacy needs independently retained provenance before any OS time
+        // comparison. An inherited manifest pair never gains ownership merely
+        // because another process started within the timestamp tolerance.
+        var supported = completeEvents.Select(item => (Id: item.ProcessId!.Value, Started: item.ProcessStartedAtUtc)).ToList();
+        if (execution?.ProcessId is { } verifiedProcess) supported.Add((verifiedProcess, execution.ProcessStartedAtUtc));
+        if (supportedManifest) supported.Add((view.Manifest.ProcessId!.Value, view.Manifest.ProcessStartedAtUtc));
+        var candidates = supported.Where(item => item.Id > 0 && DateTimeOffset.TryParse(item.Started, out _)).Distinct().Take(33).ToArray();
         if (identities.Length > 32 || incomplete
             || recorded.Any(item => item.Started is null && !identities.Any(known => known.Id == item.Id))
             || identities.Any(item => item.Id <= 0 || !DateTimeOffset.TryParse(item.Started, out _)))
             ownershipDiagnostics.Add("ERROR: Recorded owned-process identities are incomplete or exceed the bounded recovery limit; retain reservations and perform owned-process diagnosis.");
-        return (execution, identities);
+        if (identities.Length > 32 || candidates.Length > 32) candidates = [];
+        return (execution, identities, candidates);
     }
 
     private static void VerifyOwnedProcessesStopped(IEnumerable<(int Id, string? Started)> processes, List<string> diagnostics)

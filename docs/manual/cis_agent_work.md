@@ -171,7 +171,7 @@ $reconciliation | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath .\work-reco
 cis agent work disposition CIS-0001 WORK-090 --input .\work-reconcile.json --actor "Authorized controller" --reason "Reconcile the identified interrupted preparation at its full reserved cost" --format json
 ```
 
-When a run manifest exists, use [`cis agent recover`](cis_agent_recover.md) for an absent verified owned process. A terminal manifest with unfinalized accounting can also be reconciled through that operation; its appearance alone does not prove settlement. Recovery preserves a terminal run's recorded outcome, failure kind, and completion time, adds a reconciliation event, and settles its accounting. Live processes, unresolved launch identity, and other unsafe recovery conditions remain visible holds.
+When a run manifest exists, use [`cis agent recover`](cis_agent_recover.md) only when all relevant owned identities are resolved and verified stopped. A terminal manifest with unfinalized accounting can also be reconciled through that operation; its appearance alone does not prove settlement. [`cis agent cancel`](cis_agent_cancel.md) can stop independently verified live owned processes even while another identity remains unresolved; unverifiable processes stay untargeted. Partial cleanup returns non-success and retains the reservation and conflicting-work hold. Once settlement is safe, recovery preserves a terminal run's recorded outcome, failure kind, and completion time, adds a reconciliation event, and settles its accounting once. Live processes, unresolved launch identity, and other unsafe recovery conditions remain visible holds.
 
 ## Output and exit codes
 

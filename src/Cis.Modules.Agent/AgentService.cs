@@ -918,17 +918,22 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         var view = ReadRun(context, runId, diagnostics); if (view is null) return New(context, "not-found", diagnostics: diagnostics);
         if (diagnostics.Count > 0) return New(context, "blocked", run: view, diagnostics: diagnostics);
         var accountingDiagnostics = new List<string>();
-        var owned = RetainedOwnedProcesses(context, view, diagnostics, accountingDiagnostics);
+        var unresolved = new List<string>();
+        var owned = RetainedOwnedProcesses(context, view, unresolved, accountingDiagnostics);
         var terminalCleanup = CisAgentRunStates.IsTerminal(view.Manifest.Status);
-        if (owned.Processes.Length == 0) diagnostics.Add("ERROR: The run has no complete recorded owned-process identity to cancel safely.");
-        // Validate the entire retained set before stopping any process. A reused PID
-        // proves the original process stopped; it never authorizes killing its new owner.
-        foreach (var identity in owned.Processes)
+        if (owned.CancellationCandidates.Length == 0) diagnostics.Add("ERROR: The run has no independently supported complete owned-process identity within the cancellation bound.");
+        // Uncertainty elsewhere prevents settlement, not independently verified
+        // cleanup. A reused PID never authorizes stopping its new owner.
+        foreach (var identity in owned.CancellationCandidates)
             if (!OwnedProcessStopped(identity.Id, identity.Started) && !ProcessIdentityMatches(identity.Id, identity.Started))
-                diagnostics.Add("ERROR: A recorded process identity cannot be verified; cancellation retains the accounting hold.");
-        var live = owned.Processes.Where(item => ProcessIdentityMatches(item.Id, item.Started)).ToArray();
+                unresolved.Add("ERROR: A recorded process identity cannot be verified; cancellation retains the accounting hold.");
+        var live = owned.CancellationCandidates.Where(item => ProcessIdentityMatches(item.Id, item.Started)).ToArray();
         if (terminalCleanup && (view.Manifest.Work is null || live.Length == 0)) diagnostics.Add("ERROR: The run is already terminal with no verified live owned process to cancel.");
-        if (diagnostics.Count > 0) return New(context, "blocked", run: view, diagnostics: diagnostics);
+        if (diagnostics.Count > 0)
+        {
+            diagnostics.AddRange(unresolved); diagnostics.AddRange(accountingDiagnostics);
+            return New(context, "blocked", run: view, diagnostics: diagnostics);
+        }
         if (!terminalCleanup)
         {
             var cancelling = view.Manifest with { Status = CisAgentRunStates.Cancelling, UpdatedAtUtc = UtcNow(), Actor = actor.Trim() };
@@ -953,16 +958,33 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
                 if (!OwnedProcessStopped(identity.Id, identity.Started)) diagnostics.Add("ERROR: Owned process could not be cancelled safely: " + Limit(exception.Message));
             }
         }
-        var latest = WithRunEvidenceLock(context, runId, () => ReadRun(context, runId, diagnostics)) ?? view;
+        var latestReadDiagnostics = new List<string>();
+        var latest = WithRunEvidenceLock(context, runId, () => ReadRun(context, runId, latestReadDiagnostics)) ?? view;
+        diagnostics.AddRange(latestReadDiagnostics);
         var finalOwned = RetainedOwnedProcesses(context, latest, diagnostics, accountingDiagnostics);
         VerifyOwnedProcessesStopped(finalOwned.Processes, diagnostics);
+        diagnostics.AddRange(unresolved.Distinct(StringComparer.Ordinal));
         diagnostics.AddRange(accountingDiagnostics.Distinct(StringComparer.Ordinal));
         if (diagnostics.Count > 0)
         {
             if (view.Manifest.Work is { } uncertainWork && owned.Accounting is not null)
                 WorkDiagnostics(_workLedger.MarkRecoveryUncertain(context, uncertainWork,
                     "Cancellation has not proven every retained owned identity stopped. Its reservation remains held."), diagnostics);
-            return New(context, "cancellation-partial", run: latest, diagnostics: diagnostics);
+            AgentRunView? partial = latest;
+            if (latestReadDiagnostics.Count == 0) partial = WithRunEvidenceLock(context, runId, () =>
+            {
+                var evidenceDiagnostics = new List<string>();
+                var current = ReadRun(context, runId, evidenceDiagnostics);
+                diagnostics.AddRange(evidenceDiagnostics);
+                // Never replace failed evidence with newly trusted hashes. Both
+                // post-cleanup snapshots must validate before recording provenance.
+                if (current is null || evidenceDiagnostics.Count > 0) return current ?? latest;
+                AppendEvent(context, current.Manifest, new("cancellation-partial", Limit(actor.Trim() + ": " + reason
+                    + " Independently verified cleanup attempted; unresolved owned execution retains its reservation.")));
+                WriteArtifactInventory(context, runId);
+                return ReadRun(context, runId, diagnostics);
+            });
+            return New(context, "cancellation-partial", run: partial ?? latest, diagnostics: diagnostics, applied: true);
         }
         var cancelledRun = WithRunEvidenceLock(context, runId, () =>
         {

@@ -73,7 +73,7 @@ public sealed partial class AgentExecutionTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void WorkControl_CorrectionsA_IncompleteChangedIdentityPreventsCancellationBeforeAnyProcessIsKilled(bool missingProcessId)
+    public void WorkControl_CorrectionsA_PartialCancellationStopsVerifiedProcessAndRetainsUnknownIdentity(bool missingProcessId)
     {
         using var repository = AgentRepository.Create();
         AdoptWorkControl(repository);
@@ -92,29 +92,133 @@ public sealed partial class AgentExecutionTests
             var service = WorkController(provider, clock);
             AllocateWorkFixture(repository, service, 120, 120);
             var terminal = RunWork(service, repository, "fake", 30);
+            var runId = terminal.Run!.Manifest.RunId;
+            if (!missingProcessId)
+            {
+                // An exact OS match remains unsupported by the PID-only journal
+                // entry. It must never confer ownership on this manifest pair.
+                var manifest = terminal.Run.Manifest with { ProcessStartedAtUtc = second.StartTime.ToUniversalTime().ToString("O") };
+                var runRoot = System.IO.Path.Combine(repository.Path, AgentService.RootPath, "runs", runId);
+                var manifestPath = System.IO.Path.Combine(runRoot, "manifest.json");
+                File.WriteAllText(manifestPath, JsonSerializer.Serialize(manifest, JsonOptions));
+                var inventoryPath = System.IO.Path.Combine(runRoot, "artifacts.json");
+                var inventory = JsonSerializer.Deserialize<AgentRunArtifact[]>(File.ReadAllText(inventoryPath), JsonOptions)!;
+                File.WriteAllText(inventoryPath, JsonSerializer.Serialize(inventory.Select(artifact => artifact.Path == "manifest.json"
+                    ? artifact with { Sha256 = Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(manifestPath))) }
+                    : artifact), JsonOptions));
+                Assert.Equal(second.Id, manifest.ProcessId);
+                Assert.InRange(Math.Abs((second.StartTime.ToUniversalTime()
+                    - DateTimeOffset.Parse(manifest.ProcessStartedAtUtc!).UtcDateTime).TotalSeconds), 0, 2);
+            }
+            terminal = service.Show(repository.Path, runId);
+            Assert.Empty(terminal.Diagnostics);
+            var expected = terminal.Run!.Manifest;
+            var expectedResult = terminal.Run.Result!.Status;
+            var before = service.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!;
+            void AssertOutcomePreserved(AgentRunView run)
+            {
+                Assert.Equal(expected.Status, run.Manifest.Status);
+                Assert.Equal(expected.FailureKind, run.Manifest.FailureKind);
+                Assert.Equal(expected.CompletedAtUtc, run.Manifest.CompletedAtUtc);
+                Assert.Equal(expectedResult, run.Result!.Status);
+            }
+            clock.Advance(1);
+            var other = new FakeProvider();
+            var fresh = WorkController(other, clock);
 
-            var cancelled = WorkController(new FakeProvider(), clock).Cancel(repository.Path, terminal.Run!.Manifest.RunId,
-                WorkActor, "All retained identities must be complete and verified before cancellation.");
+            var cancelled = fresh.Cancel(repository.Path, runId,
+                WorkActor, "Stop independently verified ownership while retaining unresolved identity and whole-execution accounting.");
 
             Assert.NotEqual(0, cancelled.ExitCode);
-            Assert.False(first.HasExited);
+            Assert.Contains(cancelled.Diagnostics, message => message.Contains("identit", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("unresolved", StringComparison.OrdinalIgnoreCase) || message.Contains("recover", StringComparison.OrdinalIgnoreCase));
+            Assert.True(first.HasExited, "CIS did not stop the independently verified owned process.");
             Assert.False(second.HasExited);
+            AssertOutcomePreserved(cancelled.Run!);
+            Assert.Contains(cancelled.Run!.Events, item => item.Kind == "cancellation-partial");
             var held = service.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!;
             Assert.Equal(30_000, held.Task!.ReservedMilliseconds);
+            Assert.Equal(before.Task!.ConsumedMilliseconds, held.Task.ConsumedMilliseconds);
+            Assert.Equal(before.Change.ConsumedMilliseconds, held.Change.ConsumedMilliseconds);
             Assert.False(Assert.Single(held.Executions).Finalized);
             Assert.NotNull(held.HoldReason);
-            first.Kill(entireProcessTree: true);
-            Assert.True(first.WaitForExit(5000));
+            Assert.NotEqual(0, RunWork(fresh, repository, "fake", 30).ExitCode);
+            Assert.Equal(0, other.ExecuteCalls);
 
-            var recovered = WorkController(new FakeProvider(), clock).Recover(repository.Path, terminal.Run.Manifest.RunId,
+            var recovered = fresh.Recover(repository.Path, runId,
                 WorkActor, "The known process stopped, but an incomplete retained identity remains unresolved.");
 
             Assert.NotEqual(0, recovered.ExitCode);
             Assert.False(second.HasExited);
+            AssertOutcomePreserved(recovered.Run!);
             var unresolved = service.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!;
             Assert.Equal(30_000, unresolved.Task!.ReservedMilliseconds);
             Assert.Equal(held.Task.ConsumedMilliseconds, unresolved.Task.ConsumedMilliseconds);
             Assert.False(Assert.Single(unresolved.Executions).Finalized);
+        }));
+    }
+
+    [Fact]
+    public void WorkControl_PartialCancellationDoesNotRehashEvidenceChangedAfterInitialValidation()
+    {
+        using var repository = AgentRepository.Create();
+        AdoptWorkControl(repository);
+        var clock = new WorkControlClock();
+        WithWorkProcess(first => WithWorkProcess(second =>
+        {
+            var provider = new WorkCallbackProvider(new FakeProvider(), executing: (_, emit, _) =>
+            {
+                emit(new("provider-event", "Independently verified owned process.", "work/process", ProcessId: first.Id,
+                    ProcessStartedAtUtc: first.StartTime.ToUniversalTime().ToString("O")));
+                emit(new("provider-event", "Another owned identity remains incomplete.", "work/process",
+                    ProcessStartedAtUtc: second.StartTime.ToUniversalTime().ToString("O")));
+            });
+            var service = WorkController(provider, clock);
+            AllocateWorkFixture(repository, service, 120, 120);
+            var terminal = RunWork(service, repository, "fake", 30);
+            var runId = terminal.Run!.Manifest.RunId;
+            Assert.Empty(service.Show(repository.Path, runId).Diagnostics);
+            var before = service.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!;
+            var runRoot = System.IO.Path.Combine(repository.Path, AgentService.RootPath, "runs", runId);
+            var resultPath = System.IO.Path.Combine(runRoot, "result.json");
+            var inventoryPath = System.IO.Path.Combine(runRoot, "artifacts.json");
+            var originalInventory = File.ReadAllBytes(inventoryPath);
+            var changed = 0;
+            var armed = false;
+            var fresh = new AgentService(new CisRepositoryContextResolver(), [new FakeProvider()], clock: () =>
+            {
+                if (armed && Interlocked.CompareExchange(ref changed, 1, 0) == 0)
+                    File.AppendAllText(resultPath, " ");
+                return clock.Read();
+            }, taskContracts: new MutableTaskContract());
+            armed = true;
+
+            var cancelled = fresh.Cancel(repository.Path, runId, WorkActor,
+                "Preserve the original evidence inventory if evidence changes after initial cancellation validation.");
+
+            Assert.Equal(1, changed);
+            Assert.NotEqual(0, cancelled.ExitCode);
+            Assert.True(first.HasExited);
+            Assert.False(second.HasExited);
+            Assert.Equal(originalInventory, File.ReadAllBytes(inventoryPath));
+            var held = service.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!;
+            Assert.Equal(before.AdoptionId, held.AdoptionId);
+            Assert.Equal(before.Task!.ConsumedMilliseconds, held.Task!.ConsumedMilliseconds);
+            Assert.Equal(30_000, held.Task.ReservedMilliseconds);
+            Assert.False(Assert.Single(held.Executions).Finalized);
+
+            var shown = service.Show(repository.Path, runId);
+            var recovered = fresh.Recover(repository.Path, runId, WorkActor,
+                "The stale evidence inventory remains unresolved after partial cleanup.");
+
+            Assert.Contains(shown.Diagnostics, message => message.Contains("artifact inventory", StringComparison.OrdinalIgnoreCase)
+                && message.Contains("result.json", StringComparison.Ordinal));
+            Assert.NotEqual(0, recovered.ExitCode);
+            Assert.Contains(recovered.Diagnostics, message => message.Contains("artifact inventory", StringComparison.OrdinalIgnoreCase)
+                && message.Contains("result.json", StringComparison.Ordinal));
+            Assert.False(second.HasExited);
+            Assert.Equal(originalInventory, File.ReadAllBytes(inventoryPath));
+            Assert.Equal(30_000, service.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!.Task!.ReservedMilliseconds);
         }));
     }
 

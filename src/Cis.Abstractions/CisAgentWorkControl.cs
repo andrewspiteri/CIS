@@ -14,6 +14,8 @@ public sealed record CisAgentWorkIdentity(string AuthorityRepositoryId, string C
 public sealed record CisAgentWorkReference(string AdoptionId, string AuthorityRepositoryId, string ChangeId,
     string TaskId, string OwnerTaskId, string ExecutionId, string LogicalAttemptId, string? ParentExecutionId);
 
+public sealed record CisAgentWorkPreparationOwner(string HostId, int ProcessId, string ProcessStartedAtUtc);
+
 public sealed record CisAgentWorkTaskAllocation(string TaskId, long Seconds, int Attempts,
     long RestorationSeconds = 0, bool Fixed = true, bool AllowRedistribution = false);
 
@@ -59,10 +61,14 @@ public sealed record CisAgentWorkExecution(string ExecutionId, string TaskId, st
 {
     public bool Finalized { get; init; }
     public bool LaunchIntent { get; init; }
+    public CisAgentWorkPreparationOwner? PreparationOwner { get; init; }
 }
 
 public sealed record CisAgentWorkCheckpointRecord(string LogicalAttemptId, string Actor, string RecordedAtUtc,
-    CisAgentWorkCheckpoint Checkpoint, long ActiveMilliseconds, long ReservedMilliseconds);
+    CisAgentWorkCheckpoint Checkpoint, long ActiveMilliseconds, long ReservedMilliseconds)
+{
+    public string? Origin { get; init; }
+}
 
 public sealed record CisAgentWorkView(string AuthorityRepositoryId, string ChangeId, string? TaskId,
     string? OwnerTaskId, string Revision, string AdoptionId, string Coverage, string RecoveryState,
@@ -74,6 +80,9 @@ public sealed record CisAgentWorkView(string AuthorityRepositoryId, string Chang
     public IReadOnlyList<string> AcceptedOutcomeReferences { get; init; } = [];
     public string? Hypothesis { get; init; }
     public string? ExpectedResult { get; init; }
+    public long? ReflectionWindowMilliseconds { get; init; }
+    public long LastControllerReflectionMilliseconds { get; init; }
+    public bool ReflectionDue { get; init; }
 }
 
 public sealed record CisAgentWorkResult(string Status, CisAgentWorkView? Work, IReadOnlyList<string> Errors, bool Applied)

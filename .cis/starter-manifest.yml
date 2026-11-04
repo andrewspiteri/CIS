@@ -2140,7 +2140,7 @@ managed_artifacts:
   path: .github/skills/cis-agent-execution/SKILL.md
   definition: guidance.skill.agent-execution
   template_version: 1
-  applied_hash: sha256:240f3cc81b4447a185861de33b06eb66febf54551ef3241f97ea48e0b939a1b5
+  applied_hash: sha256:6c7218ecd5a85c57a23b1fdf05ceaa75a0cf2451d40dbfe8d91f7866dd19c983
   ownership: human
 - id: guidance.skill.ai-model-qualification
   path: .github/skills/cis-ai-model-qualification/SKILL.md

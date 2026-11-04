@@ -21,8 +21,8 @@ public sealed partial class AgentService
             if (diagnostics.Count > 0 || identities.Any(identity => identity is null)) return WorkFailure(diagnostics);
             var canonical = identities.Select(identity => identity!).ToArray();
             request = request with { Tasks = request.Tasks.Select((task, index) => task with { TaskId = canonical[index].TaskId }).ToArray() };
-            return _workLedger.Allocate(context, changeId.ToUpperInvariant(), request, canonical, actor, reason,
-                ReadRunManifests(context).Any(run => run.Work is not null));
+            return CurrentWorkView(context, _workLedger.Allocate(context, changeId.ToUpperInvariant(), request, canonical, actor, reason,
+                ReadRunManifests(context).Any(run => run.Work is not null)), changeId.ToUpperInvariant(), null);
         }
         catch (Exception error) when (WorkException(error)) { return WorkFailure([error.Message]); }
     }
@@ -32,7 +32,7 @@ public sealed partial class AgentService
         var context = Resolve(repositoryPath, out var diagnostics);
         if (context is null) return WorkFailure(diagnostics);
         if (!WorkId(changeId) || taskId is not null && !WorkId(taskId)) return WorkFailure(["Work identities must be canonical change/task identifiers."]);
-        return _workLedger.Read(context, changeId.ToUpperInvariant(), taskId?.ToUpperInvariant());
+        return ReadCurrentWork(context, changeId.ToUpperInvariant(), taskId?.ToUpperInvariant());
     }
 
     public CisAgentWorkResult RecordWorkProgress(string repositoryPath, string changeId, string taskId, string inputPath, string actor)
@@ -43,7 +43,8 @@ public sealed partial class AgentService
         {
             var identity = WorkIdentity(context, changeId, taskId, diagnostics, accountingOnly: true);
             return identity is null || diagnostics.Count > 0 ? WorkFailure(diagnostics)
-                : _workLedger.Progress(context, identity, ReadWorkInput<CisAgentWorkProgressRequest>(context, inputPath), actor);
+                : CurrentWorkView(context, _workLedger.Progress(context, identity, ReadWorkInput<CisAgentWorkProgressRequest>(context, inputPath), actor),
+                    identity.ChangeId, identity.TaskId);
         }
         catch (Exception error) when (WorkException(error)) { return WorkFailure([error.Message]); }
     }
@@ -62,8 +63,18 @@ public sealed partial class AgentService
                     ? new CisAgentWorkIdentity(context.RepositoryId, changeId.ToUpperInvariant(), taskId.ToUpperInvariant(), [], [])
                     : throw new InvalidDataException("Reconciliation requires canonical change/task identifiers.")
                 : WorkIdentity(context, changeId, taskId, diagnostics, accountingOnly: true);
+            CisAgentWorkPreparationOwner? verifiedPreparationOwner = null;
+            var preparationStopped = false;
+            if (identity is not null && request.Kind == "reconcile" && request.ExecutionId is not null)
+            {
+                var execution = _workLedger.Read(context, identity.ChangeId, identity.TaskId).Work?.Executions
+                    .SingleOrDefault(item => item.ExecutionId == request.ExecutionId);
+                verifiedPreparationOwner = execution?.PreparationOwner;
+                preparationStopped = PreparationOwnerStopped(verifiedPreparationOwner);
+            }
             return identity is null || diagnostics.Count > 0 ? WorkFailure(diagnostics)
-                : _workLedger.Disposition(context, identity, request, actor, reason);
+                : CurrentWorkView(context, _workLedger.Disposition(context, identity, request, actor, reason, verifiedPreparationOwner, preparationStopped),
+                    identity.ChangeId, identity.TaskId);
         }
         catch (Exception error) when (WorkException(error)) { return WorkFailure([error.Message]); }
     }
@@ -149,7 +160,8 @@ public sealed partial class AgentService
             if (!WorkRequired(context)) return null;
             var identity = WorkIdentity(context, changeId, taskId, diagnostics);
             if (identity is null || diagnostics.Count > 0) return null;
-            var admission = _workLedger.Admit(context, identity, executionId, timeoutSeconds, RuntimeCeiling(context), parentExecutionId, logicalAttemptId);
+            var admission = _workLedger.Admit(context, identity, executionId, timeoutSeconds, RuntimeCeiling(context), parentExecutionId, logicalAttemptId,
+                CapturePreparationOwner());
             admissionView = admission.Result.Work;
             if (!admission.Admitted) { WorkDiagnostics(admission.Result, diagnostics); return null; }
             return new(this, context, admission.Reference!, admission.TimeoutSeconds, diagnostics);
@@ -185,13 +197,95 @@ public sealed partial class AgentService
         if (result.Errors.Count == 0) diagnostics.Add("ERROR: Work control: " + (result.Work?.HoldReason ?? result.Work?.NextAction ?? "An authorized work allocation is required before this direct task can launch."));
     }
 
+    private static CisAgentWorkPreparationOwner CapturePreparationOwner()
+    {
+        try
+        {
+            using var process = System.Diagnostics.Process.GetCurrentProcess();
+            return new(Environment.MachineName, process.Id, process.StartTime.ToUniversalTime().ToString("O"));
+        }
+        catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception)
+        { throw new InvalidDataException("The preparing controller's lifetime ownership could not be verified; no provider may start.", error); }
+    }
+
+    private static bool PreparationOwnerStopped(CisAgentWorkPreparationOwner? owner)
+        => owner is not null && owner.HostId.Equals(Environment.MachineName, StringComparison.OrdinalIgnoreCase)
+            && OwnedProcessStopped(owner.ProcessId, owner.ProcessStartedAtUtc);
+
     private CisAgentWorkView? WorkView(CisRepositoryContext context, AgentRunManifest? manifest)
-        => manifest?.Work is { } reference ? _workLedger.Read(context, reference.ChangeId, reference.TaskId).Work : null;
+        => manifest?.Work is { } reference ? ReadCurrentWork(context, reference.ChangeId, reference.TaskId).Work : null;
+
+    private CisAgentWorkResult ReadCurrentWork(CisRepositoryContext context, string changeId, string? taskId)
+    {
+        try { return _workLedger.Read(context, changeId, taskId, RuntimeCeiling(context)); }
+        catch (Exception error) when (WorkException(error))
+        {
+            var retained = _workLedger.Read(context, changeId, taskId);
+            var reason = "The current reflection window cannot be verified from the provider profile: " + error.Message;
+            return retained with
+            {
+                Status = "held",
+                Errors = retained.Errors.Append(reason).ToArray(),
+                Work = retained.Work is null ? null : retained.Work with
+                { ReflectionWindowMilliseconds = null, HoldReason = reason, NextAction = "Repair the provider profile before further direct execution; retained accounting remains available." }
+            };
+        }
+    }
+
+    private CisAgentWorkResult CurrentWorkView(CisRepositoryContext context, CisAgentWorkResult result, string changeId, string? taskId)
+    {
+        if (result.Work is null) return result;
+        var current = ReadCurrentWork(context, changeId, taskId).Work ?? result.Work;
+        if (result.Status == "held" && result.Work.HoldReason is not null)
+            current = current with { HoldReason = result.Work.HoldReason, NextAction = result.Work.NextAction };
+        return result with { Work = current };
+    }
+
+    private (CisAgentWorkExecution? Accounting, (int Id, string? Started)[] Processes) RetainedOwnedProcesses(
+        CisRepositoryContext context, AgentRunView view, List<string> ownershipDiagnostics, List<string> accountingDiagnostics)
+    {
+        var events = view.Events.Where(item => item.Attempt == view.Manifest.Attempt
+            && (item.ProcessId is not null || item.ProcessStartedAtUtc is not null)).ToArray();
+        var recorded = events.Where(item => item.ProcessId is not null)
+            .Select(item => (Id: item.ProcessId!.Value, Started: item.ProcessStartedAtUtc)).ToList();
+        if (view.Manifest.ProcessId is { } manifestProcess) recorded.Add((manifestProcess, view.Manifest.ProcessStartedAtUtc));
+        CisAgentWorkExecution? execution = null;
+        if (view.Manifest.Work is { } reference)
+        {
+            var accounting = _workLedger.Read(context, reference.ChangeId, reference.TaskId);
+            if (accounting.ExitCode != 0) WorkDiagnostics(accounting, accountingDiagnostics);
+            execution = accounting.Work?.Executions.SingleOrDefault(item => item.ExecutionId == reference.ExecutionId);
+            if (execution is null) accountingDiagnostics.Add("ERROR: The recorded work reservation is unavailable; restore its accounting before settlement.");
+            if (execution?.ProcessId is { } ledgerProcess) recorded.Add((ledgerProcess, execution.ProcessStartedAtUtc));
+        }
+        var identities = recorded.Where(item => item.Started is not null).Distinct().Take(33).ToArray();
+        // A PID-only event can inherit the preceding process's timestamp in the
+        // manifest. Only a complete event or verified accounting identity can fill it.
+        var completeEvents = events.Where(item => item.ProcessId is not null && item.ProcessStartedAtUtc is not null).ToArray();
+        var completeEventIds = completeEvents.Select(item => item.ProcessId!.Value).ToHashSet();
+        var incomplete = events.Any(item => item.ProcessId is null
+            || item.ProcessStartedAtUtc is null && !completeEventIds.Contains(item.ProcessId.Value) && execution?.ProcessId != item.ProcessId);
+        if (events.Length > 0 && view.Manifest.ProcessId is { } manifestId && view.Manifest.ProcessStartedAtUtc is { } manifestStarted
+            && !completeEvents.Any(item => item.ProcessId == manifestId && item.ProcessStartedAtUtc == manifestStarted)
+            && !(execution?.ProcessId == manifestId && execution.ProcessStartedAtUtc == manifestStarted))
+            incomplete = true;
+        if (identities.Length > 32 || incomplete
+            || recorded.Any(item => item.Started is null && !identities.Any(known => known.Id == item.Id))
+            || identities.Any(item => item.Id <= 0 || !DateTimeOffset.TryParse(item.Started, out _)))
+            ownershipDiagnostics.Add("ERROR: Recorded owned-process identities are incomplete or exceed the bounded recovery limit; retain reservations and perform owned-process diagnosis.");
+        return (execution, identities);
+    }
+
+    private static void VerifyOwnedProcessesStopped(IEnumerable<(int Id, string? Started)> processes, List<string> diagnostics)
+    {
+        if (processes.Any(item => !OwnedProcessStopped(item.Id, item.Started)))
+            diagnostics.Add("ERROR: A recorded owned process is still active or cannot be proven stopped; its reservation remains held.");
+    }
 
     private AgentResult CompleteWorkResult(CisRepositoryContext context, AgentResult result, WorkExecutionScope? work)
     {
         work?.Dispose();
-        return work is null ? result : result with { Work = _workLedger.Read(context, work.Reference.ChangeId, work.Reference.TaskId).Work };
+        return work is null ? result : result with { Work = ReadCurrentWork(context, work.Reference.ChangeId, work.Reference.TaskId).Work };
     }
 
     private static bool IsDirectWorkRun(AgentRunManifest manifest, AgentTaskEnvelope envelope)

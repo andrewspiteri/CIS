@@ -44,7 +44,7 @@ The first allocation supplies:
 | --- | --- |
 | `changeSeconds`, `changeAttempts` | Authorized containing-change allowance. |
 | `restorationSeconds` | Capacity retained for necessary restoration. |
-| `tasks` | Existing task identities and their `seconds`, `attempts`, and optional `restorationSeconds`. |
+| `tasks` | Existing task identities and their `seconds`, `attempts`, and `restorationSeconds`. The reserve defaults to zero only when that does not reduce an existing reserve. |
 | `tasks[].fixed` | A separately fixed task limit; defaults to `true`. |
 | `tasks[].allowRedistribution` | Whether remaining task allocation may be redistributed within delegated authority; defaults to `false`. |
 | `decisionReference` | Existing policy or controller allocation decision. |
@@ -54,6 +54,8 @@ The first allocation supplies:
 | `expectedRevision` | Omit on initial allocation; supply the current revision on updates. |
 
 Updates preserve consumption, reservations, restoration capacity, history, and fixed limits. Delegated redistribution must fit the unchanged outer allowance. The original allocation authority may grant an eligible new root task capacity from the change's unallocated time and logical attempts without altering existing fixed task caps. This does not depend on permission to redistribute another owner's allowance, and it does not clear that owner's holds. A new filename, task decomposition, provider, profile, or source fingerprint cannot create another allowance for the same containing work.
+
+An ordinary update cannot reduce a task's protected restoration reserve, even when `fixed` is `false` and `allowRedistribution` is `true`. Repeat the existing `restorationSeconds` when updating that task. A lower value, including an omitted field that defaults to zero while a nonzero reserve exists, is rejected with an actionable error. Transfer only unreserved capacity; task consumption, active reservations, and the containing-change reserve remain protected.
 
 This example is synthetic. Replace its values and decision references with the actual authorized allocation, existing task identity, and controller. It does not establish a production allowance.
 
@@ -94,9 +96,11 @@ Recovery uncertainty holds conflicting work for the affected accounting owner. O
 
 ### Record progress
 
-Record reflection at the first useful result, before broader work, and no later than a configured execution window of cumulative active work at a safe boundary. This is routine execution work, not another approval or reviewer call.
+Record reflection at the first useful result, before broader work, and within the adopted execution window of cumulative active work. The reviewed provider profile sets that window to 3,600 seconds; an applicable narrower window governs instead. CIS checks at the next safe admission boundary, rather than interrupting a healthy operation or starting a timer for each command. Once cumulative measured work since the last qualifying controller checkpoint reaches the window, another expensive run or resume returns a non-success hold directing the controller to `agent work progress`.
 
-One checkpoint records Outcome, Evidence, Approach, Decision, and the next bounded action. CIS supplies Cost from measured accounting; the checkpoint cannot overwrite consumption. Optional `hypothesis` and `expectedResult` identify the investigation. Set `closeAttempt` when that logical attempt has concluded. A `blockerKey` identifies a repeated blocker; `materialNewInformation` records the controller's judgment rather than asking a semantic classifier to infer progress.
+This is routine execution work, not another approval or reviewer call. A valid controller checkpoint can keep the same logical attempt open with `closeAttempt: false`; it does not transition the canonical task to `Blocked`. New run IDs, provider changes and resumed provider-attempt numbers do not reset the window or spent work. Automatic settlement summaries, disposition summaries, status reads and model success claims do not qualify as controller reflection. Existing controller records are reused only when their provenance and required content identify them unambiguously.
+
+One qualifying checkpoint comes through the controller progress operation and records Outcome, nonempty Evidence, Approach, Decision, and the next bounded action. CIS records its origin and measured Cost context; the checkpoint cannot overwrite consumption. Optional `hypothesis` and `expectedResult` identify the investigation. Set `closeAttempt` only when that logical attempt has concluded. A `blockerKey` identifies a repeated blocker; `materialNewInformation` records the controller's judgment rather than asking a semantic classifier to infer progress. Recording reflection permits continuation automatically when all other gates allow it; it does not clear repeated-blocker, allocation, recovery, permission or required-review holds.
 
 For example, read the current revision and write one input file:
 
@@ -147,9 +151,13 @@ Replace `RUN_ID` with the retained terminal run identity. Resume rechecks curren
 
 ### Reconcile interrupted preparation
 
-A reservation can outlive interrupted preparation before a run manifest exists. Inspect `work.executions` and identify its exact accounting execution. For a recorded never-launched reservation, after the 30-second grace period, use `reconcile` with that `executionId`, current revision, existing change/task identity, actor, and rationale. CIS conservatively charges at least the full reserved bound rather than assuming no preparation ran. Retiring or moving the task does not prevent reconciliation of its retained accounting identity. A recorded launch intent without a verified process identity remains held; this operation does not treat an unknown launch as never launched.
+A reservation can outlive interrupted preparation before a run manifest exists. Admission records the original preparing controller's host, process ID, and verified process start time. That execution ownership is separate from the short accounting transaction lock; CIS does not hold the accounting lock throughout preparation or provider execution.
 
-For example, replace the execution placeholder with the exact never-launched reservation identified by status:
+Inspect `work.executions` and identify the exact accounting execution. Reconciliation requires both the 30-second grace period and verifiable evidence that the original preparer stopped. Elapsed time or an absent provider PID alone is insufficient. While the original same-host process identity remains live, the reservation stays protected. An owner on another host, unreadable identity, or an older unresolved record without ownership metadata remains uncertain and held. Let the original invocation finish where possible; a long-lived host can leave an orphan conservatively held until its original process absence can be established. Do not fill in ownership metadata manually or establish a fresh baseline to release it.
+
+Once stopped preparation is established for a recorded never-launched reservation, use `reconcile` with that `executionId`, current revision, existing change/task identity, actor, and rationale. CIS rechecks its immutable ownership record before settlement and conservatively charges at least the full reserved bound rather than assuming no preparation ran. Normal preparation retains its measured cost through its observed end. A finalized reservation cannot subsequently launch a provider. Retiring or moving the task does not prevent reconciliation of its retained accounting identity. A recorded launch intent without a verified process identity remains held; this operation does not treat an unknown launch as never launched.
+
+For example, after stopped preparer ownership has been verified, replace the execution placeholder with the exact never-launched reservation identified by status:
 
 ```powershell
 $workStatus = cis agent work status CIS-0001 --task WORK-090 --format json | ConvertFrom-Json

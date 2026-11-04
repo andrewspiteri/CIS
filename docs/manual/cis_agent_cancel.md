@@ -11,12 +11,12 @@ cis:
 
 # `cis agent cancel`
 
-Cancel an active foreground run from another process.
+Stop retained owned execution from another controller, including an outstanding accounted execution whose latest recorded process has already exited.
 
 ```text
 cis agent cancel <run-id> --actor <identity> --reason <rationale> [--repo <path>] [--format <human|json|agent>]
 ```
 
-CIS kills a process tree only when both its process ID and start timestamp match the durable owned identity. A mismatch, missing identity, or terminal run fails closed. Cancellation appends actor, reason, timestamp, and terminal state.
+CIS first validates the bounded retained owned-process set from the run manifest, event journal, and accounting record. It kills a process tree only when its process ID, start timestamp and ownership can be verified through the existing cancellation rules. It stops every verified still-live owned process, including an earlier one when the latest manifest process has exited. A missing, incomplete, changed or unverifiable identity retains the appropriate hold; stopping only the latest process cannot prove the whole execution stopped.
 
-For an accounted direct task, cancellation preserves spent work and settles its reservation only when owned execution is safely stopped. An unknown or surviving process keeps recovery uncertainty visible. Cancellation does not replenish the containing change or task allowance, clear an engineering hold, or grant another implementation route. Inspect [`cis agent work status`](cis_agent_work.md) and the retained run before continuing.
+For an accounted direct task, cancellation preserves spent work and settles its reservation only after all relevant recorded owned execution is verified stopped. Any unknown or surviving process retains recovery uncertainty and reserved capacity, so conflicting work stays held. Cancellation appends actor, rationale and lifecycle evidence. A previously recorded terminal execution outcome remains distinct from accounting cleanup; repeated settlement does not charge or release capacity twice. Cancellation does not replenish the containing change or task allowance, clear an engineering hold, or grant another implementation route. Inspect [`cis agent work status`](cis_agent_work.md) and the retained run before continuing.

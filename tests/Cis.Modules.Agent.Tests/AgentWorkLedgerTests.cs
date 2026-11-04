@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using Cis.Abstractions;
 using Cis.Modules.Agent;
 
@@ -120,15 +121,27 @@ public sealed class AgentWorkLedgerTests
     [Fact]
     public void WorkLedger_NeverLaunchedReconciliationChargesConservativelyAndCannotReleaseALaunchedIntent()
     {
-        using var f = new Fixture(); var task = f.Identity("WORK-A");
-        var allocation = new CisAgentWorkAllocationRequest(180, 5, 0, [new(task.TaskId, 120, 5)],
+        using var f = new Fixture(); var task = f.Identity("WORK-A"); var historicalTask = f.Identity("WORK-HISTORICAL");
+        var allocation = new CisAgentWorkAllocationRequest(180, 5, 0, [new(task.TaskId, 120, 5), new(historicalTask.TaskId, 60, 5)],
             "approved fixture allocation", "fixture storage ceiling", AcknowledgeHistoricalUnknown: true);
-        Assert.Equal(0, f.Ledger.Allocate(f.Context, task.ChangeId, allocation, [task], "Controller", "Fixture baseline.").ExitCode);
-        var reserved = f.Ledger.Admit(f.Context, task, "preparing/1", 60, 3600);
+        Assert.Equal(0, f.Ledger.Allocate(f.Context, task.ChangeId, allocation, [task, historicalTask], "Controller", "Fixture baseline.").ExitCode);
+        var historical = f.Ledger.Admit(f.Context, historicalTask, "historical-preparing/1", 30, 3600);
+        Assert.True(historical.Admitted);
+        var preparationOwner = new CisAgentWorkPreparationOwner("fixture-host", 123, f.Time.ToString("O"));
+        var reserved = f.Ledger.Admit(f.Context, task, "preparing/1", 60, 3600, preparationOwner: preparationOwner);
         var early = new CisAgentWorkDispositionRequest("reconcile", reserved.Result.Work!.Revision) { ExecutionId = reserved.Reference!.ExecutionId };
         Assert.NotEqual(0, f.Ledger.Disposition(f.Context, task, early, "Controller", "Wait for the preparation grace period.").ExitCode);
         f.Time = f.Time.AddSeconds(31);
-        var reconciled = f.Ledger.Disposition(f.Context, task, early, "Controller", "Reconcile the orphaned never-launched preparation.");
+        var historicalState = f.Ledger.Read(f.Context, historicalTask.ChangeId, historicalTask.TaskId).Work!;
+        var unknown = f.Ledger.Disposition(f.Context, historicalTask,
+            new("reconcile", historicalState.Revision) { ExecutionId = historical.Reference!.ExecutionId }, "Controller", "Missing historical ownership does not prove stopped work.", preparationOwner, true);
+        Assert.NotEqual(0, unknown.ExitCode);
+        Assert.Equal("uncertain", unknown.Work!.RecoveryState);
+        Assert.Equal(30_000, unknown.Work.Task!.ReservedMilliseconds);
+        var stillLive = f.Ledger.Disposition(f.Context, task, early, "Controller", "A live preparer retains its reservation.", preparationOwner, false);
+        Assert.NotEqual(0, stillLive.ExitCode);
+        Assert.Equal(60_000, stillLive.Work!.Task!.ReservedMilliseconds);
+        var reconciled = f.Ledger.Disposition(f.Context, task, early, "Controller", "Reconcile the orphaned never-launched preparation.", preparationOwner, true);
         Assert.Equal(0, reconciled.ExitCode);
         Assert.Equal(60_000, reconciled.Work!.Task!.ConsumedMilliseconds);
         Assert.Equal(0, reconciled.Work.Task.ReservedMilliseconds);
@@ -145,6 +158,137 @@ public sealed class AgentWorkLedgerTests
         Assert.NotEqual(0, held.ExitCode);
         Assert.Equal(30_000, held.Work!.Task!.ReservedMilliseconds);
         Assert.False(held.Work.Executions.Single(execution => execution.ExecutionId == launched.Reference.ExecutionId).Finalized);
+    }
+
+    [Fact]
+    public void WorkLedger_DelegatedTransfersPreserveProtectedRestorationAlongsideMeasuredAndReservedWork()
+    {
+        using var f = new Fixture(); var first = f.Identity("WORK-A"); var sibling = f.Identity("WORK-B");
+        var initial = new CisAgentWorkAllocationRequest(240, 10, 30,
+            [new(first.TaskId, 120, 5, 30, false, true), new(sibling.TaskId, 60, 3, 10, false, true)],
+            "approved fixture allocation", "fixture storage ceiling", AcknowledgeHistoricalUnknown: true)
+        { Controllers = ["Delegate"] };
+        Assert.Equal(0, f.Ledger.Allocate(f.Context, first.ChangeId, initial, [first, sibling], "Allocator", "Approve protected restoration and transferable capacity.").ExitCode);
+        var measured = f.Ledger.Admit(f.Context, first, "measured/1", 30, 3600);
+        Assert.True(measured.Admitted);
+        f.Time = f.Time.AddSeconds(10);
+        Assert.Equal(0, f.Ledger.Settle(f.Context, measured.Reference!, "Succeeded", true).ExitCode);
+        var active = f.Ledger.Admit(f.Context, first, "active/1", 30, 3600);
+        Assert.True(active.Admitted);
+
+        var transfer = initial with
+        {
+            Tasks = [new(first.TaskId, 100, 5, 30, false, true), new(sibling.TaskId, 80, 3, 10, false, true)],
+            ExpectedRevision = active.Result.Work!.Revision
+        };
+        var transferred = f.Ledger.Allocate(f.Context, first.ChangeId, transfer, [first, sibling], "Delegate", "Transfer only unused capacity to the sibling task.");
+        Assert.True(transferred.ExitCode == 0, string.Join("; ", transferred.Errors));
+        var protectedTask = f.Ledger.Read(f.Context, first.ChangeId, first.TaskId).Work!.Task!;
+        Assert.Equal(100_000, protectedTask.AllocatedMilliseconds);
+        Assert.Equal(10_000, protectedTask.ConsumedMilliseconds);
+        Assert.Equal(30_000, protectedTask.ReservedMilliseconds);
+        Assert.Equal(30_000, protectedTask.RestorationMilliseconds);
+        Assert.Equal(80_000, f.Ledger.Read(f.Context, sibling.ChangeId, sibling.TaskId).Work!.Task!.AllocatedMilliseconds);
+
+        var reduceReserve = transfer with
+        {
+            Tasks = [new(first.TaskId, 100, 5, 0, false, true), new(sibling.TaskId, 80, 3, 10, false, true)],
+            ExpectedRevision = transferred.Work!.Revision
+        };
+        var denied = f.Ledger.Allocate(f.Context, first.ChangeId, reduceReserve, [first, sibling], "Delegate", "Ordinary redistribution cannot turn protected restoration into execution capacity.");
+        Assert.NotEqual(0, denied.ExitCode);
+        Assert.Contains(denied.Errors, error => error.Contains("restoration", StringComparison.OrdinalIgnoreCase));
+        var unchanged = f.Ledger.Read(f.Context, first.ChangeId, first.TaskId).Work!;
+        Assert.Equal(transferred.Work.Revision, unchanged.Revision);
+        Assert.Equal(protectedTask, unchanged.Task);
+        f.Time = f.Time.AddSeconds(10);
+        Assert.Equal(0, f.Ledger.Settle(f.Context, active.Reference!, "Succeeded", true).ExitCode);
+        Assert.False(f.Ledger.Admit(f.Context, first, "cannot-spend-restoration/1", 60, 3600).Admitted);
+    }
+
+    [Fact]
+    public void WorkLedger_CumulativeExecutionWindowRequiresControllerReflectionAndKeepsLegacyProgressAndAttempt()
+    {
+        using var f = new Fixture(); var task = f.Identity("WORK-A");
+        var initial = new CisAgentWorkAllocationRequest(10_800, 5, 0, [new(task.TaskId, 10_800, 5)],
+            "approved fixture allocation", "fixture storage ceiling", AcknowledgeHistoricalUnknown: true);
+        Assert.Equal(0, f.Ledger.Allocate(f.Context, task.ChangeId, initial, [task], "Controller", "Approve a bounded multi-window logical attempt.").ExitCode);
+        string? logicalAttempt = null;
+        for (var index = 0; index < 2; index++)
+        {
+            var run = f.Ledger.Admit(f.Context, task, "window/" + index, 1800, 3600);
+            Assert.True(run.Admitted, string.Join("; ", run.Result.Errors));
+            logicalAttempt ??= run.Reference!.LogicalAttemptId;
+            Assert.Equal(logicalAttempt, run.Reference!.LogicalAttemptId);
+            f.Time = f.Time.AddSeconds(1800);
+            Assert.Equal(0, f.Ledger.Settle(f.Context, run.Reference, "Succeeded", true, "Retained bounded result.", ["retained result evidence"]).ExitCode);
+        }
+        var measured = f.Ledger.Read(f.Context, task.ChangeId, task.TaskId).Work!;
+        Assert.Equal(3_600_000, measured.Task!.ConsumedMilliseconds);
+        Assert.Equal(1, measured.Task.UsedAttempts);
+        Assert.All(measured.Checkpoints, checkpoint => Assert.Equal("CIS measured execution", checkpoint.Actor));
+        var disposition = f.Ledger.Disposition(f.Context, task,
+            new("continue", measured.Revision) { Evidence = ["retained result evidence"], NextAction = "Inspect the next bounded action." },
+            "Controller", "Recording a disposition does not assess outcome and approach.");
+        Assert.Equal(0, disposition.ExitCode);
+        RemoveCheckpointOrigins(f.Context.RepositoryPath);
+        var reopened = new AgentWorkLedger(() => f.Time);
+        var due = reopened.Admit(f.Context, task, "reflection-due/1", 30, 3600);
+        Assert.False(due.Admitted);
+        Assert.NotEqual(0, due.Result.ExitCode);
+        Assert.Contains("progress", due.Result.Work!.NextAction, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(logicalAttempt, due.Result.Work.LogicalAttemptId);
+        Assert.Equal(3_600_000, due.Result.Work.Task!.ConsumedMilliseconds);
+
+        var checkpoint = new CisAgentWorkCheckpoint("The retained result supports another bounded step.", ["retained result evidence"],
+            "Continue the measured approach within the unchanged scope.", "Continue after inspecting the measured cost and result.", "Run one short verification.");
+        var reflected = reopened.Progress(f.Context, task, new(checkpoint, due.Result.Work.Revision), "Controller");
+        Assert.Equal(0, reflected.ExitCode);
+        // Historical explicit controller Progress has no origin metadata. Its
+        // producer shape remains distinct from automatic/disposition summaries.
+        RemoveCheckpointOrigins(f.Context.RepositoryPath);
+        var continued = new AgentWorkLedger(() => f.Time).Admit(f.Context, task, "after-controller-reflection/1", 30, 3600);
+        Assert.True(continued.Admitted, string.Join("; ", continued.Result.Errors));
+        Assert.Equal(logicalAttempt, continued.Reference!.LogicalAttemptId);
+        Assert.Equal(1, continued.Result.Work!.Task!.UsedAttempts);
+        Assert.Equal(3_600_000, continued.Result.Work.Task.ConsumedMilliseconds);
+        f.Time = f.Time.AddSeconds(1);
+        var duringExecution = f.Ledger.Progress(f.Context, task, new(checkpoint, continued.Result.Work.Revision), "Controller");
+        Assert.Equal(0, duringExecution.ExitCode);
+        Assert.Equal(3_601_000, duringExecution.Work!.Checkpoints.Last().ActiveMilliseconds);
+        f.Time = f.Time.AddSeconds(29);
+        Assert.Equal(0, f.Ledger.Settle(f.Context, continued.Reference, "Succeeded", true).ExitCode);
+        var nextWindow = f.Ledger.Admit(f.Context, task, "continued-window/1", 30, 3600);
+        Assert.True(nextWindow.Admitted, string.Join("; ", nextWindow.Result.Errors));
+        f.Time = f.Time.AddSeconds(1);
+        Assert.Equal(0, f.Ledger.Settle(f.Context, nextWindow.Reference!, "Succeeded", true).ExitCode);
+        var narrowDue = f.Ledger.Admit(f.Context, task, "narrower-reflection-due/1", 30, 30);
+        Assert.False(narrowDue.Admitted);
+        Assert.True(narrowDue.Result.Work!.ReflectionDue);
+        var ledgerPath = Path.Combine(f.Context.RepositoryPath, CisAgentWorkPaths.Ledger);
+        var beforeStatus = File.ReadAllBytes(ledgerPath);
+        Assert.False(f.Ledger.Read(f.Context, task.ChangeId, task.TaskId).Work!.ReflectionDue);
+        var currentPolicyStatus = f.Ledger.Read(f.Context, task.ChangeId, task.TaskId, reflectionWindowSeconds: 30);
+        Assert.True(currentPolicyStatus.Work!.ReflectionDue);
+        Assert.Equal(30_000, currentPolicyStatus.Work.ReflectionWindowMilliseconds);
+        Assert.Equal(narrowDue.Result.Work.Revision, currentPolicyStatus.Work.Revision);
+        Assert.Equal(beforeStatus, File.ReadAllBytes(ledgerPath));
+        var held = f.Ledger.Disposition(f.Context, task, new("hold", f.Ledger.Read(f.Context, task.ChangeId, task.TaskId).Work!.Revision),
+            "Controller", "A separate engineering hold still requires its own resolution.");
+        Assert.Equal(0, held.ExitCode);
+        var moreReflection = f.Ledger.Progress(f.Context, task, new(checkpoint, held.Work!.Revision), "Controller");
+        Assert.Equal(0, moreReflection.ExitCode);
+        Assert.False(f.Ledger.Admit(f.Context, task, "separate-hold/1", 30, 3600).Admitted);
+    }
+
+    private static void RemoveCheckpointOrigins(string root)
+    {
+        var path = Path.Combine(root, CisAgentWorkPaths.Ledger);
+        var state = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+        foreach (var change in state["changes"]!.AsObject().Select(item => item.Value!.AsObject()))
+            foreach (var owner in change["owners"]!.AsObject().Select(item => item.Value!.AsObject()))
+                foreach (var checkpoint in owner["checkpoints"]!.AsArray()) checkpoint!.AsObject().Remove("origin");
+        File.WriteAllText(path, state.ToJsonString());
     }
 
     private sealed class Fixture : IDisposable

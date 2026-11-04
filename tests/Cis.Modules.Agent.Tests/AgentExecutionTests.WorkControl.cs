@@ -13,6 +13,284 @@ public sealed partial class AgentExecutionTests
 {
     private const string WorkActor = "Fixture controller";
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void WorkControl_CorrectionsA_CancelStopsEveryRecordedOwnedProcess(bool latestAlreadyExited)
+    {
+        using var repository = AgentRepository.Create();
+        AdoptWorkControl(repository);
+        var clock = new WorkControlClock();
+        WithWorkProcess(first => WithWorkProcess(second =>
+        {
+            var inner = new FakeProvider(duringExecution: _ => clock.Advance(1));
+            var provider = new WorkCallbackProvider(inner, executing: (_, emit, _) =>
+            {
+                emit(new("provider-event", "First owned process.", "work/process", ProcessId: first.Id,
+                    ProcessStartedAtUtc: first.StartTime.ToUniversalTime().ToString("O")));
+                emit(new("provider-event", "Replacement owned process.", "work/process", ProcessId: second.Id,
+                    ProcessStartedAtUtc: second.StartTime.ToUniversalTime().ToString("O")));
+            });
+            var service = WorkController(provider, clock);
+            AllocateWorkFixture(repository, service, 120, 120);
+            var terminal = RunWork(service, repository, "fake", 30);
+            Assert.Equal(CisAgentRunStates.Succeeded, terminal.Run!.Manifest.Status);
+            if (latestAlreadyExited)
+            {
+                second.Kill(entireProcessTree: true);
+                Assert.True(second.WaitForExit(5000));
+            }
+            Assert.False(first.HasExited);
+            var other = new FakeProvider();
+            var fresh = WorkController(other, clock);
+            Assert.NotEqual(0, RunWork(fresh, repository, "fake", 30).ExitCode);
+            Assert.Equal(0, other.ExecuteCalls);
+            Assert.Equal(30_000, fresh.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!.Task!.ReservedMilliseconds);
+
+            var cancelled = fresh.Cancel(repository.Path, terminal.Run.Manifest.RunId, WorkActor,
+                "Stop every verified owned process before releasing this reservation.");
+
+            Assert.True(cancelled.ExitCode == 0, string.Join("; ", cancelled.Diagnostics));
+            Assert.True(first.HasExited, "The earlier recorded owned process survived cancellation.");
+            Assert.True(second.HasExited, "The latest recorded owned process survived cancellation.");
+            Assert.Equal(terminal.Run.Manifest.Status, cancelled.Run!.Manifest.Status);
+            Assert.Equal(terminal.Run.Manifest.FailureKind, cancelled.Run.Manifest.FailureKind);
+            Assert.Equal(terminal.Run.Manifest.CompletedAtUtc, cancelled.Run.Manifest.CompletedAtUtc);
+            Assert.Equal(terminal.Run.Result!.Status, cancelled.Run!.Result!.Status);
+            var settled = fresh.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!;
+            Assert.Equal(0, settled.Task!.ReservedMilliseconds);
+            Assert.All(settled.Executions, execution => Assert.True(execution.Finalized));
+            Assert.Null(settled.HoldReason);
+            fresh.Cancel(repository.Path, terminal.Run.Manifest.RunId, WorkActor, "Repeated cancellation must not settle twice.");
+            fresh.Recover(repository.Path, terminal.Run.Manifest.RunId, WorkActor, "Repeated recovery must retain the settled cost.");
+            var repeated = fresh.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!;
+            Assert.Equal(settled.Task.ConsumedMilliseconds, repeated.Task!.ConsumedMilliseconds);
+            Assert.Equal(settled.Change.ConsumedMilliseconds, repeated.Change.ConsumedMilliseconds);
+            Assert.Equal(0, repeated.Task.ReservedMilliseconds);
+        }));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void WorkControl_CorrectionsA_IncompleteChangedIdentityPreventsCancellationBeforeAnyProcessIsKilled(bool missingProcessId)
+    {
+        using var repository = AgentRepository.Create();
+        AdoptWorkControl(repository);
+        var clock = new WorkControlClock();
+        WithWorkProcess(first => WithWorkProcess(second =>
+        {
+            var provider = new WorkCallbackProvider(new FakeProvider(), executing: (_, emit, _) =>
+            {
+                emit(new("provider-event", "Verified first owned process.", "work/process", ProcessId: first.Id,
+                    ProcessStartedAtUtc: first.StartTime.ToUniversalTime().ToString("O")));
+                emit(missingProcessId
+                    ? new("provider-event", "Changed process identity has no recorded PID.", "work/process",
+                        ProcessStartedAtUtc: second.StartTime.ToUniversalTime().ToString("O"))
+                    : new("provider-event", "Changed process identity has no recorded start time.", "work/process", ProcessId: second.Id));
+            });
+            var service = WorkController(provider, clock);
+            AllocateWorkFixture(repository, service, 120, 120);
+            var terminal = RunWork(service, repository, "fake", 30);
+
+            var cancelled = WorkController(new FakeProvider(), clock).Cancel(repository.Path, terminal.Run!.Manifest.RunId,
+                WorkActor, "All retained identities must be complete and verified before cancellation.");
+
+            Assert.NotEqual(0, cancelled.ExitCode);
+            Assert.False(first.HasExited);
+            Assert.False(second.HasExited);
+            var held = service.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!;
+            Assert.Equal(30_000, held.Task!.ReservedMilliseconds);
+            Assert.False(Assert.Single(held.Executions).Finalized);
+            Assert.NotNull(held.HoldReason);
+            first.Kill(entireProcessTree: true);
+            Assert.True(first.WaitForExit(5000));
+
+            var recovered = WorkController(new FakeProvider(), clock).Recover(repository.Path, terminal.Run.Manifest.RunId,
+                WorkActor, "The known process stopped, but an incomplete retained identity remains unresolved.");
+
+            Assert.NotEqual(0, recovered.ExitCode);
+            Assert.False(second.HasExited);
+            var unresolved = service.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!;
+            Assert.Equal(30_000, unresolved.Task!.ReservedMilliseconds);
+            Assert.Equal(held.Task.ConsumedMilliseconds, unresolved.Task.ConsumedMilliseconds);
+            Assert.False(Assert.Single(unresolved.Executions).Finalized);
+        }));
+    }
+
+    [Fact]
+    public void WorkControl_CorrectionsB_ActivePreparationCannotBeReconciledAfterTheGracePeriod()
+    {
+        using var repository = AgentRepository.Create();
+        AdoptWorkControl(repository);
+        var clock = new WorkControlClock();
+        var inner = new FakeProvider(duringExecution: _ => clock.Advance(2));
+        AgentService? service = null;
+        CisAgentWorkResult? competing = null;
+        CisAgentWorkView? protectedPreparation = null;
+        var provider = new WorkCallbackProvider(inner, diagnosing: () =>
+        {
+            clock.Advance(31);
+            var original = Assert.IsType<AgentService>(service);
+            var current = original.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!;
+            var execution = Assert.Single(current.Executions);
+            var input = WriteWorkInput(repository, "reconcile-active-preparation.json", new CisAgentWorkDispositionRequest("reconcile", current.Revision)
+            {
+                ExecutionId = execution.ExecutionId,
+                Evidence = ["execution:" + execution.ExecutionId],
+                NextAction = "Inspect the original invocation before deciding whether preparation stopped.",
+            });
+            competing = WorkController(new FakeProvider(), clock).DisposeWork(repository.Path, "CIS-0001", "WORK-090", input,
+                WorkActor, "Elapsed grace and an absent provider PID must not override the active preparer.");
+            protectedPreparation = original.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work;
+            clock.Advance(10);
+        });
+        service = WorkController(provider, clock);
+        AllocateWorkFixture(repository, service, 120, 120);
+
+        var completed = RunWork(service, repository, "fake", 60);
+
+        Assert.NotNull(competing);
+        Assert.NotEqual(0, competing.ExitCode);
+        Assert.Equal(60_000, protectedPreparation!.Task!.ReservedMilliseconds);
+        Assert.False(Assert.Single(protectedPreparation.Executions).Finalized);
+        Assert.True(completed.ExitCode == 0, string.Join("; ", completed.Diagnostics));
+        Assert.Equal(1, inner.ExecuteCalls);
+        var settled = service.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!;
+        Assert.Equal(43_000, settled.Task!.ConsumedMilliseconds);
+        Assert.Equal(0, settled.Task.ReservedMilliseconds);
+        Assert.True(Assert.Single(settled.Executions).Finalized);
+        service.Recover(repository.Path, completed.Run!.Manifest.RunId, WorkActor, "The known preparer already settled its complete cost.");
+        Assert.Equal(43_000, service.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!.Task!.ConsumedMilliseconds);
+    }
+
+    [Fact]
+    public void WorkControl_CorrectionsC_DelegatedJsonUpdatesPreserveTheTaskRestorationReserve()
+    {
+        using var repository = AgentRepository.Create();
+        AdoptWorkControl(repository, secondTask: true);
+        var clock = new WorkControlClock();
+        var provider = new FakeProvider(duringExecution: _ => clock.Advance(10));
+        var service = WorkController(provider, clock);
+        const string delegatedActor = "Fixture delegate";
+        var allocation = new CisAgentWorkAllocationRequest(240, 12, 30,
+            [new("WORK-090", 120, 10, 30, Fixed: false, AllowRedistribution: true),
+             new("WORK-091", 60, 2, 0, Fixed: false, AllowRedistribution: true)],
+            "fixture:delegated-transfer", "fixture:existing-storage-ceiling", AcknowledgeHistoricalUnknown: true)
+        { Controllers = [WorkActor, delegatedActor] };
+        var initial = WriteWorkInput(repository, "delegated-allocation.json", allocation);
+        Assert.Equal(0, service.AllocateWork(repository.Path, "CIS-0001", initial, WorkActor, "Synthetic delegated allocation.").ExitCode);
+        Assert.Equal(0, RunWork(service, repository, "fake", 30).ExitCode);
+        var prior = service.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!;
+        var transfer = allocation with
+        {
+            ExpectedRevision = prior.Revision,
+            Tasks = [new("WORK-090", 110, 10, 30, Fixed: false, AllowRedistribution: true),
+                     new("WORK-091", 70, 2, 0, Fixed: false, AllowRedistribution: true)],
+        };
+        var transferred = service.AllocateWork(repository.Path, "CIS-0001", WriteWorkInput(repository, "valid-transfer.json", transfer),
+            delegatedActor, "Transfer ten unreserved seconds while preserving both owners' protected capacity.");
+        Assert.True(transferred.ExitCode == 0, string.Join("; ", transferred.Errors));
+        var current = service.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!;
+        Assert.Equal(110_000, current.Task!.AllocatedMilliseconds);
+        Assert.Equal(70_000, service.WorkStatus(repository.Path, "CIS-0001", "WORK-091").Work!.Task!.AllocatedMilliseconds);
+        var omitted = WriteWorkInput(repository, "omitted-task-restoration.json", new
+        {
+            changeSeconds = 240,
+            changeAttempts = 12,
+            restorationSeconds = 30,
+            tasks = new[] { new { taskId = "WORK-090", seconds = 110, attempts = 10, @fixed = false, allowRedistribution = true } },
+            decisionReference = allocation.DecisionReference,
+            storageCeilingReference = allocation.StorageCeilingReference,
+            expectedRevision = current.Revision,
+        });
+
+        var omittedResult = service.AllocateWork(repository.Path, "CIS-0001", omitted, delegatedActor,
+            "Omitting an optional field must not spend protected task restoration.");
+
+        Assert.True(omittedResult.ExitCode == 0 || omittedResult.Errors.Count > 0);
+        current = service.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!;
+        Assert.Equal(30_000, current.Task!.RestorationMilliseconds);
+        var explicitZero = transfer with
+        {
+            ExpectedRevision = current.Revision,
+            Tasks = [new("WORK-090", 110, 10, 0, Fixed: false, AllowRedistribution: true)],
+        };
+        var zeroResult = service.AllocateWork(repository.Path, "CIS-0001", WriteWorkInput(repository, "zero-task-restoration.json", explicitZero),
+            delegatedActor, "Delegated redistribution does not authorize reducing a protected restoration reserve.");
+        Assert.True(zeroResult.ExitCode == 0 || zeroResult.Errors.Count > 0);
+        var preserved = service.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!;
+        Assert.Equal(30_000, preserved.Task!.RestorationMilliseconds);
+        Assert.Equal(prior.Task!.ConsumedMilliseconds, preserved.Task.ConsumedMilliseconds);
+        Assert.Equal(prior.Task.ReservedMilliseconds, preserved.Task.ReservedMilliseconds);
+        Assert.Equal(prior.Task.UsedAttempts, preserved.Task.UsedAttempts);
+        Assert.Equal(70_000, preserved.Task.RemainingMilliseconds);
+        Assert.NotEqual(0, RunWork(service, repository, "fake", 80).ExitCode);
+        Assert.Equal(1, provider.ExecuteCalls);
+    }
+
+    [Fact]
+    public void WorkControl_CorrectionsD_CumulativeReflectionUsesHeadlessProgressWithoutClosingTheAttempt()
+    {
+        using var repository = AgentRepository.Create();
+        AdoptWorkControl(repository, secondTask: true);
+        var clock = new WorkControlClock();
+        var stepSeconds = 1800;
+        var provider = new FakeProvider(duringExecution: _ => clock.Advance(stepSeconds));
+        var service = WorkController(provider, clock);
+        var allocation = WorkAllocation(10_800, 10_800, 0, ["WORK-090", "WORK-091"]) with
+        { Tasks = [new("WORK-090", 10_770, 10), new("WORK-091", 30, 2)] };
+        Assert.Equal(0, service.AllocateWork(repository.Path, "CIS-0001", WriteWorkInput(repository, "reflection-allocation.json", allocation),
+            WorkActor, "Synthetic allocation with a separate hard-limited owner.").ExitCode);
+        var first = RunWork(service, repository, "fake", 1800);
+        var second = RunWork(service, repository, "fake", 1800);
+        Assert.Equal(0, first.ExitCode);
+        Assert.Equal(0, second.ExitCode);
+        var spent = service.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!;
+        Assert.Equal(3_600_000, spent.Task!.ConsumedMilliseconds);
+        stepSeconds = 10;
+        var fresh = WorkController(provider, clock);
+
+        var due = RunWork(fresh, repository, "fake", 30);
+
+        Assert.NotEqual(0, due.ExitCode);
+        Assert.Equal(2, provider.ExecuteCalls);
+        Assert.Contains(due.Diagnostics, message => message.Contains("reflect", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("progress", StringComparison.OrdinalIgnoreCase));
+        var current = fresh.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!;
+        var checkpoint = new CisAgentWorkCheckpoint("Two bounded steps completed; the next verification remains in the accepted scope.",
+            ["run:" + first.Run!.Manifest.RunId, "run:" + second.Run!.Manifest.RunId],
+            "Continue through the existing approved module seam.", "continue", "Run one bounded verification step.")
+        { Hypothesis = "The existing seam satisfies the accepted task.", ExpectedResult = "A verified bounded continuation.", CloseAttempt = false };
+        using var application = new CisHostBuilder().AddModule(new RepositoryModule()).AddModule(new AgentModule())
+            .AddModule(new WorkControlFixtureModule(fresh, provider)).Build();
+        var progress = InvokeWorkCommand(application, "agent", "work", "progress", "CIS-0001", "WORK-090", "--input",
+            WriteWorkInput(repository, "due-reflection.json", new CisAgentWorkProgressRequest(checkpoint, current.Revision)),
+            "--actor", WorkActor, "--repo", repository.Path, "--format", "json");
+        Assert.Equal(0, progress.ExitCode);
+        var reflected = fresh.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!;
+        Assert.Equal(spent.Task.ConsumedMilliseconds, reflected.Task!.ConsumedMilliseconds);
+        Assert.Equal(spent.Task.UsedAttempts, reflected.Task.UsedAttempts);
+        Assert.Equal(spent.LogicalAttemptId, reflected.LogicalAttemptId);
+        Assert.Equal(0, RunWork(fresh, repository, "fake", 30).ExitCode);
+        Assert.Equal(3, provider.ExecuteCalls);
+        Assert.Equal(3_610_000, fresh.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!.Task!.ConsumedMilliseconds);
+        Assert.Contains("task_status: Ready", File.ReadAllText(System.IO.Path.Combine(repository.Path,
+            "docs/cis/changes/CIS-0001/agent-tasks/WORK-090.md")), StringComparison.Ordinal);
+
+        stepSeconds = 30;
+        var hardRun = RunWork(fresh, repository, "fake", 30, "WORK-091");
+        Assert.Equal(0, hardRun.ExitCode);
+        var hard = fresh.WorkStatus(repository.Path, "CIS-0001", "WORK-091").Work!;
+        var hardCheckpoint = checkpoint with { Evidence = ["run:" + hardRun.Run!.Manifest.RunId] };
+        var recorded = fresh.RecordWorkProgress(repository.Path, "CIS-0001", "WORK-091", WriteWorkInput(repository, "hard-reflection.json",
+            new CisAgentWorkProgressRequest(hardCheckpoint, hard.Revision)), WorkActor);
+        Assert.Equal(0, recorded.ExitCode);
+        Assert.NotEqual(0, RunWork(fresh, repository, "fake", 30, "WORK-091").ExitCode);
+        Assert.Equal(4, provider.ExecuteCalls);
+        Assert.Equal(30_000, fresh.WorkStatus(repository.Path, "CIS-0001", "WORK-091").Work!.Task!.ConsumedMilliseconds);
+    }
+
     [Fact]
     public void WorkControl_ConsumedAllowanceSurvivesFreshRunResumeAndProviderChange()
     {
@@ -324,34 +602,67 @@ public sealed partial class AgentExecutionTests
 
             var context = new CisRepositoryContextResolver().Resolve(repository.Path).Context!;
             var ledger = new AgentWorkLedger(clock.Read);
-            var admission = ledger.Admit(context, new(context.RepositoryId, "CIS-0001", "WORK-091", [],
-                ["docs/cis/changes/CIS-0001/agent-tasks/WORK-091.md"]), "fixture-premanifest-reservation", 30, 3600);
-            Assert.True(admission.Admitted, string.Join("; ", admission.Result.Errors));
-            var reference = Assert.IsType<CisAgentWorkReference>(admission.Reference);
-            Assert.False(admission.Result.Work!.Executions.Single().LaunchIntent);
-            clock.Advance(31);
-            var taskPath = System.IO.Path.Combine(repository.Path, "docs/cis/changes/CIS-0001/agent-tasks/WORK-091.md");
-            var retired = System.IO.Path.Combine(repository.Path, "docs/cis/changes/CIS-0001/agent-tasks/retired/WORK-091.md");
-            Directory.CreateDirectory(System.IO.Path.GetDirectoryName(retired)!);
-            File.Move(taskPath, retired);
-            var revision = service.WorkStatus(repository.Path, "CIS-0001", "WORK-091").Work!.Revision;
-            var input = WriteWorkInput(repository, "reconcile-reservation.json", new CisAgentWorkDispositionRequest("reconcile", revision)
+            WithWorkProcess(preparer =>
             {
-                ExecutionId = reference.ExecutionId,
-                Evidence = ["execution:" + reference.ExecutionId],
-                NextAction = "Retain the measured reservation and keep the retired task unavailable for execution.",
+                var owner = new CisAgentWorkPreparationOwner(Environment.MachineName, preparer.Id,
+                    preparer.StartTime.ToUniversalTime().ToString("O"));
+                var admission = ledger.Admit(context, new(context.RepositoryId, "CIS-0001", "WORK-091", [],
+                    ["docs/cis/changes/CIS-0001/agent-tasks/WORK-091.md"]), "fixture-premanifest-reservation", 30, 3600,
+                    preparationOwner: owner);
+                Assert.True(admission.Admitted, string.Join("; ", admission.Result.Errors));
+                var reference = Assert.IsType<CisAgentWorkReference>(admission.Reference);
+                Assert.False(admission.Result.Work!.Executions.Single().LaunchIntent);
+                preparer.Kill(entireProcessTree: true);
+                Assert.True(preparer.WaitForExit(5000));
+                clock.Advance(31);
+                var taskPath = System.IO.Path.Combine(repository.Path, "docs/cis/changes/CIS-0001/agent-tasks/WORK-091.md");
+                var retired = System.IO.Path.Combine(repository.Path, "docs/cis/changes/CIS-0001/agent-tasks/retired/WORK-091.md");
+                Directory.CreateDirectory(System.IO.Path.GetDirectoryName(retired)!);
+                File.Move(taskPath, retired);
+                var revision = service.WorkStatus(repository.Path, "CIS-0001", "WORK-091").Work!.Revision;
+                var input = WriteWorkInput(repository, "reconcile-reservation.json", new CisAgentWorkDispositionRequest("reconcile", revision)
+                {
+                    ExecutionId = reference.ExecutionId,
+                    Evidence = ["execution:" + reference.ExecutionId],
+                    NextAction = "Retain the measured reservation and keep the retired task unavailable for execution.",
+                });
+
+                var reconciled = service.DisposeWork(repository.Path, "CIS-0001", "WORK-091", input, WorkActor,
+                    "The verified preparer has stopped and never recorded launch intent; charge its abandoned reservation conservatively.");
+
+                Assert.True(reconciled.ExitCode == 0, string.Join("; ", reconciled.Errors));
+                Assert.Equal(0, reconciled.Work!.Task!.ReservedMilliseconds);
+                Assert.True(reconciled.Work.Task.ConsumedMilliseconds >= 30_000);
+                Assert.True(reconciled.Work.Executions.Single().Finalized);
+                Assert.False(File.Exists(taskPath));
+                Assert.NotEqual(0, ledger.MarkLaunchIntent(context, reference).ExitCode);
+                Assert.NotEqual(0, RunWork(service, repository, "fake", 30, "WORK-091").ExitCode);
             });
-
-            var reconciled = service.DisposeWork(repository.Path, "CIS-0001", "WORK-091", input, WorkActor,
-                "The old preparer never recorded launch intent and is no longer active after the recovery grace period.");
-
-            Assert.True(reconciled.ExitCode == 0, string.Join("; ", reconciled.Errors));
-            Assert.Equal(0, reconciled.Work!.Task!.ReservedMilliseconds);
-            Assert.True(reconciled.Work.Task.ConsumedMilliseconds >= 30_000);
-            Assert.True(reconciled.Work.Executions.Single().Finalized);
-            Assert.False(File.Exists(taskPath));
-            Assert.NotEqual(0, ledger.MarkLaunchIntent(context, reference).ExitCode);
-            Assert.NotEqual(0, RunWork(service, repository, "fake", 30, "WORK-091").ExitCode);
+            var legacy = ledger.Admit(context, new(context.RepositoryId, "CIS-0001", "WORK-090", [],
+                ["docs/cis/changes/CIS-0001/agent-tasks/WORK-090.md"]), "fixture-legacy-unowned-preparation", 30, 3600);
+            Assert.True(legacy.Admitted, string.Join("; ", legacy.Result.Errors));
+            var legacyReference = Assert.IsType<CisAgentWorkReference>(legacy.Reference);
+            clock.Advance(31);
+            var unknown = service.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!;
+            var legacyInput = WriteWorkInput(repository, "reconcile-unowned-preparation.json",
+                new CisAgentWorkDispositionRequest("reconcile", unknown.Revision)
+                {
+                    ExecutionId = legacyReference.ExecutionId,
+                    Evidence = ["execution:" + legacyReference.ExecutionId],
+                    NextAction = "Restore verifiable preparation ownership before reconciling historical uncertainty.",
+                });
+            var refused = service.DisposeWork(repository.Path, "CIS-0001", "WORK-090", legacyInput, WorkActor,
+                "A missing historical preparer identity is not proof that preparation stopped.");
+            Assert.NotEqual(0, refused.ExitCode);
+            var refusalMessages = refused.Errors.Concat(new[] { refused.Work?.HoldReason, refused.Work?.NextAction }
+                .Where(message => message is not null).Select(message => message!));
+            Assert.Contains(refusalMessages, error => error.Contains("prepar", StringComparison.OrdinalIgnoreCase)
+                || error.Contains("owner", StringComparison.OrdinalIgnoreCase) || error.Contains("uncertain", StringComparison.OrdinalIgnoreCase));
+            var retained = service.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!;
+            Assert.Equal(30_000, retained.Task!.ConsumedMilliseconds);
+            Assert.Equal(30_000, retained.Task.ReservedMilliseconds);
+            Assert.Null(retained.Executions.Single(execution => execution.ExecutionId == legacyReference.ExecutionId).PreparationOwner);
+            Assert.False(retained.Executions.Single(execution => execution.ExecutionId == legacyReference.ExecutionId).Finalized);
         }
         finally
         {

@@ -916,34 +916,71 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         var context = Resolve(repositoryPath, out var diagnostics); if (context is null) return New(null, "invalid-repository", diagnostics: diagnostics);
         if (string.IsNullOrWhiteSpace(actor) || string.IsNullOrWhiteSpace(reason)) diagnostics.Add("ERROR: Cancellation actor and reason are required.");
         var view = ReadRun(context, runId, diagnostics); if (view is null) return New(context, "not-found", diagnostics: diagnostics);
-        if (CisAgentRunStates.IsTerminal(view.Manifest.Status)
-            && !(view.Manifest.Work is not null && view.Manifest.ProcessId is { } live && ProcessIdentityMatches(live, view.Manifest.ProcessStartedAtUtc)))
-            diagnostics.Add("ERROR: The run is already terminal.");
-        if (view.Manifest.ProcessId is null || view.Manifest.ProcessStartedAtUtc is null) diagnostics.Add("ERROR: The run has no validated owned process identity.");
         if (diagnostics.Count > 0) return New(context, "blocked", run: view, diagnostics: diagnostics);
-        var cancelling = view.Manifest with { Status = CisAgentRunStates.Cancelling, UpdatedAtUtc = UtcNow(), Actor = actor.Trim() };
-        WriteManifest(context, cancelling); AppendEvent(context, cancelling, new("cancelling", Limit(reason)));
-        try
+        var accountingDiagnostics = new List<string>();
+        var owned = RetainedOwnedProcesses(context, view, diagnostics, accountingDiagnostics);
+        var terminalCleanup = CisAgentRunStates.IsTerminal(view.Manifest.Status);
+        if (owned.Processes.Length == 0) diagnostics.Add("ERROR: The run has no complete recorded owned-process identity to cancel safely.");
+        // Validate the entire retained set before stopping any process. A reused PID
+        // proves the original process stopped; it never authorizes killing its new owner.
+        foreach (var identity in owned.Processes)
+            if (!OwnedProcessStopped(identity.Id, identity.Started) && !ProcessIdentityMatches(identity.Id, identity.Started))
+                diagnostics.Add("ERROR: A recorded process identity cannot be verified; cancellation retains the accounting hold.");
+        var live = owned.Processes.Where(item => ProcessIdentityMatches(item.Id, item.Started)).ToArray();
+        if (terminalCleanup && (view.Manifest.Work is null || live.Length == 0)) diagnostics.Add("ERROR: The run is already terminal with no verified live owned process to cancel.");
+        if (diagnostics.Count > 0) return New(context, "blocked", run: view, diagnostics: diagnostics);
+        if (!terminalCleanup)
         {
-            using var process = Process.GetProcessById(view.Manifest.ProcessId!.Value); var recorded = DateTimeOffset.Parse(view.Manifest.ProcessStartedAtUtc!); var actual = process.StartTime.ToUniversalTime();
-            if (Math.Abs((actual - recorded).TotalSeconds) > 2) diagnostics.Add("ERROR: Process identity no longer matches the recorded start time; cancellation was refused.");
-            else { process.Kill(entireProcessTree: true); process.WaitForExit(5_000); }
+            var cancelling = view.Manifest with { Status = CisAgentRunStates.Cancelling, UpdatedAtUtc = UtcNow(), Actor = actor.Trim() };
+            WriteManifest(context, cancelling); AppendEvent(context, cancelling, new("cancelling", Limit(reason)));
         }
-        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
-        { diagnostics.Add("ERROR: Owned provider process could not be cancelled safely: " + Limit(exception.Message)); }
-        if (diagnostics.Count > 0) return New(context, "failed", run: view, diagnostics: diagnostics);
+        var cancellationWindow = Stopwatch.StartNew();
+        foreach (var identity in live)
+        {
+            try
+            {
+                using var process = Process.GetProcessById(identity.Id);
+                if (!ProcessIdentityMatches(identity.Id, identity.Started))
+                {
+                    if (!OwnedProcessStopped(identity.Id, identity.Started)) diagnostics.Add("ERROR: Owned process identity changed or became unreadable before cancellation.");
+                    continue;
+                }
+                process.Kill(entireProcessTree: true);
+                process.WaitForExit((int)Math.Max(0, 5_000 - cancellationWindow.ElapsedMilliseconds));
+            }
+            catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                if (!OwnedProcessStopped(identity.Id, identity.Started)) diagnostics.Add("ERROR: Owned process could not be cancelled safely: " + Limit(exception.Message));
+            }
+        }
+        var latest = WithRunEvidenceLock(context, runId, () => ReadRun(context, runId, diagnostics)) ?? view;
+        var finalOwned = RetainedOwnedProcesses(context, latest, diagnostics, accountingDiagnostics);
+        VerifyOwnedProcessesStopped(finalOwned.Processes, diagnostics);
+        diagnostics.AddRange(accountingDiagnostics.Distinct(StringComparer.Ordinal));
+        if (diagnostics.Count > 0)
+        {
+            if (view.Manifest.Work is { } uncertainWork && owned.Accounting is not null)
+                WorkDiagnostics(_workLedger.MarkRecoveryUncertain(context, uncertainWork,
+                    "Cancellation has not proven every retained owned identity stopped. Its reservation remains held."), diagnostics);
+            return New(context, "cancellation-partial", run: latest, diagnostics: diagnostics);
+        }
         var cancelledRun = WithRunEvidenceLock(context, runId, () =>
         {
             var current = ReadManifest(context, runId, []) ?? view.Manifest;
-            var manifest = current with { Status = CisAgentRunStates.Cancelled, FailureKind = "cancellation", UpdatedAtUtc = UtcNow(), CompletedAtUtc = UtcNow(), Actor = actor.Trim() };
-            WriteManifest(context, manifest); AppendEvent(context, manifest, new("cancelled", Limit(reason)));
+            if (terminalCleanup)
+                AppendEvent(context, current, new("owned-processes-cancelled", Limit(actor.Trim() + ": " + reason)));
+            else
+            {
+                var manifest = current with { Status = CisAgentRunStates.Cancelled, FailureKind = "cancellation", UpdatedAtUtc = UtcNow(), CompletedAtUtc = UtcNow(), Actor = actor.Trim() };
+                WriteManifest(context, manifest); AppendEvent(context, manifest, new("cancelled", Limit(reason)));
+            }
             WriteArtifactInventory(context, runId);
             return ReadRun(context, runId, diagnostics);
         });
         if (view.Manifest.Work is { } cancelledWork)
-            WorkDiagnostics(_workLedger.Settle(context, cancelledWork, CisAgentRunStates.Cancelled,
-                OwnedProcessStopped(view.Manifest.ProcessId!.Value, view.Manifest.ProcessStartedAtUtc),
-                "Owned process cancelled by " + actor.Trim(), [Relative(context.RepositoryPath, Path.Combine(RunPath(context, runId), "manifest.json"))]), diagnostics);
+            WorkDiagnostics(_workLedger.Settle(context, cancelledWork, terminalCleanup ? view.Manifest.Status : CisAgentRunStates.Cancelled, true,
+                "All recorded owned processes stopped by " + actor.Trim(), [Relative(context.RepositoryPath, Path.Combine(RunPath(context, runId), "manifest.json"))],
+                conservativeRecovery: terminalCleanup || owned.Accounting?.RecoveryReason is not null), diagnostics);
         return New(context, "cancelled", run: cancelledRun, diagnostics: diagnostics, applied: true);
     }
 
@@ -953,41 +990,26 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         if (string.IsNullOrWhiteSpace(actor) || string.IsNullOrWhiteSpace(reason)) diagnostics.Add("ERROR: Recovery actor and reason are required.");
         var view = ReadRun(context, runId, diagnostics); if (view is null) return New(context, "not-found", diagnostics: diagnostics);
         if (diagnostics.Count > 0) return New(context, "blocked", run: view, diagnostics: diagnostics);
-        CisAgentWorkExecution? accountingExecution = null;
-        var ownedProcessId = view.Manifest.ProcessId;
-        var ownedProcessStarted = view.Manifest.ProcessStartedAtUtc;
-        var recordedProcesses = view.Events.Where(item => item.Attempt == view.Manifest.Attempt && item.ProcessId is not null)
-            .Select(item => (Id: item.ProcessId!.Value, Started: item.ProcessStartedAtUtc)).ToList();
-        if (ownedProcessId is { } manifestProcess) recordedProcesses.Add((manifestProcess, ownedProcessStarted));
-        if (view.Manifest.Work is { } recoveryWork)
+        var accountingDiagnostics = new List<string>();
+        var owned = RetainedOwnedProcesses(context, view, diagnostics, accountingDiagnostics);
+        diagnostics.AddRange(accountingDiagnostics);
+        var accountingExecution = owned.Accounting;
+        if (view.Manifest.Work is { } recoveryWork && accountingExecution is not null)
         {
-            var accounting = _workLedger.Read(context, recoveryWork.ChangeId, recoveryWork.TaskId);
-            accountingExecution = accounting.Work?.Executions.SingleOrDefault(item => item.ExecutionId == recoveryWork.ExecutionId);
-            if (accounting.ExitCode != 0) WorkDiagnostics(accounting, diagnostics);
-            if (accountingExecution is null) diagnostics.Add("ERROR: The recorded work reservation is unavailable; restore its accounting before recovery.");
-            else
+            if (!accountingExecution.Finalized && owned.Processes.Length == 0 && accountingExecution.LaunchIntent)
             {
-                if (accountingExecution.ProcessId is { } recorded)
-                {
-                    recordedProcesses.Add((recorded, accountingExecution.ProcessStartedAtUtc));
-                }
-                if (!accountingExecution.Finalized && recordedProcesses.Count == 0 && accountingExecution.LaunchIntent)
-                {
-                    WorkDiagnostics(_workLedger.MarkRecoveryUncertain(context, recoveryWork,
-                        "Launch intent has no verified owned process identity. Startup grace or a terminal-looking manifest cannot prove stopped work; bounded diagnosis is required."), diagnostics);
-                    return New(context, "held", run: view, diagnostics: diagnostics);
-                }
+                WorkDiagnostics(_workLedger.MarkRecoveryUncertain(context, recoveryWork,
+                    "Launch intent has no verified owned process identity. Startup grace or a terminal-looking manifest cannot prove stopped work; bounded diagnosis is required."), diagnostics);
+                return New(context, "held", run: view, diagnostics: diagnostics);
             }
         }
         var unsettledAccounting = accountingExecution is { Finalized: false };
+        if (unsettledAccounting && !accountingExecution!.LaunchIntent && !PreparationOwnerStopped(accountingExecution.PreparationOwner))
+            diagnostics.Add("ERROR: The preparing controller is still live or its lifetime ownership cannot be proven stopped. Keep its reservation and finish or safely stop the original invocation before recovery.");
         if (CisAgentRunStates.IsTerminal(view.Manifest.Status) && !unsettledAccounting)
             diagnostics.Add("ERROR: Only an orphaned run with unsettled execution can be recovered as interrupted.");
-        var identities = recordedProcesses.Where(item => item.Started is not null).Distinct().Take(33).ToArray();
-        if (identities.Length > 32 || recordedProcesses.Any(item => item.Started is null && !identities.Any(known => known.Id == item.Id)))
-            diagnostics.Add("ERROR: Recorded process identities are incomplete or exceed the bounded recovery limit; retain reservations and perform owned-process diagnosis.");
-        if (identities.Any(item => !OwnedProcessStopped(item.Id, item.Started)))
-            diagnostics.Add("ERROR: A recorded provider process is still active or cannot be proven stopped; use bounded owned-process diagnosis or cancellation instead of releasing its reservation.");
-        if (recordedProcesses.Count == 0 && DateTimeOffset.TryParse(accountingExecution?.StartedAtUtc ?? view.Manifest.UpdatedAtUtc, out var updated)
+        VerifyOwnedProcessesStopped(owned.Processes, diagnostics);
+        if (owned.Processes.Length == 0 && DateTimeOffset.TryParse(accountingExecution?.StartedAtUtc ?? view.Manifest.UpdatedAtUtc, out var updated)
             && _clock().ToUniversalTime() - updated.ToUniversalTime() < TimeSpan.FromSeconds(30))
             diagnostics.Add("ERROR: The run is still inside the startup recovery grace period.");
         var lockPath = LockPath(context, view.Manifest.ChangeId, view.Manifest.TaskId, view.Manifest.TargetRepositoryId);

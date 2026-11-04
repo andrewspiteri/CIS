@@ -1780,10 +1780,10 @@ public sealed partial class AgentExecutionTests
     {
         if (OperatingSystem.IsWindows())
         {
-            var start = new ProcessStartInfo("cmd.exe");
-            start.ArgumentList.Add("/d"); start.ArgumentList.Add("/c");
-            start.ArgumentList.Add(writeFirst ? "echo ready & ping -n 20 127.0.0.1 >nul" : "ping -n 20 127.0.0.1 >nul");
-            return start;
+            var ping = System.IO.Path.Combine(Environment.SystemDirectory, "ping.exe");
+            var command = (writeFirst ? "echo ready & " : "") + $"\"{ping}\" -n 20 127.0.0.1 >nul";
+            return new ProcessStartInfo(System.IO.Path.Combine(Environment.SystemDirectory, "cmd.exe"))
+            { Arguments = $"/d /s /c \"{command}\"" };
         }
         var shell = new ProcessStartInfo("/bin/sh"); shell.ArgumentList.Add("-c"); shell.ArgumentList.Add(writeFirst ? "echo ready; sleep 20" : "sleep 20");
         return shell;
@@ -1824,7 +1824,8 @@ public sealed partial class AgentExecutionTests
         public string? LastAuthenticationMethod { get; private set; }
         public CisAgentProviderDescriptor Descriptor { get; } = new(id, "Fake", "test", true,
             ["fake-json"], [CisAgentRunModes.Plan, CisAgentRunModes.Implement, CisAgentRunModes.Review],
-            [CisAgentPermissions.ReadOnly, CisAgentPermissions.WorkspaceWrite], true, false, "Test provider") { SupportsExplicitCommands = explicitCommands };
+            [CisAgentPermissions.ReadOnly, CisAgentPermissions.WorkspaceWrite], true, false, "Test provider")
+        { SupportsExplicitCommands = explicitCommands };
         public CisAgentProviderDiagnosis Diagnose(string repositoryPath)
         {
             if (throwDiagnosis) throw new InvalidOperationException("diagnosis failed");

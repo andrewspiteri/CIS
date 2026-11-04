@@ -18,6 +18,7 @@ public sealed partial class AgentExecutionTests
         var task = new PlanWorkItem("WORK-090", "documentation", "low", null, null, "Native fixture", [], [], [], "Contract", "Native tests", "InProgress");
         var service = new AgentService(new CisRepositoryContextResolver(), [new FakeProvider(writeFile: true)], clock: Clock,
             taskContracts: new MutableTaskContract { Digest = EngineeringCompletionReview.TaskDigest(task) });
+        AllocateWorkFixture(repository, service);
         var result = service.Run(repository.Path, "CIS-0001", "WORK-090", "fake", CisAgentRunModes.Implement,
             CisAgentPermissions.WorkspaceWrite, null, "fake-json", 60, false, "Fixture author", TestContext.Current.CancellationToken);
         Assert.Equal(0, result.ExitCode);
@@ -34,7 +35,8 @@ public sealed partial class AgentExecutionTests
         var relative = $"{AgentService.RootPath}/runs/{manifest.RunId}/manifest.json";
         var receipt = EngineeringCompletionReview.Template("CIS-0001", task, policy, graph, assessment, manifest.OutputDigest!) with
         {
-            ImplementerRunId = manifest.RunId, ReviewerRunId = "separate-protocol-review",
+            ImplementerRunId = manifest.RunId,
+            ReviewerRunId = "separate-protocol-review",
             Implementation = new(relative, "sha256:" + Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(Path.Combine(repository.Path, relative)))))
         };
         var receiptPath = Path.Combine(repository.Path, ".cis/local/native-contract.json");
@@ -50,6 +52,7 @@ public sealed partial class AgentExecutionTests
         repository.Write(".cis/engineering-defaults.json", """{"schemaVersion":1,"requireTaskCompletion":true,"additionalGates":[]}""");
         var provider = new FakeProvider();
         var service = new AgentService(new CisRepositoryContextResolver(), [provider], clock: Clock);
+        AllocateWorkFixture(repository, service);
         var result = service.Run(repository.Path, "CIS-0001", "WORK-090", "fake", CisAgentRunModes.Implement,
             CisAgentPermissions.ReadOnly, null, "fake-json", 60, false, "Fixture author", TestContext.Current.CancellationToken);
         Assert.Equal("blocked", result.Status);
@@ -68,6 +71,7 @@ public sealed partial class AgentExecutionTests
         var before = repository.Git("status", "--porcelain");
         var provider = new FakeProvider(duringExecution: _ => repository.Write("Tracked.cs", "class DuringReview;"));
         var service = new AgentService(new CisRepositoryContextResolver(), [provider], clock: Clock, taskContracts: new MutableTaskContract());
+        AllocateWorkFixture(repository, service);
         var result = service.Run(repository.Path, "CIS-0001", "WORK-090", "fake", CisAgentRunModes.Review,
             CisAgentPermissions.ReadOnly, null, "fake-json", 60, false, "Fixture reviewer", TestContext.Current.CancellationToken);
         Assert.Equal(before, repository.Git("status", "--porcelain"));
@@ -85,6 +89,7 @@ public sealed partial class AgentExecutionTests
         var contracts = new MutableTaskContract { Digest = EngineeringCompletionReview.TaskDigest(task) };
         var service = new AgentService(new CisRepositoryContextResolver(), [new FakeProvider()],
             clock: Clock, taskContracts: contracts);
+        AllocateWorkFixture(repository, service);
         var result = service.Run(repository.Path, "CIS-0001", "WORK-090", "fake", CisAgentRunModes.Review,
             CisAgentPermissions.ReadOnly, null, "fake-json", 60, false, "Fixture reviewer",
             TestContext.Current.CancellationToken);
@@ -105,8 +110,14 @@ public sealed partial class AgentExecutionTests
         var receiptPath = Path.Combine(repository.Path, ".cis/local/completion.json");
         repository.Write($"{AgentService.RootPath}/runs/{result.Run.Manifest.RunId}/human.json", System.Text.Json.JsonSerializer.Serialize(new
         {
-            schemaVersion = 1, runId = "implementation-fixture", kind = "human-implemented", actor = "Synthetic protocol author",
-            taskId = task.Id, taskContractDigest = template.TaskDigest, inputDigest = template.InputDigest, completedAtUtc = "2000-01-01T00:00:00Z"
+            schemaVersion = 1,
+            runId = "implementation-fixture",
+            kind = "human-implemented",
+            actor = "Synthetic protocol author",
+            taskId = task.Id,
+            taskContractDigest = template.TaskDigest,
+            inputDigest = template.InputDigest,
+            completedAtUtc = "2000-01-01T00:00:00Z"
         }));
         File.WriteAllText(receiptPath, EngineeringCompletionReview.Serialize(template with
         {

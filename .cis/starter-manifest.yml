@@ -2140,7 +2140,7 @@ managed_artifacts:
   path: .github/skills/cis-agent-execution/SKILL.md
   definition: guidance.skill.agent-execution
   template_version: 1
-  applied_hash: sha256:3c6810ff4d1c1ebeb70e609138790a8713b8c884b2eac70a3af3a3cb3c853638
+  applied_hash: sha256:240f3cc81b4447a185861de33b06eb66febf54551ef3241f97ea48e0b939a1b5
   ownership: human
 - id: guidance.skill.ai-model-qualification
   path: .github/skills/cis-ai-model-qualification/SKILL.md
@@ -2428,7 +2428,7 @@ managed_artifacts:
   path: docs/references/agent-provider-profile.md
   definition: reference.agent-provider-profile
   template_version: 1
-  applied_hash: sha256:9a2016a7c020e26c1e4296cba66d62efdfc51621ae817af0a5b2da78e1da3f97
+  applied_hash: sha256:c537c22ff8ecf2b45913610e68e7ec4d8859ef0b8e55d93fa6fe4a68ed823286
   ownership: human
 - id: reference.ai-evaluation-index-card
   path: docs/references/ai-evaluation-datasets/index-card.md

@@ -426,6 +426,11 @@ documents:
     type: command-reference
     status: active
     authority: canonical
+  - id: change-impact-studio:manual:cis-agent-work
+    path: docs/manual/cis_agent_work.md
+    type: command-reference
+    status: active
+    authority: canonical
   - id: change-impact-studio:manual:cis-agent-author-brd
     path: docs/manual/cis_agent_author_brd.md
     type: command-reference

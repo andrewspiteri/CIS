@@ -80,6 +80,7 @@ Each loaded module owns one top-level command group. The following leaf commands
 | [`cis agent provider authenticate`](cis_agent_provider_authenticate.md) | Start provider-native authentication without exposing credentials to CIS. |
 | [`cis agent prepare`](cis_agent_prepare.md) | Prepare a digest-bound provider-neutral task envelope. |
 | [`cis agent run`](cis_agent_run.md) | Execute one eligible task with explicit provider, mode, permission, target, and isolation. |
+| [`cis agent work`](cis_agent_work.md) | Allocate durable direct-task work, inspect consumption, and record bounded progress or continuation. |
 | [`cis agent discover brd`](cis_agent_discover_brd.md) | Prepare local implementation and test evidence for BRD authoring without contacting a provider. |
 | [`cis agent author brd`](cis_agent_author_brd.md) | Draft a Review Required BRD from selected digest-bound references in an isolated one-file workspace. |
 | [`cis agent discover technical-intent`](cis_agent_discover_technical_intent.md) | Prepare the technical-intent scaffold and bounded implementation evidence without contacting a provider. |

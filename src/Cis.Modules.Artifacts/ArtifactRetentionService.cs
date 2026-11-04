@@ -167,6 +167,8 @@ public sealed class ArtifactRetentionService
         foreach (var archived in manifest.Entries)
         {
             var target = FullLocalPath(context, archived.Path, errors);
+            if (target is not null && ContainsWorkControlState(context, target))
+                errors.Add($"Restore cannot replace durable work accounting or its adoption evidence: {archived.Path}");
             if (target is null || !File.Exists(target) && !Directory.Exists(target)) continue;
             if (!HashEntry(target).Equals(archived.Digest, StringComparison.OrdinalIgnoreCase)) errors.Add($"Restore conflict: {archived.Path}");
         }
@@ -245,13 +247,14 @@ public sealed class ArtifactRetentionService
             .ThenBy(item => item.Path, StringComparer.OrdinalIgnoreCase).ToArray();
         var cutoff = _clock().ToUniversalTime().AddDays(-rule.RetainDays);
         var candidates = ranked.Select((item, index) =>
-            rule.Action != "preserve" && index >= rule.KeepLatest && item.LastWrite.ToUniversalTime() < cutoff).ToArray();
+            !ContainsWorkControlState(context, item.Path) && rule.Action != "preserve"
+                && index >= rule.KeepLatest && item.LastWrite.ToUniversalTime() < cutoff).ToArray();
         var remaining = ranked.Where((_, index) => !candidates[index]).Sum(item => item.Size);
         if (rule.MaximumBytes is { } maximum)
         {
             for (var index = ranked.Length - 1; index >= rule.KeepLatest && remaining > maximum && rule.Action != "preserve"; index--)
             {
-                if (candidates[index]) continue;
+                if (candidates[index] || ContainsWorkControlState(context, ranked[index].Path)) continue;
                 candidates[index] = true;
                 remaining -= ranked[index].Size;
             }
@@ -259,6 +262,17 @@ public sealed class ArtifactRetentionService
                 errors.Add($"Artifact family '{rule.Family}' exceeds its {maximum} byte budget: {remaining} protected bytes remain; review the retention policy or budget before cleanup.");
         }
         return ranked.Select((item, index) => (item, candidates[index])).ToArray();
+    }
+
+    private static bool ContainsWorkControlState(CisRepositoryContext context, string path)
+    {
+        var entry = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        return new[] { CisAgentWorkPaths.Ledger, CisAgentWorkPaths.Adoption, CisAgentWorkPaths.Lock }.Any(relative =>
+        {
+            var control = Path.GetFullPath(Path.Combine(context.RepositoryPath, relative));
+            return string.Equals(control, entry, CisPathSafety.PlatformComparison)
+                || control.StartsWith(entry + Path.DirectorySeparatorChar, CisPathSafety.PlatformComparison);
+        });
     }
 
     private sealed record EntryMetadata(string Path, string Kind, long Size, DateTimeOffset LastWrite);

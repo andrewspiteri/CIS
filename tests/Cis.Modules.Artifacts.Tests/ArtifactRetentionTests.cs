@@ -8,6 +8,67 @@ namespace Cis.Modules.Artifacts.Tests;
 
 public sealed class ArtifactRetentionTests
 {
+    [Theory]
+    [InlineData("archive")]
+    [InlineData("delete")]
+    public void WorkControlRetention_PreservesAccountingAcrossAgeAndBytePressureCleanup(string action)
+    {
+        using var repository = Fixture.Create();
+        var controls = new Dictionary<string, string>
+        {
+            [".cis/local/agents/work-control.json"] = "{\"consumedMilliseconds\":30000,\"reservedMilliseconds\":10000}",
+            [".cis/local/agents/work-control-adoption.json"] = "{\"adoptionId\":\"synthetic-existing-adoption\"}",
+            [".cis/local/agents/work-control.lock"] = "",
+        };
+        var old = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        foreach (var control in controls)
+        {
+            repository.Write(control.Key, control.Value);
+            repository.Age(control.Key, old);
+        }
+        repository.Write(".cis/local/agents/runs/old/result.log", "old run diagnostic");
+        repository.Write(".cis/local/agents/old.log", "old controller diagnostic");
+        repository.Age(".cis/local/agents/runs/old/result.log", old);
+        repository.Age(".cis/local/agents/old.log", old);
+        var original = controls.Keys.ToDictionary(relative => relative,
+            relative => File.ReadAllBytes(System.IO.Path.Combine(repository.Path, relative)), StringComparer.Ordinal);
+        var protectedBytes = original.Values.Sum(bytes => bytes.LongLength);
+
+        void WritePolicy(int retainDays) => repository.Write("docs/cis/references/local-artifact-retention.md", $"""
+            | Family | Path | Retain days | Keep latest | Action | Maximum bytes |
+            | --- | --- | ---: | ---: | --- | ---: |
+            | agents | .cis/local/agents | {retainDays} | 0 | {action} | {protectedBytes} |
+            """);
+        void AssertProtected(ArtifactOperationResult plan)
+        {
+            Assert.Empty(plan.Errors);
+            Assert.DoesNotContain(plan.Entries, entry => entry.Candidate && controls.ContainsKey(entry.Path));
+            Assert.Contains(plan.Entries, entry => entry.Candidate && entry.Path == ".cis/local/agents/runs");
+            Assert.Contains(plan.Entries, entry => entry.Candidate && entry.Path == ".cis/local/agents/old.log");
+        }
+        var service = repository.Service();
+        // Neither diagnostic is old enough for age-based selection in this preview.
+        // Byte pressure still cannot spend accounting state as disposable evidence.
+        WritePolicy(365);
+        AssertProtected(service.Plan(repository.Path, "agents"));
+        WritePolicy(0);
+        AssertProtected(service.Plan(repository.Path, "agents"));
+
+        var cleaned = action == "archive" ? service.Compact(repository.Path, "agents", true)
+            : service.Clean(repository.Path, "agents", true);
+
+        Assert.Equal(0, cleaned.ExitCode);
+        Assert.Equal(action == "archive" ? "compacted" : "cleaned", cleaned.Status);
+        Assert.False(Directory.Exists(System.IO.Path.Combine(repository.Path, ".cis/local/agents/runs")));
+        Assert.False(File.Exists(System.IO.Path.Combine(repository.Path, ".cis/local/agents/old.log")));
+        foreach (var control in original)
+            Assert.Equal(control.Value, File.ReadAllBytes(System.IO.Path.Combine(repository.Path, control.Key)));
+        Assert.DoesNotContain(service.Plan(repository.Path, "agents").Entries, entry => entry.Candidate);
+        if (action == "archive")
+            Assert.DoesNotContain(Assert.Single(cleaned.Archives).Entries,
+                entry => controls.ContainsKey(entry.Path) || entry.Path == ".cis/local/agents");
+    }
+
     [Fact]
     public void Doctor_SkipsFullyProtectedFamiliesButDetectsEligibilityWhenKeepLatestIsExceeded()
     {

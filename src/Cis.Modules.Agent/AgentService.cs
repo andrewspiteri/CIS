@@ -17,7 +17,10 @@ public sealed record AgentTaskEnvelope(int SchemaVersion, string Id, string Repo
     string? RepositoryRevision = null, string? WorkingTreeDigest = null, string? Mode = null, string? Permission = null,
     string? AcceptedScopeDigest = null, string? ExpiresAtUtc = null,
     IReadOnlyList<CisBrdImplementationEvidence>? ImplementationEvidence = null,
-    IReadOnlyList<AgentAuthorityArtifact>? AuthorityArtifacts = null, string? AuthoritySelectionDigest = null);
+    IReadOnlyList<AgentAuthorityArtifact>? AuthorityArtifacts = null, string? AuthoritySelectionDigest = null)
+{
+    public CisAgentWorkReference? Work { get; init; }
+}
 public sealed record AgentAuthorityArtifact(string Path, string Sha256, string Content);
 public sealed record AgentBrdReviewFinding(string Id, string Severity, string Category, string Location,
     string Observation, string Recommendation);
@@ -44,6 +47,8 @@ public sealed record AgentRunManifest(int SchemaVersion, string RunId, int Attem
     string? AuthorityDossierDigest = null)
 {
     public IReadOnlyList<string> AllowedCommands { get; init; } = [];
+    public CisAgentWorkReference? Work { get; init; }
+    public string? ExecutionRoute { get; init; }
 }
 public sealed record AgentRunEvent(int SchemaVersion, string RunId, int Attempt, long Sequence, string TimestampUtc,
     string Kind, string Message, string? ProviderEventType, string? ProviderSessionId, string? RawJson,
@@ -59,6 +64,7 @@ public sealed record AgentResult(string Status, string? RepositoryPath, AgentTas
     IReadOnlyList<AgentImportRecord> Imports, IReadOnlyList<AgentRunManifest> Runs, AgentRunView? Run,
     IReadOnlyList<string> Diagnostics, bool Applied)
 {
+    public CisAgentWorkView? Work { get; init; }
     public int ExitCode => Diagnostics.Any(item => item.StartsWith("ERROR:", StringComparison.Ordinal))
         || Status is "failed" or "timedout" or "invalid-evidence" or "interrupted" or "recovery-partial" ? 4 : 0;
 }
@@ -120,6 +126,7 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
     private readonly ICisObservedReferencePreparer? _observedReferencePreparer;
     private readonly ICisTextGenerationService? _textGeneration;
     private readonly ICisEngineeringTaskContractReader? _taskContracts;
+    private readonly AgentWorkLedger _workLedger;
     private readonly ConcurrentDictionary<string, (long Length, long Count)> _eventSequences = new(
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
 
@@ -147,6 +154,7 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         _textGeneration = textGeneration;
         _taskContracts = taskContracts;
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
+        _workLedger = new AgentWorkLedger(_clock);
     }
 
     public AgentResult Providers(string repositoryPath)
@@ -218,11 +226,12 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
     public AgentResult Run(string repositoryPath, string changeId, string taskId, string providerId, string mode,
         string permission, string? targetRepositoryId, string? transport, int timeoutSeconds, bool approveWithinCeiling, string actor,
         CancellationToken cancellationToken = default, Action<CisAgentProviderEvent>? progress = null,
-        IReadOnlyList<string>? allowedCommands = null)
+        IReadOnlyList<string>? allowedCommands = null, string? parentExecutionId = null, string? logicalAttemptId = null)
     {
         var context = Resolve(repositoryPath, out var diagnostics); if (context is null) return New(null, "invalid-repository", diagnostics: diagnostics);
         allowedCommands = allowedCommands?.ToArray() ?? [];
         var provider = FindProvider(providerId, diagnostics); ValidateExecutionOptions(provider, mode, permission, transport, timeoutSeconds, actor, diagnostics);
+        ValidateRuntimeCeiling(context, timeoutSeconds, diagnostics);
         ValidateCommandPermissions(provider, allowedCommands, mode, permission, diagnostics);
         var task = FindTask(context, changeId, taskId, diagnostics);
         if (provider is null || task is null || diagnostics.Count > 0) return New(context, "blocked", diagnostics: diagnostics);
@@ -240,76 +249,91 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         }
         if (diagnostics.Count > 0) return New(context, "blocked", diagnostics: diagnostics);
         var target = ResolveTarget(context, taskText, targetRepositoryId, diagnostics); if (target is null || diagnostics.Count > 0) return New(context, "invalid-target", diagnostics: diagnostics);
-        var diagnosis = SafeDiagnose(provider, target.RepositoryPath);
-        if (!diagnosis.Available)
-        { diagnostics.AddRange(diagnosis.Diagnostics.Select(item => "ERROR: " + item)); if (diagnostics.Count == 0) diagnostics.Add($"ERROR: Provider '{providerId}' is not available."); return New(context, diagnosis.Status, diagnoses: [diagnosis], diagnostics: diagnostics); }
         var selectedTransport = transport ?? provider.Descriptor.Transports[0]; var runId = NewRunId();
-        var lockPath = AcquireLock(context, changeId, taskId, target.Id, runId, diagnostics); if (lockPath is null) return New(context, "locked", diagnostics: diagnostics);
-        try
+        using var work = AdmitWork(context, changeId, taskId, runId + ":1", timeoutSeconds, parentExecutionId, logicalAttemptId, diagnostics, out var admissionView);
+        if (diagnostics.Count > 0) return New(context, "held", diagnostics: diagnostics) with { Work = admissionView };
+        AgentResult ExecuteAdmitted()
         {
-            var working = ResolveWorkingDirectory(context, target, runId, permission, diagnostics); if (working is null) return New(context, "invalid-workspace", diagnostics: diagnostics);
-            var snapshot = RepositorySnapshot(target.RepositoryPath);
-            string? taskContractDigest;
-            string? inputDigest;
-            string? authorityInputDigest;
-            string? authorityDossierDigest;
+            var diagnosis = SafeDiagnose(provider, target.RepositoryPath);
+            if (!diagnosis.Available)
+            { diagnostics.AddRange(diagnosis.Diagnostics.Select(item => "ERROR: " + item)); if (diagnostics.Count == 0) diagnostics.Add($"ERROR: Provider '{providerId}' is not available."); return New(context, diagnosis.Status, diagnoses: [diagnosis], diagnostics: diagnostics); }
+            var lockPath = AcquireLock(context, changeId, taskId, target.Id, runId, diagnostics); if (lockPath is null) return New(context, "locked", diagnostics: diagnostics);
             try
             {
-                taskContractDigest = _taskContracts?.ReadTaskDigest(context.RepositoryPath, changeId, taskId);
-                inputDigest = CisExecutionIdentity.CaptureIfAdopted(new(working.Value.Path, target.Id, target.DocumentationRoot,
-                    Path.Combine(working.Value.Path, target.DocumentationRoot), Path.Combine(working.Value.Path, target.DocumentationRoot, "catalog.yml")));
-                authorityInputDigest = target.Id != context.RepositoryId && inputDigest is not null ? CisExecutionIdentity.Capture(context) : null;
-                authorityDossierDigest = authorityInputDigest is null ? null : CisTaskAuthorityContext.Capture(context, changeId);
+                var working = ResolveWorkingDirectory(context, target, runId, permission, diagnostics); if (working is null) return New(context, "invalid-workspace", diagnostics: diagnostics);
+                var snapshot = RepositorySnapshot(target.RepositoryPath);
+                string? taskContractDigest;
+                string? inputDigest;
+                string? authorityInputDigest;
+                string? authorityDossierDigest;
+                try
+                {
+                    taskContractDigest = _taskContracts?.ReadTaskDigest(context.RepositoryPath, changeId, taskId);
+                    inputDigest = CisExecutionIdentity.CaptureIfAdopted(new(working.Value.Path, target.Id, target.DocumentationRoot,
+                        Path.Combine(working.Value.Path, target.DocumentationRoot), Path.Combine(working.Value.Path, target.DocumentationRoot, "catalog.yml")));
+                    authorityInputDigest = target.Id != context.RepositoryId && inputDigest is not null ? CisExecutionIdentity.Capture(context) : null;
+                    authorityDossierDigest = authorityInputDigest is null ? null : CisTaskAuthorityContext.Capture(context, changeId);
+                }
+                catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
+                {
+                    diagnostics.Add($"ERROR: Task execution contract could not be read: {exception.Message}");
+                    return New(context, "blocked", diagnostics: diagnostics);
+                }
+                if (inputDigest is not null && mode == CisAgentRunModes.Implement && string.IsNullOrWhiteSpace(taskContractDigest))
+                {
+                    diagnostics.Add("ERROR: Adopted implementation requires the plan task-contract reader before execution.");
+                    return New(context, "blocked", diagnostics: diagnostics);
+                }
+                AgentTaskEnvelope envelope;
+                try
+                {
+                    envelope = CreateEnvelope(context, changeId, taskId, providerId, taskText, task, target.Id, target.RepositoryPath, mode, permission);
+                    envelope = BindAuthorityArtifacts(context, envelope, diagnostics);
+                    if (envelope.AuthorityArtifacts is { } artifacts)
+                        ValidateTaskEligibility(context, changeId, taskText, diagnostics,
+                            artifacts.ToDictionary(item => item.Path, StringComparer.Ordinal));
+                }
+                catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException or DecoderFallbackException)
+                {
+                    diagnostics.Add("ERROR: Authority context could not be prepared: " + error.Message);
+                    return New(context, "blocked", diagnostics: diagnostics);
+                }
+                if (diagnostics.Count > 0) return New(context, "blocked", envelope, diagnostics: diagnostics);
+                if (work is not null)
+                {
+                    if (work.RemainingProviderTime() <= TimeSpan.Zero)
+                    {
+                        diagnostics.Add("ERROR: Known preparation exhausted the admitted work window. Inspect remaining work and select a supported bounded run.");
+                        return New(context, "held", diagnostics: diagnostics);
+                    }
+                    envelope = envelope with { Work = work.Reference };
+                }
+                var envelopePath = EnvelopePath(context, changeId, taskId); WriteAtomic(envelopePath, JsonSerializer.Serialize(envelope, JsonOptions));
+                var executable = ExecutableProvenance(diagnosis.Executable);
+                var now = UtcNow(); var manifest = new AgentRunManifest(1, runId, 1, changeId, taskId, envelope.Id, Sha(File.ReadAllText(envelopePath)),
+                    providerId, selectedTransport, mode, permission, context.RepositoryId, target.Id, target.RepositoryPath, working.Value.Path,
+                    working.Value.Isolated, snapshot.Revision, snapshot.Dirty, snapshot.Digest, envelope.CanonicalTaskDigest,
+                    envelope.AcceptedScopeDigest ?? string.Empty, diagnosis.Version, DigestOptional(Path.Combine(context.DocumentationPath, "references", "agent-provider-profile.md")),
+                    now, now, null, CisAgentRunStates.Prepared, null, null, null, null, actor.Trim(), timeoutSeconds,
+                    Math.Min(30, timeoutSeconds), Math.Min(300, timeoutSeconds), executable.Path, executable.Digest,
+                    selectedTransport, envelope.AcceptedScopeDigest,
+                    InputDigest: inputDigest,
+                    TaskContractDigest: taskContractDigest, AuthorityInputDigest: authorityInputDigest, AuthorityDossierDigest: authorityDossierDigest)
+                { AllowedCommands = allowedCommands, Work = work?.Reference, ExecutionRoute = "direct-task" };
+                if (IsEngineeringReview(manifest) && (taskContractDigest is null || permission != CisAgentPermissions.ReadOnly))
+                {
+                    diagnostics.Add("ERROR: Adopted engineering review requires the plan task-contract reader and read-only permission.");
+                    return New(context, "blocked", diagnostics: diagnostics);
+                }
+                InitializeRun(context, manifest);
+                var engineeringReview = IsEngineeringReview(manifest);
+                return ExecuteRun(context, provider, manifest, envelope, EngineeringReviewPrompt(envelope, engineeringReview),
+                    approveWithinCeiling, cancellationToken, diagnostics, diagnosis, progress,
+                    requireBrdReview: engineeringReview, taskReview: engineeringReview, work: work);
             }
-            catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
-            {
-                diagnostics.Add($"ERROR: Task execution contract could not be read: {exception.Message}");
-                return New(context, "blocked", diagnostics: diagnostics);
-            }
-            if (inputDigest is not null && mode == CisAgentRunModes.Implement && string.IsNullOrWhiteSpace(taskContractDigest))
-            {
-                diagnostics.Add("ERROR: Adopted implementation requires the plan task-contract reader before execution.");
-                return New(context, "blocked", diagnostics: diagnostics);
-            }
-            AgentTaskEnvelope envelope;
-            try
-            {
-                envelope = CreateEnvelope(context, changeId, taskId, providerId, taskText, task, target.Id, target.RepositoryPath, mode, permission);
-                envelope = BindAuthorityArtifacts(context, envelope, diagnostics);
-                if (envelope.AuthorityArtifacts is { } artifacts)
-                    ValidateTaskEligibility(context, changeId, taskText, diagnostics,
-                        artifacts.ToDictionary(item => item.Path, StringComparer.Ordinal));
-            }
-            catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException or DecoderFallbackException)
-            {
-                diagnostics.Add("ERROR: Authority context could not be prepared: " + error.Message);
-                return New(context, "blocked", diagnostics: diagnostics);
-            }
-            if (diagnostics.Count > 0) return New(context, "blocked", envelope, diagnostics: diagnostics);
-            var envelopePath = EnvelopePath(context, changeId, taskId); WriteAtomic(envelopePath, JsonSerializer.Serialize(envelope, JsonOptions));
-            var executable = ExecutableProvenance(diagnosis.Executable);
-            var now = UtcNow(); var manifest = new AgentRunManifest(1, runId, 1, changeId, taskId, envelope.Id, Sha(File.ReadAllText(envelopePath)),
-                providerId, selectedTransport, mode, permission, context.RepositoryId, target.Id, target.RepositoryPath, working.Value.Path,
-                working.Value.Isolated, snapshot.Revision, snapshot.Dirty, snapshot.Digest, envelope.CanonicalTaskDigest,
-                envelope.AcceptedScopeDigest ?? string.Empty, diagnosis.Version, DigestOptional(Path.Combine(context.DocumentationPath, "references", "agent-provider-profile.md")),
-                now, now, null, CisAgentRunStates.Prepared, null, null, null, null, actor.Trim(), timeoutSeconds,
-                Math.Min(30, timeoutSeconds), Math.Min(300, timeoutSeconds), executable.Path, executable.Digest,
-                selectedTransport, envelope.AcceptedScopeDigest,
-                InputDigest: inputDigest,
-                TaskContractDigest: taskContractDigest, AuthorityInputDigest: authorityInputDigest, AuthorityDossierDigest: authorityDossierDigest)
-            { AllowedCommands = allowedCommands };
-            if (IsEngineeringReview(manifest) && (taskContractDigest is null || permission != CisAgentPermissions.ReadOnly))
-            {
-                diagnostics.Add("ERROR: Adopted engineering review requires the plan task-contract reader and read-only permission.");
-                return New(context, "blocked", diagnostics: diagnostics);
-            }
-            InitializeRun(context, manifest);
-            var engineeringReview = IsEngineeringReview(manifest);
-            return ExecuteRun(context, provider, manifest, envelope, EngineeringReviewPrompt(envelope, engineeringReview),
-                approveWithinCeiling, cancellationToken, diagnostics, diagnosis, progress,
-                requireBrdReview: engineeringReview, taskReview: engineeringReview);
+            finally { ReleaseLock(lockPath); }
         }
-        finally { ReleaseLock(lockPath); }
+        return CompleteWorkResult(context, ExecuteAdmitted(), work);
     }
 
     public AgentResult AuthorBrd(string repositoryPath, IReadOnlyList<string> referencePaths, string providerId,
@@ -770,7 +794,7 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
 
     public AgentResult Resume(string repositoryPath, string runId, string? message, string actor, string reason, bool approveWithinCeiling,
         CancellationToken cancellationToken = default, Action<CisAgentProviderEvent>? progress = null,
-        IReadOnlyList<string>? allowedCommands = null)
+        IReadOnlyList<string>? allowedCommands = null, int? timeoutSeconds = null)
     {
         var context = Resolve(repositoryPath, out var diagnostics); if (context is null) return New(null, "invalid-repository", diagnostics: diagnostics);
         if (string.IsNullOrWhiteSpace(actor) || string.IsNullOrWhiteSpace(reason)) diagnostics.Add("ERROR: Resume actor and reason are required.");
@@ -783,6 +807,9 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
             diagnostics.Add("ERROR: This document-authoring task cannot be resumed; use its governed authoring or revision command.");
         if (!CisAgentRunStates.IsTerminal(view.Manifest.Status)) diagnostics.Add("ERROR: Only a terminal or interrupted run can be resumed.");
         var provider = FindProvider(view.Manifest.Provider, diagnostics); if (provider is not null && !provider.Descriptor.SupportsResume) diagnostics.Add($"ERROR: Provider '{provider.Descriptor.Id}' does not support resume.");
+        var requestedTimeout = timeoutSeconds ?? view.Manifest.TimeoutSeconds;
+        ValidateExecutionOptions(provider, view.Manifest.Mode, view.Manifest.Permission, view.Manifest.Transport, requestedTimeout, actor, diagnostics);
+        ValidateRuntimeCeiling(context, requestedTimeout, diagnostics);
         allowedCommands = allowedCommands?.ToArray() ?? [];
         ValidateCommandPermissions(provider, allowedCommands, view.Manifest.Mode, view.Manifest.Permission, diagnostics);
         if (allowedCommands.Count > 0 && view.Manifest.ChangeId == ProductAuthoringChange)
@@ -810,56 +837,78 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         var brdResume = resumesBrdAuthoring || resumesTechnicalIntent || resumesSolutionDesign
             ? ValidateBrdAuthoringResume(context, view, envelope!, diagnostics, resumesTechnicalIntent, resumesSolutionDesign) : null;
         if (diagnostics.Count > 0) return New(context, "blocked", envelope, run: view, diagnostics: diagnostics);
-        var lockPath = AcquireLock(context, view.Manifest.ChangeId, view.Manifest.TaskId, view.Manifest.TargetRepositoryId, runId, diagnostics); if (lockPath is null) return New(context, "locked", envelope, run: view, diagnostics: diagnostics);
-        try
+        var directTask = IsDirectWorkRun(view.Manifest, envelope!);
+        using var work = directTask ? AdmitWork(context, view.Manifest.ChangeId, view.Manifest.TaskId,
+            runId + ":" + (view.Manifest.Attempt + 1).ToString(System.Globalization.CultureInfo.InvariantCulture) + ":" + Guid.NewGuid().ToString("N"),
+            requestedTimeout, null, null, diagnostics, out _) : null;
+        if (diagnostics.Count > 0) return New(context, "held", envelope, run: view, diagnostics: diagnostics);
+        AgentResult ExecuteAdmittedResume()
         {
-            var previousResult = Path.Combine(RunPath(context, runId), "result.json");
-            var retainedResult = Path.Combine(RunPath(context, runId), "attempts",
-                view.Manifest.Attempt.ToString(System.Globalization.CultureInfo.InvariantCulture), "result.json");
-            if (File.Exists(previousResult))
+            var lockPath = AcquireLock(context, view.Manifest.ChangeId, view.Manifest.TaskId, view.Manifest.TargetRepositoryId, runId, diagnostics); if (lockPath is null) return New(context, "locked", envelope, run: view, diagnostics: diagnostics);
+            try
             {
-                if (File.Exists(retainedResult) && ShaFile(retainedResult) != ShaFile(previousResult))
+                var previousResult = Path.Combine(RunPath(context, runId), "result.json");
+                var retainedResult = Path.Combine(RunPath(context, runId), "attempts",
+                    view.Manifest.Attempt.ToString(System.Globalization.CultureInfo.InvariantCulture), "result.json");
+                if (File.Exists(previousResult))
                 {
-                    diagnostics.Add("ERROR: The retained attempt result differs from the current run result.");
-                    return New(context, "blocked", envelope, run: view, diagnostics: diagnostics);
+                    if (File.Exists(retainedResult) && ShaFile(retainedResult) != ShaFile(previousResult))
+                    {
+                        diagnostics.Add("ERROR: The retained attempt result differs from the current run result.");
+                        return New(context, "blocked", envelope, run: view, diagnostics: diagnostics);
+                    }
+                    Directory.CreateDirectory(Path.GetDirectoryName(retainedResult)!);
+                    if (!File.Exists(retainedResult)) File.Copy(previousResult, retainedResult);
                 }
-                Directory.CreateDirectory(Path.GetDirectoryName(retainedResult)!);
-                if (!File.Exists(retainedResult)) File.Copy(previousResult, retainedResult);
+                var updated = view.Manifest with
+                {
+                    Attempt = view.Manifest.Attempt + 1,
+                    Status = CisAgentRunStates.Prepared,
+                    StartedAtUtc = UtcNow(),
+                    UpdatedAtUtc = UtcNow(),
+                    CompletedAtUtc = null,
+                    FailureKind = null,
+                    ProcessId = null,
+                    ProcessStartedAtUtc = null,
+                    Actor = actor.Trim(),
+                    TimeoutSeconds = requestedTimeout,
+                    StartupTimeoutSeconds = Math.Min(30, requestedTimeout),
+                    IdleTimeoutSeconds = Math.Min(300, requestedTimeout),
+                    Work = work?.Reference,
+                    ExecutionRoute = directTask ? "direct-task" : view.Manifest.ExecutionRoute,
+                    AllowedCommands = allowedCommands,
+                    // Restart context so native sessions cannot retain a previous attempt's permissions.
+                    ProviderSessionId = allowedCommands.Count > 0 || view.Manifest.AllowedCommands.Count > 0
+                        ? null : view.Manifest.ProviderSessionId
+                };
+                if (work is not null)
+                {
+                    if (work.RemainingProviderTime() <= TimeSpan.Zero)
+                    {
+                        diagnostics.Add("ERROR: Known preparation exhausted the admitted resumed work window. Inspect work status and select a supported timeout.");
+                        return New(context, "held", envelope, run: view, diagnostics: diagnostics);
+                    }
+                }
+                WriteManifest(context, updated); AppendEvent(context, updated, new("resume", Limit(reason), ProviderSessionId: updated.ProviderSessionId));
+                var diagnosis = SafeDiagnose(provider, updated.TargetRepositoryPath);
+                var continuation = string.IsNullOrWhiteSpace(message)
+                    ? "Continue the bounded CIS task from the retained provider session and return the required structured completion JSON."
+                    : message.Trim();
+                var engineeringReview = IsEngineeringReview(updated);
+                var prompt = EngineeringReviewPrompt(envelope!, engineeringReview) + "\nContinuation instruction:\n" + continuation + "\n";
+                var executed = ExecuteRun(context, provider, updated, envelope!, prompt, approveWithinCeiling, cancellationToken, diagnostics, diagnosis, progress,
+                    requireBrdReview: engineeringReview, taskReview: engineeringReview, work: work);
+                if (resumesSolutionDesign && brdResume?.ArchitectureOriginals is not null)
+                    return ApplySolutionDesignAuthoringResult(context, executed, envelope!, brdResume.ArchitectureOriginals, brdResume.Implementation);
+                if (resumesTechnicalIntent && brdResume is not null)
+                    return ApplyTechnicalIntentAuthoringResult(context, executed, envelope!, brdResume.TargetPath,
+                        brdResume.RelativeTarget, brdResume.Original, brdResume.Implementation);
+                return brdResume is null ? executed : ApplyBrdAuthoringResult(context, executed,
+                    brdResume.TargetPath, brdResume.RelativeTarget, brdResume.Original, brdResume.Implementation);
             }
-            var updated = view.Manifest with
-            {
-                Attempt = view.Manifest.Attempt + 1,
-                Status = CisAgentRunStates.Prepared,
-                StartedAtUtc = UtcNow(),
-                UpdatedAtUtc = UtcNow(),
-                CompletedAtUtc = null,
-                FailureKind = null,
-                ProcessId = null,
-                ProcessStartedAtUtc = null,
-                Actor = actor.Trim(),
-                AllowedCommands = allowedCommands,
-                // Restart context so native sessions cannot retain a previous attempt's permissions.
-                ProviderSessionId = allowedCommands.Count > 0 || view.Manifest.AllowedCommands.Count > 0
-                    ? null : view.Manifest.ProviderSessionId
-            };
-            WriteManifest(context, updated); AppendEvent(context, updated, new("resume", Limit(reason), ProviderSessionId: updated.ProviderSessionId));
-            var diagnosis = SafeDiagnose(provider, updated.TargetRepositoryPath);
-            var continuation = string.IsNullOrWhiteSpace(message)
-                ? "Continue the bounded CIS task from the retained provider session and return the required structured completion JSON."
-                : message.Trim();
-            var engineeringReview = IsEngineeringReview(updated);
-            var prompt = EngineeringReviewPrompt(envelope!, engineeringReview) + "\nContinuation instruction:\n" + continuation + "\n";
-            var executed = ExecuteRun(context, provider, updated, envelope!, prompt, approveWithinCeiling, cancellationToken, diagnostics, diagnosis, progress,
-                requireBrdReview: engineeringReview, taskReview: engineeringReview);
-            if (resumesSolutionDesign && brdResume?.ArchitectureOriginals is not null)
-                return ApplySolutionDesignAuthoringResult(context, executed, envelope!, brdResume.ArchitectureOriginals, brdResume.Implementation);
-            if (resumesTechnicalIntent && brdResume is not null)
-                return ApplyTechnicalIntentAuthoringResult(context, executed, envelope!, brdResume.TargetPath,
-                    brdResume.RelativeTarget, brdResume.Original, brdResume.Implementation);
-            return brdResume is null ? executed : ApplyBrdAuthoringResult(context, executed,
-                brdResume.TargetPath, brdResume.RelativeTarget, brdResume.Original, brdResume.Implementation);
+            finally { ReleaseLock(lockPath); }
         }
-        finally { ReleaseLock(lockPath); }
+        return CompleteWorkResult(context, ExecuteAdmittedResume(), work);
     }
 
     public AgentResult Cancel(string repositoryPath, string runId, string actor, string reason)
@@ -867,7 +916,9 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         var context = Resolve(repositoryPath, out var diagnostics); if (context is null) return New(null, "invalid-repository", diagnostics: diagnostics);
         if (string.IsNullOrWhiteSpace(actor) || string.IsNullOrWhiteSpace(reason)) diagnostics.Add("ERROR: Cancellation actor and reason are required.");
         var view = ReadRun(context, runId, diagnostics); if (view is null) return New(context, "not-found", diagnostics: diagnostics);
-        if (CisAgentRunStates.IsTerminal(view.Manifest.Status)) diagnostics.Add("ERROR: The run is already terminal.");
+        if (CisAgentRunStates.IsTerminal(view.Manifest.Status)
+            && !(view.Manifest.Work is not null && view.Manifest.ProcessId is { } live && ProcessIdentityMatches(live, view.Manifest.ProcessStartedAtUtc)))
+            diagnostics.Add("ERROR: The run is already terminal.");
         if (view.Manifest.ProcessId is null || view.Manifest.ProcessStartedAtUtc is null) diagnostics.Add("ERROR: The run has no validated owned process identity.");
         if (diagnostics.Count > 0) return New(context, "blocked", run: view, diagnostics: diagnostics);
         var cancelling = view.Manifest with { Status = CisAgentRunStates.Cancelling, UpdatedAtUtc = UtcNow(), Actor = actor.Trim() };
@@ -889,6 +940,10 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
             WriteArtifactInventory(context, runId);
             return ReadRun(context, runId, diagnostics);
         });
+        if (view.Manifest.Work is { } cancelledWork)
+            WorkDiagnostics(_workLedger.Settle(context, cancelledWork, CisAgentRunStates.Cancelled,
+                OwnedProcessStopped(view.Manifest.ProcessId!.Value, view.Manifest.ProcessStartedAtUtc),
+                "Owned process cancelled by " + actor.Trim(), [Relative(context.RepositoryPath, Path.Combine(RunPath(context, runId), "manifest.json"))]), diagnostics);
         return New(context, "cancelled", run: cancelledRun, diagnostics: diagnostics, applied: true);
     }
 
@@ -897,10 +952,42 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         var context = Resolve(repositoryPath, out var diagnostics); if (context is null) return New(null, "invalid-repository", diagnostics: diagnostics);
         if (string.IsNullOrWhiteSpace(actor) || string.IsNullOrWhiteSpace(reason)) diagnostics.Add("ERROR: Recovery actor and reason are required.");
         var view = ReadRun(context, runId, diagnostics); if (view is null) return New(context, "not-found", diagnostics: diagnostics);
-        if (CisAgentRunStates.IsTerminal(view.Manifest.Status)) diagnostics.Add("ERROR: Only a non-terminal orphaned run can be recovered as interrupted.");
-        if (view.Manifest.ProcessId is { } processId && ProcessIdentityMatches(processId, view.Manifest.ProcessStartedAtUtc))
-            diagnostics.Add("ERROR: The recorded provider process is still active; cancel it instead of recovering the lock.");
-        if (view.Manifest.ProcessId is null && DateTimeOffset.TryParse(view.Manifest.UpdatedAtUtc, out var updated)
+        if (diagnostics.Count > 0) return New(context, "blocked", run: view, diagnostics: diagnostics);
+        CisAgentWorkExecution? accountingExecution = null;
+        var ownedProcessId = view.Manifest.ProcessId;
+        var ownedProcessStarted = view.Manifest.ProcessStartedAtUtc;
+        var recordedProcesses = view.Events.Where(item => item.Attempt == view.Manifest.Attempt && item.ProcessId is not null)
+            .Select(item => (Id: item.ProcessId!.Value, Started: item.ProcessStartedAtUtc)).ToList();
+        if (ownedProcessId is { } manifestProcess) recordedProcesses.Add((manifestProcess, ownedProcessStarted));
+        if (view.Manifest.Work is { } recoveryWork)
+        {
+            var accounting = _workLedger.Read(context, recoveryWork.ChangeId, recoveryWork.TaskId);
+            accountingExecution = accounting.Work?.Executions.SingleOrDefault(item => item.ExecutionId == recoveryWork.ExecutionId);
+            if (accounting.ExitCode != 0) WorkDiagnostics(accounting, diagnostics);
+            if (accountingExecution is null) diagnostics.Add("ERROR: The recorded work reservation is unavailable; restore its accounting before recovery.");
+            else
+            {
+                if (accountingExecution.ProcessId is { } recorded)
+                {
+                    recordedProcesses.Add((recorded, accountingExecution.ProcessStartedAtUtc));
+                }
+                if (!accountingExecution.Finalized && recordedProcesses.Count == 0 && accountingExecution.LaunchIntent)
+                {
+                    WorkDiagnostics(_workLedger.MarkRecoveryUncertain(context, recoveryWork,
+                        "Launch intent has no verified owned process identity. Startup grace or a terminal-looking manifest cannot prove stopped work; bounded diagnosis is required."), diagnostics);
+                    return New(context, "held", run: view, diagnostics: diagnostics);
+                }
+            }
+        }
+        var unsettledAccounting = accountingExecution is { Finalized: false };
+        if (CisAgentRunStates.IsTerminal(view.Manifest.Status) && !unsettledAccounting)
+            diagnostics.Add("ERROR: Only an orphaned run with unsettled execution can be recovered as interrupted.");
+        var identities = recordedProcesses.Where(item => item.Started is not null).Distinct().Take(33).ToArray();
+        if (identities.Length > 32 || recordedProcesses.Any(item => item.Started is null && !identities.Any(known => known.Id == item.Id)))
+            diagnostics.Add("ERROR: Recorded process identities are incomplete or exceed the bounded recovery limit; retain reservations and perform owned-process diagnosis.");
+        if (identities.Any(item => !OwnedProcessStopped(item.Id, item.Started)))
+            diagnostics.Add("ERROR: A recorded provider process is still active or cannot be proven stopped; use bounded owned-process diagnosis or cancellation instead of releasing its reservation.");
+        if (recordedProcesses.Count == 0 && DateTimeOffset.TryParse(accountingExecution?.StartedAtUtc ?? view.Manifest.UpdatedAtUtc, out var updated)
             && _clock().ToUniversalTime() - updated.ToUniversalTime() < TimeSpan.FromSeconds(30))
             diagnostics.Add("ERROR: The run is still inside the startup recovery grace period.");
         var lockPath = LockPath(context, view.Manifest.ChangeId, view.Manifest.TaskId, view.Manifest.TargetRepositoryId);
@@ -916,24 +1003,38 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
             { diagnostics.Add("ERROR: The task lock could not be validated safely: " + Limit(exception.Message)); }
         }
         if (diagnostics.Count > 0) return New(context, "blocked", run: view, diagnostics: diagnostics);
+        var terminalRecovery = CisAgentRunStates.IsTerminal(view.Manifest.Status);
         WithRunEvidenceLock(context, runId, () =>
         {
             var current = ReadManifest(context, runId, []) ?? view.Manifest;
-            var interrupted = current with
+            if (terminalRecovery)
             {
-                Status = CisAgentRunStates.Interrupted,
-                FailureKind = "orphaned-process",
-                UpdatedAtUtc = UtcNow(),
-                CompletedAtUtc = UtcNow(),
-                Actor = actor.Trim()
-            };
-            WriteManifest(context, interrupted); AppendEvent(context, interrupted, new("recovered", Limit(reason)));
+                // Accounting reconciliation must preserve the independently retained
+                // execution outcome and its completion provenance.
+                AppendEvent(context, current, new("work-reconciled", Limit(actor.Trim() + ": " + reason)));
+            }
+            else
+            {
+                var interrupted = current with
+                {
+                    Status = CisAgentRunStates.Interrupted,
+                    FailureKind = "orphaned-process",
+                    UpdatedAtUtc = UtcNow(),
+                    CompletedAtUtc = UtcNow(),
+                    Actor = actor.Trim()
+                };
+                WriteManifest(context, interrupted); AppendEvent(context, interrupted, new("recovered", Limit(reason)));
+            }
             WriteArtifactInventory(context, runId);
             return true;
         });
-        try { if (File.Exists(lockPath)) File.Delete(lockPath); }
+        try { if (!terminalRecovery && File.Exists(lockPath)) File.Delete(lockPath); }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         { diagnostics.Add("ERROR: The validated stale task lock could not be removed: " + Limit(exception.Message)); }
+        if (view.Manifest.Work is { } recoveredWork)
+            WorkDiagnostics(_workLedger.Settle(context, recoveredWork, terminalRecovery ? view.Manifest.Status : CisAgentRunStates.Interrupted, true,
+                "Owned execution recovered after stopped-process verification by " + actor.Trim(),
+                [Relative(context.RepositoryPath, Path.Combine(RunPath(context, runId), "manifest.json"))], conservativeRecovery: true), diagnostics);
         return New(context, diagnostics.Count == 0 ? "recovered" : "recovery-partial", run: ReadRun(context, runId, []), diagnostics: diagnostics, applied: true);
     }
 
@@ -1062,7 +1163,7 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         string? expectedReviewRunId = null, IReadOnlyList<string>? expectedFindingIds = null,
         bool requireBrdQuestionRevision = false, string? expectedQuestionAnswerDigest = null,
         IReadOnlyList<string>? expectedQuestionIds = null, bool taskReview = false,
-        IReadOnlyList<string>? evidenceDirectories = null)
+        IReadOnlyList<string>? evidenceDirectories = null, WorkExecutionScope? work = null)
     {
         manifest = manifest with { Status = CisAgentRunStates.Starting, UpdatedAtUtc = UtcNow() }; WriteManifest(context, manifest); AppendEvent(context, manifest, new("state", "Agent run is starting."));
         // Every supported host receives policy explicitly, including direct author/review and resumed runs.
@@ -1085,6 +1186,18 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         var checkpoint = Stopwatch.StartNew();
         try
         {
+            if (work is not null)
+            {
+                var remaining = work.RemainingProviderTime();
+                if (remaining <= TimeSpan.Zero) throw new InvalidDataException("Preparation exhausted the admitted execution window before provider invocation.");
+                request = request with
+                {
+                    Timeout = remaining,
+                    StartupTimeout = request.StartupTimeout is { } startup && startup < remaining ? startup : remaining,
+                    IdleTimeout = request.IdleTimeout is { } idle && idle < remaining ? idle : remaining
+                };
+            }
+            work?.Launch();
             providerResult = provider.Execute(request, item =>
             {
                 var current = ReadManifest(context, manifest.RunId, []) ?? manifest;
@@ -1106,9 +1219,11 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
                 // Persist every event, but avoid two atomic manifest replacements for every
                 // stdout/token fragment. Identity, permission and lifecycle changes are immediate.
                 if (checkpointRequired) { WriteManifest(context, current); checkpoint.Restart(); }
+                work?.Process(item);
                 AppendEvent(context, current, item); progress?.Invoke(item);
                 if (item.RequestedCapability is not null) AppendPermission(context, current, item, item.RequestApproved == true);
             }, cancellationToken);
+            work?.Returned();
         }
         catch (OperationCanceledException)
         { providerResult = new(CisAgentRunStates.Cancelled, null, manifest.ProviderSessionId, string.Empty, [], [], [], null, null, null, "cancellation", ["Agent execution cancelled."]); }
@@ -1219,6 +1334,7 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
                 : requireBrdQuestionRevision
                     ? "ERROR: Provider execution did not return the exact answered-question digest and identities with a one-file BRD change."
                 : "ERROR: Provider execution ended without a readable structured completion containing summary, changedFiles, validations, and evidence.");
+        work?.Finish(finalState, completion?.Summary ?? providerResult.Summary, completion?.Evidence ?? providerResult.Evidence);
         return New(context, finalState.ToLowerInvariant(), envelope, [diagnosis], ReadRunManifests(context), finalization.View, diagnostics, true);
     }
 
@@ -2293,7 +2409,7 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         catch (JsonException) { return null; }
     }
     private void ValidateTaskEligibility(CisRepositoryContext context, string changeId, string taskText, List<string> diagnostics,
-        IReadOnlyDictionary<string, AgentAuthorityArtifact>? snapshots = null)
+        IReadOnlyDictionary<string, AgentAuthorityArtifact>? snapshots = null, bool accountingOnly = false)
     {
         var total = 0;
         AgentAuthorityArtifact Read(string path)
@@ -2304,7 +2420,7 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
                 : throw new InvalidDataException("Eligibility evidence is missing from the bound authority context: " + relative);
         }
         var status = FrontMatter(taskText, "task_status") ?? FrontMatter(taskText, "status") ?? string.Empty;
-        if (status is not ("Ready" or "InProgress")) diagnostics.Add($"ERROR: Direct execution requires task status Ready or InProgress; current status is '{status}'.");
+        if (!accountingOnly && status is not ("Ready" or "InProgress")) diagnostics.Add($"ERROR: Direct execution requires task status Ready or InProgress; current status is '{status}'.");
         var planPath = Path.Combine(context.DocumentationPath, "changes", changeId, "plan.md");
         var planText = File.Exists(planPath) ? Read(planPath).Content : string.Empty;
         if (!File.Exists(planPath) || !string.Equals(FrontMatter(planText, "status"), "Approved", StringComparison.OrdinalIgnoreCase)) diagnostics.Add("ERROR: Direct execution requires an approved current plan.");
@@ -2327,7 +2443,7 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         var impactPath = Path.Combine(context.DocumentationPath, "changes", changeId, "impact.md");
         if (!File.Exists(impactPath) || Read(impactPath).Content.Contains("| proposed |", StringComparison.OrdinalIgnoreCase)) diagnostics.Add("ERROR: Direct execution requires fully dispositioned impact findings.");
         var designPath = Path.Combine(context.DocumentationPath, "changes", changeId, "design.md");
-        if (planText.Contains("feature_spec_frontend: true", StringComparison.OrdinalIgnoreCase)
+        if (!accountingOnly && planText.Contains("feature_spec_frontend: true", StringComparison.OrdinalIgnoreCase)
             && !IsDesignPreparationTask(taskText)
             && (!File.Exists(designPath) || !Read(designPath).Content.Contains("approval_status: Approved", StringComparison.OrdinalIgnoreCase)))
             diagnostics.Add("ERROR: Direct execution is blocked by the global design approval barrier.");
@@ -2336,7 +2452,7 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
     {
         ValidateProviderRegistration(diagnostics); if (!CisAgentRunModes.All.Contains(mode)) diagnostics.Add($"ERROR: Unsupported agent mode '{mode}'.");
         if (!CisAgentPermissions.All.Contains(permission)) diagnostics.Add($"ERROR: Unsupported agent permission '{permission}'.");
-        if (timeoutSeconds is < 30 or > 86_400) diagnostics.Add("ERROR: Timeout must be between 30 and 86400 seconds."); if (string.IsNullOrWhiteSpace(actor)) diagnostics.Add("ERROR: Run actor is required.");
+        if (timeoutSeconds is < 30 or > 3_600) diagnostics.Add("ERROR: Timeout must be between 30 and the adopted 3600-second run ceiling."); if (string.IsNullOrWhiteSpace(actor)) diagnostics.Add("ERROR: Run actor is required.");
         if (provider is not null)
         {
             if (!provider.Descriptor.Modes.Contains(mode, StringComparer.Ordinal)) diagnostics.Add($"ERROR: Provider '{provider.Descriptor.Id}' does not support mode '{mode}'.");
@@ -2514,6 +2630,18 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         try { using var process = Process.GetProcessById(id); return Math.Abs((process.StartTime.ToUniversalTime() - expected).TotalSeconds) <= 2; }
         catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception) { return false; }
     }
+    private static bool OwnedProcessStopped(int id, string? started)
+    {
+        if (!DateTimeOffset.TryParse(started, out var expected)) return false;
+        try
+        {
+            using var process = Process.GetProcessById(id);
+            return process.HasExited || Math.Abs((process.StartTime.ToUniversalTime() - expected).TotalSeconds) > 2;
+        }
+        catch (ArgumentException) { return true; } // No process has this ID.
+        catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception)
+        { return false; } // An unreadable identity is uncertainty, not proof of absence.
+    }
     private void InitializeRun(CisRepositoryContext context, AgentRunManifest manifest)
     { Directory.CreateDirectory(Path.Combine(RunPath(context, manifest.RunId), "attempts", manifest.Attempt.ToString(System.Globalization.CultureInfo.InvariantCulture))); WriteManifest(context, manifest); AppendEvent(context, manifest, new("state", "Agent run prepared.")); }
     private void AppendEvent(CisRepositoryContext context, AgentRunManifest manifest, CisAgentProviderEvent providerEvent)
@@ -2661,7 +2789,8 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         bool includeProviders = true, bool includeImports = true, bool includeRuns = true)
         => new(status, context?.RepositoryPath, envelope, includeProviders ? AllDescriptors() : [], diagnoses ?? [],
             includeImports && context is not null ? ReadImports(context) : [],
-            runs ?? (includeRuns && context is not null ? ReadRunManifests(context) : []), run, diagnostics ?? [], applied);
+            runs ?? (includeRuns && context is not null ? ReadRunManifests(context) : []), run, diagnostics ?? [], applied)
+        { Work = context is null ? null : WorkView(context, run?.Manifest) };
     private static bool SafeChangedFile(CisRepositoryContext context, string value)
     {
         var separator = value.IndexOf("::", StringComparison.Ordinal); if (separator < 0) return SafeRelative(value); if (value.IndexOf("::", separator + 2, StringComparison.Ordinal) >= 0) return false;

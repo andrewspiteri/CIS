@@ -117,6 +117,9 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck, ICis
         var canonicalPath = state.CanonicalPath!;
         var relativePath = NormalizePath(Path.GetRelativePath(state.Authority.RepositoryPath, canonicalPath));
         var catalog = File.ReadAllText(state.Context!.CatalogPath);
+        // Capture current adoption before selection can rebind the catalog. A
+        // replacement's historical approval cannot authorize its own restoration.
+        var previouslyAdopted = HasActiveTechnicalCatalogBinding(state.Authority, canonicalPath);
         var merge = _catalogMerger.Merge(
             state.Authority.Id,
             RouteSelectedTechnicalCatalog(state.Authority.RepositoryPath, canonicalPath, catalog, stableId, relativePath),
@@ -143,7 +146,7 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck, ICis
                 BackupImportedTechnicalIntent(state.Authority.RepositoryPath, canonicalPath);
                 content = imported;
             }
-            approvalCanCarryForward = HasCurrentApproval(existing)
+            approvalCanCarryForward = previouslyAdopted && HasCurrentApproval(existing)
                 && BaselinesCanCarryForward(existing, state.Baselines, state.Brd?.Content);
             if (!approvalCanCarryForward) content = PreserveLegacyDecisionBaselines(state, content);
             if (approvalCanCarryForward)
@@ -175,25 +178,23 @@ public sealed partial class TechnicalIntentService : IChangeReadinessCheck, ICis
             }
         }
 
-        var changed = existing is null || !Equivalent(existing, content);
-        if (changed)
+        // Clear ineffective authority even if preparation leaves the reviewed
+        // text unchanged; copied approval metadata must not survive a no-op.
+        if (!approvalCanCarryForward)
         {
-            if (approvalCanCarryForward)
-                content = ReplaceNestedFrontMatter(content, "approved_content_hash", JsonSerializer.Serialize(ContentDigest(content)));
-            else
-            {
-                content = ReplaceFrontMatter(content, "status", "Draft");
-                content = ReplaceFrontMatter(content, "last_reviewed", "null");
-                content = ReplaceNestedFrontMatter(content, "approved_by", "null");
-                content = ReplaceNestedFrontMatter(content, "approved_at", "null");
-                content = ReplaceNestedFrontMatter(content, "approval_reason", "null");
-                content = ReplaceNestedFrontMatter(content, "approved_content_hash", "null");
-            }
+            content = ReplaceFrontMatter(content, "status", "Draft");
+            content = ReplaceFrontMatter(content, "last_reviewed", "null");
+            content = ReplaceNestedFrontMatter(content, "approved_by", "null");
+            content = ReplaceNestedFrontMatter(content, "approved_at", "null");
+            content = ReplaceNestedFrontMatter(content, "approval_reason", "null");
+            content = ReplaceNestedFrontMatter(content, "approved_content_hash", "null");
         }
 
-        var nextCatalog = changed
-            ? UpdateCatalogStatus(merge.Content, stableId, approvalCanCarryForward ? "active" : "draft")
-            : merge.Content;
+        var changed = existing is null || !Equivalent(existing, content);
+        if (changed && approvalCanCarryForward)
+            content = ReplaceNestedFrontMatter(content, "approved_content_hash", JsonSerializer.Serialize(ContentDigest(content)));
+
+        var nextCatalog = UpdateCatalogStatus(merge.Content, stableId, approvalCanCarryForward ? "active" : "draft");
         var catalogChanged = !Equivalent(catalog, nextCatalog);
         if (!changed && !catalogChanged)
             return ValidateInternal(workspacePath, "unchanged", applied: false);

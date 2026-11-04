@@ -3,7 +3,6 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Cis.Abstractions;
 using Cis.Modules.Brd;
-using Cis.Modules.Docs;
 
 namespace Cis.Modules.TechnicalIntent;
 
@@ -380,20 +379,8 @@ public sealed partial class TechnicalIntentQuestionnaireService
     }
 
     private static bool HasAdoptedTechnicalRole(CisWorkspaceRepository authority, string path, string content)
-    {
-        var stableId = $"{authority.Id}:spec:technical-intent";
-        if (CisFrontMatter.Read(content, "stable_id", nested: true)?.Trim('"', '\'') != stableId) return false;
-        var catalogPath = Path.Combine(authority.RepositoryPath,
-            authority.DocumentationRoot.Replace('/', Path.DirectorySeparatorChar), "catalog.yml");
-        if (CisPathSafety.ContainsReparsePoint(authority.RepositoryPath, catalogPath)) return false;
-        var catalog = new DocumentationCatalogReader().Read(catalogPath);
-        if (!catalog.IsSuccess || catalog.Catalog is not { SchemaVersion: 1 } current) return false;
-        var bindings = current.Documents.Where(document => string.Equals(document.Id, stableId, StringComparison.OrdinalIgnoreCase)).ToArray();
-        return bindings is [{ Type: "repository-specification", Authority: "canonical", Status: "active" } binding]
-            && string.Equals(CisProductDocumentPaths.ValidatePath(authority.RepositoryPath, binding.Path), path, CisPathSafety.PlatformComparison)
-            && current.Documents.Count(document => CisPathSafety.TryResolveUnderRoot(authority.RepositoryPath, document.Path, out var documentPath)
-                && string.Equals(documentPath, path, CisPathSafety.PlatformComparison)) == 1;
-    }
+        => CisFrontMatter.Read(content, "stable_id", nested: true)?.Trim('"', '\'') == $"{authority.Id}:spec:technical-intent"
+            && TechnicalIntentService.HasActiveTechnicalCatalogBinding(authority, path);
 
     private static HashSet<string> FindSourceConflicts(IReadOnlyList<InputDocument> documents, List<string> errors, bool includeSelectedDraft = false)
     {

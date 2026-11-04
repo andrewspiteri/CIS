@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Cis.Abstractions;
+using Cis.Modules.Docs;
 
 namespace Cis.Modules.TechnicalIntent;
 
@@ -51,6 +52,21 @@ public sealed partial class TechnicalIntentService
             @"\b(?:technical\s+)?(?:choices|decisions)\s+(?:are\s+)?(?:now\s+)?closed\b|\bno\s+(?:open|unresolved)\s+technical\s+decisions\b",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))) return string.Empty;
         return body;
+    }
+
+    internal static bool HasActiveTechnicalCatalogBinding(CisWorkspaceRepository authority, string path)
+    {
+        var stableId = $"{authority.Id}:spec:technical-intent";
+        var catalogPath = Path.Combine(authority.RepositoryPath,
+            authority.DocumentationRoot.Replace('/', Path.DirectorySeparatorChar), "catalog.yml");
+        if (CisPathSafety.ContainsReparsePoint(authority.RepositoryPath, catalogPath)) return false;
+        var catalog = new DocumentationCatalogReader().Read(catalogPath);
+        if (!catalog.IsSuccess || catalog.Catalog is not { SchemaVersion: 1 } current) return false;
+        var bindings = current.Documents.Where(document => string.Equals(document.Id, stableId, StringComparison.OrdinalIgnoreCase)).ToArray();
+        return bindings is [{ Type: "repository-specification", Authority: "canonical", Status: "active" } binding]
+            && string.Equals(CisProductDocumentPaths.ValidatePath(authority.RepositoryPath, binding.Path), path, CisPathSafety.PlatformComparison)
+            && current.Documents.Count(document => CisPathSafety.TryResolveUnderRoot(authority.RepositoryPath, document.Path, out var documentPath)
+                && string.Equals(documentPath, path, CisPathSafety.PlatformComparison)) == 1;
     }
 
     private static string RouteSelectedTechnicalCatalog(string repository, string path, string catalog, string stableId, string relative)

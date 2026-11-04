@@ -19,7 +19,7 @@ public sealed partial class FeatureIntakeTests
         var service = DeliveryService(f, new StoryTaskGeneration(), completion: new StoryClosingGate());
         var id = service.Navigation(f.Authority).Features.Single().Stories.Single().Id;
         var read = service.Story(f.Authority, "referrals", id, false);
-        var plan = service.Story(f.Authority, "referrals", id, true, read.InputHash);
+        var plan = PrepareAssessedStory(service, f, id, read);
         var approved = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "approve", plan.PlanHash!, plan.Revision!, "Fixture", "Synthetic reviewed scope");
         var started = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "start", approved.PlanHash!, approved.Revision!, "Fixture", taskId: "T1");
         Assert.Empty(started.Errors);
@@ -58,7 +58,7 @@ public sealed partial class FeatureIntakeTests
         var service = DeliveryService(f, new StoryTaskGeneration(), completion: closing);
         var id = service.Navigation(f.Authority).Features.Single().Stories.Single().Id;
         var read = service.Story(f.Authority, "referrals", id, false);
-        var plan = service.Story(f.Authority, "referrals", id, true, read.InputHash);
+        var plan = PrepareAssessedStory(service, f, id, read);
         var approved = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "approve", plan.PlanHash!, plan.Revision!, "Reviewer", "Synthetic reviewed scope");
         var started = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "start", approved.PlanHash!, approved.Revision!, "Reviewer", taskId: "T1");
         Assert.Empty(started.Errors);
@@ -106,7 +106,7 @@ public sealed partial class FeatureIntakeTests
         CreateIntake(f); var executor = new StoryTaskExecutor(); var service = DeliveryService(f, new StoryTaskGeneration(), executor);
         var id = service.Navigation(f.Authority).Features.Single().Stories.Single().Id;
         var read = service.Story(f.Authority, "referrals", id, false);
-        var plan = service.Story(f.Authority, "referrals", id, true, read.InputHash);
+        var plan = PrepareAssessedStory(service, f, id, read);
         Assert.NotEmpty(service.ExecuteStoryTask(f.Authority, "referrals", id, "T1", cancellation: TestContext.Current.CancellationToken).Errors);
         var current = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "approve", plan.PlanHash!, plan.Revision!, "Reviewer", "Reviewed");
         if (previouslyStarted) current = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "start", current.PlanHash!, current.Revision!, "Reviewer", taskId: "T1");
@@ -187,7 +187,7 @@ public sealed partial class FeatureIntakeTests
         CreateIntake(f); var service = DeliveryService(f, new StoryTaskGeneration());
         var id = service.Navigation(f.Authority).Features.Single().Stories.Single().Id;
         var read = service.Story(f.Authority, "referrals", id, false);
-        var plan = service.Story(f.Authority, "referrals", id, true, read.InputHash);
+        var plan = PrepareAssessedStory(service, f, id, read);
         Assert.Empty(plan.Errors); Assert.Equal("Proposed", plan.PlanState);
         Assert.Equal(2, service.Navigation(f.Authority).Features.Single().Stories.Single().Tasks.Count);
         CisFeatureStoryResult Update(CisFeatureStoryResult current, string operation, string? task = null, string? evidence = null, bool verified = false)
@@ -232,7 +232,7 @@ public sealed partial class FeatureIntakeTests
         CreateIntake(f); var service = DeliveryService(f, new StoryTaskGeneration());
         var id = service.Navigation(f.Authority).Features.Single().Stories.Single().Id;
         var read = service.Story(f.Authority, "referrals", id, false);
-        var plan = service.Story(f.Authority, "referrals", id, true, read.InputHash);
+        var plan = PrepareAssessedStory(service, f, id, read);
         Assert.NotEmpty(service.UpdateStoryWorkflow(f.Authority, "referrals", id, "approve", "wrong", plan.Revision!, "Reviewer", "Reviewed").Errors);
         var approved = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "approve", plan.PlanHash!, plan.Revision!, "Reviewer", "Reviewed");
         Assert.Empty(approved.Errors);
@@ -260,7 +260,7 @@ public sealed partial class FeatureIntakeTests
         CreateIntake(f); var service = DeliveryService(f, new StoryTaskGeneration());
         var id = service.Navigation(f.Authority).Features.Single().Stories.Single(story => story.Title == "Privacy evidence").Id;
         var read = service.Story(f.Authority, "referrals", id, false);
-        var plan = service.Story(f.Authority, "referrals", id, true, read.InputHash);
+        var plan = PrepareAssessedStory(service, f, id, read);
         var approved = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "approve", plan.PlanHash!, plan.Revision!, "Reviewer", "Reviewed privacy acceptance and task dependencies.");
         var started = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "start", approved.PlanHash!, approved.Revision!, "Reviewer", taskId: "T1");
         Assert.Empty(started.Errors);
@@ -306,7 +306,7 @@ public sealed partial class FeatureIntakeTests
         CreateIntake(f); var service = DeliveryService(f, new StoryTaskGeneration());
         var id = service.Navigation(f.Authority).Features.Single().Stories.Single(story => story.Title == "Privacy evidence").Id;
         var read = service.Story(f.Authority, "referrals", id, false);
-        var plan = service.Story(f.Authority, "referrals", id, true, read.InputHash);
+        var plan = PrepareAssessedStory(service, f, id, read);
         var approved = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "approve", plan.PlanHash!, plan.Revision!, "Reviewer", "Reviewed delivery scope.");
         var started = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "start", approved.PlanHash!, approved.Revision!, "Reviewer", taskId: "T1");
         Assert.Empty(started.Errors);
@@ -482,10 +482,12 @@ public sealed partial class FeatureIntakeTests
         public int Calls { get; private set; }
         public Action? DuringGeneration { get; init; }
         public CisTextGenerationRequest? Request { get; private set; }
+        public IReadOnlyList<CisFeatureStoryTask>? ExplicitTasks { get; set; }
         public CisAiStatus GetStatus() => new([new("test-local", "available", "http://localhost", Mode != "remote", [new("test", 1), new("stronger", 100)], null)]);
         public CisTextGenerationResult Generate(CisTextGenerationRequest request)
         {
             Calls++; Request = request;
+            if (ExplicitTasks is not null) return new("generated", "test-local", request.Model!, JsonSerializer.Serialize(new { tasks = ExplicitTasks }), null, true);
             var missingAcceptance = Mode == "missing-acceptance" || Mode == "repair" && Calls == 1;
             CisFeatureStoryTask[] tasks = [
                 new("T1", "Confirm document retention behavior", "Inspect version retention against the privacy requirement.", [], [1],

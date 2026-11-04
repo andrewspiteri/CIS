@@ -10,21 +10,34 @@ internal sealed class TaskCompletionScopes(ICisRepositoryContextResolver resolve
 {
     internal IReadOnlyList<TaskCompletionScope> Resolve(ChangeDossier change, PlanWorkItem task, IReadOnlyList<string>? fallbackTargets)
     {
-        var authority = resolver.Resolve(change.RepositoryPath).Context
-            ?? throw new InvalidDataException("Task authority context is unavailable.");
         var targets = task.Targets is { Count: > 0 } ? task.Targets : fallbackTargets ?? [];
-        var resolution = registry?.Resolve(change.RepositoryPath);
+        var authority = resolver.Resolve(change.RepositoryPath).Context ?? throw new InvalidDataException("Task authority context is unavailable.");
+        return ResolveContexts(change.RepositoryPath, targets).Select(context =>
+        {
+            var name = context.RepositoryId == authority.RepositoryId ? task.Id + ".json" : task.Id + "/" + context.RepositoryId + ".json";
+            var relative = Path.Combine(change.RelativePath, "verification", name).Replace('\\', '/');
+            if (!CisPathSafety.TryResolveUnderRoot(change.RepositoryPath, relative, out _))
+                throw new InvalidDataException("Task receipt path escapes the authority repository.");
+            return new TaskCompletionScope(context, relative);
+        }).ToArray();
+    }
+
+    internal IReadOnlyList<CisRepositoryContext> ResolveContexts(string repositoryPath, IReadOnlyList<string> targets)
+    {
+        var authority = resolver.Resolve(repositoryPath).Context
+            ?? throw new InvalidDataException("Task authority context is unavailable.");
+        var resolution = registry?.Resolve(repositoryPath);
         var workspace = resolution?.Workspace;
         if (workspace is null)
         {
-            if (File.Exists(Path.Combine(change.RepositoryPath, ".cis/workspace.yml")))
+            if (File.Exists(Path.Combine(repositoryPath, ".cis/workspace.yml")))
                 throw new InvalidDataException("Task workspace cannot be resolved: " + string.Join("; ", resolution?.Errors ?? []));
             if (targets.Any(id => id != authority.RepositoryId))
                 throw new InvalidDataException("Task targets require a registered product workspace.");
-            return [Scope(authority)];
+            return [authority];
         }
         if (resolution!.Errors.Count > 0) throw new InvalidDataException(string.Join("; ", resolution.Errors));
-        if (workspace.AuthorityRepository is not { } registeredAuthority || !SamePath(registeredAuthority.RepositoryPath, change.RepositoryPath))
+        if (workspace.AuthorityRepository is not { } registeredAuthority || !SamePath(registeredAuthority.RepositoryPath, repositoryPath))
             throw new InvalidDataException("Completion must be requested from the registered task authority.");
         if (targets.Count == 0)
         {
@@ -45,17 +58,8 @@ internal sealed class TaskCompletionScopes(ICisRepositoryContextResolver resolve
                 ?? throw new InvalidDataException("Task target context is unavailable: " + id);
             if (context.RepositoryId != id || context.DocumentationRoot != registered.DocumentationRoot)
                 throw new InvalidDataException("Task target registration does not match repository configuration: " + id);
-            return Scope(context);
+            return context;
         }).ToArray();
-
-        TaskCompletionScope Scope(CisRepositoryContext context)
-        {
-            var name = context.RepositoryId == authority.RepositoryId ? task.Id + ".json" : task.Id + "/" + context.RepositoryId + ".json";
-            var relative = Path.Combine(change.RelativePath, "verification", name).Replace('\\', '/');
-            if (!CisPathSafety.TryResolveUnderRoot(authority.RepositoryPath, relative, out _))
-                throw new InvalidDataException("Task receipt path escapes the authority repository.");
-            return new(context, relative);
-        }
     }
 
     private static bool SamePath(string first, string second) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(first)).Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(second)),

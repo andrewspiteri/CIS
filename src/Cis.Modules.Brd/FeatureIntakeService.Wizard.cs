@@ -372,6 +372,8 @@ public sealed partial class FeatureIntakeService
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public IReadOnlyList<CisFeatureDeliveryReview>? DeliveryReviews { get; init; }
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public IReadOnlyList<CisFeatureStoryPlanning>? StoryPlanning { get; init; }
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public IReadOnlyList<string>? DecisionChanges { get; init; }
     }
     private sealed record WizardState(CisWorkspaceRepository Authority, CisWorkspace Workspace, string RequestPath, string Content,

@@ -20,7 +20,7 @@ public sealed partial class FeatureIntakeTests
         var service = DeliveryService(f, new StoryTaskGeneration(), executor);
         var id = service.Navigation(f.Authority).Features.Single().Stories.Single().Id;
         var read = service.Story(f.Authority, "referrals", id, false);
-        var plan = service.Story(f.Authority, "referrals", id, true, read.InputHash);
+        var plan = PrepareAssessedStory(service, f, id, read);
         var current = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "approve", plan.PlanHash!, plan.Revision!, "Reviewer", "Reviewed");
         CisFeatureStoryResult Execute(CisFeatureStoryResult state)
         {
@@ -67,7 +67,7 @@ public sealed partial class FeatureIntakeTests
         CreateIntake(f); var executor = new RepeatingFindingExecutor(); var service = DeliveryService(f, new StoryTaskGeneration(), executor);
         var id = service.Navigation(f.Authority).Features.Single().Stories.Single().Id;
         var read = service.Story(f.Authority, "referrals", id, false);
-        var plan = service.Story(f.Authority, "referrals", id, true, read.InputHash);
+        var plan = PrepareAssessedStory(service, f, id, read);
         var current = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "approve", plan.PlanHash!, plan.Revision!, "Reviewer", "Reviewed");
         CisFeatureStoryResult Execute(CisFeatureStoryResult state)
         {
@@ -178,7 +178,7 @@ public sealed partial class FeatureIntakeTests
         CreateIntake(f); var executor = new StoryTaskExecutor(); var service = DeliveryService(f, new StoryTaskGeneration(), executor);
         var id = service.Navigation(f.Authority).Features.Single().Stories.Single().Id;
         var read = service.Story(f.Authority, "referrals", id, false);
-        var plan = service.Story(f.Authority, "referrals", id, true, read.InputHash);
+        var plan = PrepareAssessedStory(service, f, id, read);
         var current = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "approve", plan.PlanHash!, plan.Revision!, "Reviewer", "Reviewed");
         var preview = service.ExecuteStoryTask(f.Authority, "referrals", id, "T1", cancellation: TestContext.Current.CancellationToken);
         current = service.ExecuteStoryTask(f.Authority, "referrals", id, "T1", true, current.PlanHash, current.Revision,

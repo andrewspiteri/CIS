@@ -10,7 +10,13 @@ public sealed partial class FeatureIntakeService
     private const string DeliveryVersion = "feature-delivery-14";
     private const string DeliveryUnresolvedWarning = "Resolve the flagged scope conflicts and evidence gaps before treating these stories as an implementation plan.";
     private const string DeliveryMaintenanceDeclaration = @"\b(?:create|update|save|delete|publish)\w*\s*(?:<[^>]+>)?\s*\([^;{}\n]*\)\s*(?::[^;{}\n]+)?\s*(?:\{|=>)";
-    private sealed record DeliveryDraft(string Id, string Phase, StoryDraft Story);
+    private sealed record DeliveryDraft(string Id, string Phase, StoryDraft Story)
+    {
+        public string? ParentId { get; init; }
+        public IReadOnlyList<int> ParentRequirementNumbers { get; init; } = [];
+        public IReadOnlyList<string> StoryDependencies { get; init; } = [];
+        public IReadOnlyList<string> SharedPrerequisiteTaskIds { get; init; } = [];
+    }
     private sealed record DeliveryFile(string RepositoryId, string Path, string Absolute, long Length, long Modified)
     {
         public string ContentHash { get; init; } = "";
@@ -18,6 +24,7 @@ public sealed partial class FeatureIntakeService
     private sealed record DeliveryInput(string Hash, IReadOnlyList<DeliveryDraft> Drafts, IReadOnlyList<CisFeatureDeliveryEvidence> Evidence,
         IReadOnlyList<CisWorkspaceRepository> Repositories, string Direction, string Constraints, string Ownership, IReadOnlyList<string> Warnings)
     {
+        public string ContractBoundaries { get; init; } = "";
         public IReadOnlyList<DeliveryFile> Files { get; init; } = [];
         public IReadOnlyList<DeliveryFile> ConservativeFiles { get; init; } = [];
         public IReadOnlyDictionary<string, string> ConservativeLimits { get; init; } = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -112,8 +119,8 @@ public sealed partial class FeatureIntakeService
     private DeliveryInput ReadDeliveryInput(WizardState state, bool persistSearch = true)
     {
         var warnings = new List<string>();
-        var drafts = StoryGroups(state.Source).SelectMany(group => group.Value.Select(story =>
-            new DeliveryDraft(Hash(Encoding.UTF8.GetBytes(story.Source + "|" + story.Title))[7..23], group.Key, story))).Take(80).ToArray();
+        var drafts = ExpandStoryPlanning(state, StoryGroups(state.Source).SelectMany(group => group.Value.Select(story =>
+            new DeliveryDraft(Hash(Encoding.UTF8.GetBytes(story.Source + "|" + story.Title))[7..23], group.Key, story))).Take(80).ToArray());
         var repositories = state.Workspace.Repositories.Where(r => r.IsProductOwned && r.Role == "participant").OrderBy(r => r.Id, StringComparer.Ordinal).ToArray();
         var files = new List<DeliveryFile>();
         var conservativeFiles = new List<DeliveryFile>();
@@ -193,10 +200,11 @@ public sealed partial class FeatureIntakeService
             conservativeLimits = conservativeLimits.OrderBy(item => item.Key, StringComparer.Ordinal),
             evidence
         }, Json)));
-        if (drafts.Length == 80) warnings.Add("Story coverage is bounded to 80 candidates. Split the feature before planning further requirements.");
+        if (drafts.Count == 80) warnings.Add("Story coverage is bounded to 80 candidates. Split the feature before planning further requirements.");
         warnings.Add("This is a proposed comparison with selected code excerpts, not proof of complete implementation. Review acceptance coverage and ownership before saving.");
         var input = new DeliveryInput(hash, drafts, evidence, repositories, direction, constraints,
-            state.Review.Pages.GetValueOrDefault("delivery")?.Answers.GetValueOrDefault("delivery-ownership") ?? "", warnings);
+            state.Review.Pages.GetValueOrDefault("delivery")?.Answers.GetValueOrDefault("delivery-ownership") ?? "", warnings)
+        { ContractBoundaries = DeliverySourceBoundaries(state.Source) };
         return ReadDeliveryBasis(state, input with { Files = files, ConservativeFiles = conservativeFiles, ConservativeLimits = conservativeLimits }, files);
     }
 

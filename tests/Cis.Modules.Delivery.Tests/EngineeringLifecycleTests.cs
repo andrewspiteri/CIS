@@ -60,10 +60,22 @@ public sealed partial class DeliveryWorkflowTests
             ImplementerRunId = "implementation-1",
             Implementation = WriteEvidence("human-implementation.json", new
             {
-                schemaVersion = 1, runId = "implementation-1", kind = "human-implemented", actor = "Synthetic protocol author",
-                taskId = task.Id, taskContractDigest = template.TaskDigest, inputDigest = template.InputDigest, completedAtUtc = "2000-01-01T00:00:00Z"
+                schemaVersion = 1,
+                runId = "implementation-1",
+                kind = "human-implemented",
+                actor = "Synthetic protocol author",
+                taskId = task.Id,
+                taskContractDigest = template.TaskDigest,
+                inputDigest = template.InputDigest,
+                completedAtUtc = "2000-01-01T00:00:00Z"
             }),
             ReviewerRunId = "review-1",
+            VerificationObligations = template.VerificationObligations.Select(obligation => obligation with
+            {
+                State = EngineeringGateState.Passed,
+                Rationale = "The assigned review demonstrates this documentation acceptance contract.",
+                Artifacts = [run, result]
+            }).ToArray(),
             Gates = template.Gates.Select(gate => gate with
             {
                 State = EngineeringGateState.Passed,
@@ -85,6 +97,7 @@ public sealed partial class DeliveryWorkflowTests
         {
             ImplementerRunId = receipt.ImplementerRunId,
             ReviewerRunId = receipt.ReviewerRunId,
+            VerificationObligations = receipt.VerificationObligations,
             Gates = receipt.Gates
         }));
         Assert.Contains(services.Plans.TransitionTask(transition).Errors, error => error.Contains("Gate 'review'", StringComparison.Ordinal));

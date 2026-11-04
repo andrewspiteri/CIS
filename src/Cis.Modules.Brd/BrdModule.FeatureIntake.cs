@@ -109,33 +109,52 @@ public sealed partial class BrdModule
     private static Command CreateFeatureStoryCommand(FeatureIntakeService service)
     {
         var root = new Command("story", "Read a story definition and acceptance criteria, or generate its proposed tasks.");
+        root.Subcommands.Add(CreateStoryPlanningCommand(service, false));
+        root.Subcommands.Add(CreateStoryPlanningCommand(service, true));
         foreach (var operation in new[] { "status", "prepare" })
         {
             var command = new Command(operation, operation == "prepare" ? "Generate this story's task breakdown with a selected model; automatic selection stays local." : "Read this story and its current task breakdown.");
             var workspace = WorkspaceOption(); var format = FormatOption();
-            var slug = new Option<string>("--slug") { Required = true };
-            var story = new Option<string>("--story") { Required = true };
-            var hash = new Option<string?>("--expected-input-hash") { Required = operation == "prepare" };
+            var slug = new Option<string?>("--slug") { Required = operation == "status" };
+            var story = new Option<string?>("--story") { Required = operation == "status" };
+            var hash = new Option<string?>("--expected-input-hash");
+            var input = new Option<string?>("--input") { Description = "Explicit classified task proposal JSON; requires no model or additional story options." };
             var provider = new Option<string?>("--provider") { Description = "Choose a provider and regenerate the task plan." };
             var model = new Option<string?>("--model");
             var allowRemote = new Option<bool>("--allow-remote") { Description = "Authorize sending this story, saved direction and selected code excerpts to the chosen remote model." };
             command.Options.Add(workspace); command.Options.Add(format); command.Options.Add(slug); command.Options.Add(story); command.Options.Add(hash);
             command.Options.Add(provider); command.Options.Add(model); command.Options.Add(allowRemote);
+            if (operation == "prepare") command.Options.Add(input);
             command.SetAction(parse =>
             {
                 var selected = GetFormat(parse.GetValue(format)); if (selected is null) return 2;
-                var result = service.Story(parse.GetValue(workspace) ?? Directory.GetCurrentDirectory(), parse.GetValue(slug)!, parse.GetValue(story)!, operation == "prepare", parse.GetValue(hash), parse.GetValue(provider), parse.GetValue(model), parse.GetValue(allowRemote));
+                CisFeatureStoryResult result;
+                try
+                {
+                    if (operation == "prepare" && parse.GetValue(input) is { } path)
+                        result = service.PrepareStory(parse.GetValue(workspace) ?? Directory.GetCurrentDirectory(), ReadStoryPlanningInput<CisFeatureStoryPrepareRequest>(path));
+                    else
+                    {
+                        if (string.IsNullOrWhiteSpace(parse.GetValue(slug)) || string.IsNullOrWhiteSpace(parse.GetValue(story))
+                            || operation == "prepare" && string.IsNullOrWhiteSpace(parse.GetValue(hash)))
+                            throw new InvalidDataException("Supply --slug, --story and the current --expected-input-hash for model preparation, or use --input for an explicit task proposal.");
+                        result = service.Story(parse.GetValue(workspace) ?? Directory.GetCurrentDirectory(), parse.GetValue(slug)!, parse.GetValue(story)!, operation == "prepare", parse.GetValue(hash), parse.GetValue(provider), parse.GetValue(model), parse.GetValue(allowRemote));
+                    }
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException or JsonException or ArgumentException)
+                { result = new("failed", parse.GetValue(slug) ?? "", parse.GetValue(story) ?? "", null, "", "", null, [], [], [error.Message]); }
                 if (selected == "json") Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
                 else
                 {
                     Console.WriteLine($"status={result.Status};feature={result.Slug};story={result.StoryId};title={Clean(result.Story?.Title ?? "")};tasks={result.Tasks.Count}");
                     Console.WriteLine($"provider={Clean(result.Provider ?? "")};model={Clean(result.Model ?? "")}");
                     Console.WriteLine("definition=" + Clean(result.Definition));
+                    WriteStoryPlanningState(result);
                     foreach (var criterion in result.Story?.Requirements ?? []) Console.WriteLine("acceptance=" + Clean(criterion));
                     foreach (var task in result.Tasks) Console.WriteLine($"task={task.Id};title={Clean(task.Title)};repositories={Clean(string.Join(',', task.RepositoryIds))}");
                     WriteStoryReviewState(result);
-                    foreach (var error in result.Errors) Console.WriteLine("error=" + Clean(error));
                 }
+                foreach (var error in result.Errors) Console.Error.WriteLine("error=" + Clean(error));
                 return result.ExitCode;
             });
             root.Subcommands.Add(command);
@@ -183,6 +202,55 @@ public sealed partial class BrdModule
         root.Subcommands.Add(CreateStoryFeedbackCommand(service, false));
         root.Subcommands.Add(CreateStoryFeedbackCommand(service, true));
         return root;
+    }
+
+    private static Command CreateStoryPlanningCommand(FeatureIntakeService service, bool decompose)
+    {
+        var command = new Command(decompose ? "decompose" : "assess", decompose
+            ? "Retain coherent child delivery outcomes and complete accepted scope coverage."
+            : "Record a scoped engineering delivery-size assessment without approving implementation.");
+        var input = new Option<string>("--input") { Required = true };
+        var workspace = WorkspaceOption(); var format = FormatOption();
+        command.Options.Add(input); command.Options.Add(workspace); command.Options.Add(format);
+        command.SetAction(parse =>
+        {
+            var selected = GetFormat(parse.GetValue(format)); if (selected is null) return 2;
+            CisFeatureStoryResult result;
+            try
+            {
+                var root = parse.GetValue(workspace) ?? Directory.GetCurrentDirectory();
+                result = decompose ? service.DecomposeStory(root, ReadStoryPlanningInput<CisFeatureStoryDecompositionRequest>(parse.GetValue(input)!))
+                    : service.AssessStory(root, ReadStoryPlanningInput<CisFeatureStoryAssessmentRequest>(parse.GetValue(input)!));
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException or JsonException or ArgumentException)
+            { result = new("failed", "", "", null, "", "", null, [], [], [error.Message]); }
+            if (selected == "json") Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+            else
+            {
+                Console.WriteLine($"status={result.Status};feature={result.Slug};story={result.StoryId};applied={result.Applied}");
+                WriteStoryPlanningState(result);
+            }
+            foreach (var error in result.Errors) Console.Error.WriteLine("error=" + Clean(error));
+            return result.ExitCode;
+        });
+        return command;
+    }
+
+    private static T ReadStoryPlanningInput<T>(string path)
+    {
+        var file = new FileInfo(path);
+        if (!file.Exists || file.Length > 262_144 || file.Attributes.HasFlag(FileAttributes.ReparsePoint))
+            throw new InvalidDataException("Choose a regular story input JSON file no larger than 256 KiB.");
+        return JsonSerializer.Deserialize<T>(File.ReadAllText(path), new JsonSerializerOptions(JsonOptions)
+        { UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow })
+            ?? throw new InvalidDataException("The story input must contain the expected JSON object.");
+    }
+
+    private static void WriteStoryPlanningState(CisFeatureStoryResult result)
+    {
+        Console.WriteLine($"deliverySize={Clean(result.DeliverySize?.Size ?? "unknown")};assessment={Clean(result.DeliverySizeState)};basis={Clean(result.PlanningBasisHash ?? "")};planningRevision={Clean(result.PlanningRevision)};container={result.IsDeliveryContainer}");
+        Console.WriteLine("deliverySizeReason=" + Clean(result.DeliverySizeReason));
+        foreach (var child in result.ChildStories) Console.WriteLine($"child={child.Id};key={Clean(child.Key)};title={Clean(child.Title)};requirements={string.Join(',', child.RequirementNumbers)};dependsOn={Clean(string.Join(',', child.DependsOn))}");
     }
 
     private static Command CreateStoryFeedbackCommand(FeatureIntakeService service, bool suggest)

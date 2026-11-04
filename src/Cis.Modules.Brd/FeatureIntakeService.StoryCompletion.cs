@@ -25,14 +25,20 @@ public sealed partial class FeatureIntakeService
             return repositories.Select(repository => new EngineeringAssessmentService().Assess(
                 new(repository.RepositoryPath, repository.Id, repository.DocumentationRoot,
                     Path.Combine(repository.RepositoryPath, repository.DocumentationRoot),
-                    Path.Combine(repository.RepositoryPath, repository.DocumentationRoot, "catalog.yml")), "implementation").Adopted
+                    Path.Combine(repository.RepositoryPath, repository.DocumentationRoot, "catalog.yml")), task.Category ?? "unresolved").Adopted
                 ? new CisStoryCompletionContext(repository.Id, "", null,
                     ["The engineering completion service is unavailable; adopted story completion cannot bypass verification."])
                 : new CisStoryCompletionContext(repository.Id, "", null, []) { AdoptionStatus = "not-adopted" }).ToArray();
         }
+        var contractVersion = StoryContractVersion(ReadStoryRecord(state, result.StoryId)?.Basis);
         var work = new CisStoryTaskWork(state.Workspace.WorkspacePath, result.Slug, result.StoryId, result.PlanHash!, result.Definition,
             task, task.RequirementNumbers.Select(number => result.Story!.Requirements[number - 1]).ToArray(), repositories, "")
-        { Direction = input.Direction, Constraints = input.Constraints };
+        {
+            ContractVersion = contractVersion,
+            Direction = input.Direction,
+            Constraints = EffectiveStoryConstraints(input, contractVersion),
+            NeedsVerificationRenewal = result.TaskProgress.SingleOrDefault(item => item.Id == taskId)?.NeedsVerificationRenewal == true
+        };
         var contexts = storyCompletion.Assess(work, prepare);
         if (!contexts.Select(context => context.RepositoryId).Order(StringComparer.Ordinal)
             .SequenceEqual(participantIds.Order(StringComparer.Ordinal), StringComparer.Ordinal))

@@ -13,7 +13,11 @@ public sealed record EngineeringCompletionReceipt(int SchemaVersion, string Chan
     public EngineeringEvidenceArtifact? Implementation { get; init; }
     public string? RepositoryId { get; init; }
     public string? ReceiptPath { get; init; }
+    public IReadOnlyList<EngineeringObligationEvidence> VerificationObligations { get; init; } = [];
 }
+
+public sealed record EngineeringObligationEvidence(string Id, IReadOnlyList<string> Criteria,
+    EngineeringGateState State, string Rationale, IReadOnlyList<EngineeringEvidenceArtifact> Artifacts);
 
 /// <summary>Validates task verification evidence. It neither runs tests nor approves exceptions.</summary>
 public static class EngineeringCompletionReview
@@ -24,7 +28,12 @@ public static class EngineeringCompletionReview
         CisGraphMetadataReadResult graph, EngineeringAssessment assessment, string inputDigest, string? taskDocument = null, string? taskContractDigest = null)
         => new(1, changeId, task.Id, taskContractDigest ?? TaskDigest(task, taskDocument), graph.Build?.Id ?? "", Hash(policyPath), inputDigest, task.RequirementIds,
             assessment.RequiredGates.Select(gate => new EngineeringGateEvidence(gate.Id, EngineeringGateState.Missing, "", [])).ToArray(),
-            [], "", "");
+            [], "", "")
+        {
+            VerificationObligations = (task.VerificationObligations ?? []).Select(obligation =>
+                obligation is null || obligation.Criteria is null ? throw new InvalidDataException("Task verification obligation is malformed.")
+                    : new EngineeringObligationEvidence(obligation.Id, obligation.Criteria, EngineeringGateState.Missing, "", [])).ToArray()
+        };
 
     public static IReadOnlyList<string> Review(string repository, string receiptPath, string changeId,
         PlanWorkItem task, string policyPath, CisGraphMetadataReadResult? graph, EngineeringAssessment assessment, string inputDigest, string documentationRoot, string? taskDocument = null,
@@ -80,10 +89,64 @@ public static class EngineeringCompletionReview
                         reviewTaskId ?? task.Id, taskContractDigest ?? TaskDigest(task, taskDocument), documentationRoot, thresholds,
                         required.Id == "review" && reviewRepository is not null ? repository : null, authorityInputDigest, authorityDossierDigest));
             }
+            ReviewVerificationObligations(repository, reviewRepository, task, receipt, assessment, errors);
         }
         catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or JsonException or ArgumentException)
         { errors.Add($"Invalid completion evidence: {exception.Message}"); }
         return errors;
+    }
+
+    private static void ReviewVerificationObligations(string repository, string? reviewRepository, PlanWorkItem task,
+        EngineeringCompletionReceipt receipt, EngineeringAssessment assessment, ICollection<string> errors)
+    {
+        if (task.VerificationObligations is null) { errors.Add("Task verification contract is malformed."); return; }
+        if (task.VerificationObligations.Count == 0) return; // Exact legacy contracts retain their existing adopted gate inventory.
+        IReadOnlyList<string> criteria = task.VerificationObligations.Any(obligation => obligation?.Criteria?.Contains(task.AcceptanceCriteria, StringComparer.Ordinal) == true)
+            ? [task.AcceptanceCriteria] : task.AcceptanceCriteria.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var contractErrors = CisStoryEngineeringContract.ValidateVerificationObligations(task.VerificationObligations, criteria);
+        foreach (var error in contractErrors)
+            errors.Add(error);
+        if (contractErrors.Count > 0) return;
+        if (receipt.VerificationObligations is null)
+        { errors.Add("Task verification evidence is missing."); return; }
+        if (receipt.VerificationObligations.Any(item => item is null || string.IsNullOrWhiteSpace(item.Id)
+            || item.Criteria is null || item.Artifacts is null || item.Artifacts.Any(artifact => artifact is null)))
+        { errors.Add("Task verification evidence contains an empty obligation identity."); return; }
+        foreach (var duplicate in receipt.VerificationObligations.GroupBy(item => item.Id, StringComparer.Ordinal).Where(group => group.Count() > 1))
+            errors.Add($"Duplicate task verification evidence: {duplicate.Key}.");
+        foreach (var obligation in task.VerificationObligations)
+        {
+            var evidence = receipt.VerificationObligations.FirstOrDefault(item => item.Id == obligation.Id);
+            if (evidence is null) { errors.Add($"Verification obligation '{obligation.Id}' has no completion evidence."); continue; }
+            if (evidence.Criteria is null || !evidence.Criteria.Order(StringComparer.Ordinal).SequenceEqual(obligation.Criteria.Order(StringComparer.Ordinal), StringComparer.Ordinal))
+                errors.Add($"Verification obligation '{obligation.Id}' does not cover its exact current criteria.");
+            var inapplicable = obligation.EvidenceRoute == "native" && obligation.SharedGateIds.Count > 0
+                && obligation.SharedGateIds.All(id => assessment.RequiredGates.Any(gate => gate.Id == id && gate.AllowsInapplicability)
+                    && receipt.Gates.Any(gate => gate.Id == id && gate.State == EngineeringGateState.Inapplicable));
+            ReviewGate(obligation.EvidenceRoute == "review" ? reviewRepository ?? repository : repository,
+                new(obligation.Id, obligation.Description, inapplicable),
+                new(obligation.Id, evidence.State, evidence.Rationale, evidence.Artifacts), errors);
+            if (inapplicable && evidence.State != EngineeringGateState.Inapplicable)
+                errors.Add($"Verification obligation '{obligation.Id}' must record its applicable gate disposition honestly.");
+            if (obligation.EvidenceRoute is "native" or "review")
+            {
+                IReadOnlyList<string> gateIds = obligation.EvidenceRoute == "review" ? ["review"] : obligation.SharedGateIds;
+                foreach (var id in gateIds)
+                {
+                    if (obligation.EvidenceRoute == "native" && !EngineeringNativeEvidence.SupportsGate(id))
+                    { errors.Add($"Verification obligation '{obligation.Id}' cannot use non-native gate '{id}' as native evidence."); continue; }
+                    var gate = receipt.Gates.FirstOrDefault(item => item.Id == id);
+                    var required = assessment.RequiredGates.FirstOrDefault(item => item.Id == id);
+                    if (required is null || gate is not { Artifacts.Count: > 0 }
+                        || !(gate.State == EngineeringGateState.Passed || required.AllowsInapplicability && gate.State == EngineeringGateState.Inapplicable))
+                    { errors.Add($"Verification obligation '{obligation.Id}' needs current applicable gate '{id}'."); continue; }
+                    if (evidence.Artifacts is not { Count: > 0 } || !evidence.Artifacts.Any(artifact => gate.Artifacts.Contains(artifact)))
+                        errors.Add($"Verification obligation '{obligation.Id}' must retain evidence from its '{id}' gate.");
+                }
+            }
+        }
+        foreach (var unexpected in receipt.VerificationObligations.Where(item => !task.VerificationObligations.Any(expected => expected.Id == item.Id)))
+            errors.Add($"Completion evidence references unknown verification obligation '{unexpected.Id}'.");
     }
 
     private static void ReviewGate(string repository, EngineeringGateRequirement required,
@@ -116,10 +179,28 @@ public static class EngineeringCompletionReview
     public static string Serialize(EngineeringCompletionReceipt receipt) => JsonSerializer.Serialize(receipt, JsonOptions);
     public static string TaskDigest(PlanWorkItem task, string? taskDocument = null)
     {
+        if (task.ContractErrors is not { Count: 0 })
+            throw new InvalidDataException("Task contract metadata is unresolved: " + string.Join("; ", task.ContractErrors ?? ["missing contract diagnostics"]));
         // Transition bookkeeping must not invalidate the contract that authorized that transition.
         var content = ContractBody(taskDocument ?? "");
+        var projection = JsonSerializer.SerializeToNode(task with { Status = "" }, JsonOptions)!.AsObject();
+        projection.Remove("contractErrors");
+        if (task.StoryId is null) projection.Remove("storyId");
+        if (task.InstanceKey is null) projection.Remove("instanceKey");
+        if (task.WorkOwnerTaskId is null) projection.Remove("workOwnerTaskId");
+        if (task.VerificationObligations is { Count: 0 }) projection.Remove("verificationObligations");
+        if (task.StoryId is null && task.InstanceKey is null && task.WorkOwnerTaskId is null
+            && task.VerificationObligations is { Count: 0 } && !string.IsNullOrWhiteSpace(taskDocument)
+            && PlanningService.LegacyListsMatchDocument(task, taskDocument))
+        {
+            // Old plan readers omitted these lists. The unchanged full task document still binds
+            // their exact authored meaning, so repairing hydration need not revoke its evidence.
+            projection["decisionIds"] = null;
+            projection["negativeCriteria"] = null;
+            projection["requiredOutputs"] = null;
+        }
         return "sha256:" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(
-            JsonSerializer.Serialize(task with { Status = "" }, JsonOptions) + "\n" + content)));
+            projection.ToJsonString(JsonOptions) + "\n" + content)));
     }
 
     private static string ContractBody(string document)

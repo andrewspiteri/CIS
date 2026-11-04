@@ -9,19 +9,24 @@ public sealed partial class AgentService
         List<string> diagnostics)
     {
         var previous = work.PreviousExecution;
-        if (previous is null || previous.Applied || previous.Selection.Hash != selection.Hash
+        if (previous is null || previous.Applied
+            || previous.Selection.Hash != selection.Hash && !(work.ContractVersion == 1
+                && previous.Selection.Complexity == selection.Complexity
+                && previous.Selection.Implementation == selection.Implementation && previous.Selection.Review == selection.Review)
             || previous.Status is not ("failed" or "cancelled" or "review-failed" or "blocked" or "changes-requested")) return null;
         var saved = previous.Runs.LastOrDefault(run => run.RepositoryId == target.Id && run.Stage == "Implementation"
             && run.Status == CisAgentRunStates.Succeeded);
         if (saved is null) return null;
         var retained = Show(context.RepositoryPath, saved.RunId);
         var run = retained.Run;
+        var sameContract = run is not null && (!string.IsNullOrWhiteSpace(run.Manifest.TaskContractDigest)
+            ? run.Manifest.TaskContractDigest == CisStoryEngineeringContract.Digest(work)
+            : run.Manifest.TaskDigest == work.PlanHash && run.Manifest.AcceptedScopeDigest == work.PlanHash);
         bool SamePath(string left, string right) => Path.GetFullPath(left).Equals(Path.GetFullPath(right), CisPathSafety.PlatformComparison);
         var expectedPath = Path.Combine(context.RepositoryPath, RootPath, "worktrees", SafeFile(saved.RunId), SafeFile(target.Id));
         if (retained.Diagnostics.Any(message => message.StartsWith("ERROR:", StringComparison.Ordinal)) || run?.Result is null
             || run.Manifest.Status != CisAgentRunStates.Succeeded || run.Manifest.ChangeId != "STORY-" + work.StoryId
-            || run.Manifest.TaskId != work.Task.Id + "-IMPLEMENT" || run.Manifest.TaskDigest != work.PlanHash
-            || run.Manifest.AcceptedScopeDigest != work.PlanHash || run.Manifest.TargetRepositoryId != target.Id
+            || run.Manifest.TaskId != work.Task.Id + "-IMPLEMENT" || !sameContract || run.Manifest.TargetRepositoryId != target.Id
             || run.Manifest.AuthorityRepositoryId != context.RepositoryId || run.Manifest.Mode != "implement"
             || run.Manifest.Permission != "workspace-write" || !run.Manifest.IsolatedWorktree
             || run.Manifest.Provider != selection.Implementation!.Provider || run.Manifest.Model != selection.Implementation.Model

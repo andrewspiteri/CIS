@@ -4,6 +4,8 @@ public sealed record CisStoryTaskWork(string WorkspacePath, string Slug, string 
     string Definition, CisFeatureStoryTask Task, IReadOnlyList<string> StoryCriteria,
     IReadOnlyList<CisWorkspaceRepository> Repositories, string Actor)
 {
+    public int ContractVersion { get; init; } = 2;
+    public bool NeedsVerificationRenewal { get; init; }
     public string Direction { get; init; } = "";
     public string Constraints { get; init; } = "";
     public CisStoryExecutionResult? PreviousExecution { get; init; }

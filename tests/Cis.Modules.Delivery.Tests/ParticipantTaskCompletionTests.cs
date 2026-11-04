@@ -170,43 +170,91 @@ public sealed partial class DeliveryWorkflowTests
             var implementationResult = Write(implementationRoot + "result.json", new { schemaVersion = 1, envelopeId = "implementation", status = "Succeeded" });
             var implementation = Write(implementationRoot + "manifest.json", new
             {
-                schemaVersion = 1, runId = implementationId, taskId = Task.Id, taskContractDigest = receipt.TaskDigest,
-                mode = "implement", status = "Succeeded", outputDigest = receipt.InputDigest,
+                schemaVersion = 1,
+                runId = implementationId,
+                taskId = Task.Id,
+                taskContractDigest = receipt.TaskDigest,
+                mode = "implement",
+                status = "Succeeded",
+                outputDigest = receipt.InputDigest,
                 targetRepositoryPath = scenario == "wrong-implementation-target" ? Authority.Path : Repository(id).Path,
-                provider = "protocol", providerSessionId = "implementation", completedAtUtc = "2000-01-01T00:00:00Z",
-                envelopeId = "implementation", resultDigest = implementationResult.Sha256
+                provider = "protocol",
+                providerSessionId = "implementation",
+                completedAtUtc = "2000-01-01T00:00:00Z",
+                envelopeId = "implementation",
+                resultDigest = implementationResult.Sha256
             });
-            var result = Write(reviewRoot + "result.json", new { schemaVersion = 2, envelopeId = "review", status = "Succeeded",
-                review = new { recommendation = "ready", findings = Array.Empty<object>() } });
+            var result = Write(reviewRoot + "result.json", new
+            {
+                schemaVersion = 2,
+                envelopeId = "review",
+                status = "Succeeded",
+                review = new { recommendation = "ready", findings = Array.Empty<object>() }
+            });
             var run = Write(scenario == "copied-review" ? ".cis/local/copied-review.json" : reviewRoot + "manifest.json", new
             {
-                schemaVersion = 1, runId = reviewerId, taskId = Task.Id, taskContractDigest = receipt.TaskDigest,
-                mode = "review", permission = "read-only", status = "Succeeded", inputDigest = receipt.InputDigest,
+                schemaVersion = 1,
+                runId = reviewerId,
+                taskId = Task.Id,
+                taskContractDigest = receipt.TaskDigest,
+                mode = "review",
+                permission = "read-only",
+                status = "Succeeded",
+                inputDigest = receipt.InputDigest,
                 authorityInputDigest = CisExecutionIdentity.Capture(Context("authority")),
                 authorityDossierDigest = scenario == "missing-dossier" ? null : CisTaskAuthorityContext.Capture(Context("authority"), Change.Id),
                 targetRepositoryPath = scenario == "wrong-review-target" ? Authority.Path : Repository(id).Path,
-                provider = "protocol", providerSessionId = "review", startedAtUtc = "2000-01-02T00:00:00Z",
-                envelopeId = "review", resultDigest = result.Sha256
+                provider = "protocol",
+                providerSessionId = "review",
+                startedAtUtc = "2000-01-02T00:00:00Z",
+                envelopeId = "review",
+                resultDigest = result.Sha256
             });
-            receipt = receipt with { RepositoryId = scenario == "wrong-receipt-target" ? "authority" : id,
-                ImplementerRunId = implementationId, Implementation = implementation, ReviewerRunId = reviewerId,
-                Gates = [new("review", state, "Protocol evidence for this participant only.", [run, result])] };
+            receipt = receipt with
+            {
+                RepositoryId = scenario == "wrong-receipt-target" ? "authority" : id,
+                ImplementerRunId = implementationId,
+                Implementation = implementation,
+                ReviewerRunId = reviewerId,
+                Gates = [new("review", state, "Protocol evidence for this participant only.", [run, result])],
+                VerificationObligations = receipt.VerificationObligations.Select(obligation =>
+                {
+                    Assert.Contains(Task.VerificationObligations, expected => expected.Id == obligation.Id && expected.EvidenceRoute == "review");
+                    return obligation with { State = state, Rationale = "The current participant review verifies these exact task criteria.", Artifacts = [run, result] };
+                }).ToArray()
+            };
             if (scenario == "human")
             {
                 const string humanPath = ".cis/local/human-implementation.json";
-                Repository(id).Write(humanPath, JsonSerializer.Serialize(new { schemaVersion = 1, runId = implementationId,
-                    kind = "human-implemented", actor = "Synthetic fixture author", taskId = Task.Id,
-                    taskContractDigest = receipt.TaskDigest, inputDigest = receipt.InputDigest, completedAtUtc = "2000-01-01T00:00:00Z" }));
+                Repository(id).Write(humanPath, JsonSerializer.Serialize(new
+                {
+                    schemaVersion = 1,
+                    runId = implementationId,
+                    kind = "human-implemented",
+                    actor = "Synthetic fixture author",
+                    taskId = Task.Id,
+                    taskContractDigest = receipt.TaskDigest,
+                    inputDigest = receipt.InputDigest,
+                    completedAtUtc = "2000-01-01T00:00:00Z"
+                }));
                 receipt = receipt with { Implementation = Artifact(Repository(id), humanPath) };
             }
             if (RequireBuild)
             {
                 const string buildPath = ".cis/local/build.json";
                 var destination = scenario == "authority-build" ? Authority : Repository(id);
-                destination.Write(buildPath, JsonSerializer.Serialize(new { schemaVersion = 2, inputDigest = receipt.InputDigest,
-                    status = "succeeded", steps = new[] { new { id = "build", status = "succeeded", exitCode = 0 } } }));
-                receipt = receipt with { Gates = [.. receipt.Gates, new("build", EngineeringGateState.Passed,
-                    "Synthetic native workflow result for this target.", [Artifact(destination, buildPath)])] };
+                destination.Write(buildPath, JsonSerializer.Serialize(new
+                {
+                    schemaVersion = 2,
+                    inputDigest = receipt.InputDigest,
+                    status = "succeeded",
+                    steps = new[] { new { id = "build", status = "succeeded", exitCode = 0 } }
+                }));
+                receipt = receipt with
+                {
+                    Gates = [.. receipt.Gates, new("build", EngineeringGateState.Passed,
+                    "Synthetic native workflow result for this target.", [Artifact(destination, buildPath)])]
+                };
             }
             Authority.Write(receipt.ReceiptPath!, EngineeringCompletionReview.Serialize(receipt));
 

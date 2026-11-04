@@ -157,8 +157,21 @@ public sealed partial class FeatureIntakeService
             ["narrative"] = DeliveryMeaning(draft.Story.Narrative),
             ["acceptance"] = JsonSerializer.Serialize(draft.Story.Acceptance.Select(DeliveryMeaning), Json),
             ["request"] = DeliveryMeaning(FeatureRequestMaterial(state)),
-            ["constraints"] = DeliverySourceBoundaries(state.Source)
+            ["constraints"] = DeliverySourceBoundaries(state.Source, legacy: true)
         };
+        if (draft.ParentId is { } parentId)
+        {
+            basis["parent"] = parentId;
+            basis["parent accepted requirements"] = JsonSerializer.Serialize(CurrentStoryAcceptance(input, draft), Json);
+            basis["story prerequisites"] = JsonSerializer.Serialize(draft.StoryDependencies.Order(StringComparer.Ordinal), Json);
+            basis["shared task prerequisites"] = JsonSerializer.Serialize(draft.SharedPrerequisiteTaskIds.Order(StringComparer.Ordinal), Json);
+            foreach (var reference in draft.SharedPrerequisiteTaskIds)
+            {
+                var parts = reference.Split('/');
+                var prerequisite = parts.Length == 2 ? ReadStoryRecord(state, parts[0])?.Plan.Tasks.SingleOrDefault(task => task.Id == parts[1]) : null;
+                basis["shared task contract/" + reference] = prerequisite is null ? "missing" : StoryTaskContractJson(prerequisite).GetRawText();
+            }
+        }
         var terms = DeliveryWords(draft.Story.Title + " " + draft.Story.Narrative + " " + string.Join(' ', draft.Story.Acceptance));
         var work = state.Review.RepositoryWork ?? [];
         var selectedWork = work.Where(item => item.Id == storyId || DeliveryWords(item.Title + " " + item.Scope).Overlaps(terms))
@@ -190,7 +203,7 @@ public sealed partial class FeatureIntakeService
         {
             foreach (var field in StructuredFields(state, "technical", state.Review.Pages.GetValueOrDefault("technical")).Where(field => field.Inherited))
                 basis["inherited/technical/" + field.Id] = DeliveryMeaning(field.SuggestedAnswer ?? "");
-            basis["shared-boundaries"] = DeliverySourceBoundaries(state.PlanningContext);
+            basis["shared-boundaries"] = DeliverySourceBoundaries(state.PlanningContext, legacy: true);
         }
         var repositories = state.Record.Plan.IntegrationRepositories.Append(input.Repositories.FirstOrDefault(repository =>
             SamePath(repository.RepositoryPath, state.Record.Plan.RepositoryPath))?.Id ?? "").Where(id => id.Length > 0).Distinct(StringComparer.Ordinal);
@@ -199,7 +212,36 @@ public sealed partial class FeatureIntakeService
         return basis;
     }
 
-    private static string DeliverySourceBoundaries(string source)
+    private const string StoryBoundaryBasisKey = "delivery boundaries/3b";
+
+    private static IReadOnlyDictionary<string, string> WithStoryDeliveryBoundaries(WizardState state,
+        IReadOnlyDictionary<string, string> basis)
+    {
+        var current = new SortedDictionary<string, string>(basis.ToDictionary(item => item.Key, item => item.Value), StringComparer.Ordinal)
+        {
+            [StoryBoundaryBasisKey] = JsonSerializer.Serialize(new
+            {
+                source = DeliverySourceBoundaries(state.Source),
+                shared = state.Record.Plan.SourceBrds is { Count: > 0 } ? DeliverySourceBoundaries(state.PlanningContext) : ""
+            }, Json)
+        };
+        return current;
+    }
+
+    private static IReadOnlyDictionary<string, string> StoryBasisForRecordedContract(
+        IReadOnlyDictionary<string, string>? recorded, IReadOnlyDictionary<string, string> current)
+        => recorded is not null && !recorded.ContainsKey(StoryBoundaryBasisKey)
+            ? current.Where(item => item.Key != StoryBoundaryBasisKey).ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal)
+            : current;
+
+    private static int StoryContractVersion(IReadOnlyDictionary<string, string>? basis)
+        => basis is null || !basis.ContainsKey(StoryBoundaryBasisKey) ? 1 : 2;
+
+    private static string EffectiveStoryConstraints(DeliveryInput input, int contractVersion)
+        => contractVersion < 2 || string.IsNullOrWhiteSpace(input.ContractBoundaries) ? input.Constraints
+            : input.Constraints + "\n\nInherited delivery defaults, compatibility and interfaces:\n" + input.ContractBoundaries;
+
+    private static string DeliverySourceBoundaries(string source, bool legacy = false)
     {
         source = source.Replace("\r\n", "\n", StringComparison.Ordinal);
         var headings = Regex.Matches(BrdDocumentLayout.Visible(source), @"(?m)^(?<level>#{1,6})\s+(?<title>[^\r\n]+)\r?$");
@@ -208,7 +250,8 @@ public sealed partial class FeatureIntakeService
         {
             var heading = headings[index];
             if (!Regex.IsMatch(heading.Groups["title"].Value,
-                "exclud|exclusion|out.of.scope|non.goals|constraint|assumption|ownership|principles|boundar|responsibilit|separate|authoritative|decisions|dependenc|prerequisit|permission|standards", RegexOptions.IgnoreCase)) continue;
+                legacy ? "exclud|exclusion|out.of.scope|non.goals|constraint|assumption|ownership|principles|boundar|responsibilit|separate|authoritative|decisions|dependenc|prerequisit|permission|standards"
+                    : "exclud|exclusion|out.of.scope|non.goals|constraint|assumption|ownership|principles|boundar|responsibilit|separate|authoritative|decisions|dependenc|prerequisit|permission|standards|default|compatibil|interface|contract", RegexOptions.IgnoreCase)) continue;
             var next = index + 1;
             while (next < headings.Count && headings[next].Groups["level"].Length > heading.Groups["level"].Length) next++;
             var end = next < headings.Count ? headings[next].Index : source.Length;

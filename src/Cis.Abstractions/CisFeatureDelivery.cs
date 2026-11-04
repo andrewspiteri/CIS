@@ -1,5 +1,30 @@
 namespace Cis.Abstractions;
 
+public sealed record CisStorySizeAssessment(string Size, string Rationale, string BasisHash,
+    string BehavioralBreadth, string Interfaces, string StateAndConcurrency, string Coordination, string Uncertainty);
+
+public sealed record CisFeatureStoryChild(string Key, string Title, string Definition,
+    IReadOnlyList<int> RequirementNumbers, IReadOnlyList<string> DependsOn, CisStorySizeAssessment Assessment)
+{
+    public string? Id { get; init; }
+    public IReadOnlyList<string> Requirements { get; init; } = [];
+    public IReadOnlyList<string> SharedPrerequisiteTaskIds { get; init; } = [];
+}
+
+public sealed record CisFeatureStoryPlanning(string StoryId, CisStorySizeAssessment? Assessment,
+    IReadOnlyList<CisFeatureStoryChild> Children, string Actor, string SavedAt);
+
+public sealed record CisFeatureStoryAssessmentRequest(string Slug, string StoryId, string ExpectedBasisHash,
+    string ExpectedRevision, string Actor, CisStorySizeAssessment Assessment);
+public sealed record CisFeatureStoryDecompositionRequest(string Slug, string StoryId, string ExpectedBasisHash,
+    string ExpectedRevision, string Actor, IReadOnlyList<CisFeatureStoryChild> Children);
+public sealed record CisFeatureStoryPrepareRequest(string Slug, string StoryId, string ExpectedInputHash,
+    string ExpectedRevision, string Actor, IReadOnlyList<CisFeatureStoryTask> Tasks);
+
+public sealed record CisFeatureStoryPlanHistory(string Revision, string PlanHash, string ApprovedBy,
+    string ApprovedAt, string Reason, IReadOnlyList<CisFeatureStoryTask> Tasks,
+    IReadOnlyList<CisFeatureStoryTaskProgress> TaskProgress);
+
 public sealed record CisFeatureDeliveryEvidence(string Id, string RepositoryId, string Path, string ContentHash, string Excerpt)
 {
     public IReadOnlyList<string> StoryIds { get; init; } = [];

@@ -35,6 +35,66 @@ test('story screen loads its own definition and acceptance criteria without reop
   assert.equal(f.page.panel.title, 'Privacy evidence');
 });
 
+test('delivery assessment and task meaning project service state without selecting models', async () => {
+  const f = fixture(); await f.page.ready;
+  Object.assign(f.result, { deliverySizeState: 'current', deliverySizeReason: 'Parent delivery runs only in bounded children.', isDeliveryContainer: true,
+    planningBasisHash: 'basis', planningRevision: 'revision', deliverySize: { size: 'high', rationale: 'Several independently owned outcomes.',
+      behavioralBreadth: 'Two workflows', interfaces: 'API and UI', stateAndConcurrency: 'Transaction boundary', coordination: 'Two owners', uncertainty: 'Resolved by investigation' },
+    childStories: [{ id: 'child-one', title: 'Bounded outcome', assessment: { size: 'medium' } }] });
+  await f.page.action('refresh');
+  assert.match(f.page.panel.webview.html, /Two workflows/u);
+  assert.match(f.page.panel.webview.html, /Delivery work runs in the children/u);
+  assert.match(f.page.panel.webview.html, /child-one.*Bounded outcome/u);
+  f.result.tasks = [{ id: 'T1', title: 'Document security boundary', description: 'Publish the reviewed interface.', repositoryIds: ['api'], requirementNumbers: [1],
+    acceptanceCriteria: ['The interface is documented.'], dependsOn: [], category: 'documentation', complexity: 'medium', taskTypeKey: 'core.documentation', taskTypeVersion: '1.0',
+    instanceKey: 'child-one/interface', requiredOutputs: ['docs/interface.md'], negativeCriteria: ['No public compatibility change'], approvalGate: 'none', validation: 'Review the interface contract',
+    verificationObligations: [{ id: 'interface-review', description: 'Check public compatibility', evidenceRoute: 'review', evidenceExpectations: ['Reviewed interface artifact'], criteria: ['The interface is documented.'] }] }];
+  f.result.taskProgress = [{ id: 'T1', status: 'Ready', canExecute: false, blockedReason: 'Reassess only this delivery scope.' }];
+  await f.page.reveal('T1');
+  const html = f.page.panel.webview.html;
+  assert.match(html, /documentation.*Delivery complexity:.*medium/su);
+  assert.match(html, /core.documentation.*1.0/su); assert.match(html, /docs\/interface.md/u);
+  assert.match(html, /No public compatibility change/u); assert.match(html, /Reviewed interface artifact/u);
+  assert.match(html, /Reassess only this delivery scope/u);
+  assert.match(html, /data-command="start" data-value="T1" disabled/u);
+  Object.assign(f.result.taskProgress[0], { canExecute: true, canComplete: true, needsVerificationRenewal: true,
+    execution: { status: 'reviewed', applied: true, runs: [], findings: [], errors: [], changedFiles: [] } });
+  await f.page.action('refresh');
+  assert.match(f.page.panel.webview.html, /Retained work summary/u);
+  assert.match(f.page.panel.webview.html, /applied under the earlier contract/u);
+  assert.match(f.page.panel.webview.html, /Refresh verification and review/u);
+  assert.match(f.page.panel.webview.html, /data-command="complete" data-value="T1" >Record completion/u);
+  f.result.isRevisionProposal = true;
+  f.result.previousPlans = [{ revision: 'prior-revision', planHash: 'prior-plan', approvedBy: 'Earlier reviewer', approvedAt: '2026-11-02',
+    reason: 'Accepted earlier scope', taskProgress: [{ id: 'T1', status: 'Complete', evidence: 'Earlier verified artifact' }] }];
+  f.result.isFutureCandidate = true;
+  await f.page.action('refresh'); await f.page.action('story');
+  const history = f.page.panel.webview.html;
+  assert.match(history, /proposed revision awaits task-plan review/u);
+  assert.match(history, /Retained plan history \(1\)/u); assert.match(history, /Earlier verified artifact/u);
+  assert.match(history, /uncommitted future candidate/u);
+  assert.match(history, /data-command="generate" disabled/u);
+  assert.match(history, /data-command="prepare-input" >/u);
+  assert.equal(f.calls.some(args => args[0] === 'ai' || ['prepare', 'assess', 'decompose', 'execute'].includes(args[4])), false);
+});
+
+test('explicit assessment input goes through the headless service and does not generate tasks', async () => {
+  const f = fixture(); await f.page.ready;
+  const os = require('node:os'); const path = require('node:path');
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'cis-story-assess-test-'));
+  const file = path.join(folder, 'assessment.json');
+  try {
+    fs.writeFileSync(file, JSON.stringify({ slug: 'referrals', storyId: 'abc', expectedBasisHash: 'basis', expectedRevision: 'none', actor: 'Reviewer' }));
+    f.vscode.window.showOpenDialog = async () => [{ fsPath: file }];
+    await f.page.action('assess');
+    assert.deepEqual(f.calls.at(-1), ['brd', 'feature', 'wizard', 'story', 'assess', '--workspace', '/product', '--input', file]);
+    assert.equal(f.calls.some(args => args[0] === 'ai' || args[4] === 'prepare'), false);
+    fs.writeFileSync(file, JSON.stringify({ slug: 'elsewhere', storyId: 'abc' }));
+    const count = f.calls.length; await f.page.action('decompose');
+    assert.equal(f.calls.length, count); assert.match(f.page.model.error, /for this feature and story/u);
+  } finally { fs.unlinkSync(file); fs.rmdirSync(folder); f.close(); }
+});
+
 test('generated tasks show dependencies, repository links and completion criteria and stay on the story', async () => {
   const f = fixture(); await f.page.ready;
   f.result.status = 'current';

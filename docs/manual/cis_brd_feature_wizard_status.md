@@ -3,7 +3,7 @@ title: "cis brd feature wizard status"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-11-02"
+last_reviewed: "2026-11-04"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-brd-feature-wizard-status
@@ -86,13 +86,18 @@ narrative reviews retain the legacy behaviour described above.
 
 The related `cis brd feature wizard story` commands expose the workflow shown in the
 [editor story view](cis_vscode_extension.md). All accept `--workspace <path>` and
-`--format <human|json|agent>`. Except `feedback-save`, each requires `--slug <feature>`
-and `--story <story-id>`.
+`--format <human|json|agent>`. File-input operations take identity and concurrency
+fields from their JSON request. Other operations require `--slug <feature>` and
+`--story <story-id>`.
+Story input files must be regular JSON files no larger than 256 KiB.
 
 | Subcommand | Additional required input | Effect |
 | --- | --- | --- |
 | `status` | None | Read the story, tasks, plan state, hashes and progress. |
 | `prepare` | `--expected-input-hash` | Generate proposed tasks from the checked story. Optional `--provider` and `--model` choose generation; remote use requires `--allow-remote`. |
+| `prepare` | Alternatively, `--input <json-path>` | Validate and retain an explicit task-contract proposal without calling a model. |
+| `assess` | `--input <json-path>` | Save a scoped delivery-size assessment and its engineering rationale. |
+| `decompose` | `--input <json-path>` | Retain bounded child outcomes, complete parent requirement coverage and exact prerequisites. The parent becomes a delivery container. |
 | `approve` | `--expected-plan-hash`, `--expected-revision`, `--actor`, `--reason` | Record human approval of that exact plan. |
 | `start` | `--task`, `--expected-plan-hash`, `--expected-revision`, `--actor` | Record dependency-ready task start without launching an agent. |
 | `complete` | The `start` inputs, plus `--evidence` and `--criteria-verified` | Record verified completion against the current plan and revision. |
@@ -111,6 +116,144 @@ Obtain current hashes and revisions from JSON results rather than inventing valu
 Stale inputs are rejected. Task-plan approval and saved feedback do not by themselves
 establish successful execution or completion. Durable state is stored beside the
 feature request under `story-tasks/<story-id>.json`, separately from generation caches.
+
+Delivery size must have a current assessment of at most medium before implementation
+can start. High stories remain containers; unknown or stale scope needs targeted
+assessment. Planning and authorized investigation can establish that assessment.
+Assess breadth, interfaces, state/concurrency, coordination and uncertainty; a label or
+requirement count alone is insufficient. Model-selection `complexity` describes reasoning
+strength independently: a bounded security-sensitive task may need a high reasoning tier.
+Each executable task also records its own delivery complexity; a reusable type's default
+is not an assessment of that instance.
+
+Status returns `deliverySize`, `deliverySizeState`, `deliverySizeReason`,
+`planningBasisHash`, `planningRevision`, parent/child links and task eligibility.
+The editor displays these same values and reasons. Loading an assessment, child outcome
+or task proposal is an explicit save; opening or refreshing the page calls no model.
+
+Use the current status values in an assessment request:
+
+```json
+{
+  "slug": "account-settings",
+  "storyId": "<current story ID>",
+  "expectedBasisHash": "<planningBasisHash>",
+  "expectedRevision": "<planningRevision>",
+  "actor": "Delivery controller",
+  "assessment": {
+    "size": "medium",
+    "rationale": "One bounded preference workflow with an existing persistence boundary.",
+    "basisHash": "<planningBasisHash>",
+    "behavioralBreadth": "Read and update one preference.",
+    "interfaces": "Reuse the accepted account API and settings view.",
+    "stateAndConcurrency": "Retain the existing optimistic concurrency rule.",
+    "coordination": "One owning repository; use the shared design prerequisite.",
+    "uncertainty": "No unresolved delivery uncertainty; accepted decisions remain controlling."
+  }
+}
+```
+
+Run `cis brd feature wizard story assess --workspace <authority> --input assessment.json
+--format json`. Assessment records engineering judgment, not a new stakeholder approval.
+Decomposition uses the same identity/basis/revision/actor fields and a `children` array.
+Each child has a stable `key`, `title`, `definition`, parent `requirementNumbers`,
+exact child-key `dependsOn` references and an `assessment` with the fields above.
+Child prerequisites may also name an exact existing story ID. Task prerequisites use
+a local task ID or `story-id/task-id` for an explicitly shared prerequisite.
+When decomposing a parent with shared task prerequisites, map its exact qualified
+references into each applicable child's `sharedPrerequisiteTaskIds`. CIS rejects omitted
+parent edges; it does not guess by task type or attach every sibling. Uncommitted future
+candidates keep that status in their children; delivery remains held until the existing
+source and scope workflow commits the outcome. Record the authorized commitment in the
+source requirements, then use [BRD reimport](cis_brd_feature_wizard_reimport.md) and
+resolve its reported reviews. Moving a draft card between release lists alone does not
+commit an unapproved candidate.
+CIS retains child IDs, inherited direction and constraints, and rejects incomplete
+coverage or invalid dependencies. Child delivery cannot duplicate parent execution.
+
+For example, a synthetic four-criterion capability can use these two child outcomes.
+Keep the assessment envelope's identity/tokens/actor, replace `assessment` with `children`,
+and supply a complete assessment in each child (using the shape above):
+
+```json
+{
+  "children": [
+    { "key": "preference-editing", "title": "Edit preferences", "definition": "Read and update preferences with existing compatibility rules.",
+      "requirementNumbers": [1, 2], "dependsOn": [], "assessment": "<complete assessment object>" },
+    { "key": "preference-export", "title": "Export preferences", "definition": "Export the accepted preference representation.",
+      "requirementNumbers": [3, 4], "dependsOn": ["preference-editing"], "assessment": "<complete assessment object>" }
+  ]
+}
+```
+
+The snippet shows the child shape, not a complete runnable request: replace both
+assessment placeholders with objects and retain the current envelope before running
+`cis brd feature wizard story decompose --workspace <authority> --input children.json --format json`.
+
+A deterministic task proposal uses `slug`, `storyId`, `expectedInputHash` (status
+`inputHash`), `expectedRevision` (status `revision`, not `planningRevision`), `actor`,
+and `tasks`. Copy each existing task ID/instance key when
+revising an unchanged task. Each task carries category, delivery complexity, type/version,
+targets/repositories, outputs, criteria, negative criteria, decisions, approval gate,
+validation and exact dependencies. A `verificationObligations` entry contains `id`,
+`criteria` (exact task criterion strings), `description`, `evidenceRoute` and
+`evidenceExpectations`; `sharedGateIds` and `basisReferences` retain applicable shared
+obligations and source references. Use an actionable native check, artifact or review
+expectation. Several criteria may share a check, and one criterion may need several checks.
+Completion must supply actual current evidence; planned checks alone cannot pass.
+Applicable adopted gates remain required independently of these task-specific links.
+When a task uses an existing canonical plan's approval authority, retain the exact
+`changeId` and `workOwnerTaskId`; a type or gate label alone does not prove approval.
+The work-owner link retains accounting identity through decomposition; it does not
+grant a new approval or turn a child's category into its parent's category.
+
+For example, the `tasks` array in a complete preparation envelope can contain this
+synthetic backend task. The accepted story must contain the referenced criterion;
+use its current supported type/version and actual repository IDs:
+
+```json
+{
+  "id": "T1", "instanceKey": "preference-editing/backend",
+  "title": "Update preferences", "description": "Implement the accepted update behavior and focused native tests.",
+  "repositoryIds": ["api"], "requirementNumbers": [1], "dependsOn": [],
+  "category": "backend", "complexity": "medium", "taskTypeKey": "core.backend.behavior", "taskTypeVersion": "1.0",
+  "requiredOutputs": ["Preference update implementation and native tests"],
+  "acceptanceCriteria": ["An authorized update persists the accepted preference value."],
+  "negativeCriteria": ["Preserve the public representation."], "approvalGate": "none",
+  "validation": "Run the native preference update tests, including stale-write rejection.",
+  "verificationObligations": [{ "id": "preference-update", "criteria": ["An authorized update persists the accepted preference value."],
+    "description": "Demonstrate update behavior against the real implementation.", "evidenceRoute": "native",
+    "evidenceExpectations": ["Current passing native preference update manifest"], "sharedGateIds": ["unit"] }]
+}
+```
+
+Run `cis brd feature wizard story prepare --workspace <authority> --input tasks.json --format json`
+with the complete preparation envelope. This saves a proposal and runs no model or implementation.
+
+For a reviewed contract change, explicit `prepare --input` can propose a revision of an
+approved plan using its current `revision`. Status marks `isRevisionProposal` and holds
+execution until the existing `approve` action reviews that exact proposal. Model generation
+cannot replace approved work. Reapproval retains the earlier plan, approval and events in
+`previousPlans`; compatible task progress can carry forward, while changed work requires
+current verification. Instance IDs and work-owner references remain stable.
+To withdraw an unchanged proposal, submit the approved tasks again with the current
+revision. The existing approval and progress resume without another sign-off. Regenerating
+an unaccepted proposal preserves unchanged instances and allocates new identities for
+changed work, remapping exact dependencies together.
+
+Legacy missing semantics resolve only from an unambiguous maintained contract. Otherwise
+the affected task reports missing classification or obligations and retains its history
+for targeted reassessment. It never silently becomes low-complexity implementation.
+Adding only missing legacy semantics preserves in-progress/applied work and marks
+`needsVerificationRenewal`. Inspect that work and refresh the current contract's
+verification and review; the old completion claim alone does not satisfy new obligations.
+Record completion after explicitly re-verifying every criterion and supplying the current
+required evidence. Adopted completion still checks the current contract's receipts and gates.
+Human work can use this completion route without running an agent; scoped agent verification
+and review remain available when useful.
+Unchanged pre-3B records retain their recorded boundary and execution-digest version.
+Newly reviewed contracts bind the expanded delivery boundaries, including defaults,
+compatibility and interfaces, without rewriting older approvals on a status read.
 
 Status is observational. Assessments expose their current, changed or unknown supporting scope
 without resetting retained human decisions. Delivery comparisons use content and relevant

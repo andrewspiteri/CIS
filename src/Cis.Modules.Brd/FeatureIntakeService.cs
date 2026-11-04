@@ -20,7 +20,8 @@ public sealed partial class FeatureIntakeService(
     ICisStoryTaskExecutor? storyExecutor = null,
     BrdBacklogService? backlog = null,
     ICisStoryEngineeringCompletion? storyCompletion = null,
-    ICisGraphSnapshotReader? graphReader = null)
+    ICisGraphSnapshotReader? graphReader = null,
+    ICisEngineeringTaskContractReader? taskContracts = null)
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private const string RecordMarker = "<!-- cis:feature-intake\n";

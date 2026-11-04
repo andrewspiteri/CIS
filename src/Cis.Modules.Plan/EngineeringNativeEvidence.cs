@@ -7,6 +7,9 @@ namespace Cis.Modules.Plan;
 /// <summary>Routes native evidence to validators that preserve specific rejection reasons.</summary>
 internal static class EngineeringNativeEvidence
 {
+    internal static bool SupportsGate(string id)
+        => EngineeringTestEvidence.Layers.Contains(id) || id is "build" or "lint" or "format" or "performance";
+
     internal static IReadOnlyList<string> Review(string repository, EngineeringGateEvidence gate, string inputDigest,
         string reviewerRunId, string taskId, string taskContractDigest, string documentationRoot, EngineeringDefaultsPolicy policy,
         string? expectedTargetRepository = null, string? authorityInputDigest = null, string? authorityDossierDigest = null)

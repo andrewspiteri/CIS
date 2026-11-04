@@ -3,7 +3,7 @@ title: "cis brd feature wizard delivery"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-21"
+last_reviewed: "2026-11-04"
 review_cadence: on command change
 cis:
   stable_id: change-impact-studio:manual:cis-brd-feature-wizard-delivery
@@ -155,4 +155,17 @@ cis brd feature wizard story completion-context --workspace <authority> --slug <
 
 The result's `completionContexts` gives each repository's receipt path and `templateJson`. Save reviewed receipts at the indicated repository-relative `.cis/local/engineering/story-completion/` path. Templates start with Missing gates. They grant no approval and run no checks. Use the same artifact, gate-state and independent-review rules as [task completion context](cis_plan_task_completion_context.md).
 
-Story review manifests bind the task contract, including criteria, direction and constraints; their native task ID ends in `-REVIEW`. Copy the unchanged native review manifest and result from the authority's retained agent run into the participant's local evidence directory when needed, retaining hashes. Repository-relative receipt artifacts cannot escape to another participant. Review must cover the final source after alignment changes. Refresh graph, execution evidence and review when source or the task contract changes. Each participant must pass before the shared task can complete; later-phase tasks remain separate obligations.
+Story review manifests bind the resolved task contract, including its real category,
+type/version, outputs, criteria, verification obligations, direction and constraints;
+their native task ID ends in `-REVIEW`. Native implementation records stay at their
+original authority paths. Story review receipts resolve review evidence in the participant:
+retain the authority original and provide a byte-identical, hash-verified participant
+copy of the read-only review manifest, its sibling result and referenced evidence at
+the same repository-relative run paths. Preserve native identity and target metadata;
+never relabel agent work as human implementation. Ordinary gate artifacts and explicitly
+labelled human implementation records remain relative to the participant. Review covers the final source
+after alignment changes. Refresh graph, execution evidence and review when relevant source
+or the task contract changes. Each participant must pass before the shared task can
+complete; later-phase tasks remain separate obligations. Non-code tasks use their actual
+category and artifact/conformance/review routes rather than a blanket implementation
+inventory. Missing classification cannot bypass adopted completion policy.

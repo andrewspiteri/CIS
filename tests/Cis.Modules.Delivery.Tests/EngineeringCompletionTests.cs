@@ -13,29 +13,55 @@ public sealed partial class EngineeringCompletionTests
     [InlineData("review-before-implementation", false)]
     [InlineData("tampered-result", false)]
     [InlineData("wrong-manifest-path", false)]
+    [InlineData("legacy-contract", true)]
     public void NativeImplementationMustBindSuccessfulResultAndPrecedeSeparateReview(string scenario, bool expected)
     {
         using var fixture = new Fixture();
         var receipt = fixture.Receipt(EngineeringGateState.Passed);
+        var task = fixture.Task;
+        string? taskDocument = null;
+        if (scenario == "legacy-contract")
+        {
+            Assert.Equal(OldTaskDigest(task, ""), EngineeringCompletionReview.TaskDigest(task));
+            taskDocument = "---\ndecision_ids: [\"DEC-001\"]\n---\n# WORK-001\n## Required outputs\n- A bounded contract artifact\n## Constraints and exclusions\n- Preserve unrelated behavior\n## Completion evidence\n";
+            receipt = receipt with { TaskDigest = OldTaskDigest(task, taskDocument.TrimEnd()) };
+            task = task with { DecisionIds = ["DEC-001"], RequiredOutputs = ["A bounded contract artifact"], NegativeCriteria = ["Preserve unrelated behavior"] };
+        }
         const string root = ".cis/local/agents/runs/implementation-1/";
         fixture.WriteJson(root + "result.json", new { schemaVersion = 1, status = CisAgentRunStates.Succeeded, envelopeId = "implementation-envelope" });
         var result = fixture.Artifact(root + "result.json");
         fixture.WriteJson(root + "manifest.json", new
         {
-            schemaVersion = 1, runId = "implementation-1", taskId = receipt.TaskId, taskContractDigest = receipt.TaskDigest,
-            mode = "implement", status = CisAgentRunStates.Succeeded, outputDigest = receipt.InputDigest,
-            provider = "fixture", providerSessionId = "implementation-session", completedAtUtc = "2000-01-02T00:00:00Z",
-            envelopeId = "implementation-envelope", resultDigest = result.Sha256[7..]
+            schemaVersion = 1,
+            runId = "implementation-1",
+            taskId = receipt.TaskId,
+            taskContractDigest = receipt.TaskDigest,
+            mode = "implement",
+            status = CisAgentRunStates.Succeeded,
+            outputDigest = receipt.InputDigest,
+            provider = "fixture",
+            providerSessionId = "implementation-session",
+            completedAtUtc = "2000-01-02T00:00:00Z",
+            envelopeId = "implementation-envelope",
+            resultDigest = result.Sha256[7..]
         });
         fixture.WriteJson("review-result.json", new { schemaVersion = 2, status = CisAgentRunStates.Succeeded, envelopeId = "review-envelope", review = new { recommendation = "ready", findings = Array.Empty<object>() } });
         var reviewResult = fixture.Artifact("review-result.json");
         fixture.WriteJson("review-run.json", new
         {
-            schemaVersion = 1, runId = "review-1", taskId = receipt.TaskId, taskContractDigest = receipt.TaskDigest,
-            mode = "review", permission = "read-only", status = CisAgentRunStates.Succeeded, inputDigest = receipt.InputDigest,
-            provider = "fixture", providerSessionId = scenario == "same-session" ? "implementation-session" : "review-session",
+            schemaVersion = 1,
+            runId = "review-1",
+            taskId = receipt.TaskId,
+            taskContractDigest = receipt.TaskDigest,
+            mode = "review",
+            permission = "read-only",
+            status = CisAgentRunStates.Succeeded,
+            inputDigest = receipt.InputDigest,
+            provider = "fixture",
+            providerSessionId = scenario == "same-session" ? "implementation-session" : "review-session",
             startedAtUtc = scenario == "review-before-implementation" ? "2000-01-01T00:00:00Z" : "2000-01-03T00:00:00Z",
-            envelopeId = "review-envelope", resultDigest = reviewResult.Sha256
+            envelopeId = "review-envelope",
+            resultDigest = reviewResult.Sha256
         });
         if (scenario == "tampered-result") File.AppendAllText(Path.Combine(fixture.Root, root + "result.json"), " ");
         if (scenario == "wrong-manifest-path") File.Copy(Path.Combine(fixture.Root, root + "manifest.json"), Path.Combine(fixture.Root, "copied.json"));
@@ -44,8 +70,46 @@ public sealed partial class EngineeringCompletionTests
             Implementation = fixture.Artifact(scenario == "wrong-manifest-path" ? "copied.json" : root + "manifest.json"),
             Gates = [new("review", EngineeringGateState.Passed, "Synthetic protocol review; not live agent approval.", [fixture.Artifact("review-run.json"), reviewResult])]
         };
-        var errors = fixture.Review(receipt, gateId: "review");
+        var errors = fixture.Review(receipt, gateId: "review", task: task, taskDocument: taskDocument);
         Assert.Equal(expected, errors.Count == 0);
+        if (scenario == "legacy-contract")
+        {
+            Assert.Contains(fixture.Review(receipt, gateId: "review", task: task,
+                taskDocument: taskDocument!.Replace("bounded contract", "materially different contract", StringComparison.Ordinal)), error => error.Contains("stale", StringComparison.Ordinal));
+            Assert.NotEmpty(fixture.Review(receipt, gateId: "review", task: task with { Category = "documentation" }, taskDocument: taskDocument));
+            Assert.NotEmpty(fixture.Review(receipt, gateId: "review", task: task with { RequiredOutputs = ["An additional material output"] }, taskDocument: taskDocument));
+            Assert.NotEmpty(fixture.Review(receipt, gateId: "review", task: task with { InstanceKey = "new-instance" }, taskDocument: taskDocument));
+        }
+
+        // Independent pre-3B wire shape, including the old reader's null list values.
+        static string OldTaskDigest(PlanWorkItem item, string document)
+        {
+            var old = new
+            {
+                item.Id,
+                item.Category,
+                item.Complexity,
+                item.ParentId,
+                item.TaskPath,
+                item.Title,
+                item.RequirementIds,
+                item.ImpactIds,
+                item.DependsOn,
+                item.AcceptanceCriteria,
+                item.Validation,
+                Status = "",
+                item.TaskTypeKey,
+                item.TaskTypeVersion,
+                item.ApprovalGate,
+                item.Targets,
+                item.DecisionIds,
+                item.NegativeCriteria,
+                item.RequiredOutputs,
+                item.FrontendType
+            };
+            var serialized = JsonSerializer.Serialize(old, new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true });
+            return "sha256:" + Convert.ToHexStringLower(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(serialized + "\n" + document)));
+        }
     }
 
     [Fact]
@@ -168,6 +232,40 @@ public sealed partial class EngineeringCompletionTests
         Assert.NotEmpty(fixture.Review(receipt, allowsInapplicability: false));
         Assert.NotEmpty(fixture.Review(receipt with { Gates = [receipt.Gates[0] with { Rationale = "TODO" }] }));
         Assert.NotEmpty(fixture.Review(receipt with { Gates = [receipt.Gates[0] with { Artifacts = [] }] }));
+
+        // Integration is an optional native gate in the actual adopted inventory; unit is not.
+        var task = fixture.Task with
+        {
+            VerificationObligations = [new("boundary", [fixture.Task.AcceptanceCriteria],
+            "Assess the relevant integration boundary", "native", ["Current boundary evidence or a permitted scoped inapplicability disposition"])
+            { SharedGateIds = ["integration"] }]
+        };
+        fixture.WriteJson("boundary-scope.json", new { scope = "This pure local transformation introduces no cross-component integration boundary." });
+        var scope = fixture.Artifact("boundary-scope.json");
+        var scoped = receipt with
+        {
+            TaskDigest = EngineeringCompletionReview.TaskDigest(task),
+            Gates = [new("integration", EngineeringGateState.Inapplicable, "No cross-component boundary exists in this scoped task.", [scope])],
+            VerificationObligations = [new("boundary", [task.AcceptanceCriteria], EngineeringGateState.Inapplicable,
+                "The scoped integration obligation is explicitly inapplicable.", [scope])]
+        };
+        fixture.WriteJson(".cis/local/human-implementation.json", new
+        {
+            schemaVersion = 1,
+            runId = scoped.ImplementerRunId,
+            kind = "human-implemented",
+            actor = "Synthetic protocol author",
+            taskId = task.Id,
+            taskContractDigest = scoped.TaskDigest,
+            inputDigest = scoped.InputDigest,
+            completedAtUtc = "2000-01-01T00:00:00Z"
+        });
+        scoped = scoped with { Implementation = fixture.Artifact(".cis/local/human-implementation.json") };
+        Assert.Empty(fixture.Review(scoped, gateId: "integration", task: task));
+        Assert.NotEmpty(fixture.Review(scoped, allowsInapplicability: false, gateId: "integration", task: task));
+        Assert.NotEmpty(fixture.Review(scoped with { Gates = [] }, gateId: "integration", task: task));
+        Assert.NotEmpty(fixture.Review(scoped with { VerificationObligations = [scoped.VerificationObligations[0] with { Artifacts = [] }] },
+            gateId: "integration", task: task));
     }
 
     [Fact]
@@ -283,6 +381,7 @@ public sealed partial class EngineeringCompletionTests
         public string Root { get; } = Path.Combine(Parent, Guid.NewGuid().ToString("N"));
         private readonly PlanWorkItem _task = new("WORK-001", "backend", "low", null, "agent-tasks/WORK-001.md", "Change a behavior",
             ["REQ-001"], [], [], "Behavior is verified", "dotnet test", "InProgress");
+        public PlanWorkItem Task => _task;
         private readonly CisGraphMetadataReadResult _graph = new("ready", 0, null, "fresh", new("graph-1", "example", null, true, "complete"), null, [], []);
         public Fixture()
         {
@@ -312,8 +411,14 @@ public sealed partial class EngineeringCompletionTests
             var digest = "sha256:" + Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(Path.Combine(Root, "result.json"))));
             WriteJson(".cis/local/human-implementation.json", new
             {
-                schemaVersion = 1, runId = "implementation-1", kind = "human-implemented", actor = "Synthetic protocol author",
-                taskId = _task.Id, taskContractDigest = template.TaskDigest, inputDigest, completedAtUtc = "2000-01-01T00:00:00Z"
+                schemaVersion = 1,
+                runId = "implementation-1",
+                kind = "human-implemented",
+                actor = "Synthetic protocol author",
+                taskId = _task.Id,
+                taskContractDigest = template.TaskDigest,
+                inputDigest,
+                completedAtUtc = "2000-01-01T00:00:00Z"
             });
             return template with
             {
@@ -331,12 +436,13 @@ public sealed partial class EngineeringCompletionTests
         }
         public EngineeringEvidenceArtifact Artifact(string path)
             => new(path, "sha256:" + Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(Path.Combine(Root, path)))));
-        public IReadOnlyList<string> Review(EngineeringCompletionReceipt receipt, bool allowsInapplicability = true, string gateId = "unit", string inputDigest = "sha256:inputs", string documentationRoot = "docs")
+        public IReadOnlyList<string> Review(EngineeringCompletionReceipt receipt, bool allowsInapplicability = true, string gateId = "unit", string inputDigest = "sha256:inputs", string documentationRoot = "docs",
+            PlanWorkItem? task = null, string? taskDocument = null)
         {
             var path = Path.Combine(Root, "receipt.json");
             File.WriteAllText(path, EngineeringCompletionReview.Serialize(receipt));
-            return EngineeringCompletionReview.Review(Root, path, "CIS-0001", _task, Path.Combine(Root, "policy.json"), _graph,
-                new(1, true, [new(gateId, "Changed behavior", allowsInapplicability)], []), inputDigest, documentationRoot);
+            return EngineeringCompletionReview.Review(Root, path, "CIS-0001", task ?? _task, Path.Combine(Root, "policy.json"), _graph,
+                new(1, true, [new(gateId, "Changed behavior", allowsInapplicability)], []), inputDigest, documentationRoot, taskDocument);
         }
         public void Dispose()
         {

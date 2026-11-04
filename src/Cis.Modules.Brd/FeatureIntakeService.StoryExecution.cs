@@ -21,12 +21,20 @@ public sealed partial class FeatureIntakeService
             var repositories = task.RepositoryIds.Select(id => state.Workspace.Repositories.SingleOrDefault(repository => repository.Id == id && repository.IsProductOwned)
                 ?? throw new InvalidDataException("A task repository is no longer registered as product-owned.")).ToArray();
             var input = ReadDeliveryInput(state, false);
-            if (new[] { result.Definition, task.Description, task.Title, input.Direction, input.Constraints }.Concat(task.AcceptanceCriteria).Concat(result.Story!.Requirements).Any(DeliverySensitive))
+            var contractVersion = StoryContractVersion(ReadStoryRecord(state, storyId)?.Basis);
+            var constraints = EffectiveStoryConstraints(input, contractVersion);
+            if (StoryTaskSensitive(task) || new[] { result.Definition, input.Direction, constraints }.Concat(result.Story!.Requirements).Any(DeliverySensitive))
                 throw new InvalidDataException("The selected task context may contain credentials. Remove them before execution.");
             var work = new CisStoryTaskWork(workspacePath, slug, storyId, result.PlanHash!, result.Definition, task,
                 task.RequirementNumbers.Select(number => result.Story.Requirements[number - 1]).ToArray(), repositories, actor)
-                { Direction = input.Direction, Constraints = input.Constraints, PreviousExecution = taskProgress.Execution,
-                    ReviewResponses = (taskProgress.ReviewFeedback ?? []).Where(answer => !string.IsNullOrWhiteSpace(answer.Answer)).ToArray() };
+            {
+                Direction = input.Direction,
+                Constraints = constraints,
+                ContractVersion = contractVersion,
+                PreviousExecution = taskProgress.Execution,
+                NeedsVerificationRenewal = taskProgress.NeedsVerificationRenewal,
+                ReviewResponses = (taskProgress.ReviewFeedback ?? []).Where(answer => !string.IsNullOrWhiteSpace(answer.Answer)).ToArray()
+            };
             if (work.ReviewResponses.Any(answer => DeliverySensitive(answer.Answer!)))
                 throw new InvalidDataException("A review answer may contain credentials. Remove them before execution.");
             var selection = storyExecutor.SelectModels(work);
@@ -47,8 +55,11 @@ public sealed partial class FeatureIntakeService
                 throw new InvalidDataException("Task progress changed before execution. Refresh and retry.");
             var path = StoryRecordPath(state, storyId);
             var record = ReadStoryRecord(state, storyId)!;
-            record = record with { Events = record.Events.Append(new StoryTaskEvent(taskId, "InProgress", actor.Trim(), DateTimeOffset.UtcNow.ToString("O"), "Agent execution requested.")
-                { Execution = new("running", selection, [], [], [], [], false) }).ToArray() };
+            record = record with
+            {
+                Events = record.Events.Append(new StoryTaskEvent(taskId, "InProgress", actor.Trim(), DateTimeOffset.UtcNow.ToString("O"), "Agent execution requested.")
+                { Execution = new("running", selection, [], [], [], [], false), NeedsVerificationRenewal = taskProgress.NeedsVerificationRenewal }).ToArray()
+            };
             SaveStoryExecutionRecord(path, record);
             var runRevision = StoryRevision(record);
             bool StillCurrent()
@@ -61,9 +72,12 @@ public sealed partial class FeatureIntakeService
             catch (OperationCanceledException) { executed = new("cancelled", selection, [], [], [], ["Task execution cancelled."], false); }
             catch (Exception error) when (error is IOException or InvalidDataException or InvalidOperationException or UnauthorizedAccessException)
             { executed = new("failed", selection, [], [], [], [error.Message], false); }
-            record = record with { Events = record.Events.Append(new StoryTaskEvent(taskId, "InProgress", actor.Trim(), DateTimeOffset.UtcNow.ToString("O"),
+            record = record with
+            {
+                Events = record.Events.Append(new StoryTaskEvent(taskId, "InProgress", actor.Trim(), DateTimeOffset.UtcNow.ToString("O"),
                 executed.Applied ? "Implementation and secondary review finished; reviewed changes applied. Human completion remains pending." : "Execution outcome: " + executed.Status)
-                { Execution = executed }).ToArray() };
+                { Execution = executed, NeedsVerificationRenewal = taskProgress.NeedsVerificationRenewal && !executed.Applied }).ToArray()
+            };
             SaveStoryExecutionRecord(path, record);
             return Story(workspacePath, slug, storyId, false) with { Errors = executed.Errors };
         }

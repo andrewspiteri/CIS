@@ -16,7 +16,9 @@ internal static partial class FeatureIssuePackBuilder
         TaskTypeRegistry registry,
         IReadOnlyList<TaskTypeCapabilitySelection> selections,
         IReadOnlyList<PlanWorkItem> existingItems,
-        IReadOnlyDictionary<string, IReadOnlyList<string>> automationReferences)
+        IReadOnlyDictionary<string, IReadOnlyList<string>> automationReferences,
+        string? existingSourceHash = null,
+        Func<PlanWorkItem, IReadOnlyList<Cis.Abstractions.CisTaskVerificationObligation>>? defaultObligations = null)
     {
         var parsed = Parse(repositoryPath, requestedPath);
         if (parsed.Spec is null)
@@ -46,7 +48,8 @@ internal static partial class FeatureIssuePackBuilder
                 .ToArray();
             return new(null, errors, resolution.Conflicts);
         }
-        var items = BuildItems(spec, accepted, resolution.Definitions, existingItems);
+        var items = BuildItems(spec, accepted, resolution.Definitions, existingItems, existingSourceHash == spec.Sha256, defaultObligations, out var instanceErrors);
+        if (instanceErrors.Count > 0) return new(null, instanceErrors, []);
         var documents = items.ToDictionary(
             item => item.TaskPath!,
             item => RenderTask(spec, source, item, items, accepted),
@@ -60,49 +63,122 @@ internal static partial class FeatureIssuePackBuilder
         FeatureSpec spec,
         IReadOnlyList<ImpactFinding> accepted,
         IReadOnlyList<Cis.Abstractions.CisTaskTypeDefinition> definitions,
-        IReadOnlyList<PlanWorkItem> existingItems)
+        IReadOnlyList<PlanWorkItem> existingItems,
+        bool preserveAuthoredContract,
+        Func<PlanWorkItem, IReadOnlyList<Cis.Abstractions.CisTaskVerificationObligation>>? defaultObligations,
+        out IReadOnlyList<string> errors)
     {
         var allRequirements = spec.Requirements.Select(item => item.Id).ToArray();
         var allImpacts = accepted.Select(item => item.Id).ToArray();
         var applicable = definitions.ToArray();
-        var instances = applicable.SelectMany(definition => IsFrontendCategory(definition.Category)
-                ? spec.FrontendTypes.Select(frontendType => new TaskInstance(definition, frontendType))
-                : [new TaskInstance(definition, null)])
-            .ToArray();
-        var existingByIdentity = existingItems
-            .GroupBy(item => Identity(item.TaskTypeKey, item.FrontendType), StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+        var instances = applicable.SelectMany(definition =>
+            (IsFrontendCategory(definition.Category) ? spec.FrontendTypes.Cast<string?>() : [null])
+            .SelectMany(frontendType =>
+            {
+                var storyIds = IsStoryScopedCategory(definition.Category)
+                    ? spec.Requirements.Where(requirement => requirement.StoryId is not null
+                        && (frontendType is null || requirement.FrontendType == frontendType)
+                        && MatchesCategory(requirement, definition.Category, definition.TriggerTerms))
+                        .Select(requirement => requirement.StoryId!).Distinct(StringComparer.Ordinal).ToArray()
+                    : [];
+                if (storyIds.Length == 0) return new[] { new TaskInstance(definition, frontendType, null) };
+                var scopes = storyIds.Select(story => new TaskInstance(definition, frontendType, story));
+                if (spec.Requirements.Any(requirement => requirement.StoryId is null
+                    && (frontendType is null || requirement.FrontendType == frontendType)
+                    && MatchesCategory(requirement, definition.Category, definition.TriggerTerms)))
+                    scopes = scopes.Append(new TaskInstance(definition, frontendType, null));
+                return scopes;
+            })).ToArray();
+        var problems = new List<string>();
+        var mappedScopes = new Dictionary<string, PlanWorkItem>(StringComparer.OrdinalIgnoreCase);
+        foreach (var shared in existingItems.Where(item => item.StoryId is null))
+        {
+            var replacementScopes = instances.Where(instance => instance.StoryId is not null
+                && instance.Definition.Key.Equals(shared.TaskTypeKey, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(instance.FrontendType, shared.FrontendType, StringComparison.OrdinalIgnoreCase))
+                .Select(instance => new
+                {
+                    Instance = instance,
+                    Requirements = spec.Requirements.Where(requirement => requirement.StoryId == instance.StoryId
+                        && RequirementIds(spec, instance.Definition.Category, instance.FrontendType, instance.Definition.TriggerTerms.ToArray()).Contains(requirement.Id, StringComparer.OrdinalIgnoreCase))
+                        .Select(requirement => requirement.Id).ToHashSet(StringComparer.OrdinalIgnoreCase)
+                }).Where(scope => scope.Requirements.Overlaps(shared.RequirementIds)).ToArray();
+            if (replacementScopes.Length == 0) continue; // New independent requirements do not replace historical work.
+            var stillShared = spec.Requirements.Any(requirement => requirement.StoryId is null && shared.RequirementIds.Contains(requirement.Id, StringComparer.OrdinalIgnoreCase));
+            if (replacementScopes.Length == 1 && !stillShared && replacementScopes[0].Requirements.SetEquals(shared.RequirementIds))
+            {
+                var scope = replacementScopes[0].Instance;
+                var identity = Identity(scope.Definition.Key, scope.FrontendType, scope.StoryId);
+                if (!mappedScopes.TryAdd(identity, shared with { StoryId = scope.StoryId, InstanceKey = shared.InstanceKey ?? identity }))
+                    problems.Add($"Legacy tasks have an ambiguous retained mapping to story {scope.StoryId}; retain their separate IDs and accounting owners before re-import.");
+            }
+            else
+                problems.Add($"Legacy shared task {shared.Id} cannot be replaced automatically by story scopes {string.Join(", ", replacementScopes.Select(scope => scope.Instance.StoryId))}. Explicitly map its retained ID and accounting owner before re-import; its history and reservations must not become fresh suffixed tasks.");
+        }
+        var existingGroups = existingItems.GroupBy(item => Identity(item.TaskTypeKey, item.FrontendType, item.StoryId), StringComparer.OrdinalIgnoreCase).ToArray();
+        var mappedIds = mappedScopes.Values.Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
+        foreach (var duplicate in existingGroups.Where(group => group.Count() > 1 && group.Any(item => !mappedIds.Contains(item.Id))))
+            problems.Add($"Task instances {string.Join(", ", duplicate.Select(item => item.Id))} have an ambiguous legacy type/story/frontend binding '{duplicate.Key}'. Retain their IDs and assign distinct explicit story scopes before re-import.");
+        var existingByIdentity = existingGroups.Where(group => group.Count() == 1 && !mappedIds.Contains(group.Single().Id))
+            .ToDictionary(group => group.Key, group => group.Single(), StringComparer.OrdinalIgnoreCase);
+        foreach (var (identity, mapped) in mappedScopes)
+            if (!existingByIdentity.TryAdd(identity, mapped))
+                problems.Add($"Task {mapped.Id} cannot replace an already retained story instance '{identity}'; resolve the exact owner mapping before re-import.");
         var orderCounts = instances.GroupBy(instance => instance.Definition.Order)
             .ToDictionary(group => group.Key, group => group.Count());
-        var idByIdentity = instances.ToDictionary(instance => Identity(instance.Definition.Key, instance.FrontendType), instance =>
+        var reservedIds = existingItems.Select(item => item.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var reservedKeys = existingItems.Where(item => item.InstanceKey is not null).Select(item => item.InstanceKey!).ToHashSet(StringComparer.Ordinal);
+        var idByIdentity = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var keyByIdentity = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var instance in instances.OrderBy(instance => Identity(instance.Definition.Key, instance.FrontendType, instance.StoryId), StringComparer.Ordinal))
         {
-            if (existingByIdentity.TryGetValue(Identity(instance.Definition.Key, instance.FrontendType), out var existing)) return existing.Id;
+            var identity = Identity(instance.Definition.Key, instance.FrontendType, instance.StoryId);
+            if (existingByIdentity.TryGetValue(identity, out var existing))
+            {
+                idByIdentity[identity] = existing.Id;
+                keyByIdentity[identity] = existing.InstanceKey;
+                continue;
+            }
+            var key = identity;
+            if (!reservedKeys.Add(key))
+            {
+                var unique = identity + "|instance:" + ShortIdentityHash(identity + "\n" + string.Join("\n", InstanceRequirements(instance).Order(StringComparer.Ordinal)));
+                key = unique;
+                for (var suffix = 2; !reservedKeys.Add(key); suffix++) key = unique + ":" + suffix;
+            }
             var baseId = $"WORK-{instance.Definition.Order:000}";
-            if (instance.FrontendType is not null) return $"{baseId}-{FrontendTypeSuffix(instance.FrontendType)}";
-            return orderCounts[instance.Definition.Order] == 1 ? baseId : $"{baseId}-{TaskKeySuffix(instance.Definition.Key)}";
-        }, StringComparer.OrdinalIgnoreCase);
+            var id = instance.StoryId is not null ? $"{baseId}-{TaskKeySuffix(instance.StoryId)}-{ShortIdentityHash(identity)[..8]}"
+                : instance.FrontendType is not null ? $"{baseId}-{FrontendTypeSuffix(instance.FrontendType)}"
+                : orderCounts[instance.Definition.Order] == 1 ? baseId : $"{baseId}-{TaskKeySuffix(instance.Definition.Key)}";
+            if (!reservedIds.Add(id))
+            {
+                var unique = id + "-" + ShortIdentityHash(key);
+                id = unique;
+                for (var suffix = 2; !reservedIds.Add(id); suffix++) id = unique + "-" + suffix;
+            }
+            idByIdentity[identity] = id;
+            keyByIdentity[identity] = key;
+        }
         var idsByType = instances.GroupBy(instance => instance.Definition.Key, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.Select(instance =>
-                (instance.FrontendType, idByIdentity[Identity(instance.Definition.Key, instance.FrontendType)])).ToArray(), StringComparer.OrdinalIgnoreCase);
-        var coordinationId = idsByType["core.coordination.scope-guard"].Single().Item2;
+                (instance.FrontendType, instance.StoryId, Id: idByIdentity[Identity(instance.Definition.Key, instance.FrontendType, instance.StoryId)])).ToArray(), StringComparer.OrdinalIgnoreCase);
+        var coordinationId = idsByType["core.coordination.scope-guard"].Single().Id;
         var items = new List<PlanWorkItem>();
 
         foreach (var instance in instances)
         {
             var definition = instance.Definition;
-            var dependencies = ResolveDependencies(definition, instance.FrontendType, applicable, idsByType);
-            var requirementIds = definition.CreationPolicy == "always"
-                ? allRequirements
-                : RequirementIds(spec, definition.Category, instance.FrontendType, definition.TriggerTerms.ToArray());
+            var identity = Identity(definition.Key, instance.FrontendType, instance.StoryId);
+            var id = idByIdentity[identity];
+            var existing = existingByIdentity.GetValueOrDefault(identity);
+            var dependencies = ResolveDependencies(definition, instance.FrontendType, instance.StoryId, applicable, idsByType, existing?.DependsOn ?? [], problems);
+            var requirementIds = InstanceRequirements(instance);
             var impactIds = definition.Category switch
             {
                 "documentation" => Impacts(accepted, "documentation", "contract"),
                 "verification" or "assurance" => Impacts(accepted, "verification", "implementation"),
                 _ => allImpacts,
             };
-            var identity = Identity(definition.Key, instance.FrontendType);
-            var id = idByIdentity[identity];
-            var existing = existingByIdentity.GetValueOrDefault(identity);
             var highParent = definition.Key == "core.coordination.scope-guard";
             var negative = spec.Exclusions.Count > 0
                 ? spec.Exclusions
@@ -117,9 +193,14 @@ internal static partial class FeatureIssuePackBuilder
             var validation = spec.PublicEndpoints && PublicEndpointPolicyCategory(definition.Category)
                 ? definition.Validation + " " + PublicEndpointValidation(definition.Category)
                 : definition.Validation;
+            if (instance.StoryId is not null)
+            {
+                acceptance += " " + string.Join(" ", spec.Requirements.Where(requirement => requirementIds.Contains(requirement.Id)).Select(requirement => requirement.AcceptanceCriteria));
+                validation = $"For story {instance.StoryId}: {validation}";
+            }
             if (!spec.Frontend && definition.Category == "verification")
                 validation = validation.Replace("browser journeys, ", string.Empty, StringComparison.OrdinalIgnoreCase);
-            items.Add(new PlanWorkItem(
+            var item = new PlanWorkItem(
                 id,
                 definition.Category,
                 highParent ? "high" : definition.DefaultComplexity,
@@ -136,17 +217,40 @@ internal static partial class FeatureIssuePackBuilder
                 definition.Version,
                 definition.ApprovalGate,
                 ResolveTargets(spec, definition.Category),
-                [],
-                negative,
-                RequiredOutputs(definition.Category),
+                existing?.DecisionIds ?? [],
+                preserveAuthoredContract && existing?.NegativeCriteria is { } authoredNegative ? authoredNegative : negative,
+                preserveAuthoredContract && existing?.RequiredOutputs is { } authoredOutputs ? authoredOutputs
+                    : RequiredOutputs(definition.Category).Select(output => instance.StoryId is null ? output : $"{instance.StoryId}: {output}").ToArray(),
                 instance.FrontendType) with
             {
                 Status = existing?.Status ?? (highParent ? "decomposed" : "draft"),
-            });
+                StoryId = instance.StoryId,
+                InstanceKey = keyByIdentity[identity],
+                WorkOwnerTaskId = existing?.WorkOwnerTaskId,
+                VerificationObligations = existing is not null && existing.AcceptanceCriteria == acceptance && existing.Validation == validation ? existing.VerificationObligations :
+                    [],
+            };
+            if (existing is null || existing.AcceptanceCriteria != acceptance || existing.Validation != validation)
+                item = item with { VerificationObligations = defaultObligations?.Invoke(item) ?? DefaultVerificationObligations(item, []) };
+            items.Add(item);
         }
 
+        errors = problems;
         return items;
+
+        string[] InstanceRequirements(TaskInstance instance)
+        {
+            var assigned = instance.Definition.CreationPolicy == "always" ? allRequirements
+                : RequirementIds(spec, instance.Definition.Category, instance.FrontendType, instance.Definition.TriggerTerms.ToArray());
+            if (instance.StoryId is not null)
+                return assigned.Where(id => spec.Requirements.Any(requirement => requirement.Id == id && requirement.StoryId == instance.StoryId)).ToArray();
+            return IsStoryScopedCategory(instance.Definition.Category) && instances.Any(candidate => candidate.Definition.Key == instance.Definition.Key && candidate.StoryId is not null)
+                ? assigned.Where(id => spec.Requirements.Any(requirement => requirement.Id == id && requirement.StoryId is null)).ToArray() : assigned;
+        }
     }
+
+    private static string ShortIdentityHash(string value)
+        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)))[..12];
 
     private static string TaskKeySuffix(string key)
     {
@@ -163,7 +267,16 @@ internal static partial class FeatureIssuePackBuilder
     };
 
     private static bool IsFrontendCategory(string category) => category is "wireframe" or "design" or "frontend";
-    private static string Identity(string taskTypeKey, string? frontendType) => $"{taskTypeKey}|{frontendType ?? "none"}";
+    private static string Identity(string taskTypeKey, string? frontendType, string? storyId) => $"{taskTypeKey}|{frontendType ?? "none"}|{storyId ?? "shared"}";
+    private static bool IsStoryScopedCategory(string category) => category is not ("coordination" or "documentation" or "wireframe" or "design" or "security" or "verification" or "assurance" or "delivery");
+    private static bool IsNonCodeCategory(string category) => category is "coordination" or "documentation" or "wireframe" or "design" or "assurance" or "delivery";
+
+    internal static IReadOnlyList<Cis.Abstractions.CisTaskVerificationObligation> DefaultVerificationObligations(PlanWorkItem task, IReadOnlyList<string> nativeGates)
+    {
+        var native = !IsNonCodeCategory(task.Category) && nativeGates.Count > 0;
+        return [new("task-contract", [task.AcceptanceCriteria], task.Validation, native ? "native" : "review", [task.Validation])
+        { BasisReferences = task.RequirementIds, SharedGateIds = native ? nativeGates : [] }];
+    }
 
     private static bool IsApplicable(Cis.Abstractions.CisTaskTypeDefinition definition, FeatureSpec spec)
     {
@@ -266,8 +379,11 @@ internal static partial class FeatureIssuePackBuilder
     private static IReadOnlyList<string> ResolveDependencies(
         Cis.Abstractions.CisTaskTypeDefinition definition,
         string? frontendType,
+        string? storyId,
         IReadOnlyList<Cis.Abstractions.CisTaskTypeDefinition> applicable,
-        IReadOnlyDictionary<string, (string? FrontendType, string Id)[]> idsByType)
+        IReadOnlyDictionary<string, (string? FrontendType, string? StoryId, string Id)[]> idsByType,
+        IReadOnlyList<string> retained,
+        List<string> errors)
     {
         var keys = new List<string>(definition.DependsOnTypeKeys);
         if (idsByType.ContainsKey("core.design.visual") && definition.Category is not ("coordination" or "wireframe" or "design"))
@@ -306,15 +422,30 @@ internal static partial class FeatureIssuePackBuilder
                 break;
         }
 
-        return keys.Distinct(StringComparer.OrdinalIgnoreCase)
-            .Where(idsByType.ContainsKey)
-            .SelectMany(key => idsByType[key]
-                .Where(candidate => frontendType is null || candidate.FrontendType is null
-                    || candidate.FrontendType.Equals(frontendType, StringComparison.OrdinalIgnoreCase))
-                .Select(candidate => candidate.Id))
-            .Distinct(StringComparer.Ordinal)
-            .Order(StringComparer.Ordinal)
-            .ToArray();
+        var allIds = idsByType.Values.SelectMany(value => value).Select(value => value.Id).ToHashSet(StringComparer.Ordinal);
+        var result = retained.Where(allIds.Contains).ToHashSet(StringComparer.Ordinal);
+        foreach (var key in keys.Distinct(StringComparer.OrdinalIgnoreCase).Where(idsByType.ContainsKey))
+        {
+            var candidates = idsByType[key].Where(candidate => frontendType is null || candidate.FrontendType is null
+                || candidate.FrontendType.Equals(frontendType, StringComparison.OrdinalIgnoreCase)).ToArray();
+            // Existing feature-wide assurance and the global design barrier
+            // deliberately cover all declared instances at their shared scope.
+            if (definition.Category is "verification" or "delivery" || key == "core.design.visual" && frontendType is null)
+            {
+                result.UnionWith(candidates.Select(candidate => candidate.Id));
+                continue;
+            }
+            var explicitMatches = candidates.Where(candidate => result.Contains(candidate.Id)).ToArray();
+            if (explicitMatches.Length > 0) continue;
+            var scoped = candidates.Where(candidate => candidate.StoryId == storyId).ToArray();
+            if (scoped.Length == 0) scoped = candidates.Where(candidate => candidate.StoryId is null).ToArray();
+            if (scoped.Length == 1) result.Add(scoped[0].Id);
+            else if (scoped.Length > 1)
+                errors.Add($"Task type '{definition.Key}' in story '{storyId ?? "shared"}' has ambiguous prerequisite type '{key}': {string.Join(", ", scoped.Select(candidate => candidate.Id))}. Retain an exact task-instance dependency before re-import.");
+            else if (candidates.Length > 0)
+                errors.Add($"Task type '{definition.Key}' in story '{storyId ?? "shared"}' cannot infer prerequisite '{key}' from other stories. Declare its exact shared or sibling task dependency.");
+        }
+        return result.Order(StringComparer.Ordinal).ToArray();
     }
 
     private static IReadOnlyList<string> RequiredOutputs(string category) => category switch
@@ -355,8 +486,12 @@ internal static partial class FeatureIssuePackBuilder
         builder.AppendLine($"depends_on: {JsonSerializer.Serialize(item.DependsOn)}");
         builder.AppendLine($"approval_gate: {item.ApprovalGate}");
         builder.AppendLine($"frontend_type: {item.FrontendType ?? "not-applicable"}");
+        builder.AppendLine($"story_id: {JsonSerializer.Serialize(item.StoryId)}");
+        builder.AppendLine($"instance_key: {JsonSerializer.Serialize(item.InstanceKey)}");
+        builder.AppendLine($"work_owner_task_id: {JsonSerializer.Serialize(item.WorkOwnerTaskId)}");
         builder.AppendLine($"targets: {JsonSerializer.Serialize(item.Targets ?? [])}");
         builder.AppendLine($"decision_ids: {JsonSerializer.Serialize(item.DecisionIds ?? [])}");
+        builder.AppendLine($"verification_obligations: {JsonSerializer.Serialize(item.VerificationObligations)}");
         builder.AppendLine("authority: human-approved-plan");
         builder.AppendLine("---");
         builder.AppendLine();
@@ -469,6 +604,14 @@ internal static partial class FeatureIssuePackBuilder
             builder.AppendLine($"- [ ] {check}");
         }
         builder.AppendLine($"- [ ] {item.Validation}");
+        if (item.VerificationObligations.Count > 0)
+        {
+            builder.AppendLine();
+            builder.AppendLine("## Acceptance verification");
+            builder.AppendLine();
+            foreach (var obligation in item.VerificationObligations)
+                builder.AppendLine($"- `{obligation.Id}` ({obligation.EvidenceRoute}): {obligation.Description} Criteria: {string.Join("; ", obligation.Criteria)} Evidence: {string.Join("; ", obligation.EvidenceExpectations)}");
+        }
 
         builder.AppendLine();
         builder.AppendLine("## Completion evidence");
@@ -697,7 +840,7 @@ internal static partial class FeatureIssuePackBuilder
         };
         var classificationScopedFrontend = item.FrontendType is not null
             && item.Category is "wireframe" or "design" or "frontend";
-        var sectionLines = classificationScopedFrontend
+        var sectionLines = classificationScopedFrontend || item.StoryId is not null
             ? []
             : spec.Sections
                 .Where(section => keywords.Any(keyword => ContainsTerm(section.Key, keyword)))
@@ -904,6 +1047,7 @@ internal static partial class FeatureIssuePackBuilder
             var acceptanceAt = Find(headers, "Acceptance criteria");
             var surfaceAt = Find(headers, "Surface", "Affected surfaces");
             var frontendTypeAt = Find(headers, "Frontend type", "Frontend classification", "Audience");
+            var storyAt = Find(headers, "Story ID");
             if (idAt < 0 || requirementAt < 0 || acceptanceAt < 0) continue;
             var result = new List<FeatureRequirement>();
             for (var row = index + 2; row < lines.Length && lines[row].TrimStart().StartsWith('|'); row++)
@@ -915,6 +1059,13 @@ internal static partial class FeatureIssuePackBuilder
                 var acceptance = cells[acceptanceAt].Trim();
                 var surface = surfaceAt >= 0 && cells.Length > surfaceAt ? cells[surfaceAt].Trim() : null;
                 var frontendType = frontendTypeAt >= 0 && cells.Length > frontendTypeAt ? NormalizeFrontendType(cells[frontendTypeAt]) : null;
+                var storyId = storyAt >= 0 ? cells.ElementAtOrDefault(storyAt)?.Trim() : null;
+                if (string.IsNullOrWhiteSpace(storyId) || IsNotApplicable(storyId)) storyId = null;
+                if (storyId is not null && (!Regex.IsMatch(storyId, @"\A[A-Za-z0-9][A-Za-z0-9._-]{0,79}\z", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)) || IsPlaceholder(storyId)))
+                {
+                    errors.Add($"Functional requirement '{id}' needs a stable Story ID containing only letters, digits, dots, underscores or hyphens.");
+                    continue;
+                }
                 if (IsPlaceholder(id) || IsPlaceholder(requirement) || IsPlaceholder(acceptance))
                 {
                     errors.Add($"Functional requirement row '{id}' must replace all TODO or placeholder values.");
@@ -926,7 +1077,7 @@ internal static partial class FeatureIssuePackBuilder
                     errors.Add($"Functional requirement '{id}' has unsupported frontend type '{cells[frontendTypeAt]}'. Use public, customer, or backoffice.");
                     continue;
                 }
-                result.Add(new FeatureRequirement(id, requirement, acceptance, surface, false, false, false, "medium", frontendType));
+                result.Add(new FeatureRequirement(id, requirement, acceptance, surface, false, false, false, "medium", frontendType, storyId));
             }
             foreach (var duplicate in result.GroupBy(item => item.Id, StringComparer.OrdinalIgnoreCase).Where(group => group.Count() > 1))
             {
@@ -948,7 +1099,7 @@ internal static partial class FeatureIssuePackBuilder
             if (!match.Success || IsPlaceholder(match.Groups["text"].Value)) continue;
             ordinal++;
             var text = match.Groups["text"].Value.Trim();
-            yield return new FeatureRequirement($"GOAL-{ordinal:000}", text, text, null, false, false, false, "medium", null);
+            yield return new FeatureRequirement($"GOAL-{ordinal:000}", text, text, null, false, false, false, "medium", null, null);
         }
     }
 
@@ -1242,7 +1393,7 @@ internal static partial class FeatureIssuePackBuilder
                 && !Regex.IsMatch(value, @"^(?:not applicable|n/?a|none)\b",
                     RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
                 && ContainsLifecycleRequirementSignal(new FeatureRequirement(
-                    "SECTION", value, value, null, false, false, false, "medium", null)));
+                    "SECTION", value, value, null, false, false, false, "medium", null, null)));
 
     private static IReadOnlyList<string> ResolveTargets(FeatureSpec spec, string category)
     {
@@ -1384,8 +1535,9 @@ internal static partial class FeatureIssuePackBuilder
         bool Backend,
         bool HasContract,
         string Complexity,
-        string? FrontendType);
-    private sealed record TaskInstance(Cis.Abstractions.CisTaskTypeDefinition Definition, string? FrontendType);
+        string? FrontendType,
+        string? StoryId);
+    private sealed record TaskInstance(Cis.Abstractions.CisTaskTypeDefinition Definition, string? FrontendType, string? StoryId);
     private sealed record TestObligation(string Layer, string Applicable, string Evidence, string Completion);
     private sealed record FeatureParseResult(FeatureSpec? Spec, IReadOnlyList<string> Errors);
     private sealed record ManualTestCase(

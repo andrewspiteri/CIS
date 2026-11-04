@@ -74,6 +74,8 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
         }
 
         var existing = ReadPlan(change);
+        if (existing.WorkItems.Any(item => item.ContractErrors.Count > 0))
+            return new("invalid", change.Id, existing.Status, existing.WorkItems, null, existing.WorkItems.SelectMany(item => item.ContractErrors).ToArray(), false, existing.Source);
         if (string.Equals(existing.Status, "Approved", StringComparison.OrdinalIgnoreCase))
         {
             return Error(change.Id, "An approved plan cannot be rebuilt. Record a new decision or change baseline first.");
@@ -120,6 +122,8 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
         }
 
         var existing = ReadPlan(change);
+        if (existing.WorkItems.Any(item => item.ContractErrors.Count > 0))
+            return new("invalid", change.Id, existing.Status, existing.WorkItems, null, existing.WorkItems.SelectMany(item => item.ContractErrors).ToArray(), false, existing.Source);
         var approvedPlan = string.Equals(existing.Status, "Approved", StringComparison.OrdinalIgnoreCase);
         var derivedOnlyRefresh = approvedPlan && IsExactImportedSource(request, existing.Source);
         var readinessErrors = EvaluateReadiness(request.RepositoryPath,
@@ -152,7 +156,8 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
         var accepted = impact.Findings.Where(item => item.State == "accepted").ToArray();
         var automationReferences = _automationScanner.Scan(change.RepositoryPath);
         var built = FeatureIssuePackBuilder.Build(change.RepositoryPath, request.FeatureSpecPath, change.Id, accepted, _taskTypes,
-            capabilityStatus.Selections, existing.WorkItems, automationReferences);
+            capabilityStatus.Selections, existing.WorkItems, automationReferences, existing.Source?.Sha256,
+            task => DefaultVerificationObligations(change.RepositoryPath, task));
         if (built.Pack is null)
         {
             PersistCapabilityConflicts(change, built.Conflicts);
@@ -322,7 +327,7 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
         }
 
         var plan = ReadPlan(change);
-        return new PlanResult("shown", change.Id, plan.Status, plan.WorkItems, null, [], false, plan.Source);
+        return new PlanResult("shown", change.Id, plan.Status, plan.WorkItems, null, plan.WorkItems.SelectMany(item => item.ContractErrors).ToArray(), false, plan.Source);
     }
 
     private void PersistCapabilityConflicts(
@@ -375,6 +380,7 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
         var plan = ReadPlan(change);
         var item = plan.WorkItems.FirstOrDefault(candidate => candidate.Id.Equals(request.TaskId, StringComparison.OrdinalIgnoreCase));
         if (item is null) return Error(change.Id, $"Task was not found: {request.TaskId}");
+        if (item.ContractErrors.Count > 0) return Error(change.Id, item.ContractErrors.ToArray());
         if (item.TaskTypeKey.StartsWith("core.", StringComparison.OrdinalIgnoreCase))
             return Error(change.Id, $"Core task types are non-replaceable: {item.TaskTypeKey}");
         var target = _taskTypes.Find(request.TargetTypeKey);
@@ -399,12 +405,24 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
             return new PlanResult("unchanged", change.Id, plan.Status, plan.WorkItems, null, [], false, plan.Source);
 
         var byType = plan.WorkItems.GroupBy(candidate => candidate.TaskTypeKey, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.First().Id, StringComparer.OrdinalIgnoreCase);
+            .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.OrdinalIgnoreCase);
         var missingDependencies = target.DependsOnTypeKeys.Where(key => !byType.ContainsKey(key)).ToArray();
         if (missingDependencies.Length > 0)
             return Error(change.Id, $"Target task type dependencies are not instantiated: {string.Join(", ", missingDependencies)}");
+        var addedDependencies = new List<string>();
+        foreach (var key in target.DependsOnTypeKeys)
+        {
+            var candidates = byType[key].Where(candidate => candidate.Id != item.Id
+                && (item.FrontendType is null || candidate.FrontendType is null || candidate.FrontendType == item.FrontendType)).ToArray();
+            if (candidates.Any(candidate => item.DependsOn.Contains(candidate.Id, StringComparer.Ordinal))) continue;
+            var scoped = candidates.Where(candidate => candidate.StoryId == item.StoryId).ToArray();
+            if (scoped.Length == 0) scoped = candidates.Where(candidate => candidate.StoryId is null).ToArray();
+            if (scoped.Length != 1)
+                return Error(change.Id, $"Task {item.Id} cannot resolve prerequisite type '{key}' to one instance. Retain an exact dependency on the intended shared or story task: {string.Join(", ", candidates.Select(candidate => candidate.Id))}.");
+            addedDependencies.Add(scoped[0].Id);
+        }
         var dependencies = item.DependsOn
-            .Concat(target.DependsOnTypeKeys.Select(key => byType[key]))
+            .Concat(addedDependencies)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Order(StringComparer.Ordinal)
             .ToArray();
@@ -419,7 +437,9 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
             TaskTypeKey = target.Key,
             TaskTypeVersion = target.Version,
             ApprovalGate = target.ApprovalGate,
+            VerificationObligations = [],
         };
+        migrated = migrated with { VerificationObligations = DefaultVerificationObligations(change.RepositoryPath, migrated) };
         var updatedItems = plan.WorkItems.Select(candidate => candidate.Id == item.Id ? migrated : candidate).ToArray();
         var planPath = _changes.DossierFile(change, "plan.md");
         File.WriteAllText(planPath, RenderPlan(change, "Draft", updatedItems, plan.Source));
@@ -433,6 +453,14 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
         task = ReplaceFrontMatter(task, "category", target.Category);
         task = ReplaceFrontMatter(task, "depends_on", JsonSerializer.Serialize(dependencies));
         task = ReplaceFrontMatter(task, "approval_gate", target.ApprovalGate);
+        if (HasTaskMetadata(task, "verification_obligations"))
+            task = ReplaceFrontMatter(task, "verification_obligations", JsonSerializer.Serialize(migrated.VerificationObligations));
+        else
+        {
+            var frontMatterEnd = task.IndexOf("\n---", StringComparison.Ordinal);
+            if (frontMatterEnd < 0) return Error(change.Id, "Task-type migration requires a complete canonical task front matter record.");
+            task = task.Insert(frontMatterEnd, "\nverification_obligations: " + JsonSerializer.Serialize(migrated.VerificationObligations));
+        }
         task = Regex.Replace(task, @"(?m)^#\s+" + Regex.Escape(item.Id) + @":.*$",
             $"# {item.Id}: {target.Title}", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
         var currentContract = "## Current task-type contract\n\n" +
@@ -440,6 +468,9 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
             $"- [ ] Acceptance: {target.AcceptanceCriteria}\n" +
             $"- [ ] Validation: {target.Validation}\n";
         task = ReplaceMarkdownSection(task, "## Current task-type contract", currentContract);
+        var verification = "## Acceptance verification\n\n" + string.Join("\n", migrated.VerificationObligations.Select(obligation =>
+            $"- `{obligation.Id}` ({obligation.EvidenceRoute}): {obligation.Description} Criteria: {string.Join("; ", obligation.Criteria)} Evidence: {string.Join("; ", obligation.EvidenceExpectations)}")) + "\n";
+        task = ReplaceMarkdownSection(task, "## Acceptance verification", verification);
         task = AppendMigrationHistory(task, item, target, request.Reviewer.Trim(), request.Rationale.Trim());
         File.WriteAllText(taskPath, task);
         _changes.AppendEvent(change, "task-type-migrated", new Dictionary<string, string>
@@ -572,6 +603,7 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
             return Error(change.Id, sourceCurrencyErrors.ToArray());
         var item = plan.WorkItems.FirstOrDefault(candidate => candidate.Id.Equals(request.TaskId, StringComparison.OrdinalIgnoreCase));
         if (item is null) return Error(change.Id, $"Task was not found: {request.TaskId}");
+        if (item.ContractErrors.Count > 0) return Error(change.Id, item.ContractErrors.ToArray());
         var target = CanonicalTaskStatus(request.Status);
         if (target is null) return Error(change.Id, $"Unsupported task status: {request.Status}");
         if (target == "Complete")
@@ -588,10 +620,8 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
         if (plan.Source?.FrontendChanges == true && item.Category is not ("coordination" or "wireframe" or "design")
             && target is "ReadyForReview" or "Approved" or "InProgress" or "Complete")
         {
-            var design = File.ReadAllText(_changes.DossierFile(change, "design.md"));
-            var gate = Regex.Match(design, @"(?m)^gate_status:\s*(?<value>.*)$").Groups["value"].Value.Trim();
-            if (!gate.Equals("Approved", StringComparison.OrdinalIgnoreCase))
-                return Error(change.Id, $"Global design gate is {gate}; downstream task work is blocked until explicit design approval.");
+            var gateErrors = ValidateCanonicalTaskGate(change, plan.Source, item, completing: target == "Complete");
+            if (gateErrors.Count > 0) return Error(change.Id, gateErrors.ToArray());
         }
 
         if (target == "Complete" && item.TaskPath is not null)
@@ -711,7 +741,164 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
             ?? throw new InvalidDataException("Change dossier was not found for task review.");
         var task = ReadPlan(change).WorkItems.FirstOrDefault(item => item.Id == taskId)
             ?? throw new InvalidDataException("Plan task was not found for task review.");
+        if (task.ContractErrors.Count > 0) throw new InvalidDataException(string.Join("; ", task.ContractErrors));
         return EngineeringCompletionReview.TaskDigest(task, ReadTaskContract(change, task));
+    }
+
+    public IReadOnlyList<string> ValidateTaskType(string repositoryPath, string key, string version, string category)
+    {
+        var definition = _taskTypes.Find(key);
+        if (definition is null) return [$"Task type '{key}@{version}' is unavailable. Load its existing provider before preparing or executing this task."];
+        if (!definition.Version.Equals(version, StringComparison.OrdinalIgnoreCase) || !definition.Category.Equals(category, StringComparison.OrdinalIgnoreCase))
+            return [$"Task type '{key}' requires its registered version/category '{definition.Version}/{definition.Category}', not '{version}/{category}'. Reassess the affected task contract."];
+        var selected = _capabilities.Read(TaskTypeAuthorityPath(repositoryPath));
+        if (selected.Errors.Count > 0) return selected.Errors;
+        var resolution = _taskTypes.ResolveApplicable(_taskTypes.Definitions.Where(candidate => candidate.CapabilityKey.Equals(definition.CapabilityKey, StringComparison.OrdinalIgnoreCase)).ToArray(),
+            selected.Selections.Where(selection => selection.CapabilityKey.Equals(definition.CapabilityKey, StringComparison.OrdinalIgnoreCase)).ToArray());
+        var errors = resolution.Errors.Concat(resolution.Conflicts.Select(conflict => $"Task capability '{conflict.CapabilityKey}' requires existing provider selection: {conflict.Reason}")).ToList();
+        if (!resolution.Definitions.Any(candidate => candidate.Key.Equals(key, StringComparison.OrdinalIgnoreCase)))
+            errors.Add($"The current capability selection does not authorize task type '{key}'. Retain the selected provider or use the existing authorized migration route.");
+        return errors;
+    }
+
+    public IReadOnlyList<CisTaskTypeDefinition> ReadTaskTypes(string repositoryPath)
+    {
+        var selected = _capabilities.Read(TaskTypeAuthorityPath(repositoryPath));
+        if (selected.Errors.Count > 0) return [];
+        return _taskTypes.Definitions.GroupBy(definition => definition.CapabilityKey, StringComparer.OrdinalIgnoreCase)
+            .Select(group => _taskTypes.ResolveApplicable(group.ToArray(), selected.Selections
+                .Where(selection => selection.CapabilityKey.Equals(group.Key, StringComparison.OrdinalIgnoreCase)).ToArray()))
+            .Where(resolution => resolution.IsSuccess).SelectMany(resolution => resolution.Definitions)
+            .OrderBy(definition => definition.Order).ThenBy(definition => definition.Key, StringComparer.Ordinal).ToArray();
+    }
+
+    public CisFeatureStoryTask ResolveStoryTask(string repositoryPath, CisFeatureStoryTask task)
+    {
+        if (string.IsNullOrWhiteSpace(task.TaskTypeKey) || string.IsNullOrWhiteSpace(task.TaskTypeVersion)) return task;
+        var definition = _taskTypes.Find(task.TaskTypeKey);
+        if (definition is null || ValidateTaskType(repositoryPath, task.TaskTypeKey, task.TaskTypeVersion, task.Category ?? definition.Category).Count > 0)
+            return task;
+        return task with
+        {
+            TaskTypeKey = definition.Key,
+            TaskTypeVersion = definition.Version,
+            Category = definition.Category,
+            ApprovalGate = task.ApprovalGate is null || task.ApprovalGate.Equals(definition.ApprovalGate, StringComparison.OrdinalIgnoreCase)
+                ? definition.ApprovalGate : task.ApprovalGate
+        };
+    }
+
+    public IReadOnlyList<string> ValidateStoryTaskGate(string repositoryPath, CisFeatureStoryTask task, bool completing = false)
+    {
+        var verificationErrors = ValidateNativeObligationGates(repositoryPath, task);
+        if (verificationErrors.Count > 0) return verificationErrors;
+        if (task.Category is "wireframe" or "design" or "frontend" && task.FrontendType is not ("public" or "customer" or "backoffice"))
+            return [$"Task {task.Id} requires its exact public, customer or backoffice frontend classification."];
+        if (task.Category == "frontend" && (string.IsNullOrWhiteSpace(task.ChangeId) || string.IsNullOrWhiteSpace(task.WorkOwnerTaskId)))
+            return [$"Frontend task {task.Id} needs its exact canonical change/task design authority before implementation; a none task gate does not bypass the shared design barrier."];
+        var gate = task.ApprovalGate ?? "none";
+        if (task.ChangeId is null && gate == "none") return [];
+        if (string.IsNullOrWhiteSpace(task.ChangeId) || string.IsNullOrWhiteSpace(task.WorkOwnerTaskId))
+            return [$"Task {task.Id} has unresolved canonical gate authority. Supply its exact ChangeId and WorkOwnerTaskId; a gate label does not establish approval."];
+        try
+        {
+            var change = _changes.Read(TaskTypeAuthorityPath(repositoryPath), task.ChangeId);
+            if (change is null) return [$"Canonical change {task.ChangeId} was not found for task gate assessment."];
+            var plan = ReadPlan(change);
+            var owners = plan.WorkItems.Where(item => item.Id.Equals(task.WorkOwnerTaskId, StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (owners.Length != 1) return [$"Task {task.Id} cannot resolve its exact canonical owner {task.WorkOwnerTaskId} in {task.ChangeId}."];
+            var owner = owners[0];
+            if (owner.ContractErrors.Count > 0) return owner.ContractErrors;
+            if (gate != "none" && (owner.TaskTypeKey != task.TaskTypeKey || owner.TaskTypeVersion != task.TaskTypeVersion || owner.Category != task.Category || owner.ApprovalGate != gate))
+                return [$"Task {task.Id} has a different type/category/approval contract from canonical owner {owner.Id}; reassess that exact link before execution or completion."];
+            var errors = ValidateSourceCurrency(change, plan.Source).ToList();
+            // An accounting owner can cover differently classified children.
+            // Its preparation exemptions cannot grant the child's delivery gates.
+            var gateTask = gate == "none" ? owner with
+            {
+                Id = task.Id,
+                Category = task.Category ?? "unknown",
+                FrontendType = task.FrontendType,
+                ApprovalGate = "none"
+            } : owner;
+            errors.AddRange(ValidateCanonicalTaskGate(change, plan.Source, gateTask, completing));
+            return errors;
+        }
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException)
+        { return [$"Canonical task gate could not be assessed safely: {error.Message}"]; }
+    }
+
+    private IReadOnlyList<string> ValidateCanonicalTaskGate(ChangeDossier change, PlanSource? source, PlanWorkItem task, bool completing)
+    {
+        if (task.ApprovalGate is not ("none" or "global-design-approval" or "human-final-acceptance"))
+            return [$"Task {task.Id} uses unresolved approval gate '{task.ApprovalGate}'; retain its existing authority and resolve that gate before continuation."];
+        if (completing && task.ApprovalGate == "human-final-acceptance" && CanonicalStatus(task.Status) != "Complete")
+            return [$"Task {task.Id} requires its existing canonical final acceptance before linked story completion."];
+        var requiresDesign = (source?.FrontendChanges == true || task.Category == "frontend") && task.Category is not ("coordination" or "wireframe" or "design")
+            || completing && task.ApprovalGate == "global-design-approval";
+        if (!requiresDesign) return [];
+        var path = _changes.DossierFile(change, "design.md");
+        if (!File.Exists(path) || CisPathSafety.ContainsReparsePoint(change.RepositoryPath, path))
+            return ["The canonical design approval record is missing or unsafe; retain the global design hold."];
+        var design = File.ReadAllText(path);
+        var gate = Regex.Match(design, @"(?m)^gate_status:\s*(?<value>.*)$").Groups["value"].Value.Trim();
+        return gate.Equals("Approved", StringComparison.OrdinalIgnoreCase) ? []
+            : [$"Global design gate is {gate}; downstream task work is blocked until explicit design approval."];
+    }
+
+    private string TaskTypeAuthorityPath(string repositoryPath)
+    {
+        var workspace = _workspaceRegistry?.Resolve(repositoryPath);
+        return workspace is { IsSuccess: true, Workspace.AuthorityRepository: { } authority }
+            ? authority.RepositoryPath : repositoryPath;
+    }
+
+    private IReadOnlyList<CisTaskVerificationObligation> DefaultVerificationObligations(string repositoryPath, PlanWorkItem task)
+    {
+        IReadOnlyList<string> native = [];
+        var engineering = _engineering;
+        if (engineering is not null)
+        {
+            try
+            {
+                var contexts = new TaskCompletionScopes(_resolver, _workspaceRegistry).ResolveContexts(TaskTypeAuthorityPath(repositoryPath), task.Targets ?? []);
+                if (contexts.Count > 0 && contexts.All(context => engineering.Assess(context, task.Category) is { Adopted: true, Diagnostics.Count: 0 } assessment
+                    && assessment.RequiredGates.Any(gate => gate.Id == "unit"))) native = ["unit"];
+            }
+            catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException)
+            { /* Unresolved target completion remains held by its existing scope checks; no native gate is invented. */ }
+        }
+        return FeatureIssuePackBuilder.DefaultVerificationObligations(task, native);
+    }
+
+    private IReadOnlyList<string> ValidateNativeObligationGates(string repositoryPath, CisFeatureStoryTask task)
+        => ValidateNativeObligationGates(repositoryPath, task.Id, task.Category ?? "unknown",
+            task.Targets.Count > 0 ? task.Targets : task.RepositoryIds, task.VerificationObligations);
+
+    private IReadOnlyList<string> ValidateNativeObligationGates(string repositoryPath, string taskId, string category,
+        IReadOnlyList<string> targets, IReadOnlyList<CisTaskVerificationObligation> obligations)
+    {
+        if (obligations is null || obligations.Any(obligation => obligation is null)) return [$"Task {taskId} verification obligations are malformed."];
+        var native = obligations.Where(obligation => obligation.EvidenceRoute == "native").ToArray();
+        if (native.Length == 0 || _engineering is null) return [];
+        try
+        {
+            var contexts = new TaskCompletionScopes(_resolver, _workspaceRegistry).ResolveContexts(TaskTypeAuthorityPath(repositoryPath), targets);
+            var errors = new List<string>();
+            foreach (var context in contexts)
+            {
+                var assessment = _engineering.Assess(context, category);
+                if (!assessment.Adopted) continue;
+                errors.AddRange(assessment.Diagnostics);
+                foreach (var obligation in native)
+                    foreach (var gate in obligation.SharedGateIds)
+                        if (!assessment.RequiredGates.Any(required => required.Id == gate) || !EngineeringNativeEvidence.SupportsGate(gate))
+                            errors.Add($"Task {taskId} verification obligation '{obligation.Id}' names absent or non-native gate '{gate}' in {context.RepositoryId}. Use its actual scoped native inventory or review/artifact route.");
+            }
+            return errors;
+        }
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException)
+        { return [$"Task {taskId} verification scope is unresolved: {error.Message}"]; }
     }
 
     public (EngineeringCompletionReceipt? Template, IReadOnlyList<string> Errors) CompletionContext(string repositoryPath, string changeId, string taskId, string? target = null)
@@ -721,6 +908,7 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
         var plan = ReadPlan(change);
         var task = plan.WorkItems.FirstOrDefault(item => item.Id == taskId);
         if (task is null) return (null, ["Task was not found."]);
+        if (task.ContractErrors.Count > 0) return (null, task.ContractErrors);
         try { return Completion().Prepare(change, task, plan.Source?.Targets, ReadTaskContract(change, task), target); }
         catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException)
         { return (null, [error.Message]); }
@@ -810,6 +998,11 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
 
         foreach (var item in workItems)
         {
+            if (item.ContractErrors.Count > 0) { errors.AddRange(item.ContractErrors); continue; }
+            errors.AddRange(CisStoryEngineeringContract.ValidateVerificationObligations(item.VerificationObligations,
+                [item.AcceptanceCriteria], required: false).Select(error => item.Id + ": " + error));
+            errors.AddRange(ValidateNativeObligationGates(change.RepositoryPath, item.Id, item.Category,
+                item.Targets is { Count: > 0 } ? item.Targets : source?.Targets ?? [], item.VerificationObligations));
             if (item.ImpactIds.Count == 0 || string.IsNullOrWhiteSpace(item.AcceptanceCriteria) || string.IsNullOrWhiteSpace(item.Validation))
             {
                 errors.Add($"{item.Id} requires impact coverage, acceptance criteria, and validation.");
@@ -905,11 +1098,10 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
                         && string.Equals(item.FrontendType ?? "customer", frontendType, StringComparison.OrdinalIgnoreCase)).ToArray();
                     var wireframe = wireframes.FirstOrDefault();
                     var design = designs.FirstOrDefault();
-                    var frontend = frontends.FirstOrDefault();
-                    if (wireframes.Length != 1 || designs.Length != 1 || frontends.Length != 1
-                        || wireframe is null || design is null || frontend is null
+                    if (wireframes.Length != 1 || designs.Length != 1 || frontends.Length == 0
+                        || wireframe is null || design is null
                         || !design.DependsOn.Contains(wireframe.Id, StringComparer.Ordinal)
-                        || !frontend.DependsOn.Contains(design.Id, StringComparer.Ordinal))
+                        || frontends.Any(frontend => !frontend.DependsOn.Contains(design.Id, StringComparer.Ordinal)))
                     {
                         errors.Add($"UI-bearing `{frontendType}` scope requires a matched coordination -> wireframe -> design -> frontend ordering.");
                     }
@@ -984,10 +1176,9 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
                     errors.Add($"{finalSweep.Id} must directly depend on {predecessor.Id} before Coordination may accept the feature.");
                 }
             }
-            foreach (var duplicateType in workItems.GroupBy(item => $"{item.TaskTypeKey}|{item.FrontendType ?? "none"}", StringComparer.OrdinalIgnoreCase).Where(group => group.Count() > 1))
-            {
-                errors.Add($"Task type/frontend classification is instantiated more than once without provider-qualified decomposition: {duplicateType.Key}");
-            }
+            foreach (var duplicateInstance in workItems.Where(item => item.InstanceKey is not null)
+                         .GroupBy(item => item.InstanceKey!, StringComparer.Ordinal).Where(group => group.Count() > 1))
+                errors.Add($"Task instance key is duplicated: {duplicateInstance.Key}. Preserve distinct stable task instances.");
 
             if (!File.Exists(_changes.DossierFile(change, "verification.md")))
             {
@@ -1578,6 +1769,7 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
             .Select(ParseWorkItem)
             .Where(item => item is not null)
             .Cast<PlanWorkItem>()
+            .Select(item => HydrateTaskContract(change, item))
             .ToArray();
         var sourcePath = lines.FirstOrDefault(line => line.StartsWith("feature_spec_path:", StringComparison.Ordinal))?[18..].Trim();
         var sourceHash = lines.FirstOrDefault(line => line.StartsWith("feature_spec_sha256:", StringComparison.Ordinal))?[20..].Trim();
@@ -1619,6 +1811,27 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
 
     private static PlanWorkItem? ParseWorkItem(string line)
     {
+        try
+        {
+            var item = ParseWorkItemCore(line);
+            return item is null ? null : item with { UnresolvedManifestRow = line };
+        }
+        catch (InvalidDataException error)
+        {
+            // Preserve the known legacy columns and the exact unresolved row;
+            // no other task write is allowed to regenerate its missing meaning.
+            var prefix = string.Join('|', line.Split('|').Take(18)) + "|";
+            var item = ParseWorkItemCore(prefix);
+            return item is null ? null : item with
+            {
+                ContractErrors = [$"{item.Id}: {error.Message}"],
+                UnresolvedManifestRow = line
+            };
+        }
+    }
+
+    private static PlanWorkItem? ParseWorkItemCore(string line)
+    {
         var cells = line.Split('|').Select(cell => cell.Trim()).ToArray();
         if (cells.Length >= 18)
         {
@@ -1628,7 +1841,16 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
                 string.IsNullOrWhiteSpace(cells[5]) ? null : cells[5],
                 cells[6], SplitList(cells[7]), SplitList(cells[8]), SplitList(cells[9]),
                 cells[10], cells[11], cells[12], cells[13], cells[14], cells[15], SplitList(cells[16]),
-                FrontendType: FrontendTypeOrNull(cells.ElementAtOrDefault(17)));
+                DecisionIds: ReadContractCell<string[]>(cells.ElementAtOrDefault(18)),
+                NegativeCriteria: ReadContractCell<string[]>(cells.ElementAtOrDefault(19)),
+                RequiredOutputs: ReadContractCell<string[]>(cells.ElementAtOrDefault(20)),
+                FrontendType: FrontendTypeOrNull(cells.ElementAtOrDefault(17)))
+            {
+                StoryId = ReadContractCell<string>(cells.ElementAtOrDefault(21)),
+                InstanceKey = ReadContractCell<string>(cells.ElementAtOrDefault(22)),
+                WorkOwnerTaskId = ReadContractCell<string>(cells.ElementAtOrDefault(23)),
+                VerificationObligations = ReadContractCell<CisTaskVerificationObligation[]>(cells.ElementAtOrDefault(24)) ?? []
+            };
         }
 
         if (cells.Length >= 14)
@@ -1672,6 +1894,72 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
                 cells[7],
                 cells[8])
             : null;
+    }
+
+    private PlanWorkItem HydrateTaskContract(ChangeDossier change, PlanWorkItem item)
+    {
+        if (item.ContractErrors.Count > 0) return item;
+        if (item.TaskPath is null) return item;
+        string? document;
+        try { document = ReadTaskContract(change, item); }
+        catch (InvalidDataException) { return item; } // Validation reports the missing/unsafe task document.
+        if (document is null) return item;
+        try
+        {
+            var legacyType = item.TaskTypeKey == "core.legacy" ? TaskMetadata<string>(document, "task_type") : null;
+            return item with
+            {
+                TaskTypeKey = legacyType ?? item.TaskTypeKey,
+                TaskTypeVersion = legacyType is null ? item.TaskTypeVersion : TaskMetadata<string>(document, "task_type_version") ?? item.TaskTypeVersion,
+                DecisionIds = HasTaskMetadata(document, "decision_ids") ? TaskMetadata<string[]>(document, "decision_ids") ?? [] : item.DecisionIds ?? [],
+                NegativeCriteria = MarkdownSection(document, "## Constraints and exclusions") is not null ? TaskBullets(document, "## Constraints and exclusions") : item.NegativeCriteria ?? [],
+                RequiredOutputs = MarkdownSection(document, "## Required outputs") is not null ? TaskBullets(document, "## Required outputs") : item.RequiredOutputs ?? [],
+                StoryId = HasTaskMetadata(document, "story_id") ? TaskMetadata<string>(document, "story_id") : item.StoryId,
+                InstanceKey = HasTaskMetadata(document, "instance_key") ? TaskMetadata<string>(document, "instance_key") : item.InstanceKey,
+                WorkOwnerTaskId = HasTaskMetadata(document, "work_owner_task_id") ? TaskMetadata<string>(document, "work_owner_task_id") : item.WorkOwnerTaskId,
+                VerificationObligations = HasTaskMetadata(document, "verification_obligations") ? TaskMetadata<CisTaskVerificationObligation[]>(document, "verification_obligations") ?? [] : item.VerificationObligations
+            };
+        }
+        catch (InvalidDataException error)
+        { return item with { ContractErrors = [$"{item.Id}: {error.Message}"] }; }
+    }
+
+    private static bool HasTaskMetadata(string content, string key)
+        => content.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n').Skip(1).TakeWhile(line => line != "---")
+            .Any(line => line.StartsWith(key + ":", StringComparison.Ordinal));
+
+    private static T? TaskMetadata<T>(string content, string key)
+    {
+        var lines = content.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+        if (lines.Length == 0 || lines[0] != "---") return default;
+        var raw = lines.Skip(1).TakeWhile(line => line != "---").FirstOrDefault(line => line.StartsWith(key + ":", StringComparison.Ordinal))?[(key.Length + 1)..].Trim();
+        if (string.IsNullOrEmpty(raw)) return default;
+        if (typeof(T) == typeof(string) && raw != "null" && !raw.StartsWith('"')) return (T)(object)raw;
+        try { return JsonSerializer.Deserialize<T>(raw); }
+        catch (JsonException error) { throw new InvalidDataException($"Task contract metadata '{key}' is invalid; retain its history and correct this affected contract.", error); }
+    }
+
+    private static IReadOnlyList<string> TaskBullets(string content, string heading)
+        => (MarkdownSection(content, heading) ?? "").Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n')
+            .Where(line => line.StartsWith("- ", StringComparison.Ordinal)).Select(line => line[2..]).ToArray();
+
+    internal static bool LegacyListsMatchDocument(PlanWorkItem item, string document)
+        => !string.IsNullOrWhiteSpace(item.TaskPath) && !string.IsNullOrWhiteSpace(document)
+            && (item.DecisionIds ?? []).SequenceEqual(HasTaskMetadata(document, "decision_ids") ? TaskMetadata<string[]>(document, "decision_ids") ?? [] : [], StringComparer.Ordinal)
+            && (item.NegativeCriteria ?? []).SequenceEqual(TaskBullets(document, "## Constraints and exclusions"), StringComparer.Ordinal)
+            && (item.RequiredOutputs ?? []).SequenceEqual(TaskBullets(document, "## Required outputs"), StringComparer.Ordinal);
+
+    private static string ContractCell<T>(T value)
+        => "json64:" + Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(value));
+
+    private static T? ReadContractCell<T>(string? cell)
+    {
+        if (string.IsNullOrEmpty(cell)) return default;
+        if (!cell.StartsWith("json64:", StringComparison.Ordinal))
+            throw new InvalidDataException("The task execution manifest contains unsupported contract metadata. Correct only the affected task; its history remains retained.");
+        try { return JsonSerializer.Deserialize<T>(Convert.FromBase64String(cell[7..])); }
+        catch (Exception error) when (error is JsonException or FormatException)
+        { throw new InvalidDataException("The task execution manifest contains invalid contract metadata; restore its exact persisted task semantics.", error); }
     }
 
     private string RenderPlan(
@@ -1742,11 +2030,16 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
 
         builder.AppendLine();
         builder.AppendLine("<!-- cis:execution-manifest");
-        builder.AppendLine("| ID | Category | Complexity | Parent | Task document | Title | Requirement IDs | Impact IDs | Depends on | Acceptance criteria | Validation | Status | Task type | Type version | Approval gate | Targets | Frontend type |");
-        builder.AppendLine("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
+        builder.AppendLine("| ID | Category | Complexity | Parent | Task document | Title | Requirement IDs | Impact IDs | Depends on | Acceptance criteria | Validation | Status | Task type | Type version | Approval gate | Targets | Frontend type | Decision IDs | Negative criteria | Required outputs | Story ID | Instance key | Work owner | Verification obligations |");
+        builder.AppendLine("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
         foreach (var item in workItems)
         {
-            builder.AppendLine($"| {item.Id} | {Clean(item.Category)} | {item.Complexity} | {item.ParentId} | {item.TaskPath} | {Clean(item.Title)} | {string.Join(", ", item.RequirementIds)} | {string.Join(", ", item.ImpactIds)} | {string.Join(", ", item.DependsOn)} | {Clean(item.AcceptanceCriteria)} | {Clean(item.Validation)} | {item.Status} | {item.TaskTypeKey} | {item.TaskTypeVersion} | {item.ApprovalGate} | {string.Join(", ", item.Targets ?? [])} | {item.FrontendType ?? "not-applicable"} |");
+            if (item.ContractErrors.Count > 0 && item.UnresolvedManifestRow is { } unresolved)
+            {
+                builder.AppendLine(unresolved);
+                continue;
+            }
+            builder.AppendLine($"| {item.Id} | {Clean(item.Category)} | {item.Complexity} | {item.ParentId} | {item.TaskPath} | {Clean(item.Title)} | {string.Join(", ", item.RequirementIds)} | {string.Join(", ", item.ImpactIds)} | {string.Join(", ", item.DependsOn)} | {Clean(item.AcceptanceCriteria)} | {Clean(item.Validation)} | {item.Status} | {item.TaskTypeKey} | {item.TaskTypeVersion} | {item.ApprovalGate} | {string.Join(", ", item.Targets ?? [])} | {item.FrontendType ?? "not-applicable"} | {ContractCell(item.DecisionIds)} | {ContractCell(item.NegativeCriteria)} | {ContractCell(item.RequiredOutputs)} | {ContractCell(item.StoryId)} | {ContractCell(item.InstanceKey)} | {ContractCell(item.WorkOwnerTaskId)} | {ContractCell(item.VerificationObligations)} |");
         }
         builder.AppendLine("cis:execution-manifest -->");
         return builder.ToString();

@@ -2173,6 +2173,10 @@ status: Draft
         Assert.Contains(conflicted.Errors, error => error.Contains("capability conflict", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(conflicted.Errors, error => error.Contains("parr.search.legacy", StringComparison.Ordinal));
         Assert.Contains(conflicted.Errors, error => error.Contains("parr.search.projection", StringComparison.Ordinal));
+        Assert.Contains(services.Plans.ReadTaskTypes(repository.Path), definition => definition.Key == "core.backend.behavior");
+        Assert.DoesNotContain(services.Plans.ReadTaskTypes(repository.Path), definition => definition.CapabilityKey == "parr.search");
+        Assert.Empty(services.Plans.ValidateTaskType(repository.Path, "core.backend.behavior", "1.0", "backend"));
+        Assert.NotEmpty(services.Plans.ValidateTaskType(repository.Path, "parr.search.legacy", "1.0", "search"));
         var conflictEvents = File.ReadAllText(services.Changes.DossierFile(change, "events.jsonl"));
         Assert.Contains("task-capability-conflict-detected", conflictEvents, StringComparison.Ordinal);
         Assert.Contains("sha256:", conflictEvents, StringComparison.Ordinal);
@@ -2185,6 +2189,8 @@ status: Draft
             repository.Path, "parr.search", "parr.search.legacy", [], "architect", "Use the current PARR search provider."));
         Assert.Equal(0, selected.ExitCode);
         Assert.True(selected.Applied);
+        Assert.Contains(services.Plans.ReadTaskTypes(repository.Path), definition => definition.Key == "parr.search.legacy");
+        Assert.DoesNotContain(services.Plans.ReadTaskTypes(repository.Path), definition => definition.Key == "parr.search.projection");
         var imported = services.Plans.ImportSpec(new FeatureSpecImportRequest(
             repository.Path, change.Id, "docs/cis/specs/search-feature-spec.md"));
         Assert.Equal(0, imported.ExitCode);
@@ -2257,12 +2263,16 @@ status: Draft
             repository.Path, change.Id, legacy.Id, "parr.search.projection", "architect",
             "Move the existing task without losing review evidence."));
 
-        Assert.Equal(0, migrated.ExitCode);
+        Assert.True(migrated.ExitCode == 0, string.Join("; ", migrated.Errors.Concat(migrated.Validation?.Errors ?? [])));
         Assert.True(migrated.Applied);
         var current = Assert.Single(migrated.WorkItems, item => item.Id == legacy.Id);
         Assert.Equal("parr.search.projection", current.TaskTypeKey);
         Assert.Equal("2.0", current.TaskTypeVersion);
         Assert.Equal("Draft", current.Status);
+        Assert.Equal(current.AcceptanceCriteria, Assert.Single(Assert.Single(current.VerificationObligations).Criteria));
+        var reloaded = Assert.Single(CreateServices(taskTypes: registry).Plans.Show(repository.Path, change.Id).WorkItems, item => item.Id == legacy.Id);
+        Assert.Equal(current.AcceptanceCriteria, Assert.Single(Assert.Single(reloaded.VerificationObligations).Criteria));
+        Assert.Equal(legacy.InstanceKey, reloaded.InstanceKey);
         var content = File.ReadAllText(taskPath);
         Assert.Contains(humanEvidence, content, StringComparison.Ordinal);
         Assert.Contains("example.test/issues/42", content, StringComparison.Ordinal);
@@ -2275,7 +2285,7 @@ status: Draft
 
         var repeated = services.Plans.ImportSpec(new FeatureSpecImportRequest(
             repository.Path, change.Id, "docs/cis/specs/search-feature-spec.md"));
-        Assert.Equal(0, repeated.ExitCode);
+        Assert.True(repeated.ExitCode == 0, string.Join("; ", repeated.Errors.Concat(repeated.Validation?.Errors ?? [])));
         Assert.Single(repeated.WorkItems, item => item.TaskTypeKey == "parr.search.projection");
         var reconciled = File.ReadAllText(taskPath);
         Assert.Contains(humanEvidence, reconciled, StringComparison.Ordinal);

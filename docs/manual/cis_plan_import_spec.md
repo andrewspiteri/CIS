@@ -3,7 +3,7 @@ title: "cis plan import-spec"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-08-23"
+last_reviewed: "2026-11-04"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-plan-import-spec
@@ -31,7 +31,7 @@ The Markdown source must be inside the repository and outside `.cis/local`. CIS 
 its native `type: feature-specification` contract and PARR-compatible
 `type: specification` documents with a feature title. Intake supports either:
 
-- an `ID`, optional `Surface`, `Requirement`, and `Acceptance criteria` table; or
+- an `ID`, optional `Surface` and `Story ID`, `Requirement`, and `Acceptance criteria` table; or
 - a rich narrative specification with a numbered Goals section.
 
 Narrative goals receive stable derived `GOAL-NNN` IDs. Front matter `targets`, `stack`,
@@ -43,6 +43,20 @@ lifecycle/carry-forward, security, and testing.
 IDs must be unique and every row must replace TODO and placeholder content. CIS keeps
 the source Markdown canonical and records its repository-relative path and SHA-256
 digest in `plan.md`; it does not create a competing copy.
+
+An explicit `Story ID` groups related outcome requirements into stable task instances.
+Two stories can use the same selected task type and frontend classification while
+retaining separate IDs, outputs and history. Shared coordination/design/assurance stays
+at feature scope. Omit the column to retain legacy feature-level grouping. Reimport keeps
+retained logical instance IDs and exact dependency targets; a type-only dependency with
+several possible instances requires targeted resolution instead of selecting the first
+or attaching every sibling. Provider capability selection remains a separate decision.
+When existing shared work would split across story scopes, CIS requires an explicit
+identity/owner mapping before rewriting it. An unambiguous unchanged single scope keeps
+the existing ID and owner. Adding unrelated new requirements does not reassign older work.
+Malformed contract cells are reported on the affected item; other rows remain readable.
+Repair the reported contract before a whole-plan import can rewrite it. Unrelated task
+transitions preserve its unresolved raw row.
 
 Authoring markers are the case-sensitive standalone tokens `TODO` and `TBD`, plus the
 phrase `to be completed`; product names and repository IDs such as `Friends Todo` and

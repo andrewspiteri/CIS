@@ -3,7 +3,7 @@ title: "Change Impact Studio for Visual Studio Code"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-05"
+last_reviewed: "2026-11-04"
 review_cadence: "on VSIX or consumed CLI contract change"
 cis:
   stable_id: change-impact-studio:manual:vscode-extension
@@ -290,9 +290,12 @@ Codex Desktop/App Server session can still be usable.
 ## Story task review and progress
 
 Expand **Story breakdown** to see each story's generated tasks and their status. Select
-a task to read its work description, repository links, dependencies, story acceptance
-criteria and task completion criteria. **Back to story and plan** returns to the complete
-plan for review.
+a task to read its work description, category/type, outputs, exact dependencies,
+acceptance and negative criteria, and verification obligations. **Back to story and plan**
+returns to the complete plan for review. The story shows its saved delivery-size assessment
+and the service's eligibility reasons. **Load size assessment**, **Load child outcomes**
+and **Load task proposal** submit explicit JSON through the same
+[headless story commands](cis_brd_feature_wizard_status.md#story-task-commands).
 
 After generation, review the tasks and select **Approve task plan**. Record your identity
 and approval reason. Approval binds the exact proposal and saved feature scope; it makes
@@ -302,7 +305,7 @@ documents or launch implementation agents.
 Open a ready task and select **Start task**. CIS automatically selects an available
 implementation model based on repository count, criteria, dependencies and sensitive
 behavior, then selects a distinct model for secondary review. The confirmation shows
-both models, the complexity assessment and the repository context they will receive.
+both models, assessed delivery size, reasoning strength and the repository context they will receive.
 Tasks already marked InProgress can also start agent execution.
 
 CIS executes the work in isolated Git worktrees, then gives the reviewer frozen copies

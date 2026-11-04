@@ -47,6 +47,60 @@ public sealed partial class AgentExecutionTests
     }
 
     [Theory]
+    [InlineData("documentation", "core.documentation.contracts", false)]
+    [InlineData("security", "core.security.permissions", true)]
+    public void StoryExecutionPreservesTaskContractAndSeparatesDeliveryBoundFromReasoning(string category, string type, bool sensitive)
+    {
+        using var repository = AgentRepository.Create(git: true);
+        repository.Write("app.txt", "original"); repository.CommitAll("task contract baseline");
+        var work = StoryWork(repository.Path, sensitive);
+        work = work with
+        {
+            Task = work.Task with
+            {
+                Category = category,
+                Complexity = "medium",
+                TaskTypeKey = type,
+                TaskTypeVersion = "1.0",
+                RequiredOutputs = ["The reviewed bounded change in app.txt"],
+                NegativeCriteria = ["Preserve unrelated behavior"],
+                Validation = "Review the output against the exact approved criterion.",
+                InstanceKey = "bounded-instance",
+                WorkOwnerTaskId = "WORK-090",
+                VerificationObligations = [new("V1", work.Task.AcceptanceCriteria, "Verify the bounded output", "review", ["An independent review of app.txt"])]
+            }
+        };
+        // Persist/reload the same record shape used by story execution; optional fields must survive.
+        work = JsonSerializer.Deserialize<CisStoryTaskWork>(JsonSerializer.Serialize(work))!;
+        var provider = new StoryExecutionProvider
+        {
+            InspectRequest = request =>
+        {
+            Assert.Contains(type, request.Prompt);
+            Assert.Contains("bounded-instance", request.Prompt);
+            Assert.Contains("Preserve unrelated behavior", request.Prompt);
+            Assert.Contains("An independent review of app.txt", request.Prompt);
+            Assert.Contains("WORK-090", request.Prompt);
+        }
+        };
+        var service = new AgentService(new CisRepositoryContextResolver(), [provider], textGeneration: new StoryExecutionModels());
+        var selection = service.SelectModels(work);
+        Assert.Empty(selection.Errors);
+        if (sensitive) Assert.Equal("High", selection.Complexity);
+        Assert.Equal(selection.Hash, service.SelectModels(work with { PlanHash = "another-story-changed" }).Hash);
+        Assert.NotEqual(selection.Hash, service.SelectModels(work with { Task = work.Task with { RequiredOutputs = ["A materially different output"] } }).Hash);
+        var oversized = work with { Task = work.Task with { Complexity = "high" } };
+        Assert.NotEmpty(service.SelectModels(oversized).Errors);
+        Assert.NotEmpty(service.SelectModels(work with { Task = work.Task with { ApprovalGate = "global-design-approval" } }).Errors);
+        Assert.Empty(provider.Requests);
+        var result = service.Execute(work, selection, true, () => true, TestContext.Current.CancellationToken, null);
+        Assert.True(result.Applied, string.Join("; ", result.Errors));
+        Assert.Equal(2, provider.Requests.Count);
+        Assert.All(result.Runs, run => Assert.Equal(CisStoryEngineeringContract.Digest(work),
+            service.Show(repository.Path, run.RunId).Run!.Manifest.TaskContractDigest));
+    }
+
+    [Theory]
     [InlineData("ready")]
     [InlineData("findings")]
     [InlineData("concurrent")]
@@ -346,15 +400,18 @@ public sealed partial class AgentExecutionTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void StoryRetryReusesSuccessfulImplementationButRejectsChangedRepositoryBaseline(bool changeBaseline)
+    [InlineData("unrelated")]
+    [InlineData("legacy")]
+    [InlineData("baseline")]
+    [InlineData("contract")]
+    public void StoryRetryReusesSuccessfulImplementationButRejectsChangedRepositoryBaseline(string change)
     {
         using var first = AgentRepository.Create(git: true);
         using var second = AgentRepository.Create(git: true);
         first.Write("app.txt", "original"); first.CommitAll("task baseline");
         second.Write("app.txt", "original"); second.CommitAll("task baseline");
         var work = StoryWork(first.Path) with { Repositories = [new("first", first.Path, "docs/cis", "authority"), new("second", second.Path, "docs/cis", "participant")] };
+        if (change == "legacy") work = work with { ContractVersion = 1 };
         var provider = new StoryExecutionProvider { FailImplementationNumber = 2 };
         var service = new AgentService(new CisRepositoryContextResolver(), [provider], textGeneration: new StoryExecutionModels());
         var selection = service.SelectModels(work);
@@ -362,12 +419,37 @@ public sealed partial class AgentExecutionTests
         Assert.False(failed.Applied); Assert.Equal("failed", failed.Status);
         Assert.Equal("original", first.Read("app.txt"));
         var completed = failed.Runs.Single(run => run.Status == CisAgentRunStates.Succeeded);
-        if (changeBaseline) first.Write("app.txt", "user edit");
-        var retried = service.Execute(work with { PreviousExecution = failed }, selection, true, () => true, TestContext.Current.CancellationToken, null);
-        if (changeBaseline)
+        if (change == "legacy")
+        {
+            // Pre-3B selection wire shape; its manifest still binds the exact legacy task contract.
+            var task = work.Task;
+            var legacyTask = new { task.Id, task.Title, task.Description, task.RepositoryIds, task.RequirementNumbers, task.AcceptanceCriteria, task.DependsOn };
+            var old = JsonSerializer.Serialize(new
+            {
+                work.PlanHash,
+                task = legacyTask,
+                complexity = selection.Complexity,
+                implementation = selection.Implementation,
+                review = selection.Review
+            }, new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true });
+            var hash = "sha256:" + Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(old)));
+            failed = failed with { Selection = selection with { Hash = hash } };
+            Assert.NotEqual(selection.Hash, hash);
+        }
+        if (change == "baseline") first.Write("app.txt", "user edit");
+        var retryWork = work with { PlanHash = change == "legacy" ? work.PlanHash : "aggregate-plan-changed", PreviousExecution = failed };
+        if (change == "contract") retryWork = retryWork with { Task = retryWork.Task with { RequiredOutputs = ["A new material output"] } };
+        var retried = new AgentService(new CisRepositoryContextResolver(), [provider], textGeneration: new StoryExecutionModels())
+            .Execute(retryWork, selection, true, () => true, TestContext.Current.CancellationToken, null);
+        if (change == "baseline")
         {
             Assert.False(retried.Applied); Assert.Contains(retried.Errors, error => error.Contains("baseline changed"));
             Assert.Equal(2, provider.Requests.Count); Assert.Equal("user edit", first.Read("app.txt"));
+        }
+        else if (change == "contract")
+        {
+            Assert.False(retried.Applied); Assert.Contains(retried.Errors, error => error.Contains("task or available model selection changed"));
+            Assert.Equal(2, provider.Requests.Count); Assert.Equal("original", first.Read("app.txt"));
         }
         else
         {

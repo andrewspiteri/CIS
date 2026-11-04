@@ -1,3 +1,5 @@
+using Cis.Abstractions;
+
 namespace Cis.Modules.Plan;
 
 public sealed record PlanWorkItem(
@@ -20,7 +22,16 @@ public sealed record PlanWorkItem(
     IReadOnlyList<string>? DecisionIds = null,
     IReadOnlyList<string>? NegativeCriteria = null,
     IReadOnlyList<string>? RequiredOutputs = null,
-    string? FrontendType = null);
+    string? FrontendType = null)
+{
+    public string? StoryId { get; init; }
+    public string? InstanceKey { get; init; }
+    public string? WorkOwnerTaskId { get; init; }
+    public IReadOnlyList<CisTaskVerificationObligation> VerificationObligations { get; init; } = [];
+    public IReadOnlyList<string> ContractErrors { get; init; } = [];
+    [System.Text.Json.Serialization.JsonIgnore]
+    internal string? UnresolvedManifestRow { get; init; }
+}
 
 public sealed record PlanSource(
     string Path,

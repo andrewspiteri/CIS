@@ -2140,7 +2140,7 @@ managed_artifacts:
   path: .github/skills/cis-agent-execution/SKILL.md
   definition: guidance.skill.agent-execution
   template_version: 1
-  applied_hash: sha256:9cce499aef8deb04bc6ad42b040acbdf2fe8c856ad5b1891067f2bef5630f351
+  applied_hash: sha256:2328309d3db5849933547e6b67d267adc70b021dba6a56c4129fd556634674e7
   ownership: human
 - id: guidance.skill.ai-model-qualification
   path: .github/skills/cis-ai-model-qualification/SKILL.md
@@ -2158,7 +2158,7 @@ managed_artifacts:
   path: .github/skills/cis-bounded-planning/SKILL.md
   definition: guidance.skill.bounded-planning
   template_version: 1
-  applied_hash: sha256:04b0e258427176a92493829ceee16ca7aaff41f215e164211b9990ace2a458f8
+  applied_hash: sha256:39f3f3e4ed9e330f7c98db7278f1bb2fcee64da1424455749fa55c341e906afd
   ownership: managed
 - id: guidance.skill.change-dossier
   path: .github/skills/cis-change-dossier/SKILL.md
@@ -2464,7 +2464,7 @@ managed_artifacts:
   path: docs/references/business-invariant-catalogue.md
   definition: reference.business-invariant-catalogue
   template_version: 1
-  applied_hash: sha256:548e5c9f62c24a65a30fcc5bfac867afbbd624f30ffe36897be6d0ac09a7950e
+  applied_hash: sha256:159dd8e747cbc1aa6a4a9b4c65a12f059e912c98ef0eb92c0ce17c4b79385f43
   ownership: managed
 - id: reference.command-dictionary.reference
   path: docs/references/command-dictionary.md
@@ -2560,7 +2560,7 @@ managed_artifacts:
   path: docs/references/problem-details-catalogue.md
   definition: reference.problem-details-catalogue
   template_version: 1
-  applied_hash: sha256:c00310542f08daace80745fedd61b237694f009fa21114a8ee58324c255cd3de
+  applied_hash: sha256:90081f7c3d5685e76e1867ebe383f70d91d44119bfc45234e8035ed7a825cdd7
   ownership: managed
 - id: reference.projection-dictionary.reference
   path: docs/references/projection-dictionary.md

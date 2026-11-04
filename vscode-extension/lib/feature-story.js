@@ -44,7 +44,7 @@ function openFeatureStory(vscode, { cli, authority, root, slug, storyId, taskId,
       } catch { /* Ignore malformed draft messages; no canonical state is changed. */ }
       return;
     }
-    if (model.busy || !['refresh', 'generate', 'approve', 'start', 'complete', 'task', 'story', 'save-feedback', 'suggest-feedback', 'executable-settings'].includes(command)) return;
+    if (model.busy || !['refresh', 'generate', 'approve', 'start', 'complete', 'task', 'story', 'save-feedback', 'suggest-feedback', 'executable-settings', 'assess', 'decompose', 'prepare-input'].includes(command)) return;
     if (command === 'task' || command === 'story') {
       if (command === 'task' && !model.result?.tasks?.some(task => task.id === value)) return;
       model.taskId = command === 'task' ? value : undefined; render(); return;
@@ -57,6 +57,23 @@ function openFeatureStory(vscode, { cli, authority, root, slug, storyId, taskId,
       assertAuthority();
       if (command === 'executable-settings') {
         await vscode.commands.executeCommand('workbench.action.openSettings', '@id:cis.executablePath');
+        return;
+      }
+      if (['assess', 'decompose', 'prepare-input'].includes(command)) {
+        const files = await vscode.window.showOpenDialog({ title: command === 'assess' ? 'Select delivery size assessment' : command === 'decompose' ? 'Select child story proposal' : 'Select task contract proposal',
+          canSelectMany: false, filters: { JSON: ['json'] } });
+        if (!files?.length) return;
+        assertAuthority(); if (disposed) return;
+        const file = files[0].fsPath;
+        if (fs.statSync(file).size > 262_144) throw new Error('Use a JSON proposal no larger than 256 KiB.');
+        const proposal = JSON.parse(fs.readFileSync(file, 'utf8'));
+        if (proposal.slug !== slug || proposal.storyId !== storyId) throw new Error('Select a proposal for this feature and story.');
+        const updated = await cli.query(['brd', 'feature', 'wizard', 'story', command === 'prepare-input' ? 'prepare' : command,
+          '--workspace', root, '--input', file], { repository: false, cache: false, interactive: true, acceptStructuredFailure: true });
+        assertAuthority(); if (disposed) return;
+        if (updated.errors?.length || updated._process?.failed) throw new Error((updated.errors || ['The proposal could not be saved.']).join('\n'));
+        if (updated.slug !== slug || updated.storyId !== storyId || !updated.story) throw new Error('CIS returned a different story. Refresh before retrying.');
+        model.result = updated; cli.clearQueryCache?.(); await refresh?.();
         return;
       }
       if (command === 'save-feedback' || command === 'suggest-feedback') {
@@ -142,7 +159,7 @@ function openFeatureStory(vscode, { cli, authority, root, slug, storyId, taskId,
             const label = choice => `${choice.provider} / ${choice.model}`;
             const remote = !selected.implementation.isLocal || !selected.review.isLocal;
             const approved = await vscode.window.showWarningMessage(`Start ${value} with automatic model selection?`, {
-              modal: true, detail: `Complexity: ${selected.complexity}. ${(selected.reasons || []).join(' ')}\nImplementation: ${label(selected.implementation)}\nSecondary review: ${label(selected.review)}\n\n${remote ? 'Authorize both selected models to receive the task definition, acceptance criteria and linked repository context. ' : ''}CIS will perform the work in isolated copies and review it independently. Correctable findings trigger up to two correction rounds, each followed by a fresh review. Reviewed changes are applied only when there are no actionable findings and the original files are unchanged. Decisions needing your input remain pending. Completion remains yours to confirm.`,
+              modal: true, detail: `Delivery size: ${result.deliverySize?.size || 'Unassessed'}. Reasoning strength: ${selected.complexity}. ${(selected.reasons || []).join(' ')}\nImplementation: ${label(selected.implementation)}\nSecondary review: ${label(selected.review)}\n\n${remote ? 'Authorize both selected models to receive the task definition, acceptance criteria and linked repository context. ' : ''}CIS will perform the work in isolated copies and review it independently. Correctable findings trigger up to two correction rounds, each followed by a fresh review. Reviewed changes are applied only when there are no actionable findings and the original files are unchanged. Decisions needing your input remain pending. Completion remains yours to confirm.`,
             }, 'Start implementation and review');
             if (approved !== 'Start implementation and review') return;
             assertAuthority(); if (disposed) return;
@@ -194,7 +211,7 @@ function openFeatureStory(vscode, { cli, authority, root, slug, storyId, taskId,
   panel.onDidDispose(() => { disposed = true; clearTimeout(refreshTimer); });
   panel.onDidChangeViewState?.(event => { if (event.webviewPanel.visible && !disposed && !model.busy) void action('refresh'); });
   panel.webview.onDidReceiveMessage(message => {
-    if (isValidWebviewMessage(message, new Set(['refresh', 'generate', 'approve', 'start', 'complete', 'task', 'story', 'remember-feedback', 'use-feedback', 'save-feedback', 'suggest-feedback', 'executable-settings']))) void action(message.command, message.value);
+    if (isValidWebviewMessage(message, new Set(['refresh', 'generate', 'approve', 'start', 'complete', 'task', 'story', 'remember-feedback', 'use-feedback', 'save-feedback', 'suggest-feedback', 'executable-settings', 'assess', 'decompose', 'prepare-input']))) void action(message.command, message.value);
   });
   render();
   const ready = action('refresh');
@@ -242,16 +259,19 @@ function renderFeatureStory(webview, model, scriptNonce) {
     <header class="hero"><div><p>${h(result?.featureTitle || 'Feature delivery')} · ${h(story?.phase || '')}</p><h1>${h(story?.title || 'Story and tasks')}</h1><p>Story definition, acceptance criteria and proposed delivery tasks.</p></div></header>
     ${model.error ? `<section class="card"><p role="alert">${h(model.error)}</p></section>` : ''}
     ${story ? `<section class="card"><h2>Story definition</h2><p class="story-prose">${h(result.definition)}</p><p class="muted">Definition and acceptance criteria come from the feature BRD. Task generation preserves this scope.</p><div class="story-metadata"><span><strong>Task plan:</strong> ${h(result.planState || 'Proposed')}</span><span><strong>Linked repositories:</strong> ${h(repositories.join(', ') || 'No repositories linked')}</span></div></section>
+    ${renderDeliverySize(result, model.busy)}
     <section class="card"><h2>Acceptance criteria</h2><ol class="story-criteria">${(story.requirements || []).map((criterion, index) => `<li id="criterion-${index + 1}">${h(criterion)}</li>`).join('')}</ol></section>
     <section class="card"><h2>Delivery approach</h2><p class="story-prose">${h(review?.plan || story.remainingWork)}</p><p><strong>Existing capability:</strong> ${h(story.existingCapability === 'unknown' ? 'Not established' : story.existingCapability)}</p>${story.conflict ? `<p role="alert">${h(story.conflict)}</p>` : ''}${story.assessmentReason ? `<p class="muted">${h(story.assessmentReason)}</p>` : ''}</section>
-    <section class="card"><h2>Task breakdown</h2><p>${result.status === 'stale' ? 'The story or supporting evidence changed. Generate a current breakdown before using its tasks.' : approved ? `Plan approved by ${h(result.approvedBy)}. ${result.taskProgress.filter(task => task.status === 'Complete').length}/${tasks.length} tasks complete.` : tasks.length ? `${tasks.length} proposed tasks. These tasks have not been approved or executed. Review their scope, dependencies and completion criteria, then approve this plan.` : 'Generate concrete tasks for this story, with repository links, dependencies and testable completion criteria.'}</p>
+    <section class="card"><h2>Task breakdown</h2><p>${result.isRevisionProposal ? 'This proposed revision awaits task-plan review. Earlier approvals and work remain in retained history.' : result.status === 'stale' ? 'The story or supporting evidence changed. Generate a current breakdown before using its tasks.' : approved ? `Plan approved by ${h(result.approvedBy)}. ${result.taskProgress.filter(task => task.status === 'Complete').length}/${tasks.length} tasks complete.` : tasks.length ? `${tasks.length} proposed tasks. These tasks have not been approved or executed. Review their scope, dependencies and completion criteria, then approve this plan.` : 'Generate concrete tasks for this story, with repository links, dependencies and testable completion criteria.'}</p>
       ${approved ? '<p>Open a ready task and select Start task. CIS chooses models for implementation and secondary review based on complexity, then performs the work. Review the outcome and record completion to unlock dependent tasks.</p>' : tasks.length && result.status === 'current' ? `<button type="button" data-command="approve" ${model.busy ? 'disabled' : ''}>Approve task plan…</button>` : ''}
       <p><strong>${tasks.length ? 'Generated with' : 'Default model'}:</strong> ${h(result.provider && result.model ? `${result.provider} / ${result.model}` : 'Choose a model when generating tasks')}.</p>
       ${model.selection ? `<p><strong>Selected for this attempt:</strong> ${h(model.selection.provider)} / ${h(model.selection.model)}</p>` : ''}
-      <p class="muted">Choose a model when generating. A new breakdown replaces the current task proposal only after it passes validation.</p>
-      <div class="actions"><button type="button" data-command="generate" ${approved || model.busy || !review && story.conflict || review?.treatment === 'out-of-scope' ? 'disabled' : ''}>${tasks.length ? 'Regenerate with selected model…' : 'Generate task breakdown…'}</button><button type="button" class="secondary" data-command="refresh" ${model.busy ? 'disabled' : ''}>Refresh story</button></div>
+      <p class="muted">Choose a model when generating, or load a task contract proposal. A new breakdown replaces the current task proposal only after it passes validation. An explicit revision of approved work needs task-plan review and retains the earlier approval and events.</p>
+      <button type="button" class="secondary" data-command="prepare-input" ${model.busy ? 'disabled' : ''}>Load task proposal…</button>
+      <div class="actions"><button type="button" data-command="generate" ${approved || result.isRevisionProposal || model.busy || !review && story.conflict || review?.treatment === 'out-of-scope' ? 'disabled' : ''}>${tasks.length ? 'Regenerate with selected model…' : 'Generate task breakdown…'}</button><button type="button" class="secondary" data-command="refresh" ${model.busy ? 'disabled' : ''}>Refresh story</button></div>
       ${approved ? '<p class="muted">The approved plan is preserved during delivery. Generation cannot replace approved work.</p>' : ''}
       ${tasks.map(task => `<article class="card story-task"><h3>${h(task.id)} · ${h(task.title)}</h3><p class="story-prose">${h(task.description)}</p><p><strong>Repositories:</strong> ${h(task.repositoryIds.join(', ') || 'No repositories linked')}</p><p><strong>Dependencies:</strong> ${h(task.dependsOn.join(', ') || 'None')}</p><p><strong>Story criteria covered:</strong> ${task.requirementNumbers.map(number => `<a href="#criterion-${h(number)}">${h(number)}</a>`).join(', ')}</p><h4>Task completion criteria</h4>${textList(task.acceptanceCriteria)}<p>${h(result.taskProgress?.find(progress => progress.id === task.id)?.status || 'Proposed')}</p><button type="button" data-command="task" data-value="${h(task.id)}" ${model.busy ? 'disabled' : ''}>Open task</button></article>`).join('')}</section>
+    ${(result.previousPlans || []).length ? `<details class="card"><summary>Retained plan history (${result.previousPlans.length})</summary><p>Earlier approvals and work remain available. Current completion uses the active contract.</p>${result.previousPlans.map(plan => `<article><h3>${h(plan.approvedBy)} · ${h(plan.approvedAt)}</h3><p>${h(plan.reason)}</p><p>Plan: ${h(plan.planHash)} · Revision: ${h(plan.revision)}</p><ul>${(plan.taskProgress || []).map(progress => `<li>${h(progress.id)} · ${h(progress.status)}${progress.evidence ? ` · ${h(progress.evidence)}` : ''}</li>`).join('')}</ul></article>`).join('')}</details>` : ''}
     ${(result.warnings || []).length ? `<details class="card"><summary>Evidence and scope notes</summary>${textList(result.warnings)}</details>` : ''}` : `<section class="card"><p>${model.busy ? 'Loading story definition and acceptance criteria…' : 'The story is unavailable. Refresh to retry.'}</p><button type="button" data-command="refresh" ${model.busy ? 'disabled' : ''}>Refresh story</button></section>`}
     ${model.busy && story ? '<p role="status">Preparing the story view…</p>' : ''}`;
   const script = storyActionScript(scriptNonce);
@@ -265,6 +285,32 @@ function storyActionScript(scriptNonce) {
     document.addEventListener('click',event=>{const button=event.target.closest('button[data-command]');if(button&&!button.disabled){rememberFeedback();vscode.postMessage({command:button.dataset.command,value:button.dataset.value});}});</script>`;
 }
 
+function renderDeliverySize(result, busy) {
+  const size = result.deliverySize;
+  return `<section class="card"><h2>Delivery size</h2><p><strong>${h(size?.size || 'Unassessed')}</strong> · ${h(result.deliverySizeState || 'unknown')}</p>
+    ${result.deliverySizeReason ? `<p role="status">${h(result.deliverySizeReason)}</p>` : ''}
+    ${size ? `<p>${h(size.rationale)}</p><dl>${[['Behavioral scope', size.behavioralBreadth], ['Interfaces', size.interfaces], ['State and concurrency', size.stateAndConcurrency], ['Coordination', size.coordination], ['Uncertainty', size.uncertainty]].map(([label, value]) => `<dt>${h(label)}</dt><dd>${h(value)}</dd>`).join('')}</dl>` : ''}
+    ${result.isDeliveryContainer ? '<p>This story organizes its child outcomes. Delivery work runs in the children.</p>' : ''}
+    ${result.isFutureCandidate ? '<p>This is an uncommitted future candidate. Record the authorized commitment in its source requirements, use Reimport BRD for this feature, and resolve the reported reviews before delivery.</p>' : ''}
+    ${(result.childStories || []).length ? `<h3>Child outcomes</h3><ul>${result.childStories.map(child => `<li>${h(child.id)} · ${h(child.title)} · ${h(child.assessment?.size || 'Unassessed')}${child.sharedPrerequisiteTaskIds?.length ? ` · Shared task prerequisites: ${h(child.sharedPrerequisiteTaskIds.join(', '))}` : ''}</li>`).join('')}</ul>` : ''}
+    <p>Load an explicit JSON proposal to assess delivery size or retain child outcomes. CIS checks current scope and coverage before saving. Task approval remains separate.</p>
+    <div class="actions"><button type="button" data-command="assess" ${busy ? 'disabled' : ''}>Load size assessment…</button><button type="button" data-command="decompose" ${busy ? 'disabled' : ''}>Load child outcomes…</button></div>
+    <details><summary>Planning references</summary><p>Basis: ${h(result.planningBasisHash || 'Unavailable')}</p><p>Revision: ${h(result.planningRevision || 'none')}</p></details></section>`;
+}
+
+function renderTaskContract(task) {
+  const list = values => (values || []).length ? `<ul>${values.map(value => `<li>${h(value)}</li>`).join('')}</ul>` : '<p>None declared</p>';
+  return `<section class="card"><h2>Task contract</h2><p><strong>Category:</strong> ${h(task.category || 'Needs classification')} · <strong>Delivery complexity:</strong> ${h(task.complexity || 'Unassessed')}</p>
+    <p><strong>Type:</strong> ${h(task.taskTypeKey || 'Unresolved')} @ ${h(task.taskTypeVersion || 'Unresolved')}${task.frontendType ? ` · ${h(task.frontendType)}` : ''}</p>
+    <p><strong>Approval gate:</strong> ${h(task.approvalGate || 'Unresolved')}</p><p><strong>Instance:</strong> ${h(task.instanceKey || task.id)}${task.workOwnerTaskId ? ` · Work owner: ${h(task.workOwnerTaskId)}` : ''}</p>
+    ${task.changeId ? `<p><strong>Canonical change:</strong> ${h(task.changeId)}</p>` : ''}
+    ${task.targets?.length ? `<p><strong>Targets:</strong> ${h(task.targets.join(', '))}</p>` : ''}
+    <h3>Required outputs</h3>${list(task.requiredOutputs)}<h3>Negative criteria</h3>${list(task.negativeCriteria)}
+    <h3>Validation</h3><p>${h(task.validation || 'Needs an actionable verification route')}</p>
+    <h3>Verification obligations</h3>${(task.verificationObligations || []).map(obligation => `<article><h4>${h(obligation.id)} · ${h(obligation.description)}</h4><p>Evidence route: ${h(obligation.evidenceRoute)}</p>${list(obligation.evidenceExpectations)}<p>Criteria covered:</p>${list(obligation.criteria)}${obligation.sharedGateIds?.length ? `<p>Shared gates: ${h(obligation.sharedGateIds.join(', '))}</p>` : ''}</article>`).join('') || '<p>No task-specific obligations declared. Applicable adopted policy gates still apply.</p>'}
+    ${task.decisionIds?.length ? `<h3>Decision references</h3>${list(task.decisionIds)}` : ''}</section>`;
+}
+
 function renderStoryTask(webview, model, task, scriptNonce) {
   const result = model.result;
   const progress = result.taskProgress?.find(item => item.id === task.id);
@@ -272,15 +318,17 @@ function renderStoryTask(webview, model, task, scriptNonce) {
     ${model.error ? `<p role="alert">${h(model.error)}</p>` : ''}
     ${model.notice ? `<p role="status">${h(model.notice)}</p>` : ''}
     <div class="actions"><button type="button" data-command="story" ${model.busy ? 'disabled' : ''}>Back to story and plan</button><button type="button" data-command="refresh" ${model.busy ? 'disabled' : ''}>Refresh task</button></div>
-    ${progress?.execution ? renderTaskExecution(progress.execution, progress.status, progress.reviewFeedback?.length > 0) : ''}
+    ${progress?.execution ? renderTaskExecution(progress.execution, progress.status, progress.reviewFeedback?.length > 0, progress.needsVerificationRenewal) : ''}
+    ${renderTaskContract(task)}
     ${renderReviewFeedback(model, task, progress)}
     <section class="card"><h2>Work to do</h2><p style="white-space:pre-wrap">${h(task.description)}</p><p><strong>Repositories:</strong> ${h(task.repositoryIds.join(', ') || 'No repositories linked')}</p>
     <h2>Dependencies</h2>${task.dependsOn.length ? task.dependsOn.map(id => `<button type="button" data-command="task" data-value="${h(id)}">${h(id)} · ${h(result.tasks.find(item => item.id === id)?.title || id)}</button>`).join(' ') : '<p>None</p>'}
     <h2>Task completion criteria</h2><ol>${task.acceptanceCriteria.map(criterion => `<li>${h(criterion)}</li>`).join('')}</ol>
     <h2>Story acceptance criteria covered</h2><ol>${task.requirementNumbers.map(number => `<li value="${h(number)}">${h(result.story.requirements[number - 1])}</li>`).join('')}</ol></section>
     <section class="card"><h2>Next step</h2>${progress?.blockedReason ? `<p>${h(progress.blockedReason)}</p>` : ''}
-    ${progress?.status === 'Complete' ? `<p>Completed. Recorded verification: ${h(progress.evidence)}</p>` : progress?.canExecute ? progress.execution ? '<p>Inspect the failure or review findings above and save any answers before retrying. CIS checks whether retained implementation can be reused, then reviews it again and corrects actionable findings. You will see the selected models and execution scope before continuing.</p>' : '<p>Start this task to perform the work with automatically selected models. CIS chooses an implementation model for the task complexity and a distinct model for secondary review. You will see both choices and the execution scope before starting.</p>' : progress?.canComplete ? '<p>Review the implementation and secondary review results, then record completion after verifying every criterion.</p>' : ''}
-    <div class="actions"><button type="button" data-command="start" data-value="${h(task.id)}" ${model.busy || !progress?.canExecute ? 'disabled' : ''}>${progress?.execution ? 'Retry implementation and review…' : 'Start task'}</button>
+    ${progress?.needsVerificationRenewal ? '<p>Keep the existing work. Verify every criterion against the current contract, then record completion with the required current evidence. You can also use scoped agent verification and review.</p>' : ''}
+    ${progress?.needsVerificationRenewal ? '' : progress?.status === 'Complete' ? `<p>Completed. Recorded verification: ${h(progress.evidence)}</p>` : progress?.canExecute ? progress.execution ? '<p>Inspect the failure or review findings above and save any answers before retrying. CIS checks whether retained implementation can be reused, then reviews it again and corrects actionable findings. You will see the selected models and execution scope before continuing.</p>' : '<p>Start this task to perform the work with automatically selected models. CIS chooses an implementation model for the reasoning requirements and a distinct model for secondary review. You will see both choices and the execution scope before starting.</p>' : progress?.canComplete ? '<p>Review the implementation and secondary review results, then record completion after verifying every criterion.</p>' : ''}
+    <div class="actions"><button type="button" data-command="start" data-value="${h(task.id)}" ${model.busy || !progress?.canExecute ? 'disabled' : ''}>${progress?.needsVerificationRenewal ? 'Refresh verification and review…' : progress?.execution ? 'Retry implementation and review…' : 'Start task'}</button>
     <button type="button" data-command="complete" data-value="${h(task.id)}" ${model.busy || !progress?.canComplete ? 'disabled' : ''}>Record completion…</button></div></section>
     `;
   return studioDocument(webview, task.title, body, scriptNonce, storyActionScript(scriptNonce));
@@ -306,13 +354,13 @@ function renderReviewFeedback(model, task, progress) {
     ${Object.entries(drafts).filter(([id]) => !feedback.some(item => item.id === id)).map(([, text]) => `<details><summary>Retained draft from an earlier review</summary><p>The finding changed. Copy any still-relevant text into a current answer before saving.</p><p style="white-space:pre-wrap">${h(text)}</p></details>`).join('')}</section>`;
 }
 
-function renderTaskExecution(execution, taskStatus, hasFeedback) {
+function renderTaskExecution(execution, taskStatus, hasFeedback, needsRenewal = false) {
   const choice = model => model ? `${model.provider} / ${model.model}` : 'Unavailable';
   const outcomes = { running: 'Implementation and review are running', reviewed: 'Review passed', 'changes-requested': 'Review requires changes', blocked: 'Input is needed before work can continue', failed: 'Execution failed', cancelled: 'Execution cancelled', 'review-failed': 'Review could not finish', stale: 'Task scope changed during execution' };
   const latest = [...new Map((execution.runs || []).filter(run => run.stage === 'Implementation').map(run => [run.repositoryId, run])).values()];
-  return `<section class="card"><h2>Work summary</h2><p><strong>Outcome:</strong> ${h(outcomes[execution.status] || execution.status)}</p>
-    <p><strong>Complexity:</strong> ${h(execution.selection?.complexity)} · <strong>Implementation:</strong> ${h(choice(execution.selection?.implementation))} · <strong>Review:</strong> ${h(choice(execution.selection?.review))}</p>
-    <p>${execution.status === 'running' ? 'This view refreshes automatically while execution is running.' : execution.applied ? taskStatus === 'Complete' ? 'Reviewed changes were applied and completion was recorded.' : 'Reviewed changes were applied. Verify the outcome before recording completion.' : 'Changes have not been applied. The isolated work and review findings are retained below.'}</p>
+  return `<section class="card"><h2>${needsRenewal ? 'Retained work summary' : 'Work summary'}</h2><p><strong>Outcome:</strong> ${h(outcomes[execution.status] || execution.status)}</p>
+    <p><strong>Reasoning strength:</strong> ${h(execution.selection?.complexity)} · <strong>Implementation:</strong> ${h(choice(execution.selection?.implementation))} · <strong>Review:</strong> ${h(choice(execution.selection?.review))}</p>
+    <p>${needsRenewal ? 'These changes were applied under the earlier contract. Preserve the implementation and refresh the required verification and review for the current contract.' : execution.status === 'running' ? 'This view refreshes automatically while execution is running.' : execution.applied ? taskStatus === 'Complete' ? 'Reviewed changes were applied and completion was recorded.' : 'Reviewed changes were applied. Verify the outcome before recording completion.' : 'Changes have not been applied. The isolated work and review findings are retained below.'}</p>
     ${latest.map(run => `<article><h3>${h(run.repositoryId)}</h3><p style="white-space:pre-wrap">${h(run.summary || 'No work summary was recorded.')}</p></article>`).join('')}
     ${(execution.errors || []).map(error => `<p role="alert">${h(error)}</p>`).join('')}
     ${!hasFeedback && (execution.findings || []).length ? `<h3>Review findings</h3><ul>${execution.findings.map(finding => `<li>${h(finding)}</li>`).join('')}</ul>` : ''}

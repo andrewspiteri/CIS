@@ -65,7 +65,7 @@ public sealed partial class DocumentationDoctorCheck : ICisRepositoryDoctorCheck
         {
             findings.Add(new CisRepositoryDoctorFinding(
                 "CIS-DOC-004",
-                "warning",
+                "info",
                 "documentation-readiness",
                 $"The documentation workspace contains {drafts.Length} Draft document(s).",
                 LimitEvidence(drafts),
@@ -77,20 +77,30 @@ public sealed partial class DocumentationDoctorCheck : ICisRepositoryDoctorCheck
         var todoDocuments = inventory.Documents
             .Where(document => !string.Equals(document.Type, "template", StringComparison.OrdinalIgnoreCase))
             .Where(document => ContainsTodo(context.RepositoryPath, document.Path))
-            .Select(document => document.Path)
-            .Order(StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        if (todoDocuments.Length > 0)
+        foreach (var group in todoDocuments.GroupBy(document =>
+            string.Equals(document.Status, "draft", StringComparison.OrdinalIgnoreCase) ? "pending"
+            : string.Equals(document.Status, "archived", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(document.Status, "retired", StringComparison.OrdinalIgnoreCase) ? "historical" : "live"))
         {
+            var paths = group.Select(document => document.Path).Order(StringComparer.OrdinalIgnoreCase).ToArray();
+            var description = group.Key switch
+            {
+                "pending" => $"The documentation workspace contains TODO markers in {paths.Length} Draft document(s) awaiting completion or review.",
+                "historical" => $"The documentation workspace retains TODO markers in {paths.Length} Archived or Retired document(s).",
+                _ => $"The documentation workspace contains TODO markers in {paths.Length} live document(s).",
+            };
             findings.Add(new CisRepositoryDoctorFinding(
                 "CIS-DOC-005",
-                "warning",
+                group.Key == "live" ? "warning" : "info",
                 "documentation-readiness",
-                $"The documentation workspace contains TODO markers in {todoDocuments.Length} document(s).",
-                LimitEvidence(todoDocuments),
-                "Resolve each required TODO or explicitly document why it remains open.",
+                description,
+                LimitEvidence(paths),
+                group.Key == "historical"
+                    ? "Historical content remains in inventory; use the current task or document for readiness decisions."
+                    : "Resolve each required TODO or explicitly document why it remains open before seeking approval or claiming completion.",
                 null,
-                "review-required"));
+                group.Key == "historical" ? "none" : "review-required"));
         }
 
         return findings;

@@ -69,6 +69,14 @@ Loaded modules may contribute further checks through `ICisRepositoryDoctorCheck`
 - Draft document reporting; and
 - unresolved `TODO` marker reporting.
 
+Draft counts (`CIS-DOC-004`) are informational lifecycle observations and remain
+review-required. TODO markers in Draft documents are informational pending work.
+Archived or Retired TODOs remain visible as historical information. TODOs in other
+lifecycle states, including Active or an unknown state, remain warnings requiring
+review. These findings do not approve documents or waive their owning workflow's
+readiness checks. Catalog and metadata errors remain errors; strict documentation
+validation is unchanged.
+
 The agent module diagnoses every enabled direct provider, even when no provider is the
 default. A missing executable is a warning. Inconclusive provider authentication is
 informational `CIS-AGENT-DOCTOR-008`, because ambient Desktop/App Server authentication

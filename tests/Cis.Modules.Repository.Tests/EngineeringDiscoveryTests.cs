@@ -3,6 +3,38 @@ namespace Cis.Modules.Repository.Tests;
 public sealed class EngineeringDiscoveryTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void XunitExecutableMtpCliPreservesVstestBindingUnlessDotnetMtpIsSelected(bool mtpSelected)
+    {
+        using var repo = new Fixture();
+        repo.Write("Tests.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <IsTestProject>true</IsTestProject>
+                <OutputType>Exe</OutputType>
+                <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+              </PropertyGroup>
+              <ItemGroup>
+                <PackageReference Include="xunit.v3" />
+                <PackageReference Include="Microsoft.NET.Test.Sdk" />
+                <PackageReference Include="xunit.runner.visualstudio" />
+              </ItemGroup>
+            </Project>
+            """);
+        if (mtpSelected) repo.Write("global.json", """{"test":{"runner":"Microsoft.Testing.Platform"}}""");
+
+        var classification = new RepositoryClassifier().Classify(repo.Path);
+        var component = Assert.Single(classification.Components);
+
+        Assert.Contains("xunit", component.Frameworks);
+        Assert.Equal(mtpSelected, component.Frameworks.Contains("microsoft-testing-platform"));
+        Assert.Equal(mtpSelected, RepositoryTestingStarter.CreateImportProfile(repo.Path, classification) is null);
+        if (!mtpSelected) Assert.Empty(classification.Warnings);
+        else Assert.Contains(classification.Warnings, warning => warning.Contains("qualification", StringComparison.Ordinal));
+    }
+
+    [Theory]
     [InlineData("<PropertyGroup Condition=\"'$(Gate)'=='true'\"><Gate>false</Gate><EnableMSTestRunner>true</EnableMSTestRunner></PropertyGroup>")]
     [InlineData("<PropertyGroup><EnableMSTestRunner>$(UnknownRunner)</EnableMSTestRunner></PropertyGroup>")]
     public void GroupConditionsAndUnknownRunnerValuesCannotInventVstestBinding(string settings)

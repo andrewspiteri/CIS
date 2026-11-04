@@ -7,10 +7,13 @@ namespace Cis.Modules.Repository;
 /// <summary>Recognizes literal MTP runner selection without evaluating repository build code.</summary>
 internal static class DotNetRunnerSettings
 {
-    internal static bool Read(string repository, string directory, IEnumerable<XDocument> inputs, ICollection<string> warnings)
+    internal static bool Read(string repository, string directory, IEnumerable<XDocument> inputs, ICollection<string> warnings, bool dualXunitRunner = false)
     {
         var selected = inputs.SelectMany(input => input.Descendants()).Any(element =>
             element.Name.LocalName is "TestingPlatformDotnetTestSupport" or "UseMicrosoftTestingPlatformRunner" or "EnableNUnitRunner" or "EnableMSTestRunner"
+            // xUnit's executable CLI selection is independent of dotnet test's
+            // VSTest adapter. Preserve both modes when their packages exist.
+            && !(dualXunitRunner && element.Name.LocalName == "UseMicrosoftTestingPlatformRunner")
             && (element.Value.Trim().Equals("true", StringComparison.OrdinalIgnoreCase)
                 || element.AncestorsAndSelf().Any(parent => parent.Attribute("Condition") is not null)));
         for (var current = directory; current is not null && CisPathSafety.IsUnderRoot(repository, current, allowRoot: true); current = Path.GetDirectoryName(current))

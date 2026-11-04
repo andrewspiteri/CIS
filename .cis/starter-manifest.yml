@@ -124,7 +124,6 @@ components:
   - csharp
   frameworks:
   - dotnet-test
-  - microsoft-testing-platform
   - xunit
   roles:
   - test-automation
@@ -715,6 +714,9 @@ components:
   confidence: high
   evidence:
   - tests/Cis.Abstractions.Tests/Cis.Abstractions.Tests.csproj
+  - Version.props
+  - Directory.Build.props
+  - src/Cis.Host/ExampleRecipe.props
   - tests/Directory.Build.props
   - Literal .NET test declarations; execution and result production are unverified
 - id: cis-host-tests
@@ -732,6 +734,9 @@ components:
   confidence: high
   evidence:
   - tests/Cis.Host.Tests/Cis.Host.Tests.csproj
+  - Version.props
+  - Directory.Build.props
+  - src/Cis.Host/ExampleRecipe.props
   - tests/Directory.Build.props
   - Literal .NET test declarations; execution and result production are unverified
 - id: cis-modules-agent-tests
@@ -749,6 +754,9 @@ components:
   confidence: high
   evidence:
   - tests/Cis.Modules.Agent.Tests/Cis.Modules.Agent.Tests.csproj
+  - Version.props
+  - Directory.Build.props
+  - src/Cis.Host/ExampleRecipe.props
   - tests/Directory.Build.props
   - Literal .NET test declarations; execution and result production are unverified
 - id: cis-modules-api-tests
@@ -766,6 +774,9 @@ components:
   confidence: high
   evidence:
   - tests/Cis.Modules.Api.Tests/Cis.Modules.Api.Tests.csproj
+  - Version.props
+  - Directory.Build.props
+  - src/Cis.Host/ExampleRecipe.props
   - tests/Directory.Build.props
   - Literal .NET test declarations; execution and result production are unverified
 - id: cis-modules-artifacts-tests
@@ -783,6 +794,9 @@ components:
   confidence: high
   evidence:
   - tests/Cis.Modules.Artifacts.Tests/Cis.Modules.Artifacts.Tests.csproj
+  - Version.props
+  - Directory.Build.props
+  - src/Cis.Host/ExampleRecipe.props
   - tests/Directory.Build.props
   - Literal .NET test declarations; execution and result production are unverified
 - id: cis-modules-brd-tests
@@ -800,6 +814,9 @@ components:
   confidence: high
   evidence:
   - tests/Cis.Modules.Brd.Tests/Cis.Modules.Brd.Tests.csproj
+  - Version.props
+  - Directory.Build.props
+  - src/Cis.Host/ExampleRecipe.props
   - tests/Directory.Build.props
   - Literal .NET test declarations; execution and result production are unverified
 - id: cis-modules-ci-tests
@@ -817,6 +834,9 @@ components:
   confidence: high
   evidence:
   - tests/Cis.Modules.Ci.Tests/Cis.Modules.Ci.Tests.csproj
+  - Version.props
+  - Directory.Build.props
+  - src/Cis.Host/ExampleRecipe.props
   - tests/Directory.Build.props
   - Literal .NET test declarations; execution and result production are unverified
 - id: cis-modules-context-tests
@@ -834,6 +854,9 @@ components:
   confidence: high
   evidence:
   - tests/Cis.Modules.Context.Tests/Cis.Modules.Context.Tests.csproj
+  - Version.props
+  - Directory.Build.props
+  - src/Cis.Host/ExampleRecipe.props
   - tests/Directory.Build.props
   - Literal .NET test declarations; execution and result production are unverified
 - id: cis-modules-definition-tests
@@ -851,6 +874,9 @@ components:
   confidence: high
   evidence:
   - tests/Cis.Modules.Definition.Tests/Cis.Modules.Definition.Tests.csproj
+  - Version.props
+  - Directory.Build.props
+  - src/Cis.Host/ExampleRecipe.props
   - tests/Directory.Build.props
   - Literal .NET test declarations; execution and result production are unverified
 - id: cis-modules-delivery-tests
@@ -868,6 +894,9 @@ components:
   confidence: high
   evidence:
   - tests/Cis.Modules.Delivery.Tests/Cis.Modules.Delivery.Tests.csproj
+  - Version.props
+  - Directory.Build.props
+  - src/Cis.Host/ExampleRecipe.props
   - tests/Directory.Build.props
   - Literal .NET test declarations; execution and result production are unverified
 - id: cis-modules-docs-tests
@@ -885,6 +914,9 @@ components:
   confidence: high
   evidence:
   - tests/Cis.Modules.Docs.Tests/Cis.Modules.Docs.Tests.csproj
+  - Version.props
+  - Directory.Build.props
+  - src/Cis.Host/ExampleRecipe.props
   - tests/Directory.Build.props
   - Literal .NET test declarations; execution and result production are unverified
 - id: cis-modules-feedback-tests
@@ -902,6 +934,9 @@ components:
   confidence: high
   evidence:
   - tests/Cis.Modules.Feedback.Tests/Cis.Modules.Feedback.Tests.csproj
+  - Version.props
+  - Directory.Build.props
+  - src/Cis.Host/ExampleRecipe.props
   - tests/Directory.Build.props
   - Literal .NET test declarations; execution and result production are unverified
 - id: cis-modules-frontend-tests
@@ -919,6 +954,9 @@ components:
   confidence: high
   evidence:
   - tests/Cis.Modules.Frontend.Tests/Cis.Modules.Frontend.Tests.csproj
+  - Version.props
+  - Directory.Build.props
+  - src/Cis.Host/ExampleRecipe.props
   - tests/Directory.Build.props
   - Literal .NET test declarations; execution and result production are unverified
 - id: cis-modules-graph-tests
@@ -936,6 +974,9 @@ components:
   confidence: high
   evidence:
   - tests/Cis.Modules.Graph.Tests/Cis.Modules.Graph.Tests.csproj
+  - Version.props
+  - Directory.Build.props
+  - src/Cis.Host/ExampleRecipe.props
   - tests/Directory.Build.props
   - Literal .NET test declarations; execution and result production are unverified
 - id: cis-modules-index-tests
@@ -953,6 +994,9 @@ components:
   confidence: high
   evidence:
   - tests/Cis.Modules.Index.Tests/Cis.Modules.Index.Tests.csproj
+  - Version.props
+  - Directory.Build.props
+  - src/Cis.Host/ExampleRecipe.props
   - tests/Directory.Build.props
   - Literal .NET test declarations; execution and result production are unverified
 - id: cis-modules-mcp-tests
@@ -970,6 +1014,9 @@ components:
   confidence: high
   evidence:
   - tests/Cis.Modules.Mcp.Tests/Cis.Modules.Mcp.Tests.csproj
+  - Version.props
+  - Directory.Build.props
+  - src/Cis.Host/ExampleRecipe.props
   - tests/Directory.Build.props
   - Literal .NET test declarations; execution and result production are unverified
 - id: cis-modules-references-tests
@@ -987,6 +1034,9 @@ components:
   confidence: high
   evidence:
   - tests/Cis.Modules.References.Tests/Cis.Modules.References.Tests.csproj
+  - Version.props
+  - Directory.Build.props
+  - src/Cis.Host/ExampleRecipe.props
   - tests/Directory.Build.props
   - Literal .NET test declarations; execution and result production are unverified
 - id: cis-modules-repository-tests
@@ -1004,6 +1054,9 @@ components:
   confidence: high
   evidence:
   - tests/Cis.Modules.Repository.Tests/Cis.Modules.Repository.Tests.csproj
+  - Version.props
+  - Directory.Build.props
+  - src/Cis.Host/ExampleRecipe.props
   - tests/Directory.Build.props
   - Literal .NET test declarations; execution and result production are unverified
 - id: cis-modules-security-tests
@@ -1021,6 +1074,9 @@ components:
   confidence: high
   evidence:
   - tests/Cis.Modules.Security.Tests/Cis.Modules.Security.Tests.csproj
+  - Version.props
+  - Directory.Build.props
+  - src/Cis.Host/ExampleRecipe.props
   - tests/Directory.Build.props
   - Literal .NET test declarations; execution and result production are unverified
 - id: cis-modules-skills-tests
@@ -1038,6 +1094,9 @@ components:
   confidence: high
   evidence:
   - tests/Cis.Modules.Skills.Tests/Cis.Modules.Skills.Tests.csproj
+  - Version.props
+  - Directory.Build.props
+  - src/Cis.Host/ExampleRecipe.props
   - tests/Directory.Build.props
   - Literal .NET test declarations; execution and result production are unverified
 - id: cis-modules-solutiondesign-tests
@@ -1055,6 +1114,9 @@ components:
   confidence: high
   evidence:
   - tests/Cis.Modules.SolutionDesign.Tests/Cis.Modules.SolutionDesign.Tests.csproj
+  - Version.props
+  - Directory.Build.props
+  - src/Cis.Host/ExampleRecipe.props
   - tests/Directory.Build.props
   - Literal .NET test declarations; execution and result production are unverified
 - id: cis-modules-standards-tests
@@ -1072,6 +1134,9 @@ components:
   confidence: high
   evidence:
   - tests/Cis.Modules.Standards.Tests/Cis.Modules.Standards.Tests.csproj
+  - Version.props
+  - Directory.Build.props
+  - src/Cis.Host/ExampleRecipe.props
   - tests/Directory.Build.props
   - Literal .NET test declarations; execution and result production are unverified
 - id: cis-modules-technicalintent-tests
@@ -1089,6 +1154,9 @@ components:
   confidence: high
   evidence:
   - tests/Cis.Modules.TechnicalIntent.Tests/Cis.Modules.TechnicalIntent.Tests.csproj
+  - Version.props
+  - Directory.Build.props
+  - src/Cis.Host/ExampleRecipe.props
   - tests/Directory.Build.props
   - Literal .NET test declarations; execution and result production are unverified
 - id: cis-modules-testing-tests
@@ -1106,6 +1174,9 @@ components:
   confidence: high
   evidence:
   - tests/Cis.Modules.Testing.Tests/Cis.Modules.Testing.Tests.csproj
+  - Version.props
+  - Directory.Build.props
+  - src/Cis.Host/ExampleRecipe.props
   - tests/Directory.Build.props
   - Literal .NET test declarations; execution and result production are unverified
 - id: cis-modules-tracker-tests
@@ -1123,6 +1194,9 @@ components:
   confidence: high
   evidence:
   - tests/Cis.Modules.Tracker.Tests/Cis.Modules.Tracker.Tests.csproj
+  - Version.props
+  - Directory.Build.props
+  - src/Cis.Host/ExampleRecipe.props
   - tests/Directory.Build.props
   - Literal .NET test declarations; execution and result production are unverified
 - id: cis-modules-uidirection-tests
@@ -1140,6 +1214,9 @@ components:
   confidence: high
   evidence:
   - tests/Cis.Modules.UiDirection.Tests/Cis.Modules.UiDirection.Tests.csproj
+  - Version.props
+  - Directory.Build.props
+  - src/Cis.Host/ExampleRecipe.props
   - tests/Directory.Build.props
   - Literal .NET test declarations; execution and result production are unverified
 - id: cis-mstestadaptercompat-tests
@@ -1157,6 +1234,9 @@ components:
   confidence: high
   evidence:
   - tests/Cis.MSTestAdapterCompat.Tests/Cis.MSTestAdapterCompat.Tests.csproj
+  - Version.props
+  - Directory.Build.props
+  - src/Cis.Host/ExampleRecipe.props
   - tests/Directory.Build.props
   - Literal .NET test declarations; execution and result production are unverified
 - id: capture

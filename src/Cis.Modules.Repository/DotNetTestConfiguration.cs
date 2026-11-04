@@ -12,8 +12,8 @@ internal sealed record DotNetTestConfiguration(bool IsTest, IReadOnlyList<string
     {
         var inputs = new List<(string Path, XDocument Document)>();
         var directory = Path.GetDirectoryName(projectPath)!;
-        // MSBuild automatically takes the nearest file of each kind. Parent imports and conditions
-        // require evaluation, so do not silently combine every ancestor or execute an import.
+        // MSBuild automatically takes the nearest file of each kind. Follow only
+        // bounded literal local imports; never run MSBuild or target code.
         foreach (var name in new[] { "Directory.Build.props", "Directory.Build.targets" })
         {
             for (var current = directory; current is not null && CisPathSafety.IsUnderRoot(repository, current, allowRoot: true);
@@ -40,31 +40,122 @@ internal sealed record DotNetTestConfiguration(bool IsTest, IReadOnlyList<string
         var uncertainRunner = false;
         bool? testProperty = null;
         var properties = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var input in inputs)
+        var activeImports = new HashSet<string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        var visitedInputs = new HashSet<string>(activeImports.Comparer);
+        var inputCount = 0;
+        void Unverified(string message)
         {
-            var relative = Path.GetRelativePath(repository, input.Path).Replace('\\', '/');
-            var declarations = input.Document.Descendants().Where(element => element.Name.LocalName == "PackageReference"
-                || element.Parent?.Name.LocalName == "PropertyGroup").ToArray();
-            var groupConditions = new Dictionary<XElement, bool?>();
-            foreach (var declaration in declarations)
+            warnings.Add(message);
+            uncertainTest = uncertainRunner = true;
+        }
+        bool TryLocalPath(string value, string source, out string path)
+        {
+            path = string.Empty;
+            if (string.IsNullOrWhiteSpace(value) || value.IndexOfAny(['$', '@', '%', '*', '?', ';', '\0']) >= 0) return false;
+            try
             {
+                var absolute = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(source)!, value.Replace('\\', Path.DirectorySeparatorChar)));
+                if (!CisPathSafety.IsUnderRoot(repository, absolute) || CisPathSafety.ContainsReparsePoint(repository, absolute)) return false;
+                path = absolute;
+                return true;
+            }
+            catch (Exception exception) when (exception is ArgumentException or NotSupportedException or IOException or UnauthorizedAccessException) { return false; }
+        }
+        bool? Condition(string? condition, string source)
+        {
+            var literal = LiteralCondition(condition, properties);
+            if (literal is not null) return literal;
+            var exists = System.Text.RegularExpressions.Regex.Match(condition!, @"^\s*Exists\(\s*['""](?<path>[^'""]+)['""]\s*\)\s*$",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+            return exists.Success && TryLocalPath(exists.Groups["path"].Value, source, out var path) ? File.Exists(path) || Directory.Exists(path) : null;
+        }
+        void ReadInput(string path, XDocument document, int depth)
+        {
+            var relative = Path.GetRelativePath(repository, path).Replace('\\', '/');
+            if (activeImports.Contains(path))
+            { Unverified($"Cyclic MSBuild import in {relative}; test configuration remains unverified."); return; }
+            if (visitedInputs.Any(previous => previous.Equals(path, StringComparison.OrdinalIgnoreCase) && !visitedInputs.Comparer.Equals(previous, path)))
+            { Unverified($"MSBuild import paths differ only by casing at {relative}; test configuration remains unverified on this filesystem."); return; }
+            // MSBuild ignores a file already imported in this evaluation. In
+            // particular a repeated targets import cannot undo a later setting.
+            if (!visitedInputs.Add(path)) return;
+            if (depth > 16 || ++inputCount > 32)
+            { Unverified($"Static MSBuild import inspection reached its 16-level or 32-file bound at {relative}; test configuration remains unverified."); return; }
+            activeImports.Add(path);
+            var groupConditions = new Dictionary<XElement, bool?>();
+            var declared = false;
+            foreach (var declaration in document.Descendants())
+            {
+                if (declaration.Ancestors().Any(element => element.Name.LocalName == "Choose")) continue;
+                if (declaration.Name.LocalName == "Choose")
+                {
+                    declared = true;
+                    var relevant = false;
+                    foreach (var choice in declaration.Descendants())
+                    {
+                        if (choice.Parent?.Name.LocalName == "PropertyGroup")
+                        {
+                            properties.Remove(choice.Name.LocalName);
+                            if (choice.Name.LocalName == "IsTestProject") testProperty = null;
+                        }
+                        var packageName = choice.Attribute("Include")?.Value ?? choice.Attribute("Update")?.Value ?? choice.Attribute("Remove")?.Value;
+                        relevant |= choice.Name.LocalName is "Import" or "IsTestProject" || IsRunnerProperty(choice.Name.LocalName)
+                            || choice.Name.LocalName == "PackageReference" && (IsTestPackage(packageName) || IsUnresolvedPackageIdentity(packageName));
+                    }
+                    if (relevant) Unverified($"Unsupported MSBuild Choose control flow in {relative}; test configuration remains unverified.");
+                    continue;
+                }
+                // Target bodies are runtime build actions, not initial project
+                // metadata. Never interpret them as evaluated test settings.
+                if (declaration.Ancestors().Any(element => element.Name.LocalName == "Target"))
+                {
+                    if (declaration.Name.LocalName is "Import" or "IsTestProject" || IsRunnerProperty(declaration.Name.LocalName)
+                        || declaration.Name.LocalName == "PackageReference" && IsTestPackage(declaration.Attribute("Include")?.Value))
+                        Unverified($"Build-time test declarations in {relative} were not evaluated; test configuration remains unverified.");
+                    continue;
+                }
+                var import = declaration.Name.LocalName == "Import";
+                if (!import && declaration.Name.LocalName != "PackageReference" && declaration.Parent?.Name.LocalName != "PropertyGroup") continue;
+                declared = true;
                 // MSBuild evaluates a group's condition once, before its children
                 // can assign a property used by that condition.
                 var conditions = declaration.AncestorsAndSelf().Reverse().Select(element =>
                 {
-                    if (element == declaration) return LiteralCondition(element.Attribute("Condition")?.Value, properties);
+                    if (element == declaration) return Condition(element.Attribute("Condition")?.Value, path);
                     if (!groupConditions.TryGetValue(element, out var result))
-                        groupConditions[element] = result = LiteralCondition(element.Attribute("Condition")?.Value, properties);
+                        groupConditions[element] = result = Condition(element.Attribute("Condition")?.Value, path);
                     return result;
                 }).ToArray();
                 if (conditions.Contains(false)) continue;
+                if (import)
+                {
+                    var importValue = declaration.Attribute("Project")?.Value ?? "";
+                    if (conditions.Contains(null) || declaration.Attribute("Sdk") is not null || !TryLocalPath(importValue, path, out var imported))
+                    { Unverified($"MSBuild import in {relative} is conditional, dynamic, linked or outside the repository; test configuration remains unverified."); continue; }
+                    try
+                    {
+                        if (!File.Exists(imported) || new FileInfo(imported).Length > 1_048_576)
+                        { Unverified($"MSBuild import from {relative} is missing or exceeds the 1 MiB static metadata bound; test configuration remains unverified."); continue; }
+                        var metadata = XDocument.Load(imported);
+                        if (metadata.Root?.Name.LocalName != "Project" || metadata.Root?.Attribute("Sdk") is not null
+                            || metadata.Descendants().Any(element => element.Name.LocalName is "Sdk" or "UsingTask"))
+                        { Unverified($"MSBuild import from {relative} contains unsupported SDK, control-flow or executable build configuration; test configuration remains unverified."); continue; }
+                        ReadInput(imported, metadata, depth + 1);
+                    }
+                    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Xml.XmlException)
+                    { Unverified($"Unable to inspect MSBuild import from {relative}: {exception.Message}"); }
+                    continue;
+                }
                 if (conditions.Contains(null))
                 {
                     if (declaration.Parent?.Name.LocalName == "PropertyGroup") properties.Remove(declaration.Name.LocalName);
                     uncertainRunner |= IsRunnerProperty(declaration.Name.LocalName);
-                    warnings.Add($"Conditional .NET test/package declaration in {relative} requires evaluated configuration review.");
-                    uncertainTest |= declaration.Name.LocalName == "IsTestProject"
-                        || IsTestPackage(declaration.Attribute("Include")?.Value ?? declaration.Attribute("Update")?.Value ?? declaration.Attribute("Remove")?.Value);
+                    var packageName = declaration.Attribute("Include")?.Value ?? declaration.Attribute("Update")?.Value ?? declaration.Attribute("Remove")?.Value;
+                    var testDeclaration = declaration.Name.LocalName == "IsTestProject"
+                        || declaration.Name.LocalName == "PackageReference" && (IsTestPackage(packageName) || IsUnresolvedPackageIdentity(packageName));
+                    if (testDeclaration || IsRunnerProperty(declaration.Name.LocalName))
+                        warnings.Add($"Conditional .NET test/package declaration in {relative} requires evaluated configuration review.");
+                    uncertainTest |= testDeclaration;
                     continue;
                 }
                 if (declaration.Parent?.Name.LocalName == "PropertyGroup")
@@ -80,6 +171,11 @@ internal sealed record DotNetTestConfiguration(bool IsTest, IReadOnlyList<string
                     testProperty = value;
                 if (declaration.Name.LocalName == "PackageReference")
                 {
+                    if (new[] { "Include", "Update", "Remove" }.Any(name => IsUnresolvedPackageIdentity(declaration.Attribute(name)?.Value)))
+                    {
+                        Unverified($"Nonliteral .NET package identity in {relative} requires evaluated configuration review; test configuration remains unverified.");
+                        continue;
+                    }
                     var remove = declaration.Attribute("Remove")?.Value;
                     if (remove is not null) packages.Remove(remove);
                     var include = declaration.Attribute("Include")?.Value;
@@ -88,10 +184,10 @@ internal sealed record DotNetTestConfiguration(bool IsTest, IReadOnlyList<string
                     if (update is not null && IsTestPackage(update)) uncertainTest = true;
                 }
             }
-            if (declarations.Length > 0) evidence.Add(relative);
-            if (input.Document.Descendants().Any(element => element.Name.LocalName == "Import"))
-                warnings.Add($"Explicit MSBuild imports in {relative} were not evaluated; verify inherited test configuration.");
+            if (declared || depth > 0) evidence.Add(relative);
+            activeImports.Remove(path);
         }
+        foreach (var input in inputs) ReadInput(input.Path, input.Document, 0);
 
         var sdk = project.Root?.Attribute("Sdk")?.Value ?? "";
         var frameworks = new List<string>();
@@ -104,7 +200,9 @@ internal sealed record DotNetTestConfiguration(bool IsTest, IReadOnlyList<string
         if (packages.Any(package => package.StartsWith("Reqnroll.", StringComparison.OrdinalIgnoreCase))) frameworks.Add("reqnroll");
         var resolvedProperties = new XDocument(new XElement("Project", new XElement("PropertyGroup",
             properties.Select(property => new XElement(property.Key, property.Value)))));
-        var runner = DotNetRunnerSettings.Read(repository, directory, [resolvedProperties], warnings);
+        var dualXunitRunner = (packages.Contains("xunit.v3") || packages.Contains("xunit.v3.core"))
+            && packages.Contains("Microsoft.NET.Test.Sdk") && packages.Contains("xunit.runner.visualstudio");
+        var runner = DotNetRunnerSettings.Read(repository, directory, [resolvedProperties], warnings, dualXunitRunner);
         runner |= uncertainRunner;
         if (uncertainTest) frameworks.Add("test-runner-unverified");
         var isTest = testProperty ?? (frameworks.Count > 0 || packages.Contains("Microsoft.NET.Test.Sdk"));
@@ -130,6 +228,9 @@ internal sealed record DotNetTestConfiguration(bool IsTest, IReadOnlyList<string
         (package.Equals("Microsoft.NET.Test.Sdk", StringComparison.OrdinalIgnoreCase)
          || new[] { "xunit", "NUnit", "MSTest", "TUnit", "Microsoft.Testing.Platform", "Reqnroll" }
              .Any(prefix => package.Equals(prefix, StringComparison.OrdinalIgnoreCase) || package.StartsWith(prefix + ".", StringComparison.OrdinalIgnoreCase)));
+
+    private static bool IsUnresolvedPackageIdentity(string? value)
+        => value?.IndexOfAny(['$', '@', '%', '*', '?', ';']) >= 0;
 
     private static bool IsRunnerProperty(string name) => name is "TestingPlatformDotnetTestSupport"
         or "UseMicrosoftTestingPlatformRunner" or "EnableNUnitRunner" or "EnableMSTestRunner";

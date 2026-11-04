@@ -211,6 +211,42 @@ public sealed class DocumentationServicesTests
     }
 
     [Fact]
+    public void DocumentationDoctorCheck_DistinguishesPendingWorkFromLiveTodoWarningsWithoutChangingDocuments()
+    {
+        using var repository = TemporaryRepository.CreateInitialized();
+        var states = new[] { "Draft", "Active", "Archived", "Retired", "Awaiting review" };
+        var entries = states.Select((status, index) => (Status: status, Path: $"docs/specs/lifecycle-{index}.md", Id: $"example:spec:lifecycle-{index}")).ToArray();
+        foreach (var entry in entries)
+            repository.WriteDocumentation(entry.Path["docs/".Length..],
+                $"---\ntitle: Lifecycle fixture\ntype: specification\nstatus: {entry.Status}\ncis:\n  stable_id: {entry.Id}\n---\n# Lifecycle fixture\n\nTODO: Record the required review evidence.\n");
+        repository.WriteCatalog(entries.Select(entry => CatalogEntry(entry.Id, entry.Path, "specification")
+            .Replace("status: draft", "status: " + entry.Status, StringComparison.Ordinal)).ToArray());
+        var paths = entries.Select(entry => entry.Path).Append("docs/catalog.yml").ToArray();
+        var before = paths.ToDictionary(path => path, path => File.ReadAllBytes(System.IO.Path.Combine(repository.Path, path)));
+        var context = new CisRepositoryContextResolver().Resolve(repository.Path).Context!;
+        var check = new DocumentationDoctorCheck(CreateValidationService(), CreateInventoryService());
+
+        var findings = check.Inspect(context);
+
+        var drafts = Assert.Single(findings, finding => finding.Code == "CIS-DOC-004");
+        Assert.Equal("info", drafts.Severity);
+        Assert.Equal("review-required", drafts.Fixability);
+        Assert.Contains(entries[0].Path, drafts.Evidence);
+        foreach (var entry in entries)
+        {
+            var finding = Assert.Single(findings, finding => finding.Code == "CIS-DOC-005" && finding.Evidence.Contains(entry.Path));
+            Assert.Equal(entry.Status is "Active" or "Awaiting review" ? "warning" : "info", finding.Severity);
+            Assert.Equal(entry.Status is "Archived" or "Retired" ? "none" : "review-required", finding.Fixability);
+        }
+        var inventory = CreateInventoryService().Inventory(repository.Path);
+        foreach (var entry in entries)
+            Assert.Equal(entry.Status, Assert.Single(inventory.Documents, document => document.Path == entry.Path).Status);
+        check.Inspect(context);
+        foreach (var snapshot in before)
+            Assert.Equal(snapshot.Value, File.ReadAllBytes(System.IO.Path.Combine(repository.Path, snapshot.Key)));
+    }
+
+    [Fact]
     public void DocumentationDoctorCheck_DoesNotTreatProductNameFriendsTodoAsTodoMarker()
     {
         using var repository = TemporaryRepository.CreateInitialized();

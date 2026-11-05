@@ -59,6 +59,7 @@ public sealed class StoryEngineeringCompletion(ICisRepositoryContextResolver res
                     StoryId = work.Task.StoryId ?? work.StoryId,
                     InstanceKey = work.Task.InstanceKey,
                     WorkOwnerTaskId = work.Task.WorkOwnerTaskId,
+                    AcceptanceCriteriaItems = work.Task.AcceptanceCriteria.ToArray(),
                     VerificationObligations = work.Task.VerificationObligations
                 };
                 var identity = CisExecutionIdentity.Capture(context);

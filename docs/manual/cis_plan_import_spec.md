@@ -51,9 +51,10 @@ at feature scope. Omit the column to retain legacy feature-level grouping. Reimp
 retained logical instance IDs and exact dependency targets; a type-only dependency with
 several possible instances requires targeted resolution instead of selecting the first
 or attaching every sibling. Provider capability selection remains a separate decision.
-When existing shared work would split across story scopes, CIS requires an explicit
-identity/owner mapping before rewriting it. An unambiguous unchanged single scope keeps
-the existing ID and owner. Adding unrelated new requirements does not reassign older work.
+When retained requirements move unambiguously to another story, or lose their optional
+story scope, CIS keeps the task ID, instance key, task path, owner and history. A split,
+merge or competing owner requires an explicit mapping before any task is replaced or
+retired. Adding unrelated new requirements does not reassign older work.
 Malformed contract cells are reported on the affected item; other rows remain readable.
 Repair the reported contract before a whole-plan import can rewrite it. Unrelated task
 transitions preserve its unresolved raw row.
@@ -192,6 +193,13 @@ normalized criterion text is unchanged. Revised or removed criteria do not inher
 completion. An approved plan may be regenerated only from the exact same source path and
 digest without discarding task lifecycle, human evidence, or checklist state. A revised
 same-path digest is regenerated only as Draft; unchanged approved input remains Approved.
+Authored outputs and negative criteria survive changes to another story. Re-import updates
+the affected requirement text and known source-derived obligations while retaining authored
+additions. If an older task lacks enough information to distinguish those lists, CIS holds
+the revised import before changing files. Restore the previously recorded source and
+re-import it unchanged to establish that information, then apply the revised source.
+Retrieve that version from repository history or the retained original, checking it
+against the source path and digest in `plan.md`.
 Plan approval remains explicit human authority. `cis plan approve` records new authority;
 `cis plan derive` reuses current feature authority with exact digest provenance and does
 not invent or infer approval.

@@ -27,6 +27,8 @@ public sealed record PlanWorkItem(
     public string? StoryId { get; init; }
     public string? InstanceKey { get; init; }
     public string? WorkOwnerTaskId { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? AcceptanceCriteriaItems { get; init; }
     public IReadOnlyList<CisTaskVerificationObligation> VerificationObligations { get; init; } = [];
     public IReadOnlyList<string> ContractErrors { get; init; } = [];
     [System.Text.Json.Serialization.JsonIgnore]

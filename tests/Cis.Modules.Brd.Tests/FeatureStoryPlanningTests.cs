@@ -271,6 +271,62 @@ public sealed partial class FeatureIntakeTests
     }
 
     [Fact]
+    public void StoryPlanning_DenseTwentyTaskCurrentnessIsReadOnlyAndReleasesDependentOutcome()
+    {
+        using var f = new Fixture();
+        File.WriteAllText(f.Request.SourcePath, PrivacyStory);
+        CreateIntake(f);
+        var reader = new PlanningService(null!, null!, null!, new CisRepositoryContextResolver(), workspaceRegistry: f.Registry);
+        FeatureIntakeService Fresh() => new(f.Registry, f.Importer, new DocumentationCatalogMerger(), [f.Baseline], taskContracts: reader);
+        var service = Fresh();
+        var parent = service.Navigation(f.Authority).Features.Single().Stories.Single().Id;
+        var read = service.Story(f.Authority, "referrals", parent, false);
+        var decomposed = service.DecomposeStory(f.Authority, new("referrals", parent, read.PlanningBasisHash!, read.PlanningRevision, "Fixture controller",
+            [new("dense", "Retain the bounded privacy contract", "Preserve the accepted retention outcome.", [1], [], FixtureSize("low")),
+             new("dependent", "Describe the dependent acknowledgement", "Preserve the accepted acknowledgement outcome.", [2], ["dense"], FixtureSize("low"))]));
+        Assert.Empty(decomposed.Errors);
+        var dense = service.Story(f.Authority, "referrals", decomposed.ChildStories[0].Id!, false);
+        var tasks = Enumerable.Range(1, 20).Select(number => FixtureContract("T" + number, [1], documentation: true,
+            dependencies: Enumerable.Range(1, number - 1).Select(previous => "T" + previous).ToArray())).ToArray();
+        var proposal = service.PrepareStory(f.Authority, new("referrals", dense.StoryId, dense.InputHash!, dense.Revision!, "Fixture controller", tasks));
+        Assert.Empty(proposal.Errors);
+        var approved = service.UpdateStoryWorkflow(f.Authority, "referrals", dense.StoryId, "approve", proposal.PlanHash!, proposal.Revision!,
+            "Fixture reviewer", "Accept the bounded dense dependency fixture.");
+        Assert.Empty(approved.Errors);
+        var dependent = service.Story(f.Authority, "referrals", decomposed.ChildStories[1].Id!, false);
+        var dependentProposal = service.PrepareStory(f.Authority, new("referrals", dependent.StoryId, dependent.InputHash!, dependent.Revision!, "Fixture controller",
+            [FixtureContract("T1", [1], documentation: true)]));
+        Assert.Empty(dependentProposal.Errors);
+        var dependentApproved = service.UpdateStoryWorkflow(f.Authority, "referrals", dependent.StoryId, "approve", dependentProposal.PlanHash!, dependentProposal.Revision!,
+            "Fixture reviewer", "Accept the dependent whole-outcome boundary.");
+        Assert.Empty(dependentApproved.Errors);
+        Assert.False(dependentApproved.TaskProgress[0].CanStart);
+        foreach (var task in tasks)
+        {
+            var current = service.Story(f.Authority, "referrals", dense.StoryId, false);
+            Assert.True(current.TaskProgress.Single(progress => progress.Id == task.Id).CanStart);
+            var started = service.UpdateStoryWorkflow(f.Authority, "referrals", dense.StoryId, "start", current.PlanHash!, current.Revision!, "Fixture controller", taskId: task.Id);
+            Assert.Empty(started.Errors);
+            var completed = service.UpdateStoryWorkflow(f.Authority, "referrals", dense.StoryId, "complete", started.PlanHash!, started.Revision!, "Fixture controller",
+                taskId: task.Id, evidence: "Verified this exact documentation contract and all its declared completed prerequisites.", criteriaVerified: true);
+            Assert.Empty(completed.Errors);
+        }
+        var before = f.Snapshot();
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        var complete = Fresh().Story(f.Authority, "referrals", dense.StoryId, false);
+        var released = Fresh().Story(f.Authority, "referrals", dependent.StoryId, false);
+        Fresh().Navigation(f.Authority);
+        timer.Stop();
+        TestContext.Current.TestOutputHelper?.WriteLine($"Dense 20-task full fan-in status/outcome/navigation read: {timer.Elapsed.TotalMilliseconds:F2} ms.");
+        Assert.Empty(complete.Errors);
+        Assert.Equal("Complete", complete.PlanState);
+        Assert.All(complete.TaskProgress, progress => Assert.Equal("Complete", progress.Status));
+        Assert.Empty(released.Errors);
+        Assert.True(released.TaskProgress[0].CanStart);
+        Assert.Equal(before, f.Snapshot());
+    }
+
+    [Fact]
     public void StoryPlanning_FutureCandidateChildrenRetainUncommittedDeliveryHold()
     {
         using var f = new Fixture();

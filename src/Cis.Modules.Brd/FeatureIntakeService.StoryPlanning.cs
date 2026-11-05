@@ -104,24 +104,91 @@ public sealed partial class FeatureIntakeService
     private static bool StorySharedPreparation(string? category)
         => category is "coordination" or "investigation" or "planning" or "wireframe" or "design";
 
-    private static bool StoryTaskDependencyComplete(WizardState state, DeliveryInput input, string storyId, StoryPlanRecord record, string reference)
+    private sealed class StoryCompletionEvaluation
     {
-        var parts = reference.Split('/');
-        if (parts.Length == 1) return record.Events.LastOrDefault(item => item.TaskId == reference)?.Status == "Complete";
-        if (parts.Length != 2 || !input.Drafts.Any(item => item.Id == parts[0])) return false;
-        var other = ReadStoryRecord(state, parts[0]);
-        return other is not null && other.Plan.Tasks.Any(task => task.Id == parts[1])
-            && StoryScopeMatches(other, state, input, parts[0])
-            && other.Events.LastOrDefault(item => item.TaskId == parts[1])?.Status == "Complete";
+        public Dictionary<string, bool> Completed { get; } = new(StringComparer.Ordinal);
+        public Dictionary<string, bool> ScopeCurrent { get; } = new(StringComparer.Ordinal);
+        public Dictionary<string, StoryPlanRecord?> Records { get; } = new(StringComparer.Ordinal);
+        public HashSet<string> Active { get; } = new(StringComparer.Ordinal);
     }
 
-    private static bool StoryOutcomeComplete(WizardState state, DeliveryInput input, string storyId)
+    private static StoryPlanRecord? StoryCompletionRecord(WizardState state, string storyId, StoryCompletionEvaluation evaluation, StoryPlanRecord? known = null)
     {
-        var children = StoryPlanning(state, storyId)?.Children ?? [];
-        if (children.Count > 0) return children.All(child => StoryOutcomeComplete(state, input, child.Id!));
-        var record = ReadStoryRecord(state, storyId);
-        return record is not null && StoryScopeMatches(record, state, input, storyId) && record.Plan.Tasks.Count > 0
-            && record.Plan.Tasks.All(task => record.Events.LastOrDefault(item => item.TaskId == task.Id)?.Status == "Complete");
+        if (!evaluation.Records.TryGetValue(storyId, out var record))
+            evaluation.Records[storyId] = record = known ?? ReadStoryRecord(state, storyId);
+        return record;
+    }
+
+    private static bool StoryCompletionScopeCurrent(WizardState state, DeliveryInput input, string storyId, StoryPlanRecord record,
+        StoryCompletionEvaluation evaluation)
+    {
+        if (!evaluation.ScopeCurrent.TryGetValue(storyId, out var current))
+            evaluation.ScopeCurrent[storyId] = current = StoryScopeMatches(record, state, input, storyId);
+        return current;
+    }
+
+    private bool StoryTaskDependencyComplete(WizardState state, DeliveryInput input, string storyId, StoryPlanRecord record, string reference,
+        StoryCompletionEvaluation? evaluation = null)
+    {
+        evaluation ??= new();
+        var parts = reference.Split('/');
+        return parts.Length == 1 ? StoryTaskCurrentlyComplete(state, input, storyId, reference, evaluation, record)
+            : parts.Length == 2 && StoryTaskCurrentlyComplete(state, input, parts[0], parts[1], evaluation);
+    }
+
+    private bool StoryTaskCurrentlyComplete(WizardState state, DeliveryInput input, string storyId, string taskId,
+        StoryCompletionEvaluation evaluation, StoryPlanRecord? known = null)
+    {
+        var key = storyId + "/" + taskId;
+        if (evaluation.Completed.TryGetValue(key, out var complete)) return complete;
+        // The existing story inventory allows twenty tasks plus its whole outcome.
+        if (evaluation.Active.Count >= input.Drafts.Count * 21 || !evaluation.Active.Add(key)) return false;
+        bool Result(bool current) => evaluation.Completed[key] = current;
+        try
+        {
+            var draft = input.Drafts.SingleOrDefault(item => item.Id == storyId);
+            if (draft is null) return Result(false);
+            var record = StoryCompletionRecord(state, storyId, evaluation, known);
+            var task = record?.Plan.Tasks.SingleOrDefault(item => item.Id == taskId);
+            var last = record?.Events.LastOrDefault(item => item.TaskId == taskId);
+            if (record is null || task is null || last?.Status != "Complete" || last.NeedsVerificationRenewal
+                || !StoryCompletionScopeCurrent(state, input, storyId, record, evaluation)) return Result(false);
+            foreach (var reference in task.DependsOn.Concat(draft.SharedPrerequisiteTaskIds).Distinct(StringComparer.Ordinal))
+            {
+                var parts = reference.Split('/');
+                if (!(parts.Length == 1 ? StoryTaskCurrentlyComplete(state, input, storyId, reference, evaluation, record)
+                    : parts.Length == 2 && StoryTaskCurrentlyComplete(state, input, parts[0], parts[1], evaluation))) return Result(false);
+            }
+            return Result(draft.StoryDependencies.All(dependency => StoryOutcomeComplete(state, input, dependency, evaluation)));
+        }
+        finally { evaluation.Active.Remove(key); }
+    }
+
+    private bool StoryContainerOutcomeComplete(WizardState state, DeliveryInput input, string storyId, StoryCompletionEvaluation? evaluation = null)
+        => StoryOutcomeComplete(state, input, storyId, evaluation);
+
+    private bool StoryOutcomeComplete(WizardState state, DeliveryInput input, string storyId, StoryCompletionEvaluation? evaluation = null)
+    {
+        evaluation ??= new();
+        var key = "outcome/" + storyId;
+        if (evaluation.Completed.TryGetValue(key, out var complete)) return complete;
+        if (evaluation.Active.Count >= input.Drafts.Count * 21 || !evaluation.Active.Add(key)) return false;
+        bool Result(bool current) => evaluation.Completed[key] = current;
+        try
+        {
+            var draft = input.Drafts.SingleOrDefault(item => item.Id == storyId);
+            if (draft is null || !draft.StoryDependencies.All(dependency => StoryOutcomeComplete(state, input, dependency, evaluation))) return Result(false);
+            var children = StoryPlanning(state, storyId)?.Children ?? [];
+            var record = StoryCompletionRecord(state, storyId, evaluation);
+            if (children.Count > 0)
+                return Result((record?.Plan.Tasks.Where(task => StorySharedPreparation(
+                        (taskContracts?.ResolveStoryTask(state.Authority.RepositoryPath, task) ?? task).Category)) ?? [])
+                    .All(task => StoryTaskCurrentlyComplete(state, input, storyId, task.Id, evaluation, record))
+                    && children.All(child => StoryOutcomeComplete(state, input, child.Id!, evaluation)));
+            return Result(record is not null && record.Plan.Tasks.Count > 0
+                && record.Plan.Tasks.All(task => StoryTaskCurrentlyComplete(state, input, storyId, task.Id, evaluation, record)));
+        }
+        finally { evaluation.Active.Remove(key); }
     }
 
     private static bool StoryDependencyExists(WizardState state, DeliveryInput input, string storyId, string reference)
@@ -423,13 +490,20 @@ public sealed partial class FeatureIntakeService
                 }
                 var combined = input.Drafts.ToDictionary(item => item.Id, item => item.StoryDependencies, StringComparer.Ordinal);
                 foreach (var child in nextChildren) combined[child.Id!] = child.DependsOn;
+                foreach (var planning in (state.Review.StoryPlanning ?? []).GroupBy(item => item.StoryId).Select(group => group.Last())
+                    .Where(item => item.StoryId != storyId && combined.ContainsKey(item.StoryId)))
+                    combined[planning.StoryId] = combined[planning.StoryId].Concat(planning.Children.Select(child => child.Id!)
+                        .Where(combined.ContainsKey)).Distinct(StringComparer.Ordinal).ToArray();
+                combined[storyId] = combined[storyId].Concat(nextChildren.Select(child => child.Id!)).Distinct(StringComparer.Ordinal).ToArray();
                 var active = new HashSet<string>(StringComparer.Ordinal); var done = new HashSet<string>(StringComparer.Ordinal);
+                var route = new List<string>();
                 void Visit(string id)
                 {
                     if (done.Contains(id)) return;
-                    if (!active.Add(id)) throw new InvalidDataException("Story prerequisites contain a cycle across retained child/shared outcomes.");
+                    if (!active.Add(id)) throw new InvalidDataException("Story outcome dependency cycle (including container completion): " + string.Join(" -> ", route.Append(id)));
+                    route.Add(id);
                     foreach (var dependency in combined.GetValueOrDefault(id) ?? []) Visit(dependency);
-                    active.Remove(id); done.Add(id);
+                    route.RemoveAt(route.Count - 1); active.Remove(id); done.Add(id);
                 }
                 foreach (var id in combined.Keys) Visit(id);
                 var provisional = new CisFeatureStoryPlanning(storyId, nextAssessment, nextChildren, actor.Trim(), "");

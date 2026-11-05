@@ -169,7 +169,10 @@ source requirements, then use [BRD reimport](cis_brd_feature_wizard_reimport.md)
 resolve its reported reviews. Moving a draft card between release lists alone does not
 commit an unapproved candidate.
 CIS retains child IDs, inherited direction and constraints, and rejects incomplete
-coverage or invalid dependencies. Child delivery cannot duplicate parent execution.
+coverage or invalid dependencies. A container's whole outcome depends on its children,
+so a child cannot depend on an ancestor's whole outcome. An exact ancestor preparation
+task remains a valid prerequisite. Container completion also requires its own preparation
+tasks to finish. Child delivery cannot duplicate parent execution.
 
 For example, a synthetic four-criterion capability can use these two child outcomes.
 Keep the assessment envelope's identity/tokens/actor, replace `assessment` with `children`,
@@ -236,6 +239,11 @@ execution until the existing `approve` action reviews that exact proposal. Model
 cannot replace approved work. Reapproval retains the earlier plan, approval and events in
 `previousPlans`; compatible task progress can carry forward, while changed work requires
 current verification. Instance IDs and work-owner references remain stable.
+The material contract of an exact prerequisite also affects dependent completion, including
+transitive dependents. Historical completion cannot release downstream work after that basis
+changes. Completing the revised prerequisite does not renew the dependent's old completion:
+use the existing explicit preparation and approval route, then supply current completion
+evidence for the affected task. Unrelated work retains its current approval and progress.
 To withdraw an unchanged proposal, submit the approved tasks again with the current
 revision. The existing approval and progress resume without another sign-off. Regenerating
 an unaccepted proposal preserves unchanged instances and allocates new identities for
@@ -244,7 +252,8 @@ changed work, remapping exact dependencies together.
 Legacy missing semantics resolve only from an unambiguous maintained contract. Otherwise
 the affected task reports missing classification or obligations and retains its history
 for targeted reassessment. It never silently becomes low-complexity implementation.
-Adding only missing legacy semantics preserves in-progress/applied work and marks
+If a task is otherwise unchanged, adding missing legacy semantics or first recording a
+prerequisite's material basis preserves in-progress/applied work and marks
 `needsVerificationRenewal`. Inspect that work and refresh the current contract's
 verification and review; the old completion claim alone does not satisfy new obligations.
 Record completion after explicitly re-verifying every criterion and supplying the current

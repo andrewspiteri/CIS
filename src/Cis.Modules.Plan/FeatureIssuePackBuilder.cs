@@ -18,7 +18,8 @@ internal static partial class FeatureIssuePackBuilder
         IReadOnlyList<PlanWorkItem> existingItems,
         IReadOnlyDictionary<string, IReadOnlyList<string>> automationReferences,
         string? existingSourceHash = null,
-        Func<PlanWorkItem, IReadOnlyList<Cis.Abstractions.CisTaskVerificationObligation>>? defaultObligations = null)
+        Func<PlanWorkItem, IReadOnlyList<Cis.Abstractions.CisTaskVerificationObligation>>? defaultObligations = null,
+        Func<PlanWorkItem, ImportedTaskLists?>? readImportedLists = null)
     {
         var parsed = Parse(repositoryPath, requestedPath);
         if (parsed.Spec is null)
@@ -48,7 +49,8 @@ internal static partial class FeatureIssuePackBuilder
                 .ToArray();
             return new(null, errors, resolution.Conflicts);
         }
-        var items = BuildItems(spec, accepted, resolution.Definitions, existingItems, existingSourceHash == spec.Sha256, defaultObligations, out var instanceErrors);
+        var items = BuildItems(spec, accepted, resolution.Definitions, existingItems, existingSourceHash,
+            defaultObligations, readImportedLists, out var instanceErrors);
         if (instanceErrors.Count > 0) return new(null, instanceErrors, []);
         var documents = items.ToDictionary(
             item => item.TaskPath!,
@@ -64,8 +66,9 @@ internal static partial class FeatureIssuePackBuilder
         IReadOnlyList<ImpactFinding> accepted,
         IReadOnlyList<Cis.Abstractions.CisTaskTypeDefinition> definitions,
         IReadOnlyList<PlanWorkItem> existingItems,
-        bool preserveAuthoredContract,
+        string? existingSourceHash,
         Func<PlanWorkItem, IReadOnlyList<Cis.Abstractions.CisTaskVerificationObligation>>? defaultObligations,
+        Func<PlanWorkItem, ImportedTaskLists?>? readImportedLists,
         out IReadOnlyList<string> errors)
     {
         var allRequirements = spec.Requirements.Select(item => item.Id).ToArray();
@@ -91,29 +94,28 @@ internal static partial class FeatureIssuePackBuilder
             })).ToArray();
         var problems = new List<string>();
         var mappedScopes = new Dictionary<string, PlanWorkItem>(StringComparer.OrdinalIgnoreCase);
-        foreach (var shared in existingItems.Where(item => item.StoryId is null))
+        foreach (var retained in existingItems)
         {
-            var replacementScopes = instances.Where(instance => instance.StoryId is not null
-                && instance.Definition.Key.Equals(shared.TaskTypeKey, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(instance.FrontendType, shared.FrontendType, StringComparison.OrdinalIgnoreCase))
+            var replacementScopes = instances.Where(instance =>
+                instance.Definition.Key.Equals(retained.TaskTypeKey, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(instance.FrontendType, retained.FrontendType, StringComparison.OrdinalIgnoreCase))
                 .Select(instance => new
                 {
                     Instance = instance,
-                    Requirements = spec.Requirements.Where(requirement => requirement.StoryId == instance.StoryId
-                        && RequirementIds(spec, instance.Definition.Category, instance.FrontendType, instance.Definition.TriggerTerms.ToArray()).Contains(requirement.Id, StringComparer.OrdinalIgnoreCase))
-                        .Select(requirement => requirement.Id).ToHashSet(StringComparer.OrdinalIgnoreCase)
-                }).Where(scope => scope.Requirements.Overlaps(shared.RequirementIds)).ToArray();
+                    Requirements = InstanceRequirements(instance).ToHashSet(StringComparer.OrdinalIgnoreCase)
+                }).Where(scope => scope.Requirements.Overlaps(retained.RequirementIds)).ToArray();
             if (replacementScopes.Length == 0) continue; // New independent requirements do not replace historical work.
-            var stillShared = spec.Requirements.Any(requirement => requirement.StoryId is null && shared.RequirementIds.Contains(requirement.Id, StringComparer.OrdinalIgnoreCase));
-            if (replacementScopes.Length == 1 && !stillShared && replacementScopes[0].Requirements.SetEquals(shared.RequirementIds))
+            var sameScope = replacementScopes.Count(scope => scope.Instance.StoryId == retained.StoryId);
+            if (sameScope == 1 && (retained.StoryId is not null || replacementScopes.Length == 1)) continue;
+            if (replacementScopes.Length == 1 && replacementScopes[0].Requirements.SetEquals(retained.RequirementIds))
             {
                 var scope = replacementScopes[0].Instance;
                 var identity = Identity(scope.Definition.Key, scope.FrontendType, scope.StoryId);
-                if (!mappedScopes.TryAdd(identity, shared with { StoryId = scope.StoryId, InstanceKey = shared.InstanceKey ?? identity }))
+                if (!mappedScopes.TryAdd(identity, retained with { StoryId = scope.StoryId, InstanceKey = retained.InstanceKey ?? identity }))
                     problems.Add($"Legacy tasks have an ambiguous retained mapping to story {scope.StoryId}; retain their separate IDs and accounting owners before re-import.");
             }
             else
-                problems.Add($"Legacy shared task {shared.Id} cannot be replaced automatically by story scopes {string.Join(", ", replacementScopes.Select(scope => scope.Instance.StoryId))}. Explicitly map its retained ID and accounting owner before re-import; its history and reservations must not become fresh suffixed tasks.");
+                problems.Add($"Retained task {retained.Id} cannot be replaced automatically by story scopes {string.Join(", ", replacementScopes.Select(scope => scope.Instance.StoryId ?? "shared"))}. Explicitly map its retained ID and accounting owner before re-import; its history and reservations must not become fresh suffixed tasks.");
         }
         var existingGroups = existingItems.GroupBy(item => Identity(item.TaskTypeKey, item.FrontendType, item.StoryId), StringComparer.OrdinalIgnoreCase).ToArray();
         var mappedIds = mappedScopes.Values.Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
@@ -180,13 +182,13 @@ internal static partial class FeatureIssuePackBuilder
                 _ => allImpacts,
             };
             var highParent = definition.Key == "core.coordination.scope-guard";
-            var negative = spec.Exclusions.Count > 0
-                ? spec.Exclusions
-                : ["Do not expand scope beyond accepted impacts and the imported feature specification."];
-            if (spec.PublicEndpoints && PublicEndpointPolicyCategory(definition.Category))
-            {
-                negative = negative.Concat(PublicEndpointNegativeCriteria).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-            }
+            var importedLists = GeneratedLists(spec, definition.Category, instance.StoryId);
+            ImportedTaskLists? priorLists = null;
+            try { if (existing is not null) priorLists = readImportedLists?.Invoke(existing); }
+            catch (InvalidDataException error) { problems.Add($"{existing!.Id}: {error.Message}"); }
+            if (existing is not null && priorLists is null && existingSourceHash is not null && existingSourceHash != spec.Sha256)
+                problems.Add($"Task {existing.Id} has no retained imported-list baseline for the revised source. Retain its authored contract and re-import the exact previously recorded source to establish its generated lists before applying this revision.");
+            if (existingSourceHash is null && priorLists is null) priorLists = new([], []);
             var acceptance = spec.PublicEndpoints && PublicEndpointPolicyCategory(definition.Category)
                 ? definition.AcceptanceCriteria + " " + PublicEndpointAcceptance(definition.Category)
                 : definition.AcceptanceCriteria;
@@ -218,9 +220,8 @@ internal static partial class FeatureIssuePackBuilder
                 definition.ApprovalGate,
                 ResolveTargets(spec, definition.Category),
                 existing?.DecisionIds ?? [],
-                preserveAuthoredContract && existing?.NegativeCriteria is { } authoredNegative ? authoredNegative : negative,
-                preserveAuthoredContract && existing?.RequiredOutputs is { } authoredOutputs ? authoredOutputs
-                    : RequiredOutputs(definition.Category).Select(output => instance.StoryId is null ? output : $"{instance.StoryId}: {output}").ToArray(),
+                ReconcileImportedList(existing?.NegativeCriteria, priorLists?.NegativeCriteria, importedLists.NegativeCriteria),
+                ReconcileImportedList(existing?.RequiredOutputs, priorLists?.RequiredOutputs, importedLists.RequiredOutputs),
                 instance.FrontendType) with
             {
                 Status = existing?.Status ?? (highParent ? "decomposed" : "draft"),
@@ -247,6 +248,28 @@ internal static partial class FeatureIssuePackBuilder
             return IsStoryScopedCategory(instance.Definition.Category) && instances.Any(candidate => candidate.Definition.Key == instance.Definition.Key && candidate.StoryId is not null)
                 ? assigned.Where(id => spec.Requirements.Any(requirement => requirement.Id == id && requirement.StoryId is null)).ToArray() : assigned;
         }
+    }
+
+    private static ImportedTaskLists GeneratedLists(FeatureSpec spec, string category, string? storyId)
+    {
+        IReadOnlyList<string> negative = spec.Exclusions.Count > 0 ? spec.Exclusions
+            : ["Do not expand scope beyond accepted impacts and the imported feature specification."];
+        if (spec.PublicEndpoints && PublicEndpointPolicyCategory(category))
+            negative = negative.Concat(PublicEndpointNegativeCriteria).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        return new(RequiredOutputs(category).Select(output => storyId is null ? output : $"{storyId}: {output}").ToArray(), negative);
+    }
+
+    private static IReadOnlyList<string> ReconcileImportedList(IReadOnlyList<string>? existing,
+        IReadOnlyList<string>? priorGenerated, IReadOnlyList<string> generated)
+    {
+        if (existing is null) return generated;
+        if (priorGenerated is null) return existing;
+        // Authored additions and removals are retained; only the known generated
+        // projection is replaced when its source changes.
+        return existing.Where(value => !priorGenerated.Contains(value, StringComparer.Ordinal))
+            .Concat(generated.Where(value => existing.Contains(value, StringComparer.Ordinal)
+                || !priorGenerated.Contains(value, StringComparer.Ordinal)))
+            .Distinct(StringComparer.Ordinal).ToArray();
     }
 
     private static string ShortIdentityHash(string value)
@@ -492,6 +515,9 @@ internal static partial class FeatureIssuePackBuilder
         builder.AppendLine($"targets: {JsonSerializer.Serialize(item.Targets ?? [])}");
         builder.AppendLine($"decision_ids: {JsonSerializer.Serialize(item.DecisionIds ?? [])}");
         builder.AppendLine($"verification_obligations: {JsonSerializer.Serialize(item.VerificationObligations)}");
+        var importedLists = GeneratedLists(spec, item.Category, item.StoryId);
+        builder.AppendLine($"imported_required_outputs: {JsonSerializer.Serialize(importedLists.RequiredOutputs)}");
+        builder.AppendLine($"imported_negative_criteria: {JsonSerializer.Serialize(importedLists.NegativeCriteria)}");
         builder.AppendLine("authority: human-approved-plan");
         builder.AppendLine("---");
         builder.AppendLine();
@@ -1570,3 +1596,5 @@ internal sealed record FeatureIssuePackBuildResult(
     FeatureIssuePack? Pack,
     IReadOnlyList<string> Errors,
     IReadOnlyList<TaskTypeCapabilityConflict> Conflicts);
+
+internal sealed record ImportedTaskLists(IReadOnlyList<string> RequiredOutputs, IReadOnlyList<string> NegativeCriteria);

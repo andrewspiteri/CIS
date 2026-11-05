@@ -53,7 +53,8 @@ public sealed partial class DeliveryWorkflowTests
         second.Write(".cis/engineering-defaults.json", """{"schemaVersion":1,"requireTaskCompletion":true,"additionalGates":[]}""");
         var repositories = new[] { new CisWorkspaceRepository("first", first.Path, "docs/cis"), new CisWorkspaceRepository("second", second.Path, "docs/cis") };
         var work = new CisStoryTaskWork(first.Path, "synthetic", "1234567890abcdef", "approved-synthetic-contract", "Protocol qualification",
-            new("T1", "Verify the shared contract", "Synthetic fixture", ["first", "second"], [1], ["Both participants agree", "The contract is documented"], []),
+            new("T1", "Verify the shared contract", "Synthetic fixture", ["first", "second"], [1],
+                ["Given an active registration\nWhen it is disposed\nThen it stops contributing", "Other registrations remain active"], []),
             ["Both participants agree"], repositories, "fixture");
         work = ClassifiedStoryWork(work);
         if (codeTask) work = work with
@@ -180,6 +181,10 @@ public sealed partial class DeliveryWorkflowTests
             }
         }
         Assert.All(service.Assess(work, false), context => Assert.Empty(context.Errors));
+        var firstCriterionOnly = work with { Task = work.Task with { VerificationObligations = [work.Task.VerificationObligations[1]] } };
+        Assert.Equal(work.Task.AcceptanceCriteria, firstCriterionOnly.Task.AcceptanceCriteria);
+        Assert.Contains(service.Assess(firstCriterionOnly, false).SelectMany(context => context.Errors),
+            error => error.Contains("no verification obligation: Other registrations remain active", StringComparison.Ordinal));
         const string participantReview = ".cis/local/agents/runs/review-second/manifest.json";
         var originalReview = File.ReadAllBytes(Path.Combine(first.Path, participantReview));
         File.Delete(Path.Combine(second.Path, participantReview));

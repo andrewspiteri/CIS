@@ -14,6 +14,7 @@ public sealed partial class EngineeringCompletionTests
     [InlineData("tampered-result", false)]
     [InlineData("wrong-manifest-path", false)]
     [InlineData("legacy-contract", true)]
+    [InlineData("legacy-one-string", true)]
     public void NativeImplementationMustBindSuccessfulResultAndPrecedeSeparateReview(string scenario, bool expected)
     {
         using var fixture = new Fixture();
@@ -26,6 +27,16 @@ public sealed partial class EngineeringCompletionTests
             taskDocument = "---\ndecision_ids: [\"DEC-001\"]\n---\n# WORK-001\n## Required outputs\n- A bounded contract artifact\n## Constraints and exclusions\n- Preserve unrelated behavior\n## Completion evidence\n";
             receipt = receipt with { TaskDigest = OldTaskDigest(task, taskDocument.TrimEnd()) };
             task = task with { DecisionIds = ["DEC-001"], RequiredOutputs = ["A bounded contract artifact"], NegativeCriteria = ["Preserve unrelated behavior"] };
+        }
+        if (scenario == "legacy-one-string")
+        {
+            const string criterion = "Given an active registration\nWhen it is disposed\nThen it stops contributing";
+            task = task with
+            {
+                AcceptanceCriteria = criterion,
+                VerificationObligations = [new("legacy-criterion", [criterion], "Verify the complete original one-string criterion", "review", ["Current independent review"])]
+            };
+            receipt = receipt with { TaskDigest = EngineeringCompletionReview.TaskDigest(task) };
         }
         const string root = ".cis/local/agents/runs/implementation-1/";
         fixture.WriteJson(root + "result.json", new { schemaVersion = 1, status = CisAgentRunStates.Succeeded, envelopeId = "implementation-envelope" });
@@ -68,12 +79,17 @@ public sealed partial class EngineeringCompletionTests
         receipt = receipt with
         {
             Implementation = fixture.Artifact(scenario == "wrong-manifest-path" ? "copied.json" : root + "manifest.json"),
-            Gates = [new("review", EngineeringGateState.Passed, "Synthetic protocol review; not live agent approval.", [fixture.Artifact("review-run.json"), reviewResult])]
+            Gates = [new("review", EngineeringGateState.Passed, "Synthetic protocol review; not live agent approval.", [fixture.Artifact("review-run.json"), reviewResult])],
+            VerificationObligations = task.VerificationObligations.Select(obligation => new EngineeringObligationEvidence(obligation.Id, obligation.Criteria,
+                EngineeringGateState.Passed, "The independent review verifies the exact original criterion.", [fixture.Artifact("review-run.json"), reviewResult])).ToArray()
         };
         var errors = fixture.Review(receipt, gateId: "review", task: task, taskDocument: taskDocument);
         Assert.Equal(expected, errors.Count == 0);
         if (scenario == "legacy-contract")
         {
+            var bookkeeping = taskDocument!.Insert(4, "imported_required_outputs: [\"A bounded contract artifact\"]\nimported_negative_criteria: [\"Preserve unrelated behavior\"]\n");
+            Assert.Equal(EngineeringCompletionReview.TaskDigest(task, taskDocument), EngineeringCompletionReview.TaskDigest(task, bookkeeping));
+            Assert.Empty(fixture.Review(receipt, gateId: "review", task: task, taskDocument: bookkeeping));
             Assert.Contains(fixture.Review(receipt, gateId: "review", task: task,
                 taskDocument: taskDocument!.Replace("bounded contract", "materially different contract", StringComparison.Ordinal)), error => error.Contains("stale", StringComparison.Ordinal));
             Assert.NotEmpty(fixture.Review(receipt, gateId: "review", task: task with { Category = "documentation" }, taskDocument: taskDocument));
@@ -209,6 +225,8 @@ public sealed partial class EngineeringCompletionTests
             document.Replace("Validate every record.", "Validate every record.\ntask_status: is meaningful example input", StringComparison.Ordinal)));
         Assert.NotEqual(digest, EngineeringCompletionReview.TaskDigest(task,
             document.Replace("Validate every record.", "Validate every record.\n| CIS tool-usage snapshot | Contract example |", StringComparison.Ordinal)));
+        Assert.NotEqual(digest, EngineeringCompletionReview.TaskDigest(task, "imported_required_outputs: authored example\n" + document));
+        Assert.NotEqual(digest, EngineeringCompletionReview.TaskDigest(task, document + "imported_negative_criteria: authored example\n"));
     }
 
     [Theory]

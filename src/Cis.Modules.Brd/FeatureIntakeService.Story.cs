@@ -56,7 +56,15 @@ public sealed partial class FeatureIntakeService
                 try
                 {
                     var tasks = ValidateStoryTasks(cached.Tasks, input, story, state);
-                    return ProjectStoryWorkflow(state, input, result with { Status = "current", Tasks = tasks, Cached = true, Provider = cached.Provider, Model = cached.Model });
+                    return ProjectStoryWorkflow(state, input, result with
+                    {
+                        Status = "current",
+                        Tasks = tasks,
+                        Cached = true,
+                        Provider = cached.Provider,
+                        Model = cached.Model,
+                        Revision = cached.Revision
+                    });
                 }
                 catch (InvalidDataException) { /* Regenerate an invalid derived task plan; the story definition remains available. */ }
             }
@@ -132,9 +140,9 @@ public sealed partial class FeatureIntakeService
                 }
             }
             var current = Story(workspacePath, slug, storyId, false);
-            if (current.Errors.Count > 0 || current.InputHash != hash)
+            if (current.Errors.Count > 0 || current.InputHash != hash || current.Revision != StoryRevision(retained))
                 throw new InvalidDataException("The story or implementation changed during generation. Refresh and retry; the previous plan is preserved.");
-            result = result with { Status = "current", Tasks = proposal!.Tasks, Provider = provider.Name, Model = model };
+            result = result with { Status = "current", Tasks = proposal!.Tasks, Provider = provider.Name, Model = model, Revision = current.Revision };
             var temporary = cachePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
             try { File.WriteAllText(temporary, JsonSerializer.Serialize(result, Json), new UTF8Encoding(false)); File.Move(temporary, cachePath, true); }
             finally { if (File.Exists(temporary)) File.Delete(temporary); }
@@ -165,7 +173,8 @@ public sealed partial class FeatureIntakeService
                     {
                         Status = "current",
                         Tasks = ValidateStoryTasks(cached.Tasks, input, story, state),
-                        IsRevisionProposal = PendingStoryProposal(ReadStoryRecord(state, story.Id), cached, result.InputHash!, state, input)
+                        IsRevisionProposal = PendingStoryProposal(ReadStoryRecord(state, story.Id), cached, result.InputHash!, state, input),
+                        Revision = cached.Revision
                     };
                 }
                 catch (InvalidDataException) { /* Do not expose invalid derived tasks as available work. */ }

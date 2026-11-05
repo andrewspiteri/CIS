@@ -59,7 +59,8 @@ public sealed partial class FeatureIntakeService
 
     private static bool StoryScopeMatches(StoryPlanRecord record, WizardState state, DeliveryInput input, string storyId)
     {
-        if (record.Basis is null) return record.ScopeHash == LegacyStoryScopeHash(state, input, storyId);
+        if (record.Basis is null) return !StoryHasExternalPrerequisites(input, storyId, record.Plan.Tasks)
+            && record.ScopeHash == LegacyStoryScopeHash(state, input, storyId);
         if (record.ScopeHash != DeliveryBasisHash(record.Basis)) return false;
         var current = StoryBasisForRecordedContract(record.Basis, ApprovedStoryBasis(state, input, storyId, record.Plan.Tasks));
         return record.Basis.Count == current.Count && record.Basis.All(item => current.TryGetValue(item.Key, out var value)
@@ -98,7 +99,7 @@ public sealed partial class FeatureIntakeService
     }
 
     private static IReadOnlyDictionary<string, string> ApprovedStoryBasis(WizardState state, DeliveryInput input,
-        string storyId, IReadOnlyList<CisFeatureStoryTask> tasks)
+        string storyId, IReadOnlyList<CisFeatureStoryTask> tasks, bool includePrerequisites = true)
     {
         var basis = new SortedDictionary<string, string>(StoryContractBasis(state, input, storyId).ToDictionary(item => item.Key, item => item.Value), StringComparer.Ordinal);
         var decision = state.Review.DeliveryReviews?.LastOrDefault(item => item.StoryId == storyId);
@@ -122,6 +123,10 @@ public sealed partial class FeatureIntakeService
             { item.Id, item.RepositoryId, item.Title, item.Scope, DependsOn = item.DependsOn.Order(StringComparer.Ordinal), ChangeIds = item.ChangeIds.Order(StringComparer.Ordinal) }, Json);
             foreach (var prerequisite in item?.DependsOn ?? []) pending.Enqueue(prerequisite);
         }
+        if (includePrerequisites)
+            foreach (var task in tasks)
+                foreach (var item in StoryTaskPrerequisiteBasis(state, input, storyId, task))
+                    basis["task prerequisite contract/" + task.Id + "/" + item.Key] = item.Value;
         return WithStoryDeliveryBoundaries(state, basis);
     }
 
@@ -130,6 +135,11 @@ public sealed partial class FeatureIntakeService
         if (record.Basis is null)
             return "The saved task plan has a legacy whole-feature basis whose compatibility cannot be established. Its approval and task history are retained; review a current task contract before further execution or completion.";
         var current = StoryBasisForRecordedContract(record.Basis, ApprovedStoryBasis(state, input, storyId, record.Plan.Tasks));
+        var unavailable = current.Keys.Where(key => key.StartsWith("task prerequisite contract/", StringComparison.Ordinal)
+            && !record.Basis.ContainsKey(key)).ToArray();
+        if (unavailable.Length > 0)
+            return "The retained approval has no exact material prerequisite basis for " + string.Join("; ", unavailable)
+                + ". Preserve its approval and work history; renew the affected task contract against current prerequisite evidence.";
         var changed = record.Basis.Keys.Concat(current.Keys).Distinct(StringComparer.Ordinal)
             .Where(key => record.Basis.GetValueOrDefault(key) != current.GetValueOrDefault(key)).Order(StringComparer.Ordinal);
         return "Changed task contract: " + string.Join("; ", changed)
@@ -177,7 +187,8 @@ public sealed partial class FeatureIntakeService
     {
         if (previous.Basis is null || previous.Plan.Story is null || next.Story is null) return [];
         static bool SharedKey(string key) => !key.StartsWith("task contract/", StringComparison.Ordinal)
-            && !key.StartsWith("task ownership/", StringComparison.Ordinal) && key is not ("acceptance" or "parent accepted requirements");
+            && !key.StartsWith("task ownership/", StringComparison.Ordinal)
+            && !key.StartsWith("task prerequisite contract/", StringComparison.Ordinal) && key is not ("acceptance" or "parent accepted requirements");
         var oldShared = previous.Basis.Where(item => SharedKey(item.Key)).ToDictionary(item => item.Key, item => item.Value);
         var newShared = StoryBasisForRecordedContract(previous.Basis, basis).Where(item => SharedKey(item.Key)).ToDictionary(item => item.Key, item => item.Value);
         if (oldShared.Count != newShared.Count || oldShared.Any(item => newShared.GetValueOrDefault(item.Key) != item.Value)) return [];
@@ -191,6 +202,13 @@ public sealed partial class FeatureIntakeService
             var legacyAdded = !identical && LegacyStorySemanticsAdded(old, task, next.Slug, next.StoryId);
             if (!identical && !legacyAdded) continue;
             if (task.RepositoryIds.Any(id => previous.Basis.GetValueOrDefault("task ownership/" + id) != basis.GetValueOrDefault("task ownership/" + id))) continue;
+            var prefix = "task prerequisite contract/" + task.Id + "/";
+            var oldPrerequisites = previous.Basis.Where(item => item.Key.StartsWith(prefix, StringComparison.Ordinal)).ToDictionary(item => item.Key, item => item.Value);
+            var newPrerequisites = basis.Where(item => item.Key.StartsWith(prefix, StringComparison.Ordinal)).ToDictionary(item => item.Key, item => item.Value);
+            // An established binding that changed invalidates its old work evidence.
+            // Previously unrecorded bindings retain work for explicit verification renewal.
+            if (oldPrerequisites.Any(item => newPrerequisites.GetValueOrDefault(item.Key) != item.Value)) continue;
+            var prerequisiteBindingAdded = newPrerequisites.Keys.Any(key => !oldPrerequisites.ContainsKey(key));
             static IReadOnlyList<string>? Criteria(CisFeatureStoryTask selected, CisFeatureDeliveryStory story)
                 => selected.RequirementNumbers.Any(number => number < 1 || number > story.Requirements.Count) ? null
                     : selected.RequirementNumbers.Select(number => story.Requirements[number - 1]).ToArray();
@@ -198,7 +216,7 @@ public sealed partial class FeatureIntakeService
             if (oldCriteria is not null && newCriteria is not null && oldCriteria.SequenceEqual(newCriteria, StringComparer.Ordinal))
             {
                 compatible.Add(task.Id);
-                if (legacyAdded) renewal.Add(task.Id);
+                if (legacyAdded || prerequisiteBindingAdded) renewal.Add(task.Id);
             }
         }
         // A changed prerequisite cannot leave a dependent task's former completion current.
@@ -211,7 +229,7 @@ public sealed partial class FeatureIntakeService
         var events = previous.Events.Where(item => compatible.Contains(item.TaskId)).ToList();
         foreach (var id in renewal.Where(id => compatible.Contains(id) && events.Any(item => item.TaskId == id)))
             events.Add(new(id, "InProgress", actor, at,
-                "Retained applied work and progress. Renew verification and review against the newly explicit legacy task semantics before completion.")
+                "Retained applied work and progress. Renew verification and review against the current task and prerequisite contract before completion.")
             { NeedsVerificationRenewal = true });
         return events;
     }
@@ -241,9 +259,15 @@ public sealed partial class FeatureIntakeService
     {
         result = ProjectStoryPlanning(state, input, result);
         var record = ReadStoryRecord(state, result.StoryId);
+        var evaluation = new StoryCompletionEvaluation();
+        evaluation.Records[result.StoryId] = record;
+        var scopeCurrent = record is not null && StoryScopeMatches(record, state, input, result.StoryId);
+        evaluation.ScopeCurrent[result.StoryId] = scopeCurrent;
         var pending = result.IsRevisionProposal && record is not null;
-        var approved = !pending && record is not null && StoryScopeMatches(record, state, input, result.StoryId);
-        var historical = !pending && !approved && record is not null && result.Status != "current";
+        var approved = !pending && scopeCurrent;
+        var currentProposal = record is not null && result.Status == "current" && result.Revision == StoryRevision(record);
+        var historical = !pending && !approved && record is not null && !currentProposal;
+        var retainedScopeReason = historical ? StoryScopeReason(record!, state, input, result.StoryId) : null;
         if (historical)
             result = result with
             {
@@ -253,7 +277,7 @@ public sealed partial class FeatureIntakeService
                 Definition = record.Plan.Definition,
                 Provider = record.Plan.Provider,
                 Model = record.Plan.Model,
-                Warnings = result.Warnings.Append(StoryScopeReason(record, state, input, result.StoryId)).ToArray()
+                Warnings = result.Warnings.Append(retainedScopeReason!).ToArray()
             };
         if (approved)
         {
@@ -264,10 +288,11 @@ public sealed partial class FeatureIntakeService
         {
             var last = approved || historical ? record!.Events.LastOrDefault(item => item.TaskId == task.Id) : null;
             var remaining = task.DependsOn.Concat(input.Drafts.Single(item => item.Id == result.StoryId).SharedPrerequisiteTaskIds)
-                .Distinct(StringComparer.Ordinal).Where(id => !approved || !StoryTaskDependencyComplete(state, input, result.StoryId, record!, id)).ToArray();
+                .Distinct(StringComparer.Ordinal).Where(id => !approved || !StoryTaskDependencyComplete(state, input, result.StoryId, record!, id, evaluation)).ToArray();
             var storyDependencies = input.Drafts.Single(item => item.Id == result.StoryId).StoryDependencies
-                .Where(id => !StoryOutcomeComplete(state, input, id)).ToArray();
-            var status = last?.Status ?? (approved ? remaining.Length == 0 ? "Ready" : "Blocked" : "Proposed");
+                .Where(id => !StoryOutcomeComplete(state, input, id, evaluation)).ToArray();
+            var status = last?.Status == "Complete" && (!approved || remaining.Length > 0 || storyDependencies.Length > 0)
+                ? "Needs review" : last?.Status ?? (approved ? remaining.Length == 0 ? "Ready" : "Blocked" : "Proposed");
             var deliveryBlock = StoryDeliveryBlock(result, task);
             var adopted = new[] { state.Authority }.Concat(state.Workspace.Repositories.Where(repository => task.RepositoryIds.Contains(repository.Id)))
                 .Any(repository => CisEngineeringPolicy.Read(repository.RepositoryPath)?.RequireTaskCompletion == true);
@@ -279,7 +304,7 @@ public sealed partial class FeatureIntakeService
                 (task.ApprovalGate is not (null or "none") ? ["Resolve the exact canonical approval gate before starting this task."] : []);
             var completionGateErrors = taskContracts?.ValidateStoryTaskGate(state.Authority.RepositoryPath, task, completing: true) ??
                 (task.ApprovalGate is not (null or "none") ? ["Resolve the exact canonical approval gate before completing this task."] : []);
-            var reason = historical ? StoryScopeReason(record!, state, input, result.StoryId)
+            var reason = historical ? retainedScopeReason
                 : !approved ? result.Status == "current" ? "Approve the task plan before starting work." : "The plan needs regeneration and review."
                 : deliveryBlock ?? contractErrors.FirstOrDefault() ?? (storyDependencies.Length > 0 ? "Complete prerequisite story outcomes first: " + string.Join(", ", storyDependencies) + "."
                     : remaining.Length > 0 ? "Complete dependencies first: " + string.Join(", ", remaining) + "."
@@ -302,7 +327,9 @@ public sealed partial class FeatureIntakeService
             PlanHash = approved ? StoryApprovalHash(record!.ScopeHash, record.Plan) : StoryApprovalHash(StoryScopeHash(state, input, result.StoryId), result),
             Revision = StoryRevision(record),
             ApprovedBy = approved || historical || pending ? record!.Actor : null,
-            PlanState = historical ? "Needs review" : approved ? progress.All(task => task.Status == "Complete") ? "Complete" : "Approved" : "Proposed",
+            PlanState = historical ? "Needs review" : approved ? (result.IsDeliveryContainer
+                ? StoryContainerOutcomeComplete(state, input, result.StoryId, evaluation)
+                : progress.All(task => task.Status == "Complete")) ? "Complete" : "Approved" : "Proposed",
             TaskProgress = progress,
             PreviousPlans = (record?.PreviousPlans ?? []).Concat(pending ? [record!] : []).Select(ProjectStoryHistory).ToArray()
         };

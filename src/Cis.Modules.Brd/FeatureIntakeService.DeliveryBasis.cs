@@ -214,6 +214,90 @@ public sealed partial class FeatureIntakeService
 
     private const string StoryBoundaryBasisKey = "delivery boundaries/3b";
 
+    private static bool StoryHasExternalPrerequisites(DeliveryInput input, string storyId, IReadOnlyList<CisFeatureStoryTask> tasks)
+    {
+        var draft = input.Drafts.Single(item => item.Id == storyId);
+        return tasks.Any(task => task.DependsOn.Any(reference => reference.Contains('/')))
+            || draft.SharedPrerequisiteTaskIds.Count > 0 || draft.StoryDependencies.Count > 0;
+    }
+
+    // Bind exact prerequisite instances, including their own material prerequisites.
+    // Approval actors, events, execution IDs and timestamps do not change this contract.
+    private static IReadOnlyDictionary<string, string> StoryTaskPrerequisiteBasis(WizardState state, DeliveryInput input,
+        string storyId, CisFeatureStoryTask task)
+    {
+        var basis = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        var active = new HashSet<string>(StringComparer.Ordinal);
+        var done = new HashSet<string>(StringComparer.Ordinal);
+        // Existing intake bounds permit twenty tasks and one outcome per retained story.
+        var maximumSubjects = input.Drafts.Count * 21;
+        IReadOnlyList<CisFeatureStoryTask> Tasks(string owner)
+        {
+            var record = ReadStoryRecord(state, owner);
+            if (record is not null) return record.Plan.Tasks;
+            var cache = Path.Combine(state.Authority.RepositoryPath, ".cis/local/feature-stories", state.Record.Plan.Slug, owner + ".json");
+            return SafeAbsolutePath(cache) ? ReadStoryCache(cache)?.Tasks ?? [] : [];
+        }
+        bool Enter(string key)
+        {
+            if (done.Contains(key)) return false;
+            if (active.Count + done.Count >= maximumSubjects) throw new InvalidDataException("Exact prerequisite material coverage exceeds the supported tasks and outcomes in this feature.");
+            if (!active.Add(key)) { basis["cycle/" + key] = "Unresolved prerequisite cycle."; return false; }
+            return true;
+        }
+        void CaptureTask(string owner, string id)
+        {
+            var key = owner + "/" + id;
+            if (!Enter(key)) return;
+            var draft = input.Drafts.SingleOrDefault(item => item.Id == owner);
+            var prerequisite = draft is null ? null : Tasks(owner).SingleOrDefault(item => item.Id == id);
+            if (prerequisite is null) basis[key] = "Missing exact prerequisite task.";
+            else
+            {
+                var material = ApprovedStoryBasis(state, input, owner, [prerequisite], includePrerequisites: false)
+                    .Where(item => item.Key is not ("title" or "narrative" or "acceptance" or "parent accepted requirements"))
+                    .ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal);
+                var accepted = CurrentStoryAcceptance(input, draft!);
+                material["selected accepted requirements"] = JsonSerializer.Serialize(prerequisite.RequirementNumbers.Select(number =>
+                    number > 0 && number <= accepted.Count ? accepted[number - 1] : "Missing accepted requirement " + number), Json);
+                basis[key] = DeliveryBasisHash(material);
+                foreach (var reference in prerequisite.DependsOn.Concat(draft!.SharedPrerequisiteTaskIds).Distinct(StringComparer.Ordinal)) CaptureReference(owner, reference);
+                foreach (var outcome in draft.StoryDependencies) CaptureOutcome(outcome);
+            }
+            active.Remove(key); done.Add(key);
+        }
+        void CaptureReference(string owner, string reference)
+        {
+            var parts = reference.Split('/');
+            if (parts.Length == 1) CaptureTask(owner, reference);
+            else if (parts.Length == 2 && input.Drafts.Any(item => item.Id == parts[0])) CaptureTask(parts[0], parts[1]);
+            else basis[reference] = "Unresolved exact prerequisite reference.";
+        }
+        void CaptureOutcome(string owner)
+        {
+            var key = "outcome/" + owner;
+            if (!Enter(key)) return;
+            var draft = input.Drafts.SingleOrDefault(item => item.Id == owner);
+            var children = StoryPlanning(state, owner)?.Children ?? [];
+            basis[key] = draft is null ? "Missing prerequisite story outcome." : Hash(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
+            { draft.Story.Title, draft.Story.Narrative, Requirements = CurrentStoryAcceptance(input, draft), Children = children.Select(child => child.Id).Order(StringComparer.Ordinal) }, Json)));
+            if (draft is not null)
+            {
+                if (children.Count > 0) foreach (var child in children) CaptureOutcome(child.Id!);
+                else foreach (var item in Tasks(owner)) CaptureTask(owner, item.Id);
+                foreach (var dependency in draft.StoryDependencies) CaptureOutcome(dependency);
+            }
+            active.Remove(key); done.Add(key);
+        }
+        var own = input.Drafts.Single(item => item.Id == storyId);
+        // Local edges already bind the full retained task list. Cross-story references
+        // need a material snapshot; their bounded closure also captures local prerequisites.
+        foreach (var reference in task.DependsOn.Concat(own.SharedPrerequisiteTaskIds).Where(reference => reference.Contains('/')).Distinct(StringComparer.Ordinal))
+            CaptureReference(storyId, reference);
+        foreach (var outcome in own.StoryDependencies) CaptureOutcome(outcome);
+        return basis;
+    }
+
     private static IReadOnlyDictionary<string, string> WithStoryDeliveryBoundaries(WizardState state,
         IReadOnlyDictionary<string, string> basis)
     {

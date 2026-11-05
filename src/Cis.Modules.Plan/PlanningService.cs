@@ -157,7 +157,7 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
         var automationReferences = _automationScanner.Scan(change.RepositoryPath);
         var built = FeatureIssuePackBuilder.Build(change.RepositoryPath, request.FeatureSpecPath, change.Id, accepted, _taskTypes,
             capabilityStatus.Selections, existing.WorkItems, automationReferences, existing.Source?.Sha256,
-            task => DefaultVerificationObligations(change.RepositoryPath, task));
+            task => DefaultVerificationObligations(change.RepositoryPath, task), task => ReadImportedLists(change, task));
         if (built.Pack is null)
         {
             PersistCapabilityConflicts(change, built.Conflicts);
@@ -195,6 +195,8 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
             // An unchanged approved source refreshes derived test coverage, not authored task handoffs.
             if (!derivedOnlyRefresh || restored || !File.Exists(taskPath))
                 applied |= WriteTaskPreservingEvidence(taskPath, task.Value, preserveStatus: !restored);
+            else
+                applied |= WriteImportedListsBaseline(taskPath, task.Value);
         }
         applied |= RetireObsoleteTasks(change, existing.WorkItems, workItems, source);
         applied |= RegisterFeatureSpecCatalogEntry(change, source);
@@ -920,15 +922,29 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
 
     private TaskEngineeringCompletion Completion() => new(_resolver, _workspaceRegistry, _engineering, _graphReader, _repositoryChecks);
 
-    private string? ReadTaskContract(ChangeDossier change, PlanWorkItem task)
+    private string? ReadTaskContract(ChangeDossier change, PlanWorkItem task, bool allowMissing = false)
     {
         if (task.TaskPath is null) return null;
         var root = Path.GetDirectoryName(_changes.DossierFile(change, "plan.md"))!;
         if (!CisPathSafety.TryResolveUnderRoot(root, task.TaskPath, out var path)
-            || CisPathSafety.ContainsReparsePoint(change.RepositoryPath, path)
-            || !File.Exists(path) || new FileInfo(path).Length > 512 * 1024)
+            || CisPathSafety.ContainsReparsePoint(change.RepositoryPath, path))
             throw new InvalidDataException("Task contract must be an existing bounded document inside its dossier without linked paths.");
+        if (!File.Exists(path) && allowMissing && !Directory.Exists(path)) return null;
+        if (!File.Exists(path) || new FileInfo(path).Length > 512 * 1024)
+            throw new InvalidDataException("Task contract must exist and stay within 512 KiB. Restore a bounded document at its recorded dossier path before reading or re-importing it.");
         return File.ReadAllText(path);
+    }
+
+    private ImportedTaskLists? ReadImportedLists(ChangeDossier change, PlanWorkItem task)
+    {
+        var document = ReadTaskContract(change, task, allowMissing: true);
+        if (document is null || !HasTaskMetadata(document, "imported_required_outputs")
+            || !HasTaskMetadata(document, "imported_negative_criteria")) return null;
+        var outputs = TaskMetadata<string[]>(document, "imported_required_outputs");
+        var negative = TaskMetadata<string[]>(document, "imported_negative_criteria");
+        if (outputs is null || negative is null)
+            throw new InvalidDataException("Imported task lists are unresolved; restore the affected document's exact generated baseline before re-import.");
+        return new(outputs, negative);
     }
 
     private static string? CanonicalTaskStatus(string value) => value.Trim().ToLowerInvariant() switch
@@ -2243,6 +2259,18 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
         }
         generated = PreserveCheckedChecklistItems(generated, existing);
         return WriteIfChanged(path, generated);
+    }
+
+    private static bool WriteImportedListsBaseline(string path, string generated)
+    {
+        var existing = File.ReadAllText(path);
+        var closing = Regex.Matches(existing, @"(?m)^---\r?$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        if (!existing.StartsWith("---", StringComparison.Ordinal) || closing.Count < 2) return false;
+        var additions = new StringBuilder();
+        foreach (var key in new[] { "imported_required_outputs", "imported_negative_criteria" })
+            if (!HasTaskMetadata(existing, key))
+                additions.Append(key).Append(": ").Append(JsonSerializer.Serialize(TaskMetadata<string[]>(generated, key))).Append(existing.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n");
+        return additions.Length > 0 && WriteIfChanged(path, existing.Insert(closing[1].Index, additions.ToString()));
     }
 
     private static string PreserveCheckedChecklistItems(string generated, string existing)

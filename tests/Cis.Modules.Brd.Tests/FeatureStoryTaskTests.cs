@@ -145,10 +145,17 @@ public sealed partial class FeatureIntakeTests
         Assert.Empty(current.Errors); Assert.True(current.TaskProgress[1].CanExecute);
         var completedRevision = current.Revision;
         var requestPath = service.Wizard(f.Authority, "referrals").Plan!.RequestPath;
+        var savedRequest = service.Requests(f.Authority).Single();
+        var taskRecordPath = Path.Combine(Path.GetDirectoryName(Path.Combine(f.Authority, savedRequest.RequestPath))!, "story-tasks", id + ".json");
+        var completedRecord = File.ReadAllBytes(taskRecordPath);
         File.AppendAllText(Path.Combine(f.Authority, requestPath), "\nScope updated after execution.\n");
         var retained = service.Story(f.Authority, "referrals", id, false);
         Assert.Equal("stale", retained.Status); Assert.Equal("Needs review", retained.PlanState);
-        Assert.Equal("Complete", retained.TaskProgress[0].Status);
+        Assert.Equal("Needs review", retained.TaskProgress[0].Status);
+        Assert.Equal(completedRecord, File.ReadAllBytes(taskRecordPath));
+        using var historical = JsonDocument.Parse(completedRecord);
+        Assert.Contains(historical.RootElement.GetProperty("events").EnumerateArray(), item =>
+            item.GetProperty("taskId").GetString() == "T1" && item.GetProperty("status").GetString() == "Complete");
         Assert.NotNull(retained.TaskProgress[0].Execution);
         Assert.Equal("reviewed", retained.TaskProgress[0].Execution!.Status);
         Assert.Contains("checked every criterion", retained.TaskProgress[0].Evidence);

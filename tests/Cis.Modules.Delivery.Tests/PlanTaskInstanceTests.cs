@@ -142,8 +142,10 @@ public sealed partial class DeliveryWorkflowTests
         };
     }
 
-    [Fact]
-    public void PlanInstances_FreshStoryScopesReloadAndReimportWithoutMergingContractsOrExactDependencies()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void PlanInstances_FreshStoryScopesReloadAndReimportWithoutMergingContractsOrExactDependencies(bool repairMissingDocument)
     {
         using var repository = TemporaryRepository.Create();
         var services = CreateServices();
@@ -165,6 +167,7 @@ public sealed partial class DeliveryWorkflowTests
             | --- | --- | --- | --- | --- |
             | ORDER-001 | order-status | backend | Implement order status behavior while retaining existing visibility permissions. | Existing order status is returned unchanged. |
             | ORDER-002 | order-history | backend | Implement order history behavior while retaining existing visibility permissions. | Existing order history retains all entries. |
+            | ORDER-003 | order-status | backend | Implement the reviewed order cursor behavior. | The reviewed cursor remains usable. |
 
             ## Exclusions
 
@@ -218,12 +221,16 @@ public sealed partial class DeliveryWorkflowTests
         var planPath = services.Changes.DossierFile(change, "plan.md");
         var dossier = Path.GetDirectoryName(planPath)!;
         var historyPath = Path.Combine(dossier, history.TaskPath!);
+        var statusPath = Path.Combine(dossier, status.TaskPath!);
+        File.WriteAllText(statusPath, File.ReadAllText(statusPath)
+            .Replace("work_owner_task_id: null", "work_owner_task_id: \"WORK-STATUS-OWNER\"", StringComparison.Ordinal));
         var exact = history.DependsOn.Append(status.Id).ToArray();
         var document = File.ReadAllText(historyPath).Replace("depends_on: " + JsonSerializer.Serialize(history.DependsOn),
             "depends_on: " + JsonSerializer.Serialize(exact), StringComparison.Ordinal)
             .Replace("work_owner_task_id: null", "work_owner_task_id: \"WORK-EXISTING-OWNER\"", StringComparison.Ordinal)
             .Replace("## Required outputs", "## Required outputs\n\n- Retain the reviewed history handoff artifact.", StringComparison.Ordinal)
-            .Replace("## Constraints and exclusions", "## Constraints and exclusions\n\n- Preserve the authored compatibility boundary.", StringComparison.Ordinal);
+            .Replace("## Constraints and exclusions", "## Constraints and exclusions\n\n- Preserve the authored compatibility boundary.", StringComparison.Ordinal)
+            .Replace("| TODO | TODO | Not run | Record exact reproducible evidence. |", "| Reviewed history | retained-history.txt | Passed | Preserve the reviewed history evidence. |", StringComparison.Ordinal);
         File.WriteAllText(historyPath, document);
         var lines = File.ReadAllLines(planPath);
         for (var index = 0; index < lines.Length; index++)
@@ -254,6 +261,128 @@ public sealed partial class DeliveryWorkflowTests
         var before = File.ReadAllBytes(planPath);
         Assert.Equal("unchanged", CreateServices().Plans.ImportSpec(request).Status);
         Assert.Equal(before, File.ReadAllBytes(planPath));
+
+        File.WriteAllText(Path.Combine(repository.Path, source), File.ReadAllText(Path.Combine(repository.Path, source))
+            .Replace("Implement order status behavior while retaining existing visibility permissions.", "Implement order status behavior with the reviewed status marker while retaining existing visibility permissions.", StringComparison.Ordinal)
+            .Replace("Existing order status is returned unchanged.", "Existing order status includes the reviewed status marker.", StringComparison.Ordinal));
+        var statusRevised = CreateServices().Plans.ImportSpec(request);
+        Assert.True(statusRevised.ExitCode == 0, string.Join("; ", statusRevised.Errors.Concat(statusRevised.Validation?.Errors ?? [])));
+        var freshHistory = Assert.Single(CreateServices().Plans.Show(repository.Path, change.Id).WorkItems, item => item.StoryId == "order-history" && item.Category == "backend");
+        Assert.Equal(history.Id, freshHistory.Id);
+        Assert.Equal(history.InstanceKey, freshHistory.InstanceKey);
+        Assert.Equal(history.TaskPath, freshHistory.TaskPath);
+        Assert.Equal("WORK-EXISTING-OWNER", freshHistory.WorkOwnerTaskId);
+        Assert.Contains("Retain the reviewed history handoff artifact.", freshHistory.RequiredOutputs!);
+        Assert.Contains("Preserve the authored compatibility boundary.", freshHistory.NegativeCriteria!);
+        var historyDocument = File.ReadAllText(historyPath);
+        Assert.Contains("- Retain the reviewed history handoff artifact.", historyDocument, StringComparison.Ordinal);
+        Assert.Contains("- Preserve the authored compatibility boundary.", historyDocument, StringComparison.Ordinal);
+        Assert.Contains("Preserve the reviewed history evidence.", historyDocument, StringComparison.Ordinal);
+        var revisedStatus = Assert.Single(statusRevised.WorkItems, item => item.Id == status.Id);
+        Assert.Contains("Existing order status includes the reviewed status marker.", revisedStatus.AcceptanceCriteria, StringComparison.Ordinal);
+        Assert.Contains("with the reviewed status marker", File.ReadAllText(Path.Combine(dossier, revisedStatus.TaskPath!)), StringComparison.Ordinal);
+
+        File.AppendAllText(Path.Combine(repository.Path, source), "\n- Preserve the shared retention boundary.\n");
+        var sharedConstraint = CreateServices().Plans.ImportSpec(request);
+        Assert.True(sharedConstraint.ExitCode == 0, string.Join("; ", sharedConstraint.Errors.Concat(sharedConstraint.Validation?.Errors ?? [])));
+        var constrainedHistory = Assert.Single(CreateServices().Plans.Show(repository.Path, change.Id).WorkItems, item => item.Id == history.Id);
+        Assert.Contains("Preserve the shared retention boundary.", constrainedHistory.NegativeCriteria!);
+        Assert.Contains("Preserve the authored compatibility boundary.", constrainedHistory.NegativeCriteria!);
+        Assert.Contains("Retain the reviewed history handoff artifact.", constrainedHistory.RequiredOutputs!);
+        Assert.Contains("- Preserve the shared retention boundary.", File.ReadAllText(historyPath), StringComparison.Ordinal);
+
+        var sourcePath = Path.Combine(repository.Path, source);
+        File.WriteAllText(sourcePath, File.ReadAllText(sourcePath).Replace(
+            "Do not change public defaults or introduce a product screen.", "Preserve existing public defaults while extending the reviewed service boundary.", StringComparison.Ordinal));
+        var replacedConstraint = CreateServices().Plans.ImportSpec(request);
+        Assert.True(replacedConstraint.ExitCode == 0, string.Join("; ", replacedConstraint.Errors.Concat(replacedConstraint.Validation?.Errors ?? [])));
+        var replacedHistory = Assert.Single(CreateServices().Plans.Show(repository.Path, change.Id).WorkItems, item => item.Id == history.Id);
+        Assert.Contains("Preserve existing public defaults while extending the reviewed service boundary.", replacedHistory.NegativeCriteria!);
+        Assert.DoesNotContain("Do not change public defaults or introduce a product screen.", replacedHistory.NegativeCriteria!);
+        Assert.Contains("Preserve the authored compatibility boundary.", replacedHistory.NegativeCriteria!);
+        Assert.DoesNotContain("Do not change public defaults or introduce a product screen.", File.ReadAllText(historyPath), StringComparison.Ordinal);
+
+        // An older task without a recorded generated-list baseline cannot safely
+        // distinguish authored constraints from revised source constraints.
+        var withBaseline = File.ReadAllText(historyPath);
+        File.WriteAllText(historyPath, string.Join('\n', withBaseline.Split('\n').Where(line =>
+            !line.StartsWith("imported_required_outputs:", StringComparison.Ordinal)
+            && !line.StartsWith("imported_negative_criteria:", StringComparison.Ordinal))));
+        var legacyTask = File.ReadAllBytes(historyPath);
+        var legacyPlan = File.ReadAllBytes(planPath);
+        var eventsPath = services.Changes.DossierFile(change, "events.jsonl");
+        var legacyEvents = File.ReadAllBytes(eventsPath);
+        var legacySource = File.ReadAllText(sourcePath);
+        File.AppendAllText(sourcePath, "\n- Preserve the newly reviewed legacy boundary.\n");
+        var legacyHeld = CreateServices().Plans.ImportSpec(request);
+        Assert.NotEqual(0, legacyHeld.ExitCode);
+        Assert.Contains(legacyHeld.Errors, error => error.Contains(history.Id, StringComparison.Ordinal) && error.Contains("baseline", StringComparison.Ordinal));
+        Assert.Equal(legacyTask, File.ReadAllBytes(historyPath));
+        Assert.Equal(legacyPlan, File.ReadAllBytes(planPath));
+        Assert.Equal(legacyEvents, File.ReadAllBytes(eventsPath));
+        File.WriteAllText(sourcePath, legacySource);
+        var legacyDigest = CreateServices().Plans.ReadTaskDigest(repository.Path, change.Id, history.Id);
+        var initialized = CreateServices().Plans.ImportSpec(request);
+        Assert.True(initialized.ExitCode == 0, string.Join("; ", initialized.Errors.Concat(initialized.Validation?.Errors ?? [])));
+        Assert.Contains("imported_required_outputs:", File.ReadAllText(historyPath), StringComparison.Ordinal);
+        Assert.Equal(legacyDigest, CreateServices().Plans.ReadTaskDigest(repository.Path, change.Id, history.Id));
+
+        if (repairMissingDocument)
+        {
+            var beforeRepair = Assert.Single(CreateServices().Plans.Show(repository.Path, change.Id).WorkItems, item => item.Id == status.Id);
+            var statusDocument = File.ReadAllBytes(statusPath);
+            var beforeDirectoryPlan = File.ReadAllBytes(planPath);
+            var beforeDirectoryEvents = File.ReadAllBytes(eventsPath);
+            File.Delete(statusPath);
+            Directory.CreateDirectory(statusPath);
+            try
+            {
+                var occupied = CreateServices().Plans.ImportSpec(request);
+                Assert.NotEqual(0, occupied.ExitCode);
+                Assert.Contains(occupied.Errors, error => error.Contains(status.Id, StringComparison.Ordinal));
+                Assert.Equal(beforeDirectoryPlan, File.ReadAllBytes(planPath));
+                Assert.Equal(beforeDirectoryEvents, File.ReadAllBytes(eventsPath));
+                Assert.True(Directory.Exists(statusPath));
+            }
+            finally
+            {
+                Directory.Delete(statusPath);
+                File.WriteAllBytes(statusPath, statusDocument);
+            }
+            File.Delete(statusPath);
+            var repaired = CreateServices().Plans.ImportSpec(request);
+            Assert.True(repaired.ExitCode == 0, string.Join("; ", repaired.Errors.Concat(repaired.Validation?.Errors ?? [])));
+            Assert.True(File.Exists(statusPath));
+            var repairedStatus = Assert.Single(CreateServices().Plans.Show(repository.Path, change.Id).WorkItems, item => item.Id == status.Id);
+            Assert.Equal(beforeRepair.InstanceKey, repairedStatus.InstanceKey);
+            Assert.Equal(beforeRepair.TaskPath, repairedStatus.TaskPath);
+            Assert.Equal("WORK-STATUS-OWNER", repairedStatus.WorkOwnerTaskId);
+            Assert.Equal(beforeRepair.RequiredOutputs, repairedStatus.RequiredOutputs);
+            Assert.Equal(beforeRepair.NegativeCriteria, repairedStatus.NegativeCriteria);
+        }
+        else
+        {
+            File.WriteAllText(sourcePath, File.ReadAllText(sourcePath).Replace(
+                "| ORDER-003 | order-status |", "| ORDER-003 | order-history |", StringComparison.Ordinal));
+            var requirementMoved = CreateServices().Plans.ImportSpec(request);
+            Assert.True(requirementMoved.ExitCode == 0, string.Join("; ", requirementMoved.Errors.Concat(requirementMoved.Validation?.Errors ?? [])));
+            var afterMove = CreateServices().Plans.Show(repository.Path, change.Id);
+            var movedStatus = Assert.Single(afterMove.WorkItems, item => item.Category == "backend" && item.StoryId == "order-status");
+            var movedHistory = Assert.Single(afterMove.WorkItems, item => item.Category == "backend" && item.StoryId == "order-history");
+            Assert.Equal(status.Id, movedStatus.Id);
+            Assert.Equal(status.InstanceKey, movedStatus.InstanceKey);
+            Assert.Equal(status.TaskPath, movedStatus.TaskPath);
+            Assert.Equal("WORK-STATUS-OWNER", movedStatus.WorkOwnerTaskId);
+            Assert.Equal(["ORDER-001"], movedStatus.RequirementIds);
+            Assert.Equal(history.Id, movedHistory.Id);
+            Assert.Equal(history.InstanceKey, movedHistory.InstanceKey);
+            Assert.Equal(history.TaskPath, movedHistory.TaskPath);
+            Assert.Equal("WORK-EXISTING-OWNER", movedHistory.WorkOwnerTaskId);
+            Assert.Equal(["ORDER-002", "ORDER-003"], movedHistory.RequirementIds);
+            Assert.Contains("Retain the reviewed history handoff artifact.", movedHistory.RequiredOutputs!);
+            Assert.Contains("Preserve the authored compatibility boundary.", movedHistory.NegativeCriteria!);
+            Assert.Contains("Preserve the reviewed history evidence.", File.ReadAllText(historyPath), StringComparison.Ordinal);
+        }
 
         var malformed = File.ReadAllLines(planPath);
         var malformedAt = Array.FindIndex(malformed, line => line.StartsWith("| " + history.Id + " |", StringComparison.Ordinal));
@@ -375,6 +504,19 @@ public sealed partial class DeliveryWorkflowTests
         Assert.Equal("unchanged", CreateServices().Plans.ImportSpec(new(repository.Path, change.Id, source)).Status);
         Assert.Equal(beforeRepeat, File.ReadAllBytes(planPath));
 
+        WriteSource(true, "renamed-search", "renamed-search", true, true);
+        var renamed = CreateServices().Plans.ImportSpec(new(repository.Path, change.Id, source));
+        Assert.True(renamed.ExitCode == 0, string.Join("; ", renamed.Errors.Concat(renamed.Validation?.Errors ?? [])));
+        var renamedWork = Assert.Single(CreateServices().Plans.Show(repository.Path, change.Id).WorkItems,
+            item => item.Category == "backend" && item.StoryId == "renamed-search");
+        Assert.Equal(shared.Id, renamedWork.Id);
+        Assert.Equal(shared.InstanceKey, renamedWork.InstanceKey);
+        Assert.Equal(shared.TaskPath, renamedWork.TaskPath);
+        Assert.Equal("WORK-RETAINED-ALLOCATION", renamedWork.WorkOwnerTaskId);
+        Assert.Contains("Existing work stays retained.", File.ReadAllText(taskPath), StringComparison.Ordinal);
+        Assert.Equal(newUnscoped.Id, Assert.Single(renamed.WorkItems, item => item.Category == "backend" && item.StoryId is null).Id);
+        Assert.False(Directory.Exists(Path.Combine(Path.GetDirectoryName(taskPath)!, "retired")));
+
         void WriteSource(bool storyColumn, string first = "", string second = "", bool additional = false, bool newUnscoped = false)
         {
             var header = storyColumn ? "| ID | Story ID | Surface | Requirement | Acceptance criteria |\n| --- | --- | --- | --- | --- |"
@@ -386,6 +528,45 @@ public sealed partial class DeliveryWorkflowTests
             repository.Write(source, "---\ntitle: Search projection\ntype: feature-specification\n---\n\n## Functional requirements\n\n" + header
                 + $"\n| SEARCH-001 | {firstScope}backend | Build current search behavior with existing visibility permissions. | Search retains current results. |"
                 + $"\n| SEARCH-002 | {secondScope}backend | Build prior search behavior with existing visibility permissions. | Search retains prior results. |" + extra + unscoped + "\n");
+        }
+    }
+
+    [Fact]
+    public void PlanInstances_RemovingOptionalStoryScopeRetainsTheUnambiguousOwnedInstance()
+    {
+        using var repository = TemporaryRepository.Create();
+        var services = CreateServices();
+        var change = PrepareSearchChange(repository, services);
+        const string source = "docs/cis/specs/search-feature-spec.md";
+        WriteSource(true);
+        var request = new FeatureSpecImportRequest(repository.Path, change.Id, source);
+        var imported = services.Plans.ImportSpec(request);
+        Assert.True(imported.ExitCode == 0, string.Join("; ", imported.Errors.Concat(imported.Validation?.Errors ?? [])));
+        var scoped = Assert.Single(imported.WorkItems, item => item.Category == "backend");
+        var taskPath = Path.Combine(Path.GetDirectoryName(services.Changes.DossierFile(change, "plan.md"))!, scoped.TaskPath!);
+        File.WriteAllText(taskPath, File.ReadAllText(taskPath)
+            .Replace("work_owner_task_id: null", "work_owner_task_id: \"WORK-RETAINED-ALLOCATION\"", StringComparison.Ordinal)
+            .Replace("| TODO | TODO | Not run | Record exact reproducible evidence. |", "| Retained result | fixture evidence | Passed | Existing scoped history stays retained. |", StringComparison.Ordinal));
+        WriteSource(false);
+        var removed = CreateServices().Plans.ImportSpec(request);
+        Assert.True(removed.ExitCode == 0, string.Join("; ", removed.Errors.Concat(removed.Validation?.Errors ?? [])));
+        var unscoped = Assert.Single(CreateServices().Plans.Show(repository.Path, change.Id).WorkItems, item => item.Category == "backend");
+        Assert.Null(unscoped.StoryId);
+        Assert.Equal(scoped.Id, unscoped.Id);
+        Assert.Equal(scoped.InstanceKey, unscoped.InstanceKey);
+        Assert.Equal(scoped.TaskPath, unscoped.TaskPath);
+        Assert.Equal("WORK-RETAINED-ALLOCATION", unscoped.WorkOwnerTaskId);
+        Assert.Contains("Existing scoped history stays retained.", File.ReadAllText(taskPath), StringComparison.Ordinal);
+        Assert.False(Directory.Exists(Path.Combine(Path.GetDirectoryName(taskPath)!, "retired")));
+
+        void WriteSource(bool includeScope)
+        {
+            var storyColumn = includeScope ? " Story ID |" : "";
+            var scope = includeScope ? " current-search |" : "";
+            repository.Write(source, "---\ntitle: Search projection\ntype: feature-specification\n---\n\n## Functional requirements\n\n"
+                + $"| ID |{storyColumn} Surface | Requirement | Acceptance criteria |\n| --- |{(includeScope ? " --- |" : "")} --- | --- | --- |\n"
+                + $"| SEARCH-001 |{scope} backend | Build current search behavior with existing visibility permissions. | Search retains current results. |\n"
+                + $"| SEARCH-002 |{scope} backend | Build prior search behavior with existing visibility permissions. | Search retains prior results. |\n");
         }
     }
 }

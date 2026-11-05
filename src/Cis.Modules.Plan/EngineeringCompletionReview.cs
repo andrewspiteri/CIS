@@ -100,9 +100,11 @@ public static class EngineeringCompletionReview
         EngineeringCompletionReceipt receipt, EngineeringAssessment assessment, ICollection<string> errors)
     {
         if (task.VerificationObligations is null) { errors.Add("Task verification contract is malformed."); return; }
-        if (task.VerificationObligations.Count == 0) return; // Exact legacy contracts retain their existing adopted gate inventory.
-        IReadOnlyList<string> criteria = task.VerificationObligations.Any(obligation => obligation?.Criteria?.Contains(task.AcceptanceCriteria, StringComparer.Ordinal) == true)
-            ? [task.AcceptanceCriteria] : task.AcceptanceCriteria.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (task.AcceptanceCriteriaItems is { } structured && (structured.Count == 0 || structured.Count > 64
+            || structured.Any(string.IsNullOrWhiteSpace) || structured.Distinct(StringComparer.Ordinal).Count() != structured.Count))
+        { errors.Add("Task completion criteria collection is malformed; preserve the exact authoritative criteria."); return; }
+        if (task.VerificationObligations.Count == 0 && task.AcceptanceCriteriaItems is null) return; // Legacy contracts retain their existing adopted gate inventory.
+        IReadOnlyList<string> criteria = task.AcceptanceCriteriaItems ?? [task.AcceptanceCriteria];
         var contractErrors = CisStoryEngineeringContract.ValidateVerificationObligations(task.VerificationObligations, criteria);
         foreach (var error in contractErrors)
             errors.Add(error);
@@ -213,7 +215,9 @@ public static class EngineeringCompletionReview
         {
             var line = lines[index];
             if (index > 0 && line == "---") frontmatter = false;
-            if ((frontmatter || index == 0) && line.StartsWith("task_status:", StringComparison.Ordinal)) continue;
+            if ((frontmatter || index == 0) && line.StartsWith("task_status:", StringComparison.Ordinal)
+                || frontmatter && (line.StartsWith("imported_required_outputs:", StringComparison.Ordinal)
+                    || line.StartsWith("imported_negative_criteria:", StringComparison.Ordinal))) continue;
             if (line.StartsWith("## ", StringComparison.Ordinal)) completionSection = line == "## Completion evidence";
             if (completionSection && CisToolUsageSnapshot.IsTaskRow(line)) continue;
             retained.Add(line);

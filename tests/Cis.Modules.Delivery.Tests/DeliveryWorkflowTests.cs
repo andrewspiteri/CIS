@@ -568,7 +568,17 @@ status: Draft
 
         var imported = services.Plans.ImportSpec(new FeatureSpecImportRequest(repository.Path, change.Id, featurePath));
         Assert.Equal(0, imported.ExitCode);
+        var backend = Assert.Single(imported.WorkItems, item => item.Category == "backend");
+        var backendPath = Path.Combine(Path.GetDirectoryName(services.Changes.DossierFile(change, "plan.md"))!, backend.TaskPath!);
+        const string appendedOutput = "Retain the reviewed appended handoff artifact.";
+        const string appendedBoundary = "Preserve the reviewed appended compatibility boundary.";
+        File.WriteAllText(backendPath, File.ReadAllText(backendPath)
+            .Replace("## Constraints and exclusions", "- " + appendedOutput + "\n\n## Constraints and exclusions", StringComparison.Ordinal)
+            .Replace("## Context and evidence", "- " + appendedBoundary + "\n\n## Context and evidence", StringComparison.Ordinal));
         Assert.Equal("approved", services.Plans.Approve(repository.Path, change.Id).Status);
+        var approvedBackend = Assert.Single(services.Plans.Show(repository.Path, change.Id).WorkItems, item => item.Id == backend.Id);
+        Assert.Equal(backend.RequiredOutputs!.Append(appendedOutput), approvedBackend.RequiredOutputs!);
+        Assert.Equal(backend.NegativeCriteria!.Append(appendedBoundary), approvedBackend.NegativeCriteria!);
 
         var taskRoot = Path.Combine(Path.GetDirectoryName(services.Changes.DossierFile(change, "plan.md"))!, "agent-tasks");
         var taskPaths = Directory.GetFiles(taskRoot, "*.md");
@@ -576,6 +586,7 @@ status: Draft
         foreach (var taskPath in taskPaths)
             File.AppendAllText(taskPath, "\r\n## Maintainer handoff\r\nPreserve this reviewed implementation context.\r\n");
         var taskBytes = taskPaths.ToDictionary(path => path, File.ReadAllBytes);
+        var contract = services.Plans.ReadTaskDigest(repository.Path, change.Id, backend.Id);
         var planBytes = File.ReadAllBytes(services.Changes.DossierFile(change, "plan.md"));
         readiness.Ready = false;
         repository.Write("tests/approved-refresh.test.ts",
@@ -584,12 +595,19 @@ status: Draft
 
         Assert.Equal(0, refreshed.ExitCode);
         Assert.Equal("Approved", refreshed.PlanStatus);
+        var fresh = CreateServices(readinessChecks: [readiness]);
+        var reloaded = fresh.Plans.Show(repository.Path, change.Id);
+        Assert.Equal("Approved", reloaded.PlanStatus);
+        var retainedBackend = Assert.Single(reloaded.WorkItems, item => item.Id == backend.Id);
+        Assert.Equal(approvedBackend.RequiredOutputs, retainedBackend.RequiredOutputs);
+        Assert.Equal(approvedBackend.NegativeCriteria, retainedBackend.NegativeCriteria);
+        Assert.Equal(contract, fresh.Plans.ReadTaskDigest(repository.Path, change.Id, backend.Id));
         Assert.Contains("automated_test_case_count: 1",
             File.ReadAllText(services.Changes.DossierFile(change, "test-cases.md")), StringComparison.Ordinal);
 
         foreach (var task in taskBytes) Assert.Equal(task.Value, File.ReadAllBytes(task.Key));
         Assert.Equal(planBytes, File.ReadAllBytes(services.Changes.DossierFile(change, "plan.md")));
-        var repeated = services.Plans.ImportSpec(new FeatureSpecImportRequest(repository.Path, change.Id, featurePath));
+        var repeated = fresh.Plans.ImportSpec(new FeatureSpecImportRequest(repository.Path, change.Id, featurePath));
         Assert.Equal(0, repeated.ExitCode);
         Assert.False(repeated.Applied);
 

@@ -504,6 +504,51 @@ public sealed partial class DeliveryWorkflowTests
         Assert.Equal("unchanged", CreateServices().Plans.ImportSpec(new(repository.Path, change.Id, source)).Status);
         Assert.Equal(beforeRepeat, File.ReadAllBytes(planPath));
 
+        var beforeSplitTask = File.ReadAllBytes(taskPath);
+        var beforeSplitEvents = File.ReadAllBytes(services.Changes.DossierFile(change, "events.jsonl"));
+        var catalogPath = new CisRepositoryContextResolver().Resolve(repository.Path).Context!.CatalogPath;
+        var beforeSplitCatalog = File.ReadAllBytes(catalogPath);
+        WriteSource(true, "current-search", "new-search", true, true);
+        var partialSplit = CreateServices().Plans.ImportSpec(new(repository.Path, change.Id, source));
+        Assert.NotEqual(0, partialSplit.ExitCode);
+        Assert.Contains(partialSplit.Errors, error => error.Contains(shared.Id, StringComparison.Ordinal)
+            && error.Contains("WORK-RETAINED-ALLOCATION", StringComparison.Ordinal)
+            && error.Contains("current-search", StringComparison.Ordinal)
+            && error.Contains("new-search", StringComparison.Ordinal));
+        Assert.Equal(beforeRepeat, File.ReadAllBytes(planPath));
+        Assert.Equal(beforeSplitTask, File.ReadAllBytes(taskPath));
+        Assert.Equal(beforeSplitEvents, File.ReadAllBytes(services.Changes.DossierFile(change, "events.jsonl")));
+        Assert.Equal(beforeSplitCatalog, File.ReadAllBytes(catalogPath));
+        var afterSplit = CreateServices().Plans.Show(repository.Path, change.Id);
+        var activeOwner = Assert.Single(afterSplit.WorkItems, item => item.Id == shared.Id);
+        Assert.Equal("current-search", activeOwner.StoryId);
+        Assert.Equal(shared.InstanceKey, activeOwner.InstanceKey);
+        Assert.Equal(shared.TaskPath, activeOwner.TaskPath);
+        Assert.Equal("WORK-RETAINED-ALLOCATION", activeOwner.WorkOwnerTaskId);
+        Assert.DoesNotContain(afterSplit.WorkItems, item => item.StoryId == "new-search");
+        Assert.False(Directory.Exists(Path.Combine(Path.GetDirectoryName(taskPath)!, "retired")));
+
+        var additionalTaskPath = Path.Combine(Path.GetDirectoryName(planPath)!, independent.TaskPath!);
+        var beforeCompoundAdditional = File.ReadAllBytes(additionalTaskPath);
+        WriteSource(true, "current-search", "additional-search", true, true, "moved-search");
+        var compoundSplit = CreateServices().Plans.ImportSpec(new(repository.Path, change.Id, source));
+        Assert.NotEqual(0, compoundSplit.ExitCode);
+        Assert.Contains(compoundSplit.Errors, error => error.Contains(shared.Id, StringComparison.Ordinal)
+            && error.Contains("WORK-RETAINED-ALLOCATION", StringComparison.Ordinal)
+            && error.Contains("current-search", StringComparison.Ordinal)
+            && error.Contains("additional-search", StringComparison.Ordinal));
+        Assert.Equal(beforeRepeat, File.ReadAllBytes(planPath));
+        Assert.Equal(beforeSplitTask, File.ReadAllBytes(taskPath));
+        Assert.Equal(beforeCompoundAdditional, File.ReadAllBytes(additionalTaskPath));
+        Assert.Equal(beforeSplitEvents, File.ReadAllBytes(services.Changes.DossierFile(change, "events.jsonl")));
+        Assert.Equal(beforeSplitCatalog, File.ReadAllBytes(catalogPath));
+        var afterCompound = CreateServices().Plans.Show(repository.Path, change.Id);
+        var retainedCompoundOwner = Assert.Single(afterCompound.WorkItems, item => item.Id == shared.Id);
+        Assert.Equal("current-search", retainedCompoundOwner.StoryId);
+        Assert.Equal("WORK-RETAINED-ALLOCATION", retainedCompoundOwner.WorkOwnerTaskId);
+        Assert.Equal(independent.Id, Assert.Single(afterCompound.WorkItems, item => item.StoryId == "additional-search" && item.Category == "backend").Id);
+        Assert.DoesNotContain(afterCompound.WorkItems, item => item.StoryId == "moved-search");
+
         WriteSource(true, "renamed-search", "renamed-search", true, true);
         var renamed = CreateServices().Plans.ImportSpec(new(repository.Path, change.Id, source));
         Assert.True(renamed.ExitCode == 0, string.Join("; ", renamed.Errors.Concat(renamed.Validation?.Errors ?? [])));
@@ -517,13 +562,14 @@ public sealed partial class DeliveryWorkflowTests
         Assert.Equal(newUnscoped.Id, Assert.Single(renamed.WorkItems, item => item.Category == "backend" && item.StoryId is null).Id);
         Assert.False(Directory.Exists(Path.Combine(Path.GetDirectoryName(taskPath)!, "retired")));
 
-        void WriteSource(bool storyColumn, string first = "", string second = "", bool additional = false, bool newUnscoped = false)
+        void WriteSource(bool storyColumn, string first = "", string second = "", bool additional = false, bool newUnscoped = false,
+            string additionalScope = "additional-search")
         {
             var header = storyColumn ? "| ID | Story ID | Surface | Requirement | Acceptance criteria |\n| --- | --- | --- | --- | --- |"
                 : "| ID | Surface | Requirement | Acceptance criteria |\n| --- | --- | --- | --- |";
             var firstScope = storyColumn ? first + " | " : "";
             var secondScope = storyColumn ? second + " | " : "";
-            var extra = additional ? "\n| SEARCH-003 | additional-search | backend | Build additional search behavior. | Search returns the additional current results. |" : "";
+            var extra = additional ? $"\n| SEARCH-003 | {additionalScope} | backend | Build additional search behavior. | Search returns the additional current results. |" : "";
             var unscoped = newUnscoped ? "\n| SEARCH-004 | | backend | Build a new independent search behavior. | Search returns the independent result. |" : "";
             repository.Write(source, "---\ntitle: Search projection\ntype: feature-specification\n---\n\n## Functional requirements\n\n" + header
                 + $"\n| SEARCH-001 | {firstScope}backend | Build current search behavior with existing visibility permissions. | Search retains current results. |"

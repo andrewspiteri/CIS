@@ -11,6 +11,100 @@ namespace Cis.Modules.Brd.Tests;
 public sealed partial class FeatureIntakeTests
 {
     [Fact]
+    public void StoryPlanning_WholeContainerPrerequisiteBindsIndependentPreparationWithoutSupersededImplementation()
+    {
+        using var f = new Fixture();
+        File.WriteAllText(f.Request.SourcePath, PrivacyStory
+            + "| PRV-003 | The product shall publish the verified privacy outcome. |\n"
+            + "| PRV-004 | The product shall preserve an independent privacy reference. |\n");
+        CreateIntake(f);
+        var reader = new PlanningService(null!, null!, null!, new CisRepositoryContextResolver(), workspaceRegistry: f.Registry);
+        FeatureIntakeService Fresh() => new(f.Registry, f.Importer, new DocumentationCatalogMerger(), [f.Baseline], taskContracts: reader);
+        var service = Fresh(); var root = service.Navigation(f.Authority).Features.Single().Stories.Single().Id;
+        var rootRead = service.Story(f.Authority, "referrals", root, false);
+        var rootSplit = service.DecomposeStory(f.Authority, new("referrals", root, rootRead.PlanningBasisHash!, rootRead.PlanningRevision, "Fixture controller",
+            [new("privacy-container", "Deliver the prepared privacy outcome", "Preserve the accepted version and acknowledgement behavior.", [1, 2], [], FixtureSize("high")),
+             new("publication", "Publish verified privacy", "Publish the accepted completed privacy outcome.", [3], ["privacy-container"], FixtureSize("low")),
+             new("reference", "Preserve independent reference", "Preserve the separate accepted privacy reference.", [4], [], FixtureSize("low"))]));
+        Assert.Empty(rootSplit.Errors);
+        CisFeatureStoryResult Prepare(string id, IReadOnlyList<CisFeatureStoryTask> tasks)
+        {
+            var current = service.Story(f.Authority, "referrals", id, false);
+            var proposal = service.PrepareStory(f.Authority, new("referrals", id, current.InputHash!, current.Revision!, "Fixture controller", tasks));
+            Assert.Empty(proposal.Errors);
+            var approved = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "approve", proposal.PlanHash!, proposal.Revision!, "Fixture reviewer", "Review this exact bounded privacy contract and its accepted prerequisites.");
+            Assert.Empty(approved.Errors); return approved;
+        }
+        CisFeatureStoryResult Complete(string id)
+        {
+            var current = service.Story(f.Authority, "referrals", id, false);
+            var started = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "start", current.PlanHash!, current.Revision!, "Fixture implementer", taskId: "T1");
+            Assert.Empty(started.Errors);
+            var completed = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "complete", started.PlanHash!, started.Revision!, "Fixture implementer",
+                taskId: "T1", evidence: "Explicitly re-verified every current criterion and the applicable preparation/output contract.", criteriaVerified: true);
+            Assert.Empty(completed.Errors); Assert.Equal("Complete", completed.TaskProgress[0].Status); return completed;
+        }
+        var criterion = "The shared preparation preserves the accepted customer privacy version and acknowledgement behavior.";
+        var prep = FixtureContract("T1", [1]) with
+        {
+            Category = "wireframe",
+            TaskTypeKey = "core.design.wireframe",
+            TaskTypeVersion = "1.1",
+            FrontendType = "customer",
+            RequiredOutputs = ["wireframes.md"],
+            AcceptanceCriteria = [criterion],
+            VerificationObligations = [new("privacy-preparation", [criterion], "Review the required shared privacy preparation.", "artifact", ["Current reviewed privacy preparation artifact"])]
+        };
+        var p = Prepare(rootSplit.ChildStories[0].Id!, [prep, FixtureContract("T2", [2])]);
+        var nested = service.DecomposeStory(f.Authority, new("referrals", p.StoryId, p.PlanningBasisHash!, p.PlanningRevision, "Fixture controller",
+            [new("version", "Retain exact privacy versions", "Preserve the accepted versioned privacy document.", [1], [], FixtureSize("low")),
+             new("acknowledgement", "Retain exact acknowledgement", "Preserve the accepted UTC acknowledgement contract.", [2], [], FixtureSize("low"))]));
+        Assert.Empty(nested.Errors); Assert.All(nested.ChildStories, child => Assert.Empty(child.SharedPrerequisiteTaskIds));
+        foreach (var child in nested.ChildStories)
+        {
+            var leaf = Prepare(child.Id!, [FixtureContract("T1", [1])]);
+            Assert.Empty(leaf.Tasks[0].DependsOn);
+        }
+        var d = Prepare(rootSplit.ChildStories[1].Id!, [FixtureContract("T1", [1])]);
+        var unrelated = Prepare(rootSplit.ChildStories[2].Id!, [FixtureContract("T1", [1])]);
+        Complete(p.StoryId); foreach (var child in nested.ChildStories) Complete(child.Id!);
+        d = Complete(d.StoryId); unrelated = Complete(unrelated.StoryId);
+        var pCurrent = service.Story(f.Authority, "referrals", p.StoryId, false);
+        Assert.Equal("Complete", pCurrent.PlanState); Assert.Equal("Ready", pCurrent.TaskProgress[1].Status);
+        // Superseded parent implementation is neither required again nor an outcome material input.
+        p = Prepare(p.StoryId, pCurrent.Tasks.Select(task => task.Id == "T2" ? task with { RequiredOutputs = ["artifacts/superseded-parent-notes.md"] } : task).ToArray());
+        Assert.Equal("Complete", p.PlanState);
+        var unaffectedD = Fresh().Story(f.Authority, "referrals", d.StoryId, false);
+        Assert.Equal("Complete", unaffectedD.TaskProgress[0].Status); Assert.Equal(d.PlanHash, unaffectedD.PlanHash); Assert.Equal(d.Revision, unaffectedD.Revision);
+        var request = service.Requests(f.Authority).Single();
+        var records = Path.Combine(Path.GetDirectoryName(Path.Combine(f.Authority, request.RequestPath))!, "story-tasks");
+        var dBytes = File.ReadAllBytes(Path.Combine(records, d.StoryId + ".json"));
+        var unrelatedBytes = File.ReadAllBytes(Path.Combine(records, unrelated.StoryId + ".json"));
+        p = Prepare(p.StoryId, p.Tasks.Select(task => task.Id == "T1" ? task with { RequiredOutputs = ["wireframes-revised.md"] } : task).ToArray());
+        Assert.Equal(prep.InstanceKey ?? "referrals/" + p.StoryId + "/T1", p.Tasks[0].InstanceKey);
+        Assert.Equal("Ready", p.TaskProgress[0].Status);
+        var beforePreparation = Fresh().Story(f.Authority, "referrals", d.StoryId, false);
+        Assert.NotEqual("Complete", beforePreparation.TaskProgress[0].Status); Assert.False(beforePreparation.TaskProgress[0].CanExecute);
+        Assert.Equal(dBytes, File.ReadAllBytes(Path.Combine(records, d.StoryId + ".json")));
+        Complete(p.StoryId);
+        service = Fresh(); var afterPreparation = service.Story(f.Authority, "referrals", d.StoryId, false);
+        Assert.Equal("Needs review", afterPreparation.PlanState); Assert.NotEqual("Complete", afterPreparation.TaskProgress[0].Status);
+        Assert.False(afterPreparation.TaskProgress[0].CanExecute); Assert.Equal(dBytes, File.ReadAllBytes(Path.Combine(records, d.StoryId + ".json")));
+        var renewed = Prepare(d.StoryId, afterPreparation.Tasks);
+        Assert.Equal(d.Tasks[0].InstanceKey, renewed.Tasks[0].InstanceKey);
+        Assert.Equal("Complete", Assert.Single(renewed.PreviousPlans).TaskProgress[0].Status);
+        Assert.NotEqual("Complete", renewed.TaskProgress[0].Status);
+        Complete(d.StoryId);
+        var retainedUnrelated = Fresh().Story(f.Authority, "referrals", unrelated.StoryId, false);
+        Assert.Equal("Complete", retainedUnrelated.TaskProgress[0].Status); Assert.Equal(unrelated.PlanHash, retainedUnrelated.PlanHash);
+        Assert.Equal(unrelated.Revision, retainedUnrelated.Revision); Assert.Equal(unrelatedBytes, File.ReadAllBytes(Path.Combine(records, unrelated.StoryId + ".json")));
+        var beforeRead = f.Snapshot();
+        Assert.Equal("Complete", Fresh().Story(f.Authority, "referrals", d.StoryId, false).TaskProgress[0].Status);
+        Assert.Equal("Complete", Fresh().Story(f.Authority, "referrals", p.StoryId, false).TaskProgress[0].Status);
+        Assert.Equal(beforeRead, f.Snapshot());
+    }
+
+    [Fact]
     public void StoryPlanning_UpgradedPrerequisiteBindingRetainsAppliedProgressForVerificationRenewal()
     {
         using var f = new Fixture(); File.WriteAllText(f.Request.SourcePath, PrivacyStory); CreateIntake(f);

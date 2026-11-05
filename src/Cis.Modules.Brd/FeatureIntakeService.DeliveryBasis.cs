@@ -223,7 +223,7 @@ public sealed partial class FeatureIntakeService
 
     // Bind exact prerequisite instances, including their own material prerequisites.
     // Approval actors, events, execution IDs and timestamps do not change this contract.
-    private static IReadOnlyDictionary<string, string> StoryTaskPrerequisiteBasis(WizardState state, DeliveryInput input,
+    private IReadOnlyDictionary<string, string> StoryTaskPrerequisiteBasis(WizardState state, DeliveryInput input,
         string storyId, CisFeatureStoryTask task)
     {
         var basis = new SortedDictionary<string, string>(StringComparer.Ordinal);
@@ -283,7 +283,14 @@ public sealed partial class FeatureIntakeService
             { draft.Story.Title, draft.Story.Narrative, Requirements = CurrentStoryAcceptance(input, draft), Children = children.Select(child => child.Id).Order(StringComparer.Ordinal) }, Json)));
             if (draft is not null)
             {
-                if (children.Count > 0) foreach (var child in children) CaptureOutcome(child.Id!);
+                if (children.Count > 0)
+                {
+                    // Whole outcomes require retained own preparation as well as child delivery.
+                    // Unapproved cache proposals and superseded parent implementation do not contribute.
+                    foreach (var item in ReadStoryRecord(state, owner)?.Plan.Tasks.Where(item => StoryOutcomePreparation(state, item)) ?? [])
+                        CaptureTask(owner, item.Id);
+                    foreach (var child in children) CaptureOutcome(child.Id!);
+                }
                 else foreach (var item in Tasks(owner)) CaptureTask(owner, item.Id);
                 foreach (var dependency in draft.StoryDependencies) CaptureOutcome(dependency);
             }

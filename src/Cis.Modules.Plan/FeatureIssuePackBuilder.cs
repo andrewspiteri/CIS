@@ -106,7 +106,12 @@ internal static partial class FeatureIssuePackBuilder
                 }).Where(scope => scope.Requirements.Overlaps(retained.RequirementIds)).ToArray();
             if (replacementScopes.Length == 0) continue; // New independent requirements do not replace historical work.
             var sameScope = replacementScopes.Count(scope => scope.Instance.StoryId == retained.StoryId);
-            if (sameScope == 1 && (retained.StoryId is not null || replacementScopes.Length == 1)) continue;
+            var retainedTargets = replacementScopes.All(scope => existingItems.Count(item =>
+                item.TaskTypeKey.Equals(scope.Instance.Definition.Key, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(item.FrontendType, scope.Instance.FrontendType, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(item.StoryId, scope.Instance.StoryId, StringComparison.Ordinal)
+                && scope.Requirements.Overlaps(item.RequirementIds)) == 1);
+            if (sameScope == 1 && retainedTargets && (retained.StoryId is not null || replacementScopes.Length == 1)) continue;
             if (replacementScopes.Length == 1 && replacementScopes[0].Requirements.SetEquals(retained.RequirementIds))
             {
                 var scope = replacementScopes[0].Instance;
@@ -115,7 +120,7 @@ internal static partial class FeatureIssuePackBuilder
                     problems.Add($"Legacy tasks have an ambiguous retained mapping to story {scope.StoryId}; retain their separate IDs and accounting owners before re-import.");
             }
             else
-                problems.Add($"Retained task {retained.Id} cannot be replaced automatically by story scopes {string.Join(", ", replacementScopes.Select(scope => scope.Instance.StoryId ?? "shared"))}. Explicitly map its retained ID and accounting owner before re-import; its history and reservations must not become fresh suffixed tasks.");
+                problems.Add($"Retained task {retained.Id} (accounting owner {retained.WorkOwnerTaskId ?? retained.Id}) cannot be replaced automatically by story scopes {string.Join(", ", replacementScopes.Select(scope => scope.Instance.StoryId ?? "shared"))}. Explicitly map its retained ID and accounting owner before re-import; its history and reservations must not become fresh suffixed tasks.");
         }
         var existingGroups = existingItems.GroupBy(item => Identity(item.TaskTypeKey, item.FrontendType, item.StoryId), StringComparer.OrdinalIgnoreCase).ToArray();
         var mappedIds = mappedScopes.Values.Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
@@ -263,13 +268,24 @@ internal static partial class FeatureIssuePackBuilder
         IReadOnlyList<string>? priorGenerated, IReadOnlyList<string> generated)
     {
         if (existing is null) return generated;
-        if (priorGenerated is null) return existing;
-        // Authored additions and removals are retained; only the known generated
-        // projection is replaced when its source changes.
-        return existing.Where(value => !priorGenerated.Contains(value, StringComparer.Ordinal))
-            .Concat(generated.Where(value => existing.Contains(value, StringComparer.Ordinal)
-                || !priorGenerated.Contains(value, StringComparer.Ordinal)))
-            .Distinct(StringComparer.Ordinal).ToArray();
+        if (priorGenerated is null || priorGenerated.SequenceEqual(generated, StringComparer.Ordinal)) return existing;
+        // Retain the authored sequence and removals. Replace only known generated
+        // entries, anchoring new entries where the generated portion last occurred.
+        var retained = new List<string>();
+        var insertion = -1;
+        foreach (var value in existing)
+        {
+            if (priorGenerated.Contains(value, StringComparer.Ordinal))
+            {
+                if (generated.Contains(value, StringComparer.Ordinal)) retained.Add(value);
+                insertion = retained.Count;
+            }
+            else retained.Add(value);
+        }
+        var additions = generated.Where(value => !priorGenerated.Contains(value, StringComparer.Ordinal)
+            && !retained.Contains(value, StringComparer.Ordinal)).Distinct(StringComparer.Ordinal).ToArray();
+        retained.InsertRange(insertion < 0 ? retained.Count : insertion, additions);
+        return retained;
     }
 
     private static string ShortIdentityHash(string value)

@@ -57,7 +57,7 @@ public sealed partial class FeatureIntakeService
             repositories = input.Repositories.Select(r => new { r.Id, r.RepositoryPath })
         }, Json)));
 
-    private static bool StoryScopeMatches(StoryPlanRecord record, WizardState state, DeliveryInput input, string storyId)
+    private bool StoryScopeMatches(StoryPlanRecord record, WizardState state, DeliveryInput input, string storyId)
     {
         if (record.Basis is null) return !StoryHasExternalPrerequisites(input, storyId, record.Plan.Tasks)
             && record.ScopeHash == LegacyStoryScopeHash(state, input, storyId);
@@ -98,7 +98,7 @@ public sealed partial class FeatureIntakeService
         return document.RootElement.Clone();
     }
 
-    private static IReadOnlyDictionary<string, string> ApprovedStoryBasis(WizardState state, DeliveryInput input,
+    private IReadOnlyDictionary<string, string> ApprovedStoryBasis(WizardState state, DeliveryInput input,
         string storyId, IReadOnlyList<CisFeatureStoryTask> tasks, bool includePrerequisites = true)
     {
         var basis = new SortedDictionary<string, string>(StoryContractBasis(state, input, storyId).ToDictionary(item => item.Key, item => item.Value), StringComparer.Ordinal);
@@ -130,7 +130,7 @@ public sealed partial class FeatureIntakeService
         return WithStoryDeliveryBoundaries(state, basis);
     }
 
-    private static string StoryScopeReason(StoryPlanRecord record, WizardState state, DeliveryInput input, string storyId)
+    private string StoryScopeReason(StoryPlanRecord record, WizardState state, DeliveryInput input, string storyId)
     {
         if (record.Basis is null)
             return "The saved task plan has a legacy whole-feature basis whose compatibility cannot be established. Its approval and task history are retained; review a current task contract before further execution or completion.";
@@ -165,7 +165,7 @@ public sealed partial class FeatureIntakeService
             .SequenceEqual(right.OrderBy(task => task.Id, StringComparer.Ordinal).Select(Contract), StringComparer.Ordinal);
     }
 
-    private static bool PendingStoryProposal(StoryPlanRecord? record, CisFeatureStoryResult? cached, string inputHash,
+    private bool PendingStoryProposal(StoryPlanRecord? record, CisFeatureStoryResult? cached, string inputHash,
         WizardState state, DeliveryInput input)
         => record is not null && cached is { Provider: "controller", Tasks.Count: > 0 }
             && cached.InputHash == inputHash && cached.Revision == StoryRevision(record)

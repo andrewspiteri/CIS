@@ -51,7 +51,7 @@ public sealed partial class FeatureIntakeService
         return drafts;
     }
 
-    private static string StoryPlanningBasis(WizardState state, DeliveryInput input, string storyId)
+    private string StoryPlanningBasis(WizardState state, DeliveryInput input, string storyId)
         => DeliveryBasisHash(ApprovedStoryBasis(state, input, storyId, []));
 
     private static IReadOnlyList<string> CurrentStoryAcceptance(DeliveryInput input, DeliveryDraft draft)
@@ -63,7 +63,7 @@ public sealed partial class FeatureIntakeService
             ? current[number - 1] : "missing parent requirement " + number).ToArray();
     }
 
-    private static CisFeatureStoryResult ProjectStoryPlanning(WizardState state, DeliveryInput input, CisFeatureStoryResult result)
+    private CisFeatureStoryResult ProjectStoryPlanning(WizardState state, DeliveryInput input, CisFeatureStoryResult result)
     {
         var draft = input.Drafts.Single(item => item.Id == result.StoryId);
         var planning = StoryPlanning(state, result.StoryId);
@@ -104,6 +104,9 @@ public sealed partial class FeatureIntakeService
     private static bool StorySharedPreparation(string? category)
         => category is "coordination" or "investigation" or "planning" or "wireframe" or "design";
 
+    private bool StoryOutcomePreparation(WizardState state, CisFeatureStoryTask task)
+        => StorySharedPreparation((taskContracts?.ResolveStoryTask(state.Authority.RepositoryPath, task) ?? task).Category);
+
     private sealed class StoryCompletionEvaluation
     {
         public Dictionary<string, bool> Completed { get; } = new(StringComparer.Ordinal);
@@ -119,7 +122,7 @@ public sealed partial class FeatureIntakeService
         return record;
     }
 
-    private static bool StoryCompletionScopeCurrent(WizardState state, DeliveryInput input, string storyId, StoryPlanRecord record,
+    private bool StoryCompletionScopeCurrent(WizardState state, DeliveryInput input, string storyId, StoryPlanRecord record,
         StoryCompletionEvaluation evaluation)
     {
         if (!evaluation.ScopeCurrent.TryGetValue(storyId, out var current))
@@ -181,8 +184,7 @@ public sealed partial class FeatureIntakeService
             var children = StoryPlanning(state, storyId)?.Children ?? [];
             var record = StoryCompletionRecord(state, storyId, evaluation);
             if (children.Count > 0)
-                return Result((record?.Plan.Tasks.Where(task => StorySharedPreparation(
-                        (taskContracts?.ResolveStoryTask(state.Authority.RepositoryPath, task) ?? task).Category)) ?? [])
+                return Result((record?.Plan.Tasks.Where(task => StoryOutcomePreparation(state, task)) ?? [])
                     .All(task => StoryTaskCurrentlyComplete(state, input, storyId, task.Id, evaluation, record))
                     && children.All(child => StoryOutcomeComplete(state, input, child.Id!, evaluation)));
             return Result(record is not null && record.Plan.Tasks.Count > 0

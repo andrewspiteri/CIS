@@ -37,7 +37,8 @@ public sealed partial class FeatureIntakeService
             ContractVersion = contractVersion,
             Direction = input.Direction,
             Constraints = EffectiveStoryConstraints(input, contractVersion),
-            NeedsVerificationRenewal = result.TaskProgress.SingleOrDefault(item => item.Id == taskId)?.NeedsVerificationRenewal == true
+            NeedsVerificationRenewal = result.TaskProgress.SingleOrDefault(item => item.Id == taskId)?.NeedsVerificationRenewal == true,
+            CanonicalBinding = StoryCanonicalBinding(state, input, result.StoryId, task)
         };
         var contexts = storyCompletion.Assess(work, prepare);
         if (!contexts.Select(context => context.RepositoryId).Order(StringComparer.Ordinal)

@@ -17,27 +17,16 @@ public sealed partial class FeatureIntakeService
             if (result.Errors.Count > 0) return result;
             var task = result.Tasks.SingleOrDefault(item => item.Id == taskId) ?? throw new InvalidDataException("Select a task in this story.");
             var taskProgress = result.TaskProgress.Single(item => item.Id == taskId);
-            if (!taskProgress.CanExecute) throw new InvalidDataException(taskProgress.BlockedReason ?? "This task is not available for execution.");
-            var repositories = task.RepositoryIds.Select(id => state.Workspace.Repositories.SingleOrDefault(repository => repository.Id == id && repository.IsProductOwned)
-                ?? throw new InvalidDataException("A task repository is no longer registered as product-owned.")).ToArray();
+            if (!taskProgress.CanExecute) return result with { Errors = [taskProgress.BlockedReason ?? "This task is not available for execution."] };
             var input = ReadDeliveryInput(state, false);
-            var contractVersion = StoryContractVersion(ReadStoryRecord(state, storyId)?.Basis);
-            var constraints = EffectiveStoryConstraints(input, contractVersion);
-            if (StoryTaskSensitive(task) || new[] { result.Definition, input.Direction, constraints }.Concat(result.Story!.Requirements).Any(DeliverySensitive))
+            var work = StoryWork(state, input, result, task, actor, previous: taskProgress.Execution,
+                responses: (taskProgress.ReviewFeedback ?? []).Where(answer => !string.IsNullOrWhiteSpace(answer.Answer)).ToArray());
+            if (StoryTaskSensitive(task) || new[] { result.Definition, work.Direction, work.Constraints }.Concat(result.Story!.Requirements).Any(DeliverySensitive))
                 throw new InvalidDataException("The selected task context may contain credentials. Remove them before execution.");
-            var work = new CisStoryTaskWork(workspacePath, slug, storyId, result.PlanHash!, result.Definition, task,
-                task.RequirementNumbers.Select(number => result.Story.Requirements[number - 1]).ToArray(), repositories, actor)
-            {
-                Direction = input.Direction,
-                Constraints = constraints,
-                ContractVersion = contractVersion,
-                PreviousExecution = taskProgress.Execution,
-                NeedsVerificationRenewal = taskProgress.NeedsVerificationRenewal,
-                ReviewResponses = (taskProgress.ReviewFeedback ?? []).Where(answer => !string.IsNullOrWhiteSpace(answer.Answer)).ToArray()
-            };
             if (work.ReviewResponses.Any(answer => DeliverySensitive(answer.Answer!)))
                 throw new InvalidDataException("A review answer may contain credentials. Remove them before execution.");
             var selection = storyExecutor.SelectModels(work);
+            selection = selection with { Work = selection.Work ?? taskProgress.Work };
             result = result with { ExecutionPlan = selection };
             if (!execute) return result with { Errors = selection.Errors };
             if (selection.Errors.Count > 0) return result with { Errors = selection.Errors };

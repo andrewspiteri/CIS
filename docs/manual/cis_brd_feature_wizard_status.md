@@ -103,7 +103,9 @@ Story input files must be regular JSON files no larger than 256 KiB.
 | `complete` | The `start` inputs, plus `--evidence` and `--criteria-verified` | Record verified completion against the current plan and revision. |
 | `execution-plan` | `--task` | Select implementation and distinct review models without execution. |
 | `execute` | `--task`, `--expected-plan-hash`, `--expected-revision`, `--expected-execution-hash`, `--actor` | Execute and review the approved task; remote execution requires `--allow-remote`. |
-| `feedback-suggest` | `--task`, `--expected-revision` | Suggest answers to retained review findings. Provider/model selection and remote authorization work as for preparation. |
+| `work-status` | `--task` | Read canonical ownership, cumulative allowance, correction history, recovery state and the next permitted action. |
+| `bind-work` | `--input <json-path>` | Associate the approved story instance with its exact existing approved canonical change/task. This does not allocate work or grant approval. |
+| `feedback-suggest` | `--task`, `--expected-revision` | Suggest supported context for genuine missing decisions/information. Optional advice and ordinary required corrections do not require answers. |
 | `feedback-save` | `--input <json-path>` | Save human answers from JSON, at most 256 KiB. Identity and concurrency fields come from the request. |
 
 `feedback-save` input contains `slug`, `storyId`, `taskId`, `expectedPlanHash`,
@@ -116,6 +118,107 @@ Obtain current hashes and revisions from JSON results rather than inventing valu
 Stale inputs are rejected. Task-plan approval and saved feedback do not by themselves
 establish successful execution or completion. Durable state is stored beside the
 feature request under `story-tasks/<story-id>.json`, separately from generation caches.
+
+### Work ownership and continuation
+
+Inspect the current story without starting work:
+
+```text
+cis brd feature wizard story work-status --workspace <authority> --slug <feature> --story <story-id> --task <task-id> --format json
+```
+
+`taskProgress[].work` reports whether controls are required, whether the canonical binding
+is proven, its `identity`, and the existing work-control result in `control`. The latter's
+`work` contains the current revision, task/change consumption, reservations, remaining
+allowance, restoration reserve, recovery state and durable correction history. Historical
+usage can remain unknown; a required missing ledger or allocation is a hold. A correction-only
+view records the default correction limit and does not claim a total work allowance.
+Status and execution-plan reads do not allocate, record progress/disposition or call a model.
+
+CIS reuses an existing unambiguous approved association. If it is missing, identify the
+actual approved canonical change and task through the existing preparation/plan facilities.
+Do not use a synthetic `STORY-*`, `*-IMPLEMENT` or `*-REVIEW` stage name as the owner.
+Supply this binding envelope with current story tokens:
+
+```json
+{
+  "slug": "<feature>", "storyId": "<story-id>", "taskId": "<task-id>",
+  "expectedPlanHash": "<current planHash>", "expectedRevision": "<current revision>",
+  "changeId": "CIS-0001", "workOwnerTaskId": "WORK-001",
+  "actor": "<authorized controller>", "reason": "<why this exact approved relationship applies>"
+}
+```
+
+`CIS-0001` and `WORK-001` are synthetic examples; replace them with the approved identities.
+Run `cis brd feature wizard story bind-work --workspace <authority> --input binding.json
+--format json`. CIS validates both current authorities and records the association's actor,
+reason and time outside implementation meaning. The original task approval, retained
+implementation digest and work history remain intact. A conflicting owner or ambiguous
+mapping is held; binding cannot replace an established owner or reset its allowance.
+
+Follow the returned `nextAction` using [`cis agent work`](cis_agent_work.md). Allocate once
+at the proven change/task boundary under existing authority, including the required
+acknowledgment of unmeasured historical effort. Applicable controls on an exact registered
+owned participant permit allocation at the authority. A story with retained correction
+history can also explicitly enter finite work accounting through this allocation route.
+Establishing the allocation adopts work accounting across the authority: all supported
+direct-task and story routes, including sibling tasks with no correction history, then
+need their canonical owner and applicable finite allocation. One task's allocation grants
+no capacity to another. This does not adopt engineering quality policy or grant plan,
+design or completion approval. The allocation requires the existing canonical task,
+authorized actor/reason and decision references; a profile alone does not opt in.
+Progress, reflection and justified disposition
+use that same owner and the returned revision. Retry through `execution-plan` and `execute`
+with refreshed story tokens; compatible implementation whose work was already accounted can
+be reused without charging it again. Unaccounted historical runs require the displayed
+owner-scoped `reconcile-story-history` before reuse. Generic agent resume follows the recorded
+route and cannot turn story-stage identities into direct canonical tasks.
+
+The default two automatic correction rounds persist across invocations, repositories and
+provider changes. A started interrupted round remains recorded. After the limit, inspect
+the returned correction relationship and required finding references. An authorized relevant
+`simplify` disposition can permit one specific bounded correction within remaining capacity;
+it does not replenish two rounds, logical attempts, restoration reserve or total allowance.
+After checking the retained contract and exact candidate material, CIS starts that granted
+step against its retained findings before a fresh review can replace their wording. A genuinely
+revised and approved task contract supersedes obsolete pending correction context; prior
+rounds, spent work and history remain recorded.
+
+A started grant whose remaining bound cannot support the minimum operation stays held.
+Retrying or reallocating the containing task does not extend that correction's separate cap.
+After every associated owned root and child is safely finalized without recovery uncertainty,
+an authorized controller can use the [same-round extension](cis_agent_work.md#record-a-disposition-and-resume)
+through `cis agent work disposition <change-id> <task-id> --input <disposition.json>
+--actor <controller> --reason <rationale>`. Supply kind `simplify`, a fresh revision, the same
+`correctionRelationshipId` and current `correctionFindingReferences`, a changed justified
+hypothesis, evidence and `nextAction`. When fewer than 30 usable seconds remain,
+`correctionMaximumSeconds` authorizes one additional step of 30–3,600 seconds. CIS retains
+the same round ID, number, material context and completed stages; spent work, logical
+attempts, restoration reserves, hard task/change allowances and provider limits do not reset.
+Recovery uncertainty and genuine authority/permission/evidence holds remain independent.
+Routine useful reflection and delegated continuation do not require another human sign-off.
+
+`routine-reflection-autonomous` means the otherwise healthy story can continue. At admission,
+CIS records `story-controller-progress` from its approved contract, retained native evidence
+and measured cost under existing delegation. It qualifies only that story relationship and
+contract; it does not clear the direct-task reflection gate. Status remains read-only, and
+correction, capacity, recovery, permission and approval holds remain effective.
+
+### Review findings and answers
+
+`execution.structuredFindings` retains severity and explicit `required`/`optional` disposition,
+with CIS-stamped repository, run and material association. Display strings are summaries.
+Optional minor advice permits application and completion when the other gates pass, and
+does not require a correction, answer or suggestion call. A required minor defect remains
+corrective; a free-text answer cannot fix or waive it. Only an explicitly identified existing
+human decision or question requires an answer; other holds name the permitted next action.
+Retained historical blocked questions keep their established answer flow. Inconsistent review verdicts
+are held for clarification within the same work context.
+
+Historical findings without disposition keep their established meaning: blocking, major and
+minor are corrective; observations are advisory. Unknown or malformed values do not become
+optional. The editor projects these distinctions, cumulative work and next permitted action;
+it does not create an additional approval boundary.
 
 Delivery size must have a current assessment of at most medium before implementation
 can start. High stories remain containers; unknown or stale scope needs targeted

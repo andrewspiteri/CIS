@@ -44,7 +44,35 @@ internal static class EngineeringReviewEvidence
                 || Text(root, "envelopeId") != Text(manifest, "envelopeId") || Text(root, "status") != CisAgentRunStates.Succeeded
                 || !root.TryGetProperty("review", out var review) || Text(review, "recommendation") != "ready"
                 || !review.TryGetProperty("findings", out var findings) || findings.ValueKind != JsonValueKind.Array) continue;
-            if (findings.EnumerateArray().All(finding => Text(finding, "severity") == "observation")) return true;
+            var strict = false;
+            if (review.TryGetProperty("contractVersion", out var version))
+            {
+                if (version.ValueKind != JsonValueKind.Number || !version.TryGetInt32(out var number) || number != 2) continue;
+                strict = true;
+            }
+            var dispositions = new List<string>();
+            var valid = true;
+            foreach (var finding in findings.EnumerateArray())
+            {
+                if (finding.ValueKind != JsonValueKind.Object) { valid = false; break; }
+                string? disposition = null;
+                if (finding.TryGetProperty("disposition", out var supplied))
+                {
+                    if (supplied.ValueKind != JsonValueKind.String) { valid = false; break; }
+                    disposition = supplied.GetString();
+                }
+                if (!CisTaskReviewSemantics.TryDisposition(Text(finding, "severity"), disposition, strict, out var effective))
+                { valid = false; break; }
+                if (finding.TryGetProperty("requiresDecision", out var decision)
+                    && (decision.ValueKind is not (JsonValueKind.True or JsonValueKind.False) || decision.GetBoolean()))
+                { valid = false; break; } // A ready result cannot still require an unresolved human decision.
+                if (strict && (!finding.TryGetProperty("basisReferences", out var basis) || basis.ValueKind != JsonValueKind.Array
+                    || basis.EnumerateArray().Any(value => value.ValueKind != JsonValueKind.String)
+                    || !CisTaskReviewSemantics.ValidBasisReferences(basis.EnumerateArray().Select(value => value.GetString()!).ToArray())))
+                { valid = false; break; }
+                dispositions.Add(effective);
+            }
+            if (valid && CisTaskReviewSemantics.VerdictError(Text(review, "recommendation"), dispositions) is null) return true;
         }
         return false;
     }

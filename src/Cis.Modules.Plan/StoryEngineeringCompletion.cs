@@ -23,7 +23,7 @@ public sealed class StoryEngineeringCompletion(ICisRepositoryContextResolver res
                     throw new InvalidDataException("Story completion participant is not product-owned.");
                 var context = resolver.Resolve(repository.RepositoryPath).Context
                     ?? throw new InvalidDataException("Repository context is unavailable for story completion.");
-                var gateErrors = taskContracts?.ValidateStoryTaskGate(work.WorkspacePath, work.Task, completing: true)
+                var gateErrors = taskContracts?.ValidateStoryTaskGate(work.WorkspacePath, work.ForCanonicalGate(), completing: true)
                     ?? (string.IsNullOrWhiteSpace(work.Task.ApprovalGate) || work.Task.ApprovalGate.Equals("none", StringComparison.OrdinalIgnoreCase)
                         ? [] : new[] { $"Task {work.Task.Id} requires approval gate '{work.Task.ApprovalGate}'; its existing approval authority is unavailable." });
                 if (gateErrors.Count > 0)

@@ -143,7 +143,27 @@ See [wizard status](cis_brd_feature_wizard_status.md) and [save](cis_brd_feature
 
 ## Engineering completion evidence
 
-When engineering defaults are adopted, the story's verified-criteria flag is necessary but insufficient. Completion checks current source, graph, policy, alignment and required gate evidence separately for every owned participant. A missing completion service cannot bypass adopted obligations. Existing projects without adoption retain their established workflow.
+Where work controls apply, the supported story loop carries one proven canonical
+work owner through implementation, independent review, required correction and application.
+Reading status never creates an allocation. Inspect or establish a missing association through the headless
+[`work-status` / `bind-work` routes](cis_brd_feature_wizard_status.md#work-ownership-and-continuation),
+then use the existing owner-scoped work allocation, progress and disposition commands.
+Applicable participant controls and an explicit finite allocation from retained story
+correction history use this same authority route. Establishing that allocation adopts work
+accounting across the authority: every supported direct-task and story route, including
+siblings without correction history, then needs its canonical owner and applicable finite
+allocation. One task's allocation grants no capacity to another. This does not adopt
+engineering quality policy or grant plan, design or completion approval.
+Stage IDs and linked repositories do not receive fresh allowances or correction limits.
+This coverage governs supported CIS routes sharing authoritative state; it does not account
+for independent external commands/hosts or establish a total storage-retention guarantee.
+
+Required findings must be corrected or legitimately resolved with current authority and
+evidence before application. Optional advice remains visible without compulsory engineering
+or feedback answers. A consistent ready review with optional minor advice can proceed through
+the same completion checks below. Saved answers are context, not defect closure or permission.
+
+When engineering defaults are adopted, the story's verified-criteria flag is necessary but insufficient. Completion checks current source, graph, policy, alignment and required gate evidence separately for every owned participant. A missing completion service cannot bypass adopted obligations. Projects without engineering quality-policy adoption retain their established completion-evidence workflow; authority-wide work accounting remains a separate requirement where established.
 
 Prepare templates without changing task state:
 

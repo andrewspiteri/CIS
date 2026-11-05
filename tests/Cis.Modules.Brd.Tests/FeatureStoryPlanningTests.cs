@@ -218,6 +218,9 @@ public sealed partial class FeatureIntakeTests
     private sealed class PlanningContractCapture : ICisStoryTaskExecutor
     {
         public CisStoryTaskWork? Observed { get; private set; }
+        public CisStoryWorkStatus? WorkInspection { get; set; }
+        public CisStoryWorkStatus InspectWork(CisStoryTaskWork work) => WorkInspection
+            ?? new("unavailable", false, false, null, null, "Load the current work-control inspector.", []);
         public CisStoryExecutionPlan SelectModels(CisStoryTaskWork work)
             => new("fixture-model-selection", "High", ["Sensitive privacy review uses stronger reasoning independently of bounded delivery size."],
                 new("fixture", "implementation", true), new("fixture", "review", true), []);

@@ -248,7 +248,8 @@ public sealed partial class FeatureIntakeService
         IReadOnlyList<CisFeatureStoryTask> previous, string slug, string storyId, WizardState state, DeliveryInput input)
     {
         if (tasks is null) throw new InvalidDataException("Supply the complete proposed task list.");
-        var accepted = ReadStoryRecord(state, storyId) is not null;
+        var retainedRecord = ReadStoryRecord(state, storyId);
+        var accepted = retainedRecord is not null;
         var ordinal = previous.Concat(tasks).Select(task => task is not null && task.Id is { Length: > 1 }
             && int.TryParse(task.Id[1..], out var number) ? number : 0).DefaultIfEmpty().Max();
         string AllocateId() => ordinal >= 999_999 ? throw new InvalidDataException("The bounded story task identity inventory is exhausted; retain existing instances before preparing further proposals.") : "T" + ++ordinal;
@@ -280,6 +281,10 @@ public sealed partial class FeatureIntakeService
             if (old?.WorkOwnerTaskId is not null && (task.WorkOwnerTaskId is not null && task.WorkOwnerTaskId != old.WorkOwnerTaskId
                 || task.ChangeId is not null && task.ChangeId != old.ChangeId))
                 throw new InvalidDataException("Task regeneration cannot change its existing accounting owner or containing change.");
+            var binding = old is null ? null : StoryCanonicalBinding(state, input, storyId, old, retainedRecord);
+            if (binding is not null && (task.WorkOwnerTaskId is not null && task.WorkOwnerTaskId != binding.WorkOwnerTaskId
+                || task.ChangeId is not null && task.ChangeId != binding.ChangeId))
+                throw new InvalidDataException("Retain the task's established work association; a revised proposal cannot choose a new allowance owner.");
             var id = old?.Id ?? (key == slug + "/" + storyId + "/" + task.Id ? task.Id : task.InstanceKey is null ? key[(key.LastIndexOf('/') + 1)..] : task.Id);
             if (!remap.TryAdd(task.Id, id) || result.Any(item => item.InstanceKey == key))
                 throw new InvalidDataException("Each proposed task needs a distinct stable instance identity.");
@@ -310,7 +315,8 @@ public sealed partial class FeatureIntakeService
                 }
                 if (!changed) break;
             }
-        foreach (var old in previous.Where(task => task.WorkOwnerTaskId is not null))
+        foreach (var old in previous.Where(task => task.WorkOwnerTaskId is not null
+            || StoryCanonicalBinding(state, input, storyId, task, retainedRecord) is not null))
             if (!result.Any(task => task.InstanceKey == (old.InstanceKey ?? slug + "/" + storyId + "/" + old.Id)))
                 throw new InvalidDataException("Retain owned task instance " + old.Id + " and its instanceKey/work owner. Use the existing source/scope retirement workflow before removing accepted work; a new suffix or renamed proposal cannot reset its accounting identity.");
         var draft = input.Drafts.Single(item => item.Id == storyId);

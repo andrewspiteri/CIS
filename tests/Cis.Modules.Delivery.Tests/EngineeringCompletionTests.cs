@@ -349,6 +349,44 @@ public sealed partial class EngineeringCompletionTests
     }
 
     [Fact]
+    public void TaskReviewLegacyCompletionRetainsSeverityMeaningAndRejectsMalformedOptionalLabels()
+    {
+        using var fixture = new Fixture();
+        foreach (var (severity, disposition, accepted) in new (string, string?, bool)[]
+                 { ("minor", null, false), ("observation", null, true), ("observation", "unknown", false) })
+        {
+            var finding = new Dictionary<string, object?> { ["severity"] = severity };
+            if (disposition is not null) finding["disposition"] = disposition;
+            fixture.WriteJson("legacy-review-result.json", new
+            {
+                schemaVersion = 2,
+                status = CisAgentRunStates.Succeeded,
+                envelopeId = "legacy-envelope",
+                review = new { recommendation = "ready", findings = new[] { finding } }
+            });
+            var result = fixture.Artifact("legacy-review-result.json");
+            var receipt = fixture.Receipt(EngineeringGateState.Passed);
+            fixture.WriteJson("legacy-review-run.json", new
+            {
+                schemaVersion = 1,
+                runId = receipt.ReviewerRunId,
+                startedAtUtc = "2000-01-02T00:00:00Z",
+                inputDigest = receipt.InputDigest,
+                status = CisAgentRunStates.Succeeded,
+                mode = "review",
+                permission = "read-only",
+                taskId = receipt.TaskId,
+                provider = "legacy-protocol",
+                envelopeId = "legacy-envelope",
+                resultDigest = result.Sha256,
+                taskContractDigest = receipt.TaskDigest
+            });
+            receipt = receipt with { Gates = [new("review", EngineeringGateState.Passed, "Retained historical native review contract.", [fixture.Artifact("legacy-review-run.json"), result])] };
+            Assert.Equal(accepted, fixture.Review(receipt, gateId: "review").Count == 0);
+        }
+    }
+
+    [Fact]
     public void ExecutionIdentityDetectsUncommittedAndNewInputsButIgnoresDisposableEvidence()
     {
         using var fixture = new Fixture();

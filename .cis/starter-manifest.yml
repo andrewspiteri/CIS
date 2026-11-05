@@ -1438,7 +1438,7 @@ managed_artifacts:
   path: .github/instructions/cis-agent-execution.instructions.md
   definition: guidance.instruction.agent-execution
   template_version: 1
-  applied_hash: sha256:0299bd4cfc7672b2f8527fe2b6c121f50e5dd8db290402014b821c33452ef28b
+  applied_hash: sha256:6e229215f42c0a33814f8e6b1dbd5004ff589dad7d03aa779740416b37da2a51
   ownership: managed
 - id: guidance.instruction.ai-model-qualification
   path: .github/instructions/cis-ai-model-qualification.instructions.md
@@ -2140,7 +2140,7 @@ managed_artifacts:
   path: .github/skills/cis-agent-execution/SKILL.md
   definition: guidance.skill.agent-execution
   template_version: 1
-  applied_hash: sha256:2328309d3db5849933547e6b67d267adc70b021dba6a56c4129fd556634674e7
+  applied_hash: sha256:777858fb0fae7ba1509b924dbf1132eee3ddc4cf4e8b78510d7cddec7cbe9e40
   ownership: human
 - id: guidance.skill.ai-model-qualification
   path: .github/skills/cis-ai-model-qualification/SKILL.md
@@ -2428,7 +2428,7 @@ managed_artifacts:
   path: docs/references/agent-provider-profile.md
   definition: reference.agent-provider-profile
   template_version: 1
-  applied_hash: sha256:c537c22ff8ecf2b45913610e68e7ec4d8859ef0b8e55d93fa6fe4a68ed823286
+  applied_hash: sha256:a3d4887508121ea55ed2c53b5a1c4e2301fb77b6a1da985d0054f97e44afd01b
   ownership: human
 - id: reference.ai-evaluation-index-card
   path: docs/references/ai-evaluation-datasets/index-card.md
@@ -2464,7 +2464,7 @@ managed_artifacts:
   path: docs/references/business-invariant-catalogue.md
   definition: reference.business-invariant-catalogue
   template_version: 1
-  applied_hash: sha256:159dd8e747cbc1aa6a4a9b4c65a12f059e912c98ef0eb92c0ce17c4b79385f43
+  applied_hash: sha256:fd7429f95efc48c67c87b884f2d41245a562a279be57d73c5dc26e6d840f0413
   ownership: managed
 - id: reference.command-dictionary.reference
   path: docs/references/command-dictionary.md
@@ -2560,7 +2560,7 @@ managed_artifacts:
   path: docs/references/problem-details-catalogue.md
   definition: reference.problem-details-catalogue
   template_version: 1
-  applied_hash: sha256:90081f7c3d5685e76e1867ebe383f70d91d44119bfc45234e8035ed7a825cdd7
+  applied_hash: sha256:85f16eedbec7efe5e0be5d655c98745d38be4fc0b7c280105118196452da9e53
   ownership: managed
 - id: reference.projection-dictionary.reference
   path: docs/references/projection-dictionary.md

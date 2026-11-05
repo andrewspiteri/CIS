@@ -8,7 +8,7 @@ public sealed partial class AgentModule
 {
     private static Command Work(AgentService service)
     {
-        var group = new Command("work", "Allocate and inspect durable direct-task work, record progress, and resolve a bounded continuation.");
+        var group = new Command("work", "Allocate and inspect durable task/story work, record progress, and resolve a bounded continuation.");
         var allocate = new Command("allocate", "Establish or update an authorized change and task allocation without resetting consumption.");
         var allocationChange = new Argument<string>("change-id");
         var allocationInput = Required("--input"); var allocationActor = Required("--actor"); var allocationReason = Required("--reason");
@@ -26,13 +26,14 @@ public sealed partial class AgentModule
 
         var status = new Command("status", "Read current work ownership, capacity, history, and holds without changing accounting.");
         var statusChange = new Argument<string>("change-id"); var statusTask = new Option<string?>("--task");
+        var statusRelationship = new Option<string?>("--relationship") { Description = "Inspect the stable story correction relationship shown by execution-plan." };
         var statusRepo = Repo(); var statusFormat = Format();
-        status.Arguments.Add(statusChange); status.Options.Add(statusTask); status.Options.Add(statusRepo); status.Options.Add(statusFormat);
+        status.Arguments.Add(statusChange); status.Options.Add(statusTask); status.Options.Add(statusRelationship); status.Options.Add(statusRepo); status.Options.Add(statusFormat);
         status.SetAction(result =>
         {
             var format = result.GetValue(statusFormat)!;
             if (!WorkFormatSupported(format)) return 2;
-            return RenderWork(service.WorkStatus(result.GetValue(statusRepo)!, result.GetValue(statusChange)!, result.GetValue(statusTask)), format);
+            return RenderWork(service.WorkStatus(result.GetValue(statusRepo)!, result.GetValue(statusChange)!, result.GetValue(statusTask), result.GetValue(statusRelationship)), format);
         });
         group.Subcommands.Add(status);
 
@@ -97,6 +98,10 @@ public sealed partial class AgentModule
             RenderWorkAllowance("change", work.Change, format);
             if (work.Task is not null) RenderWorkAllowance("task", work.Task, format);
             Console.WriteLine($"workCoverage={Safe(work.Coverage)};recovery={Safe(work.RecoveryState)};hold={Safe(work.HoldReason)};nextAction={Safe(work.NextAction)};logicalAttempt={Safe(work.LogicalAttemptId)};repeatedBlockers={work.RepeatedBlockerCount}");
+            Console.WriteLine($"storyRelationship={Safe(work.CorrectionRelationshipId)};correctionOnly={work.CorrectionOnly.ToString().ToLowerInvariant()};boundedContinuation={work.CorrectionContinuationAvailable.ToString().ToLowerInvariant()}");
+            foreach (var round in work.Corrections)
+                Console.WriteLine($"correctionRound={Safe(round.Id)};relationship={Safe(round.RelationshipId)};number={round.Number};status={Safe(round.Status)};maximumSeconds={round.MaximumSeconds};repositories={string.Join(',', round.Stages.Select(stage => Safe(stage.RepositoryId)))};disposition={Safe(round.DispositionReference)}");
+            foreach (var finding in work.RequiredCorrectionFindingReferences) Console.WriteLine("requiredCorrectionFinding=" + Safe(finding));
             Console.WriteLine($"workAuthority={Safe(work.DecisionReference)};storageOwner={Safe(work.StorageOwner)};storageCeiling={Safe(work.StorageCeilingReference)}");
             foreach (var execution in work.Executions.TakeLast(5))
                 Console.WriteLine($"workExecution={Safe(execution.ExecutionId)};status={Safe(execution.Status)};activeMilliseconds={execution.ActiveMilliseconds};elapsedMilliseconds={execution.ElapsedMilliseconds};reservedMilliseconds={execution.ReservedMilliseconds};parent={Safe(execution.ParentExecutionId)};recovery={Safe(execution.RecoveryReason)}");
@@ -109,6 +114,9 @@ public sealed partial class AgentModule
             RenderWorkAllowance("Change", work.Change, format);
             if (work.Task is not null) RenderWorkAllowance("Task", work.Task, format);
             Console.WriteLine($"Coverage: {work.Coverage}; recovery: {work.RecoveryState}; repeated unchanged blockers: {work.RepeatedBlockerCount}.");
+            if (work.CorrectionRelationshipId is not null) Console.WriteLine($"Story relationship: {work.CorrectionRelationshipId}; correction-only history: {work.CorrectionOnly}; specific continuation available: {work.CorrectionContinuationAvailable}.");
+            foreach (var round in work.Corrections)
+                Console.WriteLine($"Correction {round.Number} ({round.Id}): {round.Status}; completed repositories={string.Join(", ", round.Stages.Select(stage => stage.RepositoryId))}; bounded seconds={round.MaximumSeconds?.ToString() ?? "owning allowance"}.");
             if (work.HoldReason is not null) Console.WriteLine($"Hold: {work.HoldReason}");
             Console.WriteLine($"Next action: {work.NextAction}");
             Console.WriteLine($"Allocation decision: {work.DecisionReference}; storage owner: {work.StorageOwner}; storage ceiling: {work.StorageCeilingReference}.");

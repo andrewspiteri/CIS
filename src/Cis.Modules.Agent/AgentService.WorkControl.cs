@@ -7,13 +7,16 @@ namespace Cis.Modules.Agent;
 
 public sealed partial class AgentService
 {
+    private const string AllocationScopeNotice = "Allocating work establishes authority-wide finite work accounting for every supported direct and story route. Sibling tasks will also need a canonical owner and allocated capacity, which may be inherited; this does not adopt engineering quality policy.";
+
     public CisAgentWorkResult AllocateWork(string repositoryPath, string changeId, string inputPath, string actor, string reason)
     {
         var context = Resolve(repositoryPath, out var diagnostics);
         if (context is null) return WorkFailure(diagnostics);
         try
         {
-            if (!WorkRequired(context)) return WorkFailure(["Adopt the existing engineering policy before allocating governed direct-task work."]);
+            if (!WorkRequired(context) && !RegisteredParticipantWorkRequired(context) && !_workLedger.HasCorrectionHistory(context))
+                return WorkFailure(["Work allocation requires applicable adopted controls or retained story correction history. A provider profile alone does not opt a minimal repository into accounting."]);
             var request = ReadWorkInput<CisAgentWorkAllocationRequest>(context, inputPath);
             if (request.Tasks is null || request.Tasks.Count is < 1 or > 1000)
                 return WorkFailure(["Supply a bounded list of canonical task allocations."]);
@@ -21,18 +24,21 @@ public sealed partial class AgentService
             if (diagnostics.Count > 0 || identities.Any(identity => identity is null)) return WorkFailure(diagnostics);
             var canonical = identities.Select(identity => identity!).ToArray();
             request = request with { Tasks = request.Tasks.Select((task, index) => task with { TaskId = canonical[index].TaskId }).ToArray() };
-            return CurrentWorkView(context, _workLedger.Allocate(context, changeId.ToUpperInvariant(), request, canonical, actor, reason,
+            var allocated = CurrentWorkView(context, _workLedger.Allocate(context, changeId.ToUpperInvariant(), request, canonical, actor, reason,
                 ReadRunManifests(context).Any(run => run.Work is not null)), changeId.ToUpperInvariant(), null);
+            return allocated.Work is null ? allocated : allocated with
+            { Work = allocated.Work with { NextAction = AllocationScopeNotice + " " + allocated.Work.NextAction } };
         }
         catch (Exception error) when (WorkException(error)) { return WorkFailure([error.Message]); }
     }
 
-    public CisAgentWorkResult WorkStatus(string repositoryPath, string changeId, string? taskId = null)
+    public CisAgentWorkResult WorkStatus(string repositoryPath, string changeId, string? taskId = null, string? relationshipId = null)
     {
         var context = Resolve(repositoryPath, out var diagnostics);
         if (context is null) return WorkFailure(diagnostics);
         if (!WorkId(changeId) || taskId is not null && !WorkId(taskId)) return WorkFailure(["Work identities must be canonical change/task identifiers."]);
-        return ReadCurrentWork(context, changeId.ToUpperInvariant(), taskId?.ToUpperInvariant());
+        return relationshipId is null ? ReadCurrentWork(context, changeId.ToUpperInvariant(), taskId?.ToUpperInvariant())
+            : _workLedger.ReadCorrections(context, relationshipId);
     }
 
     public CisAgentWorkResult RecordWorkProgress(string repositoryPath, string changeId, string taskId, string inputPath, string actor)
@@ -56,6 +62,9 @@ public sealed partial class AgentService
         try
         {
             var request = ReadWorkInput<CisAgentWorkDispositionRequest>(context, inputPath);
+            if (request.CorrectionRelationshipId is { } relationship && request.Kind != "reconcile-story-history"
+                && _workLedger.ReadCorrections(context, relationship).Work?.CorrectionOnly == true)
+                return _workLedger.DispositionCorrection(context, relationship, request, actor, reason);
             // Reconciliation concerns retained accounting, even after the canonical task
             // has moved or ceased to be eligible for a new execution.
             var identity = request.Kind == "reconcile" && request.ExecutionId is not null
@@ -72,6 +81,8 @@ public sealed partial class AgentService
                 verifiedPreparationOwner = execution?.PreparationOwner;
                 preparationStopped = PreparationOwnerStopped(verifiedPreparationOwner);
             }
+            if (request.Kind == "reconcile-story-history" && identity is not null && diagnostics.Count == 0)
+                return ReconcileStoryHistory(context, identity, request, actor, reason, diagnostics);
             return identity is null || diagnostics.Count > 0 ? WorkFailure(diagnostics)
                 : CurrentWorkView(context, _workLedger.Disposition(context, identity, request, actor, reason, verifiedPreparationOwner, preparationStopped),
                     identity.ChangeId, identity.TaskId);
@@ -102,9 +113,305 @@ public sealed partial class AgentService
 
     private bool WorkRequired(CisRepositoryContext context)
         => CisEngineeringPolicy.Read(context.RepositoryPath)?.RequireTaskCompletion == true
-            || File.Exists(Path.Combine(context.RepositoryPath, AgentWorkLedger.RelativePath))
-            || File.Exists(Path.Combine(context.RepositoryPath, AgentWorkLedger.AdoptionPath))
+            || _workLedger.HasGovernedState(context)
             || ReadRunManifests(context).Any(run => run.Work is not null);
+
+    private bool RegisteredParticipantWorkRequired(CisRepositoryContext authority)
+    {
+        var resolution = _workspaceRegistry?.Resolve(authority.RepositoryPath);
+        if (resolution?.Workspace is not { } workspace) return false;
+        if (workspace.AuthorityRepository is not { IsProductOwned: true } registeredAuthority
+            || !registeredAuthority.RepositoryPath.Equals(authority.RepositoryPath, CisPathSafety.PlatformComparison)) return false;
+        return workspace.Repositories.Where(repository => repository.IsProductOwned && repository.Role == "participant")
+            .Any(repository => _resolver.Resolve(repository.RepositoryPath).Context is { } participant && WorkRequired(participant));
+    }
+
+    private sealed record StoryWorkBinding(CisRepositoryContext Authority, CisAgentWorkIdentity? Identity,
+        string RelationshipId, int MaximumRunSeconds, bool Required, string Actor, IReadOnlyList<string> HistoricalRunIds,
+        string? BindingReason = null)
+    {
+        public string ContractDigest { get; init; } = "";
+        public string? ReflectionApproach { get; init; }
+        public string? ScopeTitle { get; init; }
+    }
+
+    private StoryWorkBinding? ResolveStoryWorkBinding(CisStoryTaskWork work, List<string> diagnostics)
+    {
+        try
+        {
+            var context = Resolve(work.WorkspacePath, out var resolutionErrors);
+            diagnostics.AddRange(resolutionErrors);
+            if (context is null) return null;
+            var workspace = _workspaceRegistry?.Resolve(work.WorkspacePath);
+            if (workspace?.Workspace?.AuthorityRepository is { } authority)
+            {
+                context = Resolve(authority.RepositoryPath, out resolutionErrors);
+                diagnostics.AddRange(resolutionErrors);
+                if (context is null) return null;
+                foreach (var repository in work.Repositories)
+                    if (!workspace.Workspace.Repositories.Any(registered => registered.IsProductOwned
+                        && registered.Id == repository.Id && registered.RepositoryPath.Equals(repository.RepositoryPath, CisPathSafety.PlatformComparison)))
+                        diagnostics.Add("ERROR: Story accounting targets must be exact registered product-owned repositories: " + repository.Id);
+            }
+            else if (workspace?.Errors.Count > 0 && File.Exists(Path.Combine(work.WorkspacePath, ".cis/workspace.yml")))
+                diagnostics.AddRange(workspace.Errors.Select(error => "ERROR: " + error));
+            var required = WorkRequired(context) || work.Repositories.Any(repository =>
+                _resolver.Resolve(repository.RepositoryPath).Context is { } participant ? WorkRequired(participant)
+                    : CisEngineeringPolicy.Read(repository.RepositoryPath)?.RequireTaskCompletion == true);
+            if (required && string.IsNullOrWhiteSpace(work.Task.InstanceKey))
+                diagnostics.Add("ERROR: Adopted story work needs the retained stable task InstanceKey. Resolve its approved instance through story preparation before binding an allowance.");
+            var relationship = work.Slug + "/" + (work.Task.InstanceKey ?? work.StoryId + "/" + work.Task.Id);
+            if (string.IsNullOrWhiteSpace(relationship) || relationship.Length > 1000 || relationship.Contains('\0'))
+                throw new InvalidDataException("Story continuation needs its bounded stable instance relationship.");
+            if (work.CanonicalBinding is { } binding && (work.Task.ChangeId is { } declaredChange
+                    && !declaredChange.Equals(binding.ChangeId, StringComparison.OrdinalIgnoreCase)
+                || work.Task.WorkOwnerTaskId is { } declaredOwner && !declaredOwner.Equals(binding.WorkOwnerTaskId, StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidDataException("The approved task and retained story binding disagree about their canonical change or work owner.");
+            var changeId = work.Task.ChangeId ?? work.CanonicalBinding?.ChangeId;
+            var taskId = work.Task.WorkOwnerTaskId ?? work.CanonicalBinding?.WorkOwnerTaskId;
+            CisAgentWorkIdentity? identity = null;
+            string? bindingReason = null;
+            if (changeId is not null && taskId is not null)
+            {
+                var identityDiagnostics = new List<string>();
+                try { identity = WorkIdentity(context, changeId, taskId, identityDiagnostics, accountingOnly: true); }
+                catch (Exception error) when (!required && work.CanonicalBinding is null && WorkException(error))
+                { identityDiagnostics.Add(error.Message); }
+                if (required || work.CanonicalBinding is not null) diagnostics.AddRange(identityDiagnostics);
+                else if (identityDiagnostics.Count > 0)
+                {
+                    identity = null;
+                    bindingReason = "Optional declared ownership is not currently established: " + string.Join(" ", identityDiagnostics)
+                        + " Use bind-work against an approved canonical task when accounting is needed; the existing story gates still apply.";
+                }
+            }
+            else if (required || work.CanonicalBinding is not null)
+                diagnostics.Add("ERROR: This story task needs one unambiguous approved canonical ChangeId and WorkOwnerTaskId. Use the existing story bind-work preparation route, then cis agent work allocate once at that owning change/task; no provider work has started. " + AllocationScopeNotice);
+            else if (changeId is not null || taskId is not null)
+                bindingReason = "Optional declared ownership is incomplete. Establish its exact canonical change/task through bind-work when governed accounting is needed.";
+            var historical = ReadRunManifests(context).Where(run => run.Work is null && (run.StoryRelationshipId == relationship
+                || run.StoryRelationshipId is null && run.ChangeId == "STORY-" + work.StoryId
+                    && (run.TaskId == work.Task.Id + "-IMPLEMENT" || run.TaskId == work.Task.Id + "-REVIEW")
+                || work.PreviousExecution?.Runs.Any(previous => previous.RunId == run.RunId) == true)).Select(run => run.RunId).ToArray();
+            if (diagnostics.Any(message => message.StartsWith("ERROR:", StringComparison.Ordinal))) return null;
+            var maximum = work.Repositories.Select(repository => _resolver.Resolve(repository.RepositoryPath).Context)
+                .Where(participant => participant is not null).Select(participant => RuntimeCeiling(participant!))
+                .Append(RuntimeCeiling(context)).Min();
+            return new(context, identity, relationship, maximum, required, work.Actor, historical, bindingReason)
+            {
+                ContractDigest = CisStoryEngineeringContract.Digest(work),
+                ReflectionApproach = (work.Task.Validation ?? work.Task.Description) is { Length: <= 4000 } approach ? approach : null,
+                ScopeTitle = work.Task.Title is { Length: <= 4000 } title ? title : null
+            };
+        }
+        catch (Exception error) when (WorkException(error))
+        { diagnostics.Add("ERROR: Story work binding could not be established: " + error.Message); return null; }
+    }
+
+    public CisStoryWorkStatus InspectWork(CisStoryTaskWork work)
+    {
+        var diagnostics = new List<string>();
+        var binding = ResolveStoryWorkBinding(work, diagnostics);
+        if (binding is null)
+            return new("held", true, false, null, null, diagnostics.FirstOrDefault() ?? "Resolve the exact story work binding before execution.", diagnostics);
+        var control = binding.Required && binding.Identity is not null
+            ? ReadStoryWork(binding)
+            : _workLedger.ReadCorrections(binding.Authority, binding.RelationshipId, binding.ContractDigest, binding.Actor,
+                expectedIdentity: binding.Identity, inspectIdentity: true);
+        var corrections = _workLedger.ReadCorrections(binding.Authority, binding.RelationshipId, binding.ContractDigest, binding.Actor,
+            expectedIdentity: binding.Identity, inspectIdentity: true);
+        var historyBindingCurrent = corrections.Work is not { CorrectionOnly: true, TaskId: not null } history
+            || binding.Identity is { } expectedBindingIdentity && history.AuthorityRepositoryId == expectedBindingIdentity.AuthorityRepositoryId
+                && history.ChangeId == expectedBindingIdentity.ChangeId && history.TaskId == expectedBindingIdentity.TaskId;
+        if (control.Work is not null && corrections.Work is not null)
+            control = control with
+            {
+                Work = control.Work with
+                {
+                    Corrections = corrections.Work.Corrections,
+                    CorrectionRelationshipId = binding.RelationshipId,
+                    RequiredCorrectionFindingReferences = corrections.Work.RequiredCorrectionFindingReferences,
+                    CorrectionContinuationAvailable = corrections.Work.CorrectionContinuationAvailable,
+                    RequiredCorrectionContext = corrections.Work.RequiredCorrectionContext,
+                    CorrectionContinuation = corrections.Work.CorrectionContinuation
+                }
+            };
+        if (corrections.Status == "held" && corrections.Work?.HoldReason is { } correctionHold)
+            control = control with
+            {
+                Status = "held",
+                Errors = control.Errors.Append(correctionHold).Distinct(StringComparer.Ordinal).ToArray(),
+                Work = control.Work is null ? corrections.Work : control.Work with
+                {
+                    HoldReason = string.Join(" ", new[] { control.Work.HoldReason, correctionHold }.Where(reason => !string.IsNullOrWhiteSpace(reason)).Distinct(StringComparer.Ordinal)),
+                    NextAction = corrections.Work.NextAction
+                }
+            };
+        if (binding.Required && binding.Identity is { } currentIdentity
+            && !_workLedger.HistoricalReconciled(binding.Authority, currentIdentity, binding.RelationshipId, binding.HistoricalRunIds))
+            control = control with { Status = "held", Errors = control.Errors.Append(HistoricalAction(binding)).ToArray() };
+        if (control.ExitCode == 0 && control.Work?.HoldReason == AgentWorkLedger.ReflectionAction)
+            control = control with
+            {
+                Status = "routine-reflection-autonomous",
+                Work = control.Work with { HoldReason = null, NextAction = StoryReflectionAction }
+            };
+        var nextAction = binding.BindingReason ?? control.Work?.NextAction ?? (binding.Required ? "Establish the owning allocation through cis agent work allocate."
+            : "Continue the supported story route; its correction count remains durable without adopting an allowance.");
+        if (control.Status == "missing-allocation" || binding.Required && control.Work is { CorrectionOnly: false, Task: null }
+            || control.Work is { CorrectionOnly: true, RequiredCorrectionFindingReferences.Count: > 0 } && control.Work.Corrections.Count >= 2)
+            nextAction += " " + AllocationScopeNotice;
+        return new(control.ExitCode == 0 ? control.Status == "routine-reflection-autonomous" ? control.Status : "current" : "held", binding.Required, binding.Identity is not null && historyBindingCurrent,
+            binding.Identity, control, nextAction, control.Errors);
+    }
+
+    private const string StoryReflectionAction = "Continue the supported story route. At admission CIS records a routine reflection from the approved task, retained native results and measured cost under existing controller delegation. This does not satisfy direct-task controller reflection or clear another hold.";
+
+    private CisAgentWorkResult ReadStoryWork(StoryWorkBinding binding)
+    {
+        var identity = binding.Identity ?? throw new InvalidDataException("Story accounting requires its canonical owner.");
+        return _workLedger.Read(binding.Authority, identity.ChangeId, identity.TaskId,
+            binding.MaximumRunSeconds, new("story-task", binding.RelationshipId, "orchestration", binding.Authority.RepositoryId)
+            { ContractDigest = binding.ContractDigest });
+    }
+
+    private WorkExecutionScope? AdmitStoryRoot(StoryWorkBinding binding, string executionId, List<string> diagnostics)
+    {
+        if (!binding.Required) return null;
+        if (binding.Identity is null) { diagnostics.Add("ERROR: The story has no canonical work owner."); return null; }
+        if (!_workLedger.HistoricalReconciled(binding.Authority, binding.Identity, binding.RelationshipId, binding.HistoricalRunIds))
+        { diagnostics.Add("ERROR: " + HistoricalAction(binding)); return null; }
+        if (!ReflectStoryBeforeAdmission(binding, diagnostics)) return null;
+        var admission = _workLedger.Admit(binding.Authority, binding.Identity, executionId, binding.MaximumRunSeconds,
+            binding.MaximumRunSeconds, preparationOwner: CapturePreparationOwner(), clampToRemaining: true,
+            stage: new("story-task", binding.RelationshipId, "orchestration", binding.Authority.RepositoryId)
+            { ContractDigest = binding.ContractDigest }, controller: binding.Actor);
+        if (!admission.Admitted) { WorkDiagnostics(admission.Result, diagnostics); return null; }
+        return new(this, binding.Authority, admission.Reference!, admission.TimeoutSeconds, diagnostics);
+    }
+
+    private bool ReflectStoryBeforeAdmission(StoryWorkBinding binding, List<string> diagnostics)
+    {
+        var identity = binding.Identity ?? throw new InvalidDataException("Story reflection requires its canonical accounting owner.");
+        var current = ReadStoryWork(binding);
+        if (current.ExitCode != 0) { WorkDiagnostics(current, diagnostics); return false; }
+        if (current.Work?.HoldReason != AgentWorkLedger.ReflectionAction) return true;
+        var evidence = ReadRunManifests(binding.Authority).Where(run => run.StoryRelationshipId == binding.RelationshipId
+                && run.TaskContractDigest == binding.ContractDigest
+                && run.Work is { } reference && reference.OwnerTaskId == current.Work.OwnerTaskId && reference.ChangeId == identity.ChangeId)
+            .OrderByDescending(run => run.UpdatedAtUtc, StringComparer.Ordinal).Take(20)
+            .Select(run => "agent-run:" + run.RunId + ":" + run.Status + ":" + (run.ResultDigest ?? "no-result"))
+            .Concat(identity.AcceptedOutcomeReferences.Take(18).Select(reference => "canonical-outcome:" + reference))
+            .Append("approved-story-contract:" + binding.ContractDigest).ToArray();
+        var checkpoint = new CisAgentWorkCheckpoint("CIS story controller evaluated retained native run statuses and the approved task '"
+            + (binding.ScopeTitle is { Length: > 2000 } title ? title[..2000] : binding.ScopeTitle ?? binding.RelationshipId)
+            + "' before admission. Measured owner cost: " + current.Work.Task?.ConsumedMilliseconds
+            + "ms settled, " + current.Work.Task?.ReservedMilliseconds + "ms reserved; reflection window "
+            + current.Work.ReflectionWindowMilliseconds + "ms. Earlier unmeasured effort remains unknown.",
+            evidence, binding.ReflectionApproach ?? "Evaluate the retained approved task contract and native candidate evidence before its next bounded stage.",
+            "Continue the same approved story contract under existing controller delegation; this snapshot has no separate allowance or recovery hold. Preserve all subsequent correction, permission and task gates.",
+            "Inspect or review this contract's retained candidate through the supported story route; stop on any newly observed hold.")
+        { CloseAttempt = false };
+        var recorded = _workLedger.Progress(binding.Authority, identity, new(checkpoint, current.Work.Revision), binding.Actor,
+            binding.RelationshipId, binding.ContractDigest);
+        WorkDiagnostics(recorded, diagnostics);
+        return recorded.ExitCode == 0;
+    }
+
+    private WorkExecutionScope? AdmitStoryStage(StoryWorkBinding binding, WorkExecutionScope? root, string executionId,
+        string stage, string repositoryId, string? correctionRoundId, List<string> diagnostics)
+    {
+        if (!binding.Required) return null;
+        if (binding.Identity is null || root is null) { diagnostics.Add("ERROR: A story stage needs its admitted canonical root."); return null; }
+        var admission = _workLedger.Admit(binding.Authority, binding.Identity, executionId, binding.MaximumRunSeconds,
+            binding.MaximumRunSeconds, root.Reference.ExecutionId, root.Reference.LogicalAttemptId, CapturePreparationOwner(), true,
+            new("story-task", binding.RelationshipId, stage, repositoryId, correctionRoundId)
+            { ContractDigest = binding.ContractDigest }, binding.Actor);
+        if (!admission.Admitted) { WorkDiagnostics(admission.Result, diagnostics); return null; }
+        return new(this, binding.Authority, admission.Reference!, admission.TimeoutSeconds, diagnostics);
+    }
+
+    private CisAgentWorkCorrectionRound? StartOrResumeStoryCorrection(StoryWorkBinding binding, WorkExecutionScope? root,
+        IReadOnlyList<string> requiredFindingReferences, List<string> diagnostics, string? contractDigest = null,
+        string? materialBasis = null, IReadOnlyList<CisStoryReviewFinding>? findingDetails = null,
+        IReadOnlyList<CisAgentWorkCandidateTree>? candidateTrees = null)
+    {
+        var admission = _workLedger.BeginCorrection(binding.Authority, binding.Identity, root?.Reference,
+            binding.RelationshipId, binding.Actor, requiredFindingReferences, contractDigest, materialBasis, findingDetails, candidateTrees);
+        WorkDiagnostics(admission.Result, diagnostics);
+        return admission.Round;
+    }
+
+    private bool ObserveStoryContract(StoryWorkBinding binding, WorkExecutionScope? root, string contractDigest, List<string> diagnostics)
+    {
+        var result = _workLedger.ObserveContract(binding.Authority, binding.Identity, root?.Reference,
+            binding.RelationshipId, binding.Actor, contractDigest);
+        WorkDiagnostics(result, diagnostics); return result.ExitCode == 0;
+    }
+
+    private bool RecordStoryCorrectionStage(StoryWorkBinding binding, WorkExecutionScope? root, string roundId,
+        string repositoryId, string runId, string candidate, IReadOnlyList<string> evidence, List<string> diagnostics)
+    {
+        var result = _workLedger.RecordCorrectionStage(binding.Authority, binding.Identity, root?.Reference,
+            binding.RelationshipId, roundId, binding.Actor, repositoryId, runId, candidate, evidence);
+        WorkDiagnostics(result, diagnostics); return result.ExitCode == 0;
+    }
+
+    private bool CompleteStoryCorrection(StoryWorkBinding binding, WorkExecutionScope? root, string roundId, List<string> diagnostics)
+    {
+        var result = _workLedger.CompleteCorrection(binding.Authority, binding.Identity, root?.Reference,
+            binding.RelationshipId, roundId, binding.Actor);
+        WorkDiagnostics(result, diagnostics); return result.ExitCode == 0;
+    }
+
+    private bool StoryWorkCheckpoint(StoryWorkBinding binding, WorkExecutionScope? root, string actor, string outcome,
+        IReadOnlyList<string> evidence, string decision, string nextAction, List<string> diagnostics)
+    {
+        if (!binding.Required) return true;
+        if (binding.Identity is null || root is null) { diagnostics.Add("ERROR: Story reflection has lost its canonical work reservation."); return false; }
+        var current = ReadStoryWork(binding);
+        if (current.Work is null) { WorkDiagnostics(current, diagnostics); return false; }
+        var checkpoint = new CisAgentWorkCheckpoint(outcome, evidence,
+            binding.ReflectionApproach ?? "Evaluate this approved task's retained candidate and independent review evidence.", decision, nextAction)
+        { CloseAttempt = false };
+        var recorded = _workLedger.Progress(binding.Authority, binding.Identity, new(checkpoint, current.Work.Revision), actor,
+            binding.RelationshipId, binding.ContractDigest);
+        WorkDiagnostics(recorded, diagnostics); return recorded.ExitCode == 0;
+    }
+
+    private static string HistoricalAction(StoryWorkBinding binding)
+        => "Retained story effort is unmeasured. After establishing the owning allocation, use cis agent work disposition "
+            + binding.Identity?.ChangeId + " " + binding.Identity?.TaskId
+            + " with kind reconcile-story-history, correctionRelationshipId '" + binding.RelationshipId
+            + "', historicalRunIds [" + string.Join(",", binding.HistoricalRunIds) + "] and the current revision. CIS conservatively charges retained bounds once; implementation evidence can then be reused without a zero-cost restart.";
+
+    private CisAgentWorkResult ReconcileStoryHistory(CisRepositoryContext context, CisAgentWorkIdentity identity,
+        CisAgentWorkDispositionRequest request, string actor, string reason, List<string> diagnostics)
+    {
+        if (request.CorrectionRelationshipId is null || request.HistoricalRunIds is not { Count: > 0 and <= 100 })
+            return WorkFailure(["Historical story reconciliation needs its stable correctionRelationshipId and exact retained historicalRunIds."]);
+        var bounds = new Dictionary<string, long>(StringComparer.Ordinal);
+        foreach (var runId in request.HistoricalRunIds.Distinct(StringComparer.Ordinal))
+        {
+            var view = ReadRun(context, runId, diagnostics);
+            if (view is null || view.Manifest.Work is not null || !CisAgentRunStates.IsTerminal(view.Manifest.Status)
+                || view.Manifest.ExecutionRoute != "story-task" && !view.Manifest.ChangeId.StartsWith("STORY-", StringComparison.Ordinal)
+                || view.Manifest.StoryRelationshipId is { } recorded && recorded != request.CorrectionRelationshipId)
+                return WorkFailure(diagnostics.Append("Reconcile only exact terminal retained story runs with their established relationship; direct or already-accounted runs cannot be repriced."));
+            var ownershipErrors = new List<string>(); var accountingErrors = new List<string>();
+            var retained = RetainedOwnedProcesses(context, view, ownershipErrors, accountingErrors);
+            if (ownershipErrors.Count > 0 || accountingErrors.Count > 0
+                || retained.Processes.Any(process => !OwnedProcessStopped(process.Id, process.Started)))
+                return WorkFailure(["A retained historical story process is live or uncertain. Resolve its exact process ownership before charging and reusing it."]);
+            if (!DateTimeOffset.TryParse(view.Manifest.StartedAtUtc, out var started)
+                || !DateTimeOffset.TryParse(view.Manifest.CompletedAtUtc, out var completed) || completed < started || view.Manifest.TimeoutSeconds is < 30 or > 3600)
+                return WorkFailure(["The retained story timing evidence is incomplete. Restore or reconcile its actual run evidence; no zero-cost usage was assumed."]);
+            bounds.Add(runId, Math.Max(checked((long)view.Manifest.TimeoutSeconds * 1000), checked((long)Math.Ceiling((completed - started).TotalMilliseconds))));
+        }
+        if (diagnostics.Any(error => error.StartsWith("ERROR:", StringComparison.Ordinal))) return WorkFailure(diagnostics);
+        return CurrentWorkView(context, _workLedger.ReconcileHistory(context, identity, request.CorrectionRelationshipId,
+            bounds, request.ExpectedRevision, actor, reason), identity.ChangeId, identity.TaskId);
+    }
 
     private CisAgentWorkIdentity? WorkIdentity(CisRepositoryContext context, string changeId, string taskId,
         List<string> diagnostics, bool accountingOnly = false)
@@ -315,6 +622,7 @@ public sealed partial class AgentService
         private int? processId;
         private string? processStarted;
         public CisAgentWorkReference Reference { get; }
+        internal int TimeoutSeconds => seconds;
 
         internal WorkExecutionScope(AgentService service, CisRepositoryContext context, CisAgentWorkReference reference, int seconds, List<string> diagnostics)
         {

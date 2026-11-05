@@ -4,7 +4,7 @@ using Cis.Modules.Agent;
 
 namespace Cis.Modules.Agent.Tests;
 
-public sealed class AgentWorkLedgerTests
+public sealed partial class AgentWorkLedgerTests
 {
     [Fact]
     public async Task WorkLedger_NestedActiveIntervalsAreInclusiveWhileIndependentRootsAndSettlementRemainDistinct()
@@ -289,6 +289,135 @@ public sealed class AgentWorkLedgerTests
             foreach (var owner in change["owners"]!.AsObject().Select(item => item.Value!.AsObject()))
                 foreach (var checkpoint in owner["checkpoints"]!.AsArray()) checkpoint!.AsObject().Remove("origin");
         File.WriteAllText(path, state.ToJsonString());
+    }
+
+    [Fact]
+    public async Task WorkLedger_StoryRootsClampAtomicallyAndUncertainChildrenKeepTheirInclusiveReservation()
+    {
+        using var f = new Fixture();
+        var first = f.Identity("WORK-A"); var second = f.Identity("WORK-B");
+        var allocation = new CisAgentWorkAllocationRequest(180, 10, 10,
+            [new(first.TaskId, 100, 4, 10), new(second.TaskId, 100, 4, 10)], "approved fixture allocation", "fixture storage ceiling",
+            AcknowledgeHistoricalUnknown: true)
+        { Controllers = ["Controller"] };
+        Assert.Equal(0, f.Ledger.Allocate(f.Context, first.ChangeId, allocation, [first, second], "Controller", "Shared story capacity.").ExitCode);
+        var denied = f.Ledger.Admit(f.Context, first, "unauthorized", 60, 3600, controller: "Other actor");
+        Assert.False(denied.Admitted);
+        Assert.Empty(f.Ledger.Read(f.Context, first.ChangeId).Work!.Executions);
+        var roots = await Task.WhenAll(new[] { first, second }.Select(identity => Task.Run(() =>
+            new AgentWorkLedger(() => f.Time).Admit(f.Context, identity, identity.TaskId + "/root", 3600, 3600,
+                clampToRemaining: true, stage: new("story-task", identity.TaskId, "orchestration", "authority"), controller: "Controller"),
+            TestContext.Current.CancellationToken)));
+        Assert.All(roots, root => Assert.True(root.Admitted, string.Join("; ", root.Result.Errors)));
+        Assert.Equal([80, 90], roots.Select(root => root.TimeoutSeconds).Order().ToArray());
+        Assert.Equal(170_000, f.Ledger.Read(f.Context, first.ChangeId).Work!.Change.ReservedMilliseconds);
+        var firstRoot = roots[0]; var secondRoot = roots[1];
+        var correction = f.Ledger.BeginCorrection(f.Context, first, firstRoot.Reference, "feature/first", "Controller", ["required:material-basis"]);
+        Assert.NotNull(correction.Round);
+        f.Time = f.Time.AddSeconds(1);
+        var child = f.Ledger.Admit(f.Context, first, "first/correction", 3600, 3600, firstRoot.Reference!.ExecutionId,
+            firstRoot.Reference.LogicalAttemptId, clampToRemaining: true,
+            stage: new("story-task", "feature/first", "correction", "backend", correction.Round!.Id), controller: "Controller");
+        Assert.True(child.Admitted, string.Join("; ", child.Result.Errors));
+        Assert.Equal(0, f.Ledger.MarkLaunchIntent(f.Context, child.Reference!).ExitCode);
+        f.Time = f.Time.AddSeconds(3);
+        Assert.NotEqual(0, f.Ledger.Settle(f.Context, child.Reference!, "Interrupted", false).ExitCode);
+        var waiting = f.Ledger.Settle(f.Context, firstRoot.Reference, "Interrupted", true);
+        Assert.Equal(0, waiting.ExitCode);
+        Assert.Equal(170_000, waiting.Work!.Change.ReservedMilliseconds);
+        Assert.Equal("uncertain", waiting.Work.RecoveryState);
+        f.Time = f.Time.AddSeconds(1);
+        var stopped = f.Ledger.Settle(f.Context, child.Reference!, "Interrupted", true);
+        Assert.Equal(5_000, stopped.Work!.Task!.ConsumedMilliseconds);
+        Assert.Equal(secondRoot.TimeoutSeconds * 1000L, stopped.Work.Change.ReservedMilliseconds);
+        Assert.Equal("unchanged", f.Ledger.Settle(f.Context, child.Reference!, "Interrupted", true).Status);
+        f.Time = f.Time.AddSeconds(1);
+        var allStopped = f.Ledger.Settle(f.Context, secondRoot.Reference!, "Succeeded", true);
+        Assert.Equal(11_000, allStopped.Work!.Change.ConsumedMilliseconds);
+        Assert.Equal(0, allStopped.Work.Change.ReservedMilliseconds);
+        Assert.Equal(2, allStopped.Work.Change.UsedAttempts);
+    }
+
+    [Fact]
+    public void WorkLedger_CorrectionHistorySurvivesAdoptionAndOneDispositionDoesNotRefillAutomaticRounds()
+    {
+        using var f = new Fixture();
+        const string relationship = "feature/stable-instance";
+        var first = f.Ledger.BeginCorrection(f.Context, null, null, relationship, "Controller", ["required:material-basis"]);
+        Assert.Equal(1, first.Round!.Number);
+        Assert.True(first.Result.Work!.CorrectionOnly);
+        Assert.False(f.Ledger.HasGovernedState(f.Context));
+        Assert.False(File.Exists(Path.Combine(f.Context.RepositoryPath, CisAgentWorkPaths.Adoption)));
+        Assert.Equal(0, f.Ledger.RecordCorrectionStage(f.Context, null, null, relationship, first.Round.Id, "Controller",
+            "backend", "implementation-1", "candidate-1", ["retained result-1"]).ExitCode);
+        Assert.Equal(0, f.Ledger.CompleteCorrection(f.Context, null, null, relationship, first.Round.Id, "Controller").ExitCode);
+        var reopened = new AgentWorkLedger(() => f.Time);
+        var second = reopened.BeginCorrection(f.Context, null, null, relationship, "Controller", ["required:material-basis"]);
+        Assert.Equal(2, second.Round!.Number);
+        Assert.Equal(0, reopened.CompleteCorrection(f.Context, null, null, relationship, second.Round.Id, "Controller").ExitCode);
+        var exhausted = new AgentWorkLedger(() => f.Time).BeginCorrection(f.Context, null, null, relationship, "Controller", ["required:material-basis"]);
+        Assert.Null(exhausted.Round);
+        Assert.NotEqual(0, exhausted.Result.ExitCode);
+        var beforeRead = File.ReadAllBytes(Path.Combine(f.Context.RepositoryPath, CisAgentWorkPaths.Ledger));
+        var readLimit = reopened.ReadCorrections(f.Context, relationship);
+        Assert.Equal("held", readLimit.Status);
+        Assert.Contains("simplify disposition", readLimit.Work!.NextAction, StringComparison.Ordinal);
+        Assert.Equal(beforeRead, File.ReadAllBytes(Path.Combine(f.Context.RepositoryPath, CisAgentWorkPaths.Ledger)));
+        var unmeasuredGrant = new CisAgentWorkDispositionRequest("simplify", exhausted.Result.Work!.Revision)
+        {
+            CorrectionRelationshipId = relationship,
+            CorrectionFindingReferences = ["required:material-basis"],
+            CorrectionMaximumSeconds = 60,
+            Hypothesis = "Use the existing native operation.",
+            NextAction = "Correct the one required invariant and review it.",
+            Evidence = ["current review"]
+        };
+        Assert.NotEqual(0, reopened.DispositionCorrection(f.Context, relationship, unmeasuredGrant, "Controller", "A measured bound is required.").ExitCode);
+
+        var identity = f.Identity("WORK-A");
+        var allocation = new CisAgentWorkAllocationRequest(300, 5, 10, [new(identity.TaskId, 250, 4, 10)],
+            "approved fixture allocation", "fixture storage ceiling", exhausted.Result.Work.Revision, true)
+        { Controllers = ["Controller"] };
+        var adopted = reopened.Allocate(f.Context, identity.ChangeId, allocation, [identity], "Controller", "Acknowledge historical effort and bound continuation.");
+        Assert.Equal(0, adopted.ExitCode);
+        var reconciled = reopened.ReconcileHistory(f.Context, identity, relationship, new Dictionary<string, long>
+        { ["implementation-1"] = 20_000, ["review-1"] = 10_000 }, adopted.Work!.Revision, "Controller", "Conservatively retain old run bounds.");
+        Assert.Equal(30_000, reconciled.Work!.Task!.ConsumedMilliseconds);
+        var again = reopened.ReconcileHistory(f.Context, identity, relationship, new Dictionary<string, long>
+        { ["implementation-1"] = 20_000, ["review-1"] = 10_000 }, reconciled.Work.Revision, "Controller", "Idempotent historical reconciliation.");
+        Assert.Equal("unchanged", again.Status);
+        Assert.Equal(30_000, again.Work!.Task!.ConsumedMilliseconds);
+        var granted = reopened.Disposition(f.Context, identity, unmeasuredGrant with { ExpectedRevision = again.Work.Revision }, "Controller", "One justified bounded simpler correction.");
+        Assert.Equal(0, granted.ExitCode);
+        var root = reopened.Admit(f.Context, identity, "governed/root", 120, 3600,
+            stage: new("story-task", relationship, "orchestration", "authority"), controller: "Controller");
+        Assert.True(root.Admitted);
+        var third = reopened.BeginCorrection(f.Context, identity, root.Reference, relationship, "Controller", ["required:material-basis"]);
+        Assert.Equal(3, third.Round!.Number);
+        Assert.Equal(60, third.Round.MaximumSeconds);
+        Assert.NotNull(third.Round.DispositionReference);
+        Assert.Equal(third.Round.Id, reopened.BeginCorrection(f.Context, identity, root.Reference, relationship, "Controller", ["required:material-basis"]).Round!.Id);
+        f.Time = f.Time.AddSeconds(3); // Correction workspace preparation consumes the same inclusive grant.
+        var correction = reopened.Admit(f.Context, identity, "bounded/correction", 120, 3600, root.Reference!.ExecutionId,
+            root.Reference.LogicalAttemptId, clampToRemaining: true,
+            stage: new("story-task", relationship, "correction", "backend", third.Round.Id), controller: "Controller");
+        Assert.Equal(57, correction.TimeoutSeconds);
+        f.Time = f.Time.AddSeconds(20);
+        Assert.Equal(0, reopened.Settle(f.Context, correction.Reference!, "Succeeded", true).ExitCode);
+        var review = reopened.Admit(f.Context, identity, "bounded/review", 120, 3600, root.Reference.ExecutionId,
+            root.Reference.LogicalAttemptId, clampToRemaining: true,
+            stage: new("story-task", relationship, "review", "backend", third.Round.Id), controller: "Controller");
+        Assert.True(review.Admitted);
+        Assert.Equal(37, review.TimeoutSeconds);
+        f.Time = f.Time.AddSeconds(5);
+        Assert.Equal(0, reopened.Settle(f.Context, review.Reference!, "Succeeded", true).ExitCode);
+        Assert.Equal(0, reopened.CompleteCorrection(f.Context, identity, root.Reference, relationship, third.Round.Id, "Controller").ExitCode);
+        Assert.Null(reopened.BeginCorrection(f.Context, identity, root.Reference, relationship, "Controller", ["required:material-basis"]).Round);
+        f.Time = f.Time.AddSeconds(1);
+        var settled = reopened.Settle(f.Context, root.Reference, "changes-requested", true);
+        Assert.Equal(59_000, settled.Work!.Task!.ConsumedMilliseconds);
+        Assert.Equal(3, reopened.ReadCorrections(f.Context, relationship).Work!.Corrections.Count);
+        Assert.Equal(1, settled.Work.Task.UsedAttempts);
     }
 
     private sealed class Fixture : IDisposable

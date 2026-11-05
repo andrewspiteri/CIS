@@ -473,21 +473,31 @@ public sealed partial class AgentExecutionTests
         public List<CisAgentExecutionRequest> Requests { get; } = [];
         public bool Findings { get; init; }
         public int ReviewFailures { get; init; }
+        public Func<int, bool>? ReviewNeedsChanges { get; init; }
         public bool Blocked { get; init; }
         public bool Cancel { get; init; }
         public bool MalformedReview { get; init; }
         public bool ReviewWrites { get; init; }
+        public int? FailReviewNumber { get; init; }
+        public string? ReviewKind { get; init; }
+        public CisReviewNecessityAssessment? NecessityAssessment { get; init; }
+        public Action? DuringExecution { get; init; }
+        public int DiagnoseCalls { get; private set; }
         public int? FailImplementationNumber { get; init; }
         public Action? DuringReview { get; init; }
         public string? LargeEvidence { get; init; }
         public Action<CisAgentExecutionRequest>? InspectRequest { get; init; }
         public CisAgentProviderDescriptor Descriptor => new("codex", "Test coding agent", "test", true, ["exec-json"], ["implement", "review"], ["read-only", "workspace-write"], false, false, "Test only");
-        public CisAgentProviderDiagnosis Diagnose(string repositoryPath) => new("codex", "ready", true, null, "test", true, [], []);
+        public CisAgentProviderDiagnosis Diagnose(string repositoryPath)
+        { DiagnoseCalls++; return new("codex", "ready", true, null, "test", true, [], []); }
         public CisAgentProviderExecutionResult Execute(CisAgentExecutionRequest request, Action<CisAgentProviderEvent> onEvent, CancellationToken cancellationToken)
         {
             Requests.Add(request);
+            DuringExecution?.Invoke();
             if (request.Mode == "implement" && Requests.Count(item => item.Mode == "implement") == FailImplementationNumber)
                 return new(CisAgentRunStates.Failed, 1, null, "Provider unavailable", [], [], [], null, null, null, null, ["Provider unavailable"]);
+            if (request.Mode == "review" && Requests.Count(item => item.Mode == "review") == FailReviewNumber)
+                return new(CisAgentRunStates.Failed, 1, null, "Reviewer unavailable", [], [], [], null, null, null, null, ["Reviewer unavailable"]);
             if (Cancel) throw new OperationCanceledException(cancellationToken);
             if (request.Mode == "implement") File.WriteAllText(Path.Combine(request.WorkingDirectory, "app.txt"),
                 ReviewFailures > 0 && request.Prompt.Contains("<review-findings>") ? "corrected" : "implemented");
@@ -499,19 +509,26 @@ public sealed partial class AgentExecutionTests
             }
             if (request.Mode == "implement" && LargeEvidence is not null) File.WriteAllText(Path.Combine(request.WorkingDirectory, "inventory.txt"), LargeEvidence);
             InspectRequest?.Invoke(request);
-            var needsChanges = Findings || Blocked || Requests.Count(item => item.Mode == "review") <= ReviewFailures;
+            var reviewNumber = Requests.Count(item => item.Mode == "review");
+            var needsChanges = Findings || Blocked || (ReviewNeedsChanges?.Invoke(reviewNumber) ?? reviewNumber <= ReviewFailures);
+            var reviewFindings = new List<AgentBrdReviewFinding>();
+            if (needsChanges || ReviewKind is "ready-required" or "bad-disposition")
+                reviewFindings.Add(new("TASK-REV-001", ReviewKind is "minor-required" or "mixed" ? "minor" : "major",
+                    "acceptance", "app.txt", "Criterion not met.", "Correct the behavior.")
+                { Disposition = ReviewKind == "bad-disposition" ? "perhaps" : "required", BasisReferences = ["Accepted task completion criterion"] });
+            if (ReviewKind is "optional" or "mixed" or "revise-optional")
+                reviewFindings.Add(new("TASK-REV-002", "minor", "maintainability", "app.txt", "Optional future polish.", "Consider a future cleanup.")
+                { Disposition = "optional", BasisReferences = ["Optional preference outside this task's acceptance obligations"] });
             var completion = new
             {
                 summary = request.Mode == "implement" ? "Implemented task." : "Reviewed actual implementation.",
                 changedFiles = request.Mode == "implement" ? LargeEvidence is null ? new[] { "app.txt" } : ["app.txt", "inventory.txt"] : [],
                 validations = new[] { "Fixture validation passed." },
                 evidence = new[] { "app.txt" },
-                review = request.Mode == "review" ? new
-                {
-                    recommendation = Blocked ? "blocked" : needsChanges ? "revise" : "ready",
-                    strengths = new[] { "Scoped change." },
-                    findings = needsChanges ? new[] { new { id = "TASK-REV-001", severity = "major", category = "acceptance", location = "app.txt", observation = "Criterion not met.", recommendation = "Correct the behavior." } } : []
-                } : null
+                review = request.Mode == "review" ? new AgentBrdReview(
+                    ReviewKind == "ready-required" ? "ready" : ReviewKind == "revise-optional" ? "revise" : Blocked ? "blocked" : needsChanges ? "revise" : "ready",
+                    ["Scoped change."], reviewFindings)
+                { NecessityAssessment = NecessityAssessment } : null
             };
             return new(CisAgentRunStates.Succeeded, 0, null, JsonSerializer.Serialize(completion), [], [], [], null, null, null, null, []);
         }

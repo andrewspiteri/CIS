@@ -23,9 +23,23 @@ public sealed record AgentTaskEnvelope(int SchemaVersion, string Id, string Repo
 }
 public sealed record AgentAuthorityArtifact(string Path, string Sha256, string Content);
 public sealed record AgentBrdReviewFinding(string Id, string Severity, string Category, string Location,
-    string Observation, string Recommendation);
+    string Observation, string Recommendation)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? Disposition { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? BasisReferences { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public bool? RequiresDecision { get; init; }
+}
 public sealed record AgentBrdReview(string Recommendation, IReadOnlyList<string> Strengths,
-    IReadOnlyList<AgentBrdReviewFinding> Findings);
+    IReadOnlyList<AgentBrdReviewFinding> Findings)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public int? ContractVersion { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public CisReviewNecessityAssessment? NecessityAssessment { get; init; }
+}
 public sealed record AgentBrdRevision(string ReviewRunId, IReadOnlyList<string> AppliedFindingIds);
 public sealed record AgentBrdQuestionRevision(string AnswerDigest, IReadOnlyList<string> IncorporatedQuestionIds);
 public sealed record AgentResultDocument(int SchemaVersion, string EnvelopeId, string Status, string Summary,
@@ -49,6 +63,10 @@ public sealed record AgentRunManifest(int SchemaVersion, string RunId, int Attem
     public IReadOnlyList<string> AllowedCommands { get; init; } = [];
     public CisAgentWorkReference? Work { get; init; }
     public string? ExecutionRoute { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? StoryRelationshipId { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? StoryCorrectionRoundId { get; init; }
 }
 public sealed record AgentRunEvent(int SchemaVersion, string RunId, int Attempt, long Sequence, string TimestampUtc,
     string Kind, string Message, string? ProviderEventType, string? ProviderSessionId, string? RawJson,
@@ -799,6 +817,16 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         var context = Resolve(repositoryPath, out var diagnostics); if (context is null) return New(null, "invalid-repository", diagnostics: diagnostics);
         if (string.IsNullOrWhiteSpace(actor) || string.IsNullOrWhiteSpace(reason)) diagnostics.Add("ERROR: Resume actor and reason are required.");
         var view = ReadRun(context, runId, diagnostics); if (view is null) return New(context, "not-found", diagnostics: diagnostics);
+        // Story stages are evidence within the story controller, never direct canonical tasks.
+        // Resume there so frozen candidates, correction rounds and application gates remain intact.
+        if (view.Manifest.ExecutionRoute == "story-task"
+            || view.Manifest.ChangeId.StartsWith("STORY-", StringComparison.Ordinal)
+                && (view.Manifest.TaskId.EndsWith("-IMPLEMENT", StringComparison.Ordinal)
+                    || view.Manifest.TaskId.EndsWith("-REVIEW", StringComparison.Ordinal)))
+        {
+            diagnostics.Add("ERROR: This is a retained story stage. Continue through the story execution-plan/execute route for its approved task; generic agent resume cannot finalize or apply a story candidate.");
+            return New(context, "story-continuation-required", run: view, diagnostics: diagnostics);
+        }
         var resumesBrdAuthoring = view.Manifest.ChangeId == ProductAuthoringChange && view.Manifest.TaskId == BrdAuthoringTask;
         var resumesTechnicalIntent = view.Manifest.ChangeId == ProductAuthoringChange && view.Manifest.TaskId == TechnicalIntentAuthoringTask;
         var resumesSolutionDesign = view.Manifest.ChangeId == ProductAuthoringChange && view.Manifest.TaskId == SolutionDesignAuthoringTask;
@@ -1330,6 +1358,8 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
                 && (!ValidBrdReview(completion?.Review, taskReview)
                     || (taskReview ? RepositorySnapshot(currentManifest.WorkingDirectory).Digest != currentManifest.WorkingTreeDigest : changedFiles.Count > 0)))
                 finalState = CisAgentRunStates.InvalidEvidence;
+            if (finalState == CisAgentRunStates.Succeeded && taskReview && completion is { Review: { } taskAssessment })
+                completion = completion with { Review = taskAssessment with { ContractVersion = 2 } };
             if (finalState == CisAgentRunStates.Succeeded && requireBrdRevision
                 && (!ValidBrdRevision(completion?.Revision, expectedReviewRunId!, expectedFindingIds!) || changedFiles.Count != 1))
                 finalState = CisAgentRunStates.InvalidEvidence;
@@ -1372,7 +1402,9 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
             diagnostics.Add($"INFO: The canonical BRD was not changed. Retained run: {manifest.RunId}.");
         }
         if (finalState == CisAgentRunStates.InvalidEvidence) diagnostics.Add(requireBrdReview
-            ? "ERROR: Provider execution ended without an unchanged workspace and a valid structured BRD review containing recommendation, strengths, and bounded findings."
+            ? taskReview
+                ? "ERROR: Task review evidence is invalid or inconsistent. Retain the candidate and obtain an unchanged, read-only review with explicit required/optional dispositions, grounded basis references and a consistent verdict; optional advice cannot require correction."
+                : "ERROR: Provider execution ended without an unchanged workspace and a valid structured BRD review containing recommendation, strengths, and bounded findings."
             : requireBrdRevision
                 ? "ERROR: Provider execution did not return the exact approved review run and accepted finding identities with a one-file BRD change."
                 : requireBrdQuestionRevision
@@ -2322,10 +2354,13 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
     {
         if (review is null || review.Strengths is null || review.Findings is null || review.Findings.Count > 100
             || review.Recommendation is not ("ready" or "revise" or "blocked")) return false;
+        if (taskReview && review.ContractVersion is not (null or 2)) return false;
         if (review.Recommendation is "revise" or "blocked" && review.Findings.Count == 0) return false;
         var identities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var dispositions = new List<string>();
         foreach (var finding in review.Findings)
         {
+            if (finding is null) return false;
             var identity = finding.Id ?? string.Empty;
             if (!Regex.IsMatch(identity, taskReview ? "^TASK-REV-[0-9]{3}$" : "^BRD-REV-[0-9]{3}$",
                     RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
@@ -2334,7 +2369,16 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
                 || string.IsNullOrWhiteSpace(finding.Category) || string.IsNullOrWhiteSpace(finding.Location)
                 || string.IsNullOrWhiteSpace(finding.Observation) || string.IsNullOrWhiteSpace(finding.Recommendation))
                 return false;
+            if (taskReview)
+            {
+                if (!CisTaskReviewSemantics.TryDisposition(finding.Severity, finding.Disposition, true, out var disposition)
+                    || !CisTaskReviewSemantics.ValidBasisReferences(finding.BasisReferences)) return false;
+                if (finding.RequiresDecision == true && (disposition != "required" || review.Recommendation != "blocked")) return false;
+                dispositions.Add(disposition);
+            }
         }
+        if (taskReview) return CisTaskReviewSemantics.VerdictError(review.Recommendation, dispositions) is null
+            && CisTaskReviewSemantics.ValidNecessityAssessment(review.NecessityAssessment);
         return review.Recommendation != "ready"
             || !review.Findings.Any(item => item.Severity is "blocking" or "major");
     }

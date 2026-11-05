@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Cis.Abstractions;
 
@@ -14,13 +15,40 @@ public sealed class ClaudeAgentProvider : ICisAgentProvider, ICisAgentProviderAu
     private const string BrdReviewJsonSchema = """
         {"type":"object","additionalProperties":false,"required":["summary","changedFiles","validations","evidence","review"],"properties":{"summary":{"type":"string","minLength":1},"changedFiles":{"type":"array","maxItems":0,"items":{"type":"string"}},"validations":{"type":"array","items":{"type":"string"}},"evidence":{"type":"array","items":{"type":"string"}},"review":{"type":"object","additionalProperties":false,"required":["recommendation","strengths","findings"],"properties":{"recommendation":{"type":"string","enum":["ready","revise","blocked"]},"strengths":{"type":"array","items":{"type":"string","minLength":1}},"findings":{"type":"array","maxItems":100,"items":{"type":"object","additionalProperties":false,"required":["id","severity","category","location","observation","recommendation"],"properties":{"id":{"type":"string","pattern":"^BRD-REV-[0-9]{3}$"},"severity":{"type":"string","enum":["blocking","major","minor","observation"]},"category":{"type":"string","minLength":1},"location":{"type":"string","minLength":1},"observation":{"type":"string","minLength":1},"recommendation":{"type":"string","minLength":1}}}}}}}}
         """;
+    private static readonly string TaskReviewJsonSchema = CreateTaskReviewJsonSchema();
+
+    private static string CreateTaskReviewJsonSchema()
+    {
+        var schema = JsonNode.Parse(BrdReviewJsonSchema)!;
+        var review = schema["properties"]!["review"]!;
+        var finding = review["properties"]!["findings"]!["items"]!;
+        finding["properties"]!["id"]!["pattern"] = "^TASK-REV-[0-9]{3}$";
+        finding["required"]!.AsArray().Add("disposition");
+        finding["required"]!.AsArray().Add("basisReferences");
+        finding["properties"]!["disposition"] = JsonNode.Parse("""{"type":"string","enum":["required","optional"]}""");
+        finding["properties"]!["basisReferences"] = JsonNode.Parse("""{"type":"array","minItems":1,"maxItems":32,"items":{"type":"string","minLength":1,"maxLength":2000}}""");
+        finding["properties"]!["requiresDecision"] = new JsonObject { ["type"] = "boolean" };
+        var necessity = new JsonObject { ["type"] = "object", ["additionalProperties"] = false };
+        var required = new JsonArray();
+        var properties = new JsonObject();
+        foreach (var name in new[] { "invariant", "nativeAlternative", "costEvidence", "maintenanceAndPassSemantics", "duplicationAvoided", "decision" })
+        {
+            required.Add(name);
+            properties[name] = new JsonObject { ["type"] = "string", ["minLength"] = 1, ["maxLength"] = 4000 };
+        }
+        necessity["required"] = required;
+        necessity["properties"] = properties;
+        review["properties"]!["necessityAssessment"] = necessity;
+        return schema.ToJsonString();
+    }
     private readonly string _executable;
 
     public ClaudeAgentProvider() : this(ResolveExecutable(
         Environment.GetEnvironmentVariable("CIS_CLAUDE_EXECUTABLE"),
         Environment.GetEnvironmentVariable("PATH"),
         Environment.GetEnvironmentVariable("USERPROFILE"),
-        OperatingSystem.IsWindows())) { }
+        OperatingSystem.IsWindows()))
+    { }
     public ClaudeAgentProvider(string executable) => _executable = executable;
 
     public CisAgentProviderDescriptor Descriptor { get; } = new(
@@ -29,7 +57,8 @@ public sealed class ClaudeAgentProvider : ICisAgentProvider, ICisAgentProviderAu
         [CisAgentRunModes.Plan, CisAgentRunModes.Implement, CisAgentRunModes.Review],
         [CisAgentPermissions.ReadOnly, CisAgentPermissions.WorkspaceWrite],
         true, false,
-        "Uses Claude Code print mode with structured streaming JSON and an explicit predeclared permission mode.") { SupportsExplicitCommands = true };
+        "Uses Claude Code print mode with structured streaming JSON and an explicit predeclared permission mode.")
+    { SupportsExplicitCommands = true };
 
     public CisAgentProviderDiagnosis Diagnose(string repositoryPath)
     {
@@ -236,9 +265,14 @@ public sealed class ClaudeAgentProvider : ICisAgentProvider, ICisAgentProviderAu
 
     internal static ProcessStartInfo CreateStartInfo(string executable, string workingDirectory) => new(executable)
     {
-        WorkingDirectory = workingDirectory, UseShellExecute = false, CreateNoWindow = true,
-        RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
-        StandardInputEncoding = new UTF8Encoding(false), StandardOutputEncoding = new UTF8Encoding(false),
+        WorkingDirectory = workingDirectory,
+        UseShellExecute = false,
+        CreateNoWindow = true,
+        RedirectStandardInput = true,
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
+        StandardInputEncoding = new UTF8Encoding(false),
+        StandardOutputEncoding = new UTF8Encoding(false),
         StandardErrorEncoding = new UTF8Encoding(false),
     };
 
@@ -278,7 +312,7 @@ public sealed class ClaudeAgentProvider : ICisAgentProvider, ICisAgentProviderAu
         }
         if (request.Mode == CisAgentRunModes.Review)
         {
-            start.ArgumentList.Add("--json-schema"); start.ArgumentList.Add(request.TaskReview ? BrdReviewJsonSchema.Replace("BRD-REV-", "TASK-REV-", StringComparison.Ordinal) : BrdReviewJsonSchema);
+            start.ArgumentList.Add("--json-schema"); start.ArgumentList.Add(request.TaskReview ? TaskReviewJsonSchema : BrdReviewJsonSchema);
             start.ArgumentList.Add("--no-session-persistence");
         }
     }

@@ -530,6 +530,17 @@ public sealed partial class FeatureIntakeTests
         var recordPath = Path.Combine(Path.GetDirectoryName(Path.Combine(f.Authority, request.RequestPath))!, "story-tasks", id + ".json");
         RetainSevenFieldStoryRecord(recordPath);
         File.WriteAllText(Path.Combine(f.Authority, ".cis/engineering-defaults.json"), """{"schemaVersion":1,"requireTaskCompletion":true,"additionalGates":[]}""");
+        // This execution double isolates classification/verification renewal. Actual owner
+        // authority and measured ledger debits are exercised by the Agent and Delivery fixtures.
+        // Its explicit finite control context is neither persisted allocation nor approval.
+        var syntheticAllowance = new CisAgentWorkAllowance(60_000, 1_000, 0, 5_000, 2, 1);
+        var syntheticControl = new CisAgentWorkView("synthetic-authority", "SYNTHETIC-CHANGE", "SYNTHETIC-OWNER", "SYNTHETIC-OWNER",
+            "synthetic-revision", "synthetic-adoption", "synthetic-bounded-fixture", "clear", null,
+            "Continue only the scoped verification through the execution double.", 1_000, syntheticAllowance, syntheticAllowance,
+            "synthetic-existing-attempt", 0, "fixture:explicit-bounded-control", "Fixture controller", "fixture:existing-local-bound", [], []);
+        capture.WorkInspection = new("synthetic-authorized", true, true,
+            new("synthetic-authority", "SYNTHETIC-CHANGE", "SYNTHETIC-OWNER", [], []),
+            new("synthetic-authorized", syntheticControl, [], false), syntheticControl.NextAction, []);
         var reader = new PlanningService(null!, null!, null!, new CisRepositoryContextResolver(), workspaceRegistry: f.Registry);
         service = new FeatureIntakeService(f.Registry, f.Importer, new DocumentationCatalogMerger(), [f.Baseline], storyExecutor: capture, taskContracts: reader);
         var retained = service.Story(f.Authority, "referrals", id, false);

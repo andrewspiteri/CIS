@@ -247,6 +247,87 @@ async function feedbackFixture() {
   await f.page.reveal('T1'); return f;
 }
 
+test('optional minor advice and cumulative work remain visible without mandatory answers or corrections', async () => {
+  const f = await feedbackFixture();
+  Object.assign(f.result.taskProgress[0], { canExecute: false, canComplete: true,
+    work: { status: 'ready', required: true, bindingCurrent: true, identity: { authorityRepositoryId: 'authority', changeId: 'CIS-0001', taskId: 'WORK-001' },
+      nextAction: 'Record current completion evidence.', control: { work: { ownerTaskId: 'WORK-001', revision: 'ledger-7', coverage: 'historical-unknown', recoveryState: 'clear',
+        task: { consumedMilliseconds: 2400, reservedMilliseconds: 100, remainingMilliseconds: 3500, restorationMilliseconds: 1000 },
+        change: { consumedMilliseconds: 6000, reservedMilliseconds: 100, remainingMilliseconds: 9000, restorationMilliseconds: 2000 },
+        corrections: [{ id: 'correction-1', relationshipId: 'referrals/abc/T1', number: 1, status: 'completed', findingReferences: ['finding-required'] }] } } },
+    execution: { status: 'reviewed', applied: true, findings: ['minor optional naming advice'], runs: [], changedFiles: [] },
+    reviewFeedback: [{ id: 'optional-1', finding: 'A naming preference for future cleanup.', severity: 'minor', disposition: 'optional', requiresDecision: false,
+      applicabilityReason: 'Optional advice is retained; no correction or answer is required.' }] });
+  await f.page.action('refresh');
+  const html = f.page.panel.webview.html;
+  assert.match(html, /Optional advice/u); assert.match(html, /CIS-0001.*WORK-001/su);
+  assert.match(html, /consumed 2400 ms.*remaining 3500 ms/su); assert.match(html, /historical-unknown/u); assert.match(html, /Correction 1.*completed/u);
+  assert.doesNotMatch(html, /<textarea|data-command="save-feedback"|data-command="suggest-feedback"/u);
+  assert.match(html, /data-command="complete" data-value="T1" >Record completion/u);
+  f.result.taskProgress[0].execution.applied = false; f.result.taskProgress[0].execution.status = 'review-failed';
+  await f.page.action('refresh'); await f.page.action('suggest-feedback', 'T1');
+  assert.match(f.page.model.error, /need no answer/u);
+  assert.equal(f.calls.some(args => args[0] === 'ai' || args[4] === 'feedback-suggest' || args[4] === 'execute'), false);
+});
+
+test('required corrections and genuine decision holds differ from optional advice', async () => {
+  const f = await feedbackFixture();
+  f.result.taskProgress[0].reviewFeedback = [
+    { id: 'required-1', finding: 'The accepted timestamp behavior is missing.', severity: 'minor', disposition: 'required', requiresDecision: false },
+    { id: 'optional-1', finding: 'Prefer a shorter helper name.', severity: 'minor', disposition: 'optional', requiresDecision: false }];
+  await f.page.action('refresh');
+  assert.match(f.page.panel.webview.html, /Required correction/u); assert.match(f.page.panel.webview.html, /Optional advice/u);
+  assert.doesNotMatch(f.page.panel.webview.html, /<textarea|data-command="save-feedback"/u);
+  f.result.taskProgress[0].execution.status = 'blocked'; f.result.taskProgress[0].reviewFeedback[0].requiresDecision = true;
+  await f.page.action('refresh');
+  assert.match(f.page.panel.webview.html, /Required decision or evidence/u);
+  assert.match(f.page.panel.webview.html, /data-finding="required-1"/u); assert.doesNotMatch(f.page.panel.webview.html, /data-finding="optional-1"/u);
+  assert.match(f.page.panel.webview.html, /data-command="save-feedback"/u);
+});
+
+test('a retained legacy blocked question keeps its answer and suggestion flow without permitting completion', async () => {
+  const f = await feedbackFixture();
+  Object.assign(f.result.taskProgress[0], { canComplete: false });
+  f.result.taskProgress[0].execution.status = 'blocked';
+  Object.assign(f.result.taskProgress[0].reviewFeedback[0], { severity: 'major', disposition: 'required', requiresDecision: true });
+  await f.page.action('refresh');
+  assert.match(f.page.panel.webview.html, /Required decision or evidence/u);
+  assert.match(f.page.panel.webview.html, /data-finding="finding-1"[^>]*><\/textarea>/u);
+  assert.match(f.page.panel.webview.html, /data-command="suggest-feedback"/u);
+  assert.match(f.page.panel.webview.html, /data-command="complete" data-value="T1" disabled/u);
+  await f.page.action('suggest-feedback', 'T1');
+  assert.ok(f.calls.some(args => args[4] === 'feedback-suggest'));
+  assert.equal(f.result.taskProgress[0].reviewFeedback[0].answer, null);
+  assert.equal(f.calls.some(args => ['execute', 'complete', 'feedback-save'].includes(args[4])), false);
+});
+
+test('missing canonical work binding uses the supported headless input route without allocating work', async () => {
+  const f = await feedbackFixture();
+  Object.assign(f.result.taskProgress[0], { canExecute: false, work: { status: 'missing-binding', required: true, bindingCurrent: false,
+    nextAction: 'Bind an existing approved canonical change and task before allocation.', errors: [] } });
+  await f.page.action('refresh'); assert.match(f.page.panel.webview.html, /Bind existing approved work/u);
+  const os = require('node:os'); const path = require('node:path');
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'cis-story-binding-test-')); const input = path.join(folder, 'binding.json');
+  fs.writeFileSync(input, JSON.stringify({ slug: 'referrals', storyId: 'abc', taskId: 'T1', expectedPlanHash: 'plan', expectedRevision: 'review-revision',
+    changeId: 'CIS-0001', workOwnerTaskId: 'WORK-001', actor: 'Authorized controller', reason: 'Use the exact approved work relationship.' }));
+  const query = f.cli.query;
+  f.vscode.window.showOpenDialog = async () => [{ fsPath: input }];
+  f.cli.query = async args => {
+    if (args[4] !== 'bind-work') return query(args);
+    f.calls.push(args); const binding = JSON.parse(fs.readFileSync(args[args.indexOf('--input') + 1], 'utf8'));
+    assert.equal(binding.workOwnerTaskId, 'WORK-001'); assert.equal(binding.expectedRevision, 'review-revision');
+    f.result.taskProgress[0].work = { status: 'missing-allocation', required: true, bindingCurrent: true,
+      identity: { authorityRepositoryId: 'authority', changeId: 'CIS-0001', taskId: 'WORK-001' }, nextAction: 'Use cis agent work allocate once under existing authority.', errors: [] };
+    return structuredClone(f.result);
+  };
+  try {
+    await f.page.action('bind-work', 'T1'); assert.equal(f.page.model.error, undefined);
+    assert.match(f.page.panel.webview.html, /missing-allocation/u); assert.match(f.page.panel.webview.html, /cis agent work allocate/u);
+    assert.equal(f.calls.filter(args => args[4] === 'bind-work').length, 1);
+    assert.equal(f.calls.some(args => args[0] === 'agent' || args[0] === 'ai' || args[4] === 'execute'), false);
+  } finally { fs.unlinkSync(input); fs.rmdirSync(folder); }
+});
+
 test('changed finding basis retains response provenance and requires an explicit draft renewal', async () => {
   const f = await feedbackFixture();
   Object.assign(f.result.taskProgress[0].reviewFeedback[0], { suggestedAnswer: null, answer: null,

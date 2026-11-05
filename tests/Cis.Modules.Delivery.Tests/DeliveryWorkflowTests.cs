@@ -2636,6 +2636,15 @@ authority: human-reviewed
                 + System.IO.Path.DirectorySeparatorChar;
             if (fullPath.StartsWith(parent, StringComparison.OrdinalIgnoreCase))
             {
+                // Native Git fixtures create read-only loose objects on Windows.
+                // Touch only this owned temporary root and never traverse reparse points.
+                if (!File.GetAttributes(fullPath).HasFlag(FileAttributes.ReparsePoint))
+                    foreach (var file in Directory.EnumerateFiles(fullPath, "*", new EnumerationOptions
+                    { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint }))
+                    {
+                        var attributes = File.GetAttributes(file);
+                        if (attributes.HasFlag(FileAttributes.ReadOnly)) File.SetAttributes(file, attributes & ~FileAttributes.ReadOnly);
+                    }
                 Directory.Delete(fullPath, recursive: true);
             }
         }

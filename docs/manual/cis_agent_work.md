@@ -15,13 +15,29 @@ Allocate the work allowed for a change and its logical tasks, inspect consumptio
 
 ## Scope and authority
 
-Direct `agent run` and direct-task `agent resume` require work accounting when the authority has adopted engineering defaults with `requireTaskCompletion: true`. A provider profile alone does not adopt these controls. Repositories without that adoption retain their existing direct-run behavior; minimal import does not acquire a new mandatory allocation. Product-document authoring and story execution are outside this accounting slice.
+Direct `agent run`, direct-task `agent resume` and governed story stages require work accounting under applicable adopted engineering defaults (`requireTaskCompletion: true`) or existing authority-owned accounting. Story control applies when the authority or a linked owned target has adopted it; an unconfigured target does not exempt the shared work. An exact registered owned participant's controls permit allocation at an authority that has no engineering quality policy. Retained story correction history also permits an authorized finite allocation against existing approved canonical work.
 
-The controller supplies an allocation from the existing authorized planning or controller process. The actor and decision reference record that authority; provider output, a resume reason, and `--approve-requests` do not grant it. An absent allocation on the governed direct route holds execution and identifies the missing allocation decision. Allocating work does not approve a plan, accept impacts, satisfy a design barrier, or transition a task.
+Establishing that allocation adopts work accounting across the authority: every supported direct-task and story route then needs its canonical owner and applicable finite allocation, including sibling tasks with no correction history or engineering quality policy. Allocating one task grants no capacity to another. This adopts work accounting, not engineering quality policy, and grants no plan, design or completion approval. A provider profile alone does not adopt accounting. Authorities without adopted accounting or applicable engineering defaults retain their existing non-adopted execution boundaries. Product-document authoring and import operations retain their dedicated flows.
+
+The controller supplies an allocation from the existing authorized planning or controller process. The actor and decision reference record that authority; provider output, a resume reason, and `--approve-requests` do not grant it. An absent allocation on a governed route holds execution and identifies the missing allocation decision. Allocating work does not approve a plan, accept impacts, satisfy a design barrier, or transition a task.
 
 One authority-owned record retains the containing change, logical accounting owners, allocations, measured consumption, reservations, restoration reserve, logical attempts, checkpoints, and recovery uncertainty. CIS diagnostic cleanup protects `.cis/local/agents/work-control.json`, `work-control-adoption.json`, and `work-control.lock` under that same directory. Those three accounting, adoption, and transaction-lock files are distinct from disposable run diagnostics even though the existing agents retention family covers their parent directory. Raw external deletion is outside that cleanup guarantee. Do not edit or delete these files to reset work: missing or corrupt accounting after adoption holds execution and requires reconciliation, not a new empty allocation.
 
 Historical runs remain readable. Initial allocation must explicitly acknowledge that earlier unmeasured effort is unknown; it does not assert that those runs cost nothing. The accounting guarantee covers supported controllers sharing this authoritative state. It does not supervise independent hosts or raw external agent commands. Storage owner and ceiling references are recorded; complete storage enforcement is outside this slice.
+
+### Story ownership and continuation
+
+Inspect a story task without allocating or launching work:
+
+```text
+cis brd feature wizard story work-status --workspace <authority-path> --slug <feature> --story <story-id> --task <task-id> --format json
+```
+
+Reuse its existing unambiguous canonical association. If the association is missing, prepare and inspect the existing approved change/task, then use `cis brd feature wizard story bind-work --workspace <authority-path> --input <binding.json> --format json`. The binding request contains `slug`, `storyId`, `taskId`, current `expectedPlanHash` and `expectedRevision`, `changeId`, `workOwnerTaskId`, `actor` and `reason`. Get the story tokens from current story status. Binding records an association to existing approved work; it neither allocates capacity nor alters the approved implementation contract. Genuine ambiguity remains a targeted hold.
+
+Use that canonical change/task with the allocation, progress and disposition commands below. When entering finite accounting from correction-only history, first allocate with the explicit acknowledgment of unknown historical effort, then follow the displayed owner-scoped `reconcile-story-history` action before reuse or a specific correction grant. These operations grant no plan, design or completion approval. Implementation, independent review, grouped corrections, retries and linked owned repositories share this authority ledger and logical attempt. Stage IDs and provider attempts retain detail without creating fresh owners. Admission precedes costly preparation; compatible candidate reuse preserves historical cost and charges only newly performed work. Generic `agent resume` redirects story stages to the governed story `execution-plan` / `execute` route.
+
+The two automatic correction rounds are durable under the story relationship. A round groups required findings across the relevant candidate set; it is not each reviewer, repository, command or failing development test. Optional advice remains visible without compulsory work or answers. At the limit, inspect current correction history and required finding references before recording a relevant authorized bounded disposition. Review clarification and correction share the same capacity and independent holds.
 
 ## Commands
 
@@ -102,6 +118,8 @@ This is routine execution work, not another approval or reviewer call. A valid c
 
 One qualifying checkpoint comes through the controller progress operation and records Outcome, nonempty Evidence, Approach, Decision, and the next bounded action. CIS records its origin and measured Cost context; the checkpoint cannot overwrite consumption. Optional `hypothesis` and `expectedResult` identify the investigation. Set `closeAttempt` only when that logical attempt has concluded. A `blockerKey` identifies a repeated blocker; `materialNewInformation` records the controller's judgment rather than asking a semantic classifier to infer progress. Recording reflection permits continuation automatically when all other gates allow it; it does not clear repeated-blocker, allocation, recovery, permission or required-review holds.
 
+The supported story controller records its own routine reflection under existing delegation from the approved task, retained native results and measured cost. `story work-status` reports `routine-reflection-autonomous` when reflection is the only pending action; continue through the story route without a manual progress ceremony. These records identify their story relationship and approved task contract. They qualify only for that same story context and never satisfy direct-task controller reflection, claim new material information, close the logical attempt or clear another hold. Reading status records no checkpoint.
+
 For example, read the current revision and write one input file:
 
 ```powershell
@@ -130,7 +148,15 @@ Evidence references are existing results or source locations; do not copy raw lo
 
 Two consecutive logical attempts with the same blocker and no material new information hold another unchanged expensive repetition. Two expected failing tests during development do not establish that condition. A controller may record a justified in-scope simplification within existing authority and remaining capacity. That decision preserves spent effort and does not require another human prompt where the controller already has the necessary delegation.
 
-Supported disposition kinds are `continue`, `simplify`, `hold`, and `reconcile`. Use a fresh revision, supporting evidence, and an explicit rationale. A bare continuation, reworded hypothesis, or increased allocation does not clear every hold. Hard exhaustion, uncertain recovery, and existing approval or permission gates remain separate.
+Supported disposition kinds are `continue`, `simplify`, `hold`, `reconcile`, and `reconcile-story-history`. Use a fresh revision, supporting evidence, and an explicit rationale. A bare continuation, reworded hypothesis, or increased allocation does not clear every hold. Hard exhaustion, uncertain recovery, and existing approval or permission gates remain separate.
+
+For a story correction-limit hold, a relevant `simplify` disposition also identifies the retained `correctionRelationshipId`, current `correctionFindingReferences`, and `correctionMaximumSeconds` for one bounded next step. Use the relationship and references returned by status; do not invent them. The bound must fit existing authority and remaining capacity. Prior rounds remain recorded, an interrupted started round remains charged/retained, and a grant is not two fresh rounds. Routine reflection without a correction-limit hold still uses the ordinary progress/disposition fields; it needs no additional human approval when existing delegation suffices.
+
+In genuinely non-adopted correction-only work, another actor may claim the next numbered round for the same relationship and identity only when none is started, preserving counts and the two-round automatic limit; started work stays with its original controller or requires explicit canonical binding, authority-wide finite accounting and supported history reconciliation, never a ledger edit or actor rename.
+
+An exhausted pending grant, before its correction round has started, can receive a replacement `simplify` disposition with a fresh revision, the same relationship and current required findings, a changed justified hypothesis, evidence, `nextAction` and a finite `correctionMaximumSeconds` of 30–3,600 seconds. The replacement preserves previously spent owner work and correction history; task/change allowances and other holds remain binding. Once the round has started, use the same-round extension below instead.
+
+If an already granted, started round has fewer than 30 usable seconds left, an authorized controller can use the same `simplify` request to authorize one further bounded step. Supply a fresh revision, the same relationship and current required-finding references, a changed justified hypothesis, evidence and `nextAction`. Here `correctionMaximumSeconds` is the additional step of 30–3,600 seconds. Every associated owned root and child must already be safely finalized without recovery uncertainty. CIS retains the same round ID, number, material context and completed stages, and records the extension reference in that round's `continuationReferences` and the owner checkpoint. Its cumulative cap includes all measured round work plus the newly authorized step; consumption, logical attempts, restoration reserves, task/change limits and provider ceilings remain unchanged. Retry or containing-task reallocation alone does not extend this cap.
 
 ```powershell
 $workStatus = cis agent work status CIS-0001 --task WORK-090 --format json | ConvertFrom-Json
@@ -148,6 +174,27 @@ cis agent resume RUN_ID --actor "Authorized controller" --reason "Continue the r
 ```
 
 Replace `RUN_ID` with the retained terminal run identity. Resume rechecks current policy and remaining capacity; provider-attempt numbering does not create a new logical work allowance. Its optional `--timeout-seconds` chooses a shorter supported bound when the recorded timeout no longer fits; it does not grant capacity. Resupply any explicitly authorized `--allow-command` entries. Use `cancel` and bounded `recover` for the existing owned-process lifecycle, not as an alternative implementation route. A live or uncertain process/reservation must be reconciled before capacity can be safely released.
+
+### Reconcile historical story effort
+
+When adopted story status identifies retained unmeasured runs, establish the authorized canonical allocation and its historical-unknown acknowledgment first. Then use `reconcile-story-history` on that same canonical change/task. Copy the exact `correctionRelationshipId`, retained `historicalRunIds` and current revision from the reported hold/status; do not infer identities or edit accounting files.
+
+This synthetic request shows the field names. Replace every placeholder with the current service-reported value:
+
+```json
+{
+  "kind": "reconcile-story-history",
+  "expectedRevision": "CURRENT_WORK_REVISION",
+  "correctionRelationshipId": "EXACT_STORY_RELATIONSHIP",
+  "historicalRunIds": ["EXACT_RETAINED_RUN_ID"]
+}
+```
+
+```text
+cis agent work disposition <change-id> <work-owner-task-id> --repo <authority-path> --input <historical-reconciliation.json> --actor <authorized-controller> --reason <rationale> --format json
+```
+
+CIS verifies the exact terminal native story records, artifact integrity, timing bounds and stopped owned processes. Live or uncertain ownership remains held. Reconciliation conservatively charges at least each retained run's recorded bound, once, without erasing prior correction rounds or transferring a charge to another owner. A repeated identical reconciliation is idempotent. Initial historical acknowledgment alone does not price those runs or make their effort zero. Once this hold is resolved, governed story continuation may reuse compatible implementation evidence while charging only newly performed work.
 
 ### Reconcile interrupted preparation
 
@@ -176,6 +223,8 @@ When a run manifest exists, use [`cis agent recover`](cis_agent_recover.md) only
 ## Output and exit codes
 
 All formats expose the work owner, revision, change/task allocations, consumed/reserved/remaining capacity, restoration reserve, attempt usage, coverage, recovery state, hold reason, and next action. JSON retains execution and checkpoint history. `agent show`, run results, and their structured summaries include the available work projection. Status reads do not settle execution or alter consumption.
+
+In correction history, a granted round's `startedAtUtc` is its grant measurement origin, including active preparation performed before the candidate was verified and the round was created. It is not that later verification or creation time. Measured correction cost is the union of relevant active intervals from that origin; settled waiting between invocations is excluded, even when the timestamp is much earlier than the latest continuation.
 
 The result has `status`, `work`, `errors`, `applied`, and `exitCode`. A hold, invalid request, busy accounting transaction, or missing allocation returns nonzero (`4`); an unsupported output format returns `2`. A hold does not imply task completion. Successful allocation or progress does not establish that a provider ran or that product acceptance was granted.
 

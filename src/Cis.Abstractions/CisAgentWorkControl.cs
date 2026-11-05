@@ -45,6 +45,51 @@ public sealed record CisAgentWorkDispositionRequest(string Kind, string Expected
     public string? Hypothesis { get; init; }
     public string? NextAction { get; init; }
     public IReadOnlyList<string> Evidence { get; init; } = [];
+    public string? CorrectionRelationshipId { get; init; }
+    public IReadOnlyList<string> CorrectionFindingReferences { get; init; } = [];
+    public int? CorrectionMaximumSeconds { get; init; }
+    public IReadOnlyList<string> HistoricalRunIds { get; init; } = [];
+}
+
+public sealed record CisAgentWorkStage(string Route, string RelationshipId, string Name, string RepositoryId,
+    string? CorrectionRoundId = null)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? ContractDigest { get; init; }
+}
+
+public sealed record CisAgentWorkCorrectionStage(string RepositoryId, string RunId, string Candidate,
+    string RecordedAtUtc, IReadOnlyList<string> Evidence);
+
+public sealed record CisAgentWorkCandidateTree(string RepositoryId, string BaselineTree, string CandidateTree);
+
+public sealed record CisAgentWorkCorrectionContext(string ContractDigest, string MaterialBasis,
+    IReadOnlyList<CisStoryReviewFinding> Findings, IReadOnlyList<CisAgentWorkCandidateTree> Candidates);
+
+public sealed record CisAgentWorkCorrectionContinuation(string Id, string RelationshipId, int MaximumSeconds,
+    string NextAction, string Actor, string RecordedAtUtc, CisAgentWorkCorrectionContext? Context);
+
+/// <summary>A retained correction round and its accounting basis.</summary>
+/// <param name="Id">The retained round identity.</param>
+/// <param name="RelationshipId">The owning story relationship.</param>
+/// <param name="Number">The durable round number.</param>
+/// <param name="Status">The recorded round state.</param>
+/// <param name="StartedAtUtc">The measurement origin. For a granted round this is the grant's recorded time,
+/// including earlier active preparation, rather than the later candidate verification or round creation time.
+/// Measured cost unions relevant active intervals and excludes settled waiting.</param>
+/// <param name="FindingReferences">The required findings bound to this round.</param>
+/// <param name="Stages">The retained completed repository stages.</param>
+public sealed record CisAgentWorkCorrectionRound(string Id, string RelationshipId, int Number, string Status,
+    string StartedAtUtc, IReadOnlyList<string> FindingReferences, IReadOnlyList<CisAgentWorkCorrectionStage> Stages)
+{
+    public string? CompletedAtUtc { get; init; }
+    public string? DispositionReference { get; init; }
+    public int? MaximumSeconds { get; init; }
+    public IReadOnlyList<string> ExecutionIds { get; init; } = [];
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public CisAgentWorkCorrectionContext? Context { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? ContinuationReferences { get; init; }
 }
 
 public sealed record CisAgentWorkAllowance(long AllocatedMilliseconds, long ConsumedMilliseconds,
@@ -62,12 +107,17 @@ public sealed record CisAgentWorkExecution(string ExecutionId, string TaskId, st
     public bool Finalized { get; init; }
     public bool LaunchIntent { get; init; }
     public CisAgentWorkPreparationOwner? PreparationOwner { get; init; }
+    public CisAgentWorkStage? Stage { get; init; }
 }
 
 public sealed record CisAgentWorkCheckpointRecord(string LogicalAttemptId, string Actor, string RecordedAtUtc,
     CisAgentWorkCheckpoint Checkpoint, long ActiveMilliseconds, long ReservedMilliseconds)
 {
     public string? Origin { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? StoryRelationshipId { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? StoryContractDigest { get; init; }
 }
 
 public sealed record CisAgentWorkView(string AuthorityRepositoryId, string ChangeId, string? TaskId,
@@ -83,6 +133,15 @@ public sealed record CisAgentWorkView(string AuthorityRepositoryId, string Chang
     public long? ReflectionWindowMilliseconds { get; init; }
     public long LastControllerReflectionMilliseconds { get; init; }
     public bool ReflectionDue { get; init; }
+    public IReadOnlyList<CisAgentWorkCorrectionRound> Corrections { get; init; } = [];
+    public bool CorrectionOnly { get; init; }
+    public string? CorrectionRelationshipId { get; init; }
+    public IReadOnlyList<string> RequiredCorrectionFindingReferences { get; init; } = [];
+    public bool CorrectionContinuationAvailable { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public CisAgentWorkCorrectionContext? RequiredCorrectionContext { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public CisAgentWorkCorrectionContinuation? CorrectionContinuation { get; init; }
 }
 
 public sealed record CisAgentWorkResult(string Status, CisAgentWorkView? Work, IReadOnlyList<string> Errors, bool Applied)

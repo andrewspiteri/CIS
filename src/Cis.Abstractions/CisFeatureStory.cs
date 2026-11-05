@@ -68,6 +68,8 @@ public sealed record CisFeatureStoryTaskProgress(string Id, string Status, bool 
     public bool CanExecute { get; init; }
     public bool NeedsVerificationRenewal { get; init; }
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public CisStoryWorkStatus? Work { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public IReadOnlyList<CisStoryReviewFeedback>? ReviewFeedback { get; init; }
 }
 public sealed record CisFeatureStoryTaskLink(string Id, string Title, string Status, IReadOnlyList<string> RepositoryIds);

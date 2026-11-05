@@ -111,6 +111,8 @@ public sealed partial class BrdModule
         var root = new Command("story", "Read a story definition and acceptance criteria, or generate its proposed tasks.");
         root.Subcommands.Add(CreateStoryPlanningCommand(service, false));
         root.Subcommands.Add(CreateStoryPlanningCommand(service, true));
+        root.Subcommands.Add(CreateStoryWorkCommand(service, false));
+        root.Subcommands.Add(CreateStoryWorkCommand(service, true));
         foreach (var operation in new[] { "status", "prepare" })
         {
             var command = new Command(operation, operation == "prepare" ? "Generate this story's task breakdown with a selected model; automatic selection stays local." : "Read this story and its current task breakdown.");
@@ -191,8 +193,8 @@ public sealed partial class BrdModule
                         Console.WriteLine($"repository={context.RepositoryId};receipt={context.ReceiptPath}");
                         if (context.TemplateJson is not null) Console.WriteLine(context.TemplateJson);
                     }
-                    foreach (var error in result.Errors) Console.WriteLine("error=" + Clean(error));
                 }
+                foreach (var error in result.Errors) Console.Error.WriteLine("error=" + Clean(error));
                 return result.ExitCode;
             });
             root.Subcommands.Add(command);
@@ -246,6 +248,37 @@ public sealed partial class BrdModule
             ?? throw new InvalidDataException("The story input must contain the expected JSON object.");
     }
 
+    private static Command CreateStoryWorkCommand(FeatureIntakeService service, bool bind)
+    {
+        var command = new Command(bind ? "bind-work" : "work-status", bind
+            ? "Associate this approved story instance with its exact existing approved canonical work owner; do not allocate work."
+            : "Read canonical ownership, allowance, correction history and the next permitted action without changing work.");
+        var workspace = WorkspaceOption(); var format = FormatOption();
+        var input = new Option<string?>("--input") { Required = bind };
+        var slug = new Option<string?>("--slug") { Required = !bind };
+        var story = new Option<string?>("--story") { Required = !bind };
+        var task = new Option<string?>("--task") { Required = !bind };
+        foreach (var option in new Option[] { workspace, format, input, slug, story, task }) command.Options.Add(option);
+        command.SetAction(parse =>
+        {
+            var selected = GetFormat(parse.GetValue(format)); if (selected is null) return 2;
+            CisFeatureStoryResult result;
+            try
+            {
+                var root = parse.GetValue(workspace) ?? Directory.GetCurrentDirectory();
+                result = bind ? service.BindStoryWork(root, ReadStoryPlanningInput<CisStoryWorkBindingRequest>(parse.GetValue(input)!))
+                    : service.StoryWorkStatus(root, parse.GetValue(slug)!, parse.GetValue(story)!, parse.GetValue(task)!);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException or JsonException or ArgumentException)
+            { result = new("failed", parse.GetValue(slug) ?? "", parse.GetValue(story) ?? "", null, "", "", null, [], [], [error.Message]); }
+            if (selected == "json") Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+            else { Console.WriteLine($"status={result.Status};planState={result.PlanState};revision={result.Revision};applied={result.Applied}"); WriteStoryReviewState(result); }
+            foreach (var error in result.Errors) Console.Error.WriteLine("error=" + Clean(error));
+            return result.ExitCode;
+        });
+        return command;
+    }
+
     private static void WriteStoryPlanningState(CisFeatureStoryResult result)
     {
         Console.WriteLine($"deliverySize={Clean(result.DeliverySize?.Size ?? "unknown")};assessment={Clean(result.DeliverySizeState)};basis={Clean(result.PlanningBasisHash ?? "")};planningRevision={Clean(result.PlanningRevision)};container={result.IsDeliveryContainer}");
@@ -290,8 +323,8 @@ public sealed partial class BrdModule
             {
                 Console.WriteLine($"status={result.Status};planState={result.PlanState};revision={result.Revision}");
                 WriteStoryReviewState(result);
-                foreach (var error in result.Errors) Console.WriteLine("error=" + Clean(error));
             }
+            foreach (var error in result.Errors) Console.Error.WriteLine("error=" + Clean(error));
             return result.ExitCode;
         });
         return command;
@@ -326,8 +359,9 @@ public sealed partial class BrdModule
                 {
                     Console.WriteLine($"status={result.Status};planState={result.PlanState};selection={result.ExecutionPlan?.Hash}");
                     if (result.ExecutionPlan is { } models) Console.WriteLine($"complexity={models.Complexity};implementation={models.Implementation?.Provider}/{models.Implementation?.Model};review={models.Review?.Provider}/{models.Review?.Model}");
-                    foreach (var error in result.Errors) Console.WriteLine("error=" + Clean(error));
+                    WriteStoryReviewState(result);
                 }
+                foreach (var error in result.Errors) Console.Error.WriteLine("error=" + Clean(error));
                 return result.ExitCode;
             }
             finally { Console.CancelKeyPress -= cancel; }
@@ -433,10 +467,24 @@ public sealed partial class BrdModule
         foreach (var progress in result.TaskProgress)
         {
             Console.WriteLine($"task={progress.Id};status={progress.Status};blocked={Clean(progress.BlockedReason ?? "")}");
+            WriteStoryWorkState(progress.Work);
             foreach (var feedback in progress.ReviewFeedback ?? [])
-                Console.WriteLine($"finding={feedback.Id};applicability={feedback.ApplicabilityState};answered={!string.IsNullOrWhiteSpace(feedback.Answer)};retained={!string.IsNullOrWhiteSpace(feedback.RetainedAnswer)};basisHash={feedback.BasisHash};reason={Clean(feedback.ApplicabilityReason ?? "")};actor={Clean(feedback.Actor ?? "")};suggested={!string.IsNullOrWhiteSpace(feedback.SuggestedAnswer)}");
+                Console.WriteLine($"finding={feedback.Id};severity={Clean(feedback.Severity ?? "legacy")};disposition={Clean(feedback.Disposition ?? "legacy")};requiresDecision={feedback.RequiresDecision};applicability={feedback.ApplicabilityState};answered={!string.IsNullOrWhiteSpace(feedback.Answer)};retained={!string.IsNullOrWhiteSpace(feedback.RetainedAnswer)};basisHash={feedback.BasisHash};reason={Clean(feedback.ApplicabilityReason ?? "")};actor={Clean(feedback.Actor ?? "")};suggested={!string.IsNullOrWhiteSpace(feedback.SuggestedAnswer)}");
         }
         foreach (var warning in result.Warnings) Console.WriteLine("warning=" + Clean(warning));
+    }
+
+    private static void WriteStoryWorkState(CisStoryWorkStatus? state)
+    {
+        if (state is null) return;
+        Console.WriteLine($"workStatus={Clean(state.Status)};required={state.Required};bindingCurrent={state.BindingCurrent};change={Clean(state.Identity?.ChangeId ?? "")};canonicalTask={Clean(state.Identity?.TaskId ?? "")}");
+        Console.WriteLine("workNextAction=" + Clean(state.NextAction));
+        if (state.Control?.Work is not { } work) return;
+        Console.WriteLine($"workRevision={Clean(work.Revision)};owner={Clean(work.OwnerTaskId ?? "")};coverage={Clean(work.Coverage)};recovery={Clean(work.RecoveryState)};reflectionDue={work.ReflectionDue};hold={Clean(work.HoldReason ?? "")}");
+        Console.WriteLine($"changeConsumedMs={work.Change.ConsumedMilliseconds};changeReservedMs={work.Change.ReservedMilliseconds};changeRemainingMs={work.Change.RemainingMilliseconds}");
+        if (work.Task is { } task) Console.WriteLine($"taskConsumedMs={task.ConsumedMilliseconds};taskReservedMs={task.ReservedMilliseconds};taskRemainingMs={task.RemainingMilliseconds};attemptsRemaining={task.RemainingAttempts}");
+        foreach (var round in work.Corrections)
+            Console.WriteLine($"correction={Clean(round.Id)};relationship={Clean(round.RelationshipId)};number={round.Number};status={Clean(round.Status)};findings={Clean(string.Join(',', round.FindingReferences))}");
     }
 
     private static Command CreateFeatureIntakeCommand(FeatureIntakeService service)

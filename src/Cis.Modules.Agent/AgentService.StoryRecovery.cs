@@ -4,21 +4,60 @@ namespace Cis.Modules.Agent;
 
 public sealed partial class AgentService
 {
+    private string? RetainedStoryReportTarget(CisRepositoryContext context, CisStoryTaskWork work, StoryWorkBinding binding)
+    {
+        var contract = CisStoryEngineeringContract.Digest(work);
+        var manifest = ReadRunManifests(context).Where(run => run.Mode == "implement"
+            && run.Status == CisAgentRunStates.Succeeded && run.TargetRepositoryId == "task-report"
+            && run.ChangeId == "STORY-" + work.StoryId && run.TaskId == work.Task.Id + "-IMPLEMENT"
+            && run.TaskContractDigest == contract && (run.StoryRelationshipId == binding.RelationshipId || run.StoryRelationshipId is null))
+            .OrderByDescending(run => run.StartedAtUtc, StringComparer.Ordinal).FirstOrDefault();
+        if (manifest is null) return null;
+        var retained = Show(context.RepositoryPath, manifest.RunId);
+        var workspaceRoot = Path.Combine(context.RepositoryPath, RootPath, "workspaces");
+        if (manifest.AuthorityRepositoryId != context.RepositoryId || retained.Run?.Result is null
+            || retained.Diagnostics.Any(message => message.StartsWith("ERROR:", StringComparison.Ordinal))
+            || retained.Run.Artifacts.Count == 0 || retained.Run.Artifacts.Any(artifact => !artifact.Valid)
+            || !CisPathSafety.IsUnderRoot(workspaceRoot, manifest.TargetRepositoryPath)
+            || CisPathSafety.ContainsReparsePoint(context.RepositoryPath, manifest.TargetRepositoryPath)
+            || !Directory.Exists(manifest.TargetRepositoryPath) || !IsGitRepository(manifest.TargetRepositoryPath))
+            throw new InvalidDataException("The retained repository-free report target cannot be reused safely. Inspect native run " + manifest.RunId + ".");
+        return manifest.TargetRepositoryPath;
+    }
+
     private StoryCandidate? RecoverStoryCandidate(CisRepositoryContext context, CisStoryTaskWork work,
         CisStoryExecutionPlan selection, CisWorkspaceRepository target, string preparedPath, string baseline,
-        List<string> diagnostics)
+        List<string> diagnostics, StoryWorkBinding binding)
     {
         var previous = work.PreviousExecution;
-        if (previous is null || previous.Applied
-            || previous.Selection.Hash != selection.Hash && !(work.ContractVersion == 1
-                && previous.Selection.Complexity == selection.Complexity
-                && previous.Selection.Implementation == selection.Implementation && previous.Selection.Review == selection.Review)
-            || previous.Status is not ("failed" or "cancelled" or "review-failed" or "blocked" or "changes-requested")) return null;
-        var saved = previous.Runs.LastOrDefault(run => run.RepositoryId == target.Id && run.Stage == "Implementation"
-            && run.Status == CisAgentRunStates.Succeeded);
+        if (previous?.Applied == true) return null;
+        var compatiblePrevious = previous is not null
+            && previous.Status is "failed" or "cancelled" or "review-failed" or "blocked" or "changes-requested" or "held" or "running";
+        var saved = compatiblePrevious ? previous!.Runs.LastOrDefault(run => run.RepositoryId == target.Id && run.Stage == "Implementation"
+            && run.Status == CisAgentRunStates.Succeeded) : null;
+        // A stopped controller may have persisted a completed stage before the story result was
+        // saved. Recover its original evidence by stable relationship, never a new stage allowance.
+        var durable = ReadRunManifests(context).Where(run => (run.ExecutionRoute == "story-task" && run.StoryRelationshipId == binding.RelationshipId
+                || run.StoryRelationshipId is null && run.ChangeId == "STORY-" + work.StoryId && run.TaskId == work.Task.Id + "-IMPLEMENT")
+            && run.TargetRepositoryId == target.Id
+            && run.TaskContractDigest == CisStoryEngineeringContract.Digest(work) && run.Mode == "implement"
+            && run.Status == CisAgentRunStates.Succeeded).OrderByDescending(run => run.StartedAtUtc, StringComparer.Ordinal).FirstOrDefault();
+        if (durable is not null && (saved is null || StringComparer.Ordinal.Compare(durable.StartedAtUtc,
+            ReadManifest(context, saved.RunId, diagnostics)?.StartedAtUtc) > 0))
+            saved = new(durable.RunId, target.Id, "Implementation", durable.Provider, durable.Model!, durable.Status,
+                durable.WorkingDirectory, "Retained story implementation", [])
+            { CorrectionRoundId = durable.StoryCorrectionRoundId };
         if (saved is null) return null;
         var retained = Show(context.RepositoryPath, saved.RunId);
         var run = retained.Run;
+        if (run is not null && !string.IsNullOrWhiteSpace(run.Manifest.TaskContractDigest)
+            && run.Manifest.TaskContractDigest != CisStoryEngineeringContract.Digest(work)
+            && run.Manifest.ChangeId == "STORY-" + work.StoryId && run.Manifest.TaskId == work.Task.Id + "-IMPLEMENT"
+            && run.Manifest.AuthorityRepositoryId == context.RepositoryId && run.Manifest.TargetRepositoryId == target.Id
+            && run.Manifest.Status == CisAgentRunStates.Succeeded && run.Manifest.Mode == "implement"
+            && run.Artifacts.Count > 0 && run.Artifacts.All(artifact => artifact.Valid)
+            && !retained.Diagnostics.Any(message => message.StartsWith("ERROR:", StringComparison.Ordinal)))
+            return null; // A newly approved contract may start work without refunding this old run or its rounds.
         var sameContract = run is not null && (!string.IsNullOrWhiteSpace(run.Manifest.TaskContractDigest)
             ? run.Manifest.TaskContractDigest == CisStoryEngineeringContract.Digest(work)
             : run.Manifest.TaskDigest == work.PlanHash && run.Manifest.AcceptedScopeDigest == work.PlanHash);
@@ -29,7 +68,6 @@ public sealed partial class AgentService
             || run.Manifest.TaskId != work.Task.Id + "-IMPLEMENT" || !sameContract || run.Manifest.TargetRepositoryId != target.Id
             || run.Manifest.AuthorityRepositoryId != context.RepositoryId || run.Manifest.Mode != "implement"
             || run.Manifest.Permission != "workspace-write" || !run.Manifest.IsolatedWorktree
-            || run.Manifest.Provider != selection.Implementation!.Provider || run.Manifest.Model != selection.Implementation.Model
             || !SamePath(run.Manifest.TargetRepositoryPath, target.RepositoryPath)
             || !SamePath(run.Manifest.WorkingDirectory, expectedPath) || !Directory.Exists(expectedPath)
             || CisPathSafety.ContainsReparsePoint(context.RepositoryPath, expectedPath)

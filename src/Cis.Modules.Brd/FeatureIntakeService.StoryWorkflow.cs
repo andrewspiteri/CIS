@@ -22,6 +22,8 @@ public sealed partial class FeatureIntakeService
         public IReadOnlyDictionary<string, string>? Basis { get; init; }
         [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
         public IReadOnlyList<StoryPlanRecord>? PreviousPlans { get; init; }
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public IReadOnlyDictionary<string, StoryWorkBindingAudit>? WorkBindings { get; init; }
     }
 
     private static string StoryRecordPath(WizardState state, string storyId)
@@ -300,26 +302,46 @@ public sealed partial class FeatureIntakeService
             if (task.TaskTypeKey is not null && task.TaskTypeVersion is not null && task.Category is not null)
                 contractErrors.AddRange(taskContracts?.ValidateTaskType(state.Authority.RepositoryPath, task.TaskTypeKey, task.TaskTypeVersion, task.Category)
                     ?? ["Load the registered planning reader to reassess the retained typed task contract."]);
-            var gateErrors = taskContracts?.ValidateStoryTaskGate(state.Authority.RepositoryPath, task) ??
+            var execution = approved || historical ? record!.Events.LastOrDefault(item => item.TaskId == task.Id && item.Execution is not null)?.Execution : null;
+            var renewal = last?.NeedsVerificationRenewal == true;
+            CisStoryWorkStatus? workStatus = null;
+            var gateTask = task;
+            if (approved || historical)
+            {
+                try
+                {
+                    var work = StoryWork(state, input, result with
+                    { PlanHash = StoryApprovalHash(record!.ScopeHash, record.Plan) }, task, previous: execution) with
+                    { NeedsVerificationRenewal = renewal };
+                    gateTask = work.ForCanonicalGate();
+                    workStatus = InspectStoryWork(work);
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException or JsonException or ArgumentException)
+                {
+                    workStatus = new("held", adopted, false, null, null,
+                        "Inspect the exact story work binding and resolve the reported authority before execution.", [error.Message]);
+                }
+            }
+            var workHold = workStatus is null ? null : StoryWorkHold(workStatus);
+            var gateErrors = taskContracts?.ValidateStoryTaskGate(state.Authority.RepositoryPath, gateTask) ??
                 (task.ApprovalGate is not (null or "none") ? ["Resolve the exact canonical approval gate before starting this task."] : []);
-            var completionGateErrors = taskContracts?.ValidateStoryTaskGate(state.Authority.RepositoryPath, task, completing: true) ??
+            var completionGateErrors = taskContracts?.ValidateStoryTaskGate(state.Authority.RepositoryPath, gateTask, completing: true) ??
                 (task.ApprovalGate is not (null or "none") ? ["Resolve the exact canonical approval gate before completing this task."] : []);
             var reason = historical ? retainedScopeReason
                 : !approved ? result.Status == "current" ? "Approve the task plan before starting work." : "The plan needs regeneration and review."
                 : deliveryBlock ?? contractErrors.FirstOrDefault() ?? (storyDependencies.Length > 0 ? "Complete prerequisite story outcomes first: " + string.Join(", ", storyDependencies) + "."
                     : remaining.Length > 0 ? "Complete dependencies first: " + string.Join(", ", remaining) + "."
                     : gateErrors.FirstOrDefault());
-            var execution = approved || historical ? record!.Events.LastOrDefault(item => item.TaskId == task.Id && item.Execution is not null)?.Execution : null;
-            var renewal = last?.NeedsVerificationRenewal == true;
             return new CisFeatureStoryTaskProgress(task.Id, status, approved && status == "Ready" && reason is null,
                 approved && status == "InProgress" && reason is null && completionGateErrors.Count == 0 && (execution is null || execution.Applied),
-                reason ?? (renewal ? "Retain the existing work and verify every criterion against the current contract. Record completion with current required evidence, or use scoped agent verification and review."
+                reason ?? workHold ?? (renewal ? "Retain the existing work and verify every criterion against the current contract. Record completion with current required evidence, or use scoped agent verification and review."
                     : status == "InProgress" ? completionGateErrors.FirstOrDefault() : null), last?.Evidence)
             {
                 Execution = execution,
                 NeedsVerificationRenewal = renewal,
+                Work = workStatus,
                 ReviewFeedback = execution is null ? null : StoryFeedback(state, input, record!, task.Id, execution),
-                CanExecute = approved && reason is null && (status is "Ready" or "InProgress") && remaining.Length == 0 && (execution?.Applied != true || renewal)
+                CanExecute = approved && reason is null && workHold is null && (status is "Ready" or "InProgress") && remaining.Length == 0 && (execution?.Applied != true || renewal)
             };
         }).ToArray();
         return result with
@@ -386,7 +408,7 @@ public sealed partial class FeatureIntakeService
                 }
                 record = new(DeliveryBasisHash(approvedBasis), result with { IsRevisionProposal = false, PreviousPlans = [], TaskProgress = [] },
                     actor.Trim(), reason!.Trim(), now, previous is null ? [] : CompatibleStoryEvents(previous, result, approvedBasis, actor.Trim(), now))
-                { Basis = approvedBasis, PreviousPlans = history.Count > 0 ? history : null };
+                { Basis = approvedBasis, PreviousPlans = history.Count > 0 ? history : null, WorkBindings = previous?.WorkBindings };
             }
             else
             {

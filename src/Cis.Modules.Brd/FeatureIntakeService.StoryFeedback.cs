@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Cis.Abstractions;
 
 namespace Cis.Modules.Brd;
@@ -51,6 +52,8 @@ public sealed partial class FeatureIntakeService
                 .DistinctBy(run => JsonSerializer.Serialize(run, Json), StringComparer.Ordinal)
                 .OrderBy(run => run.RepositoryId, StringComparer.Ordinal).ThenBy(run => run.Stage, StringComparer.Ordinal).ThenBy(run => run.Summary, StringComparer.Ordinal), Json)
         };
+        if (execution.StructuredFindings is { } structured)
+            return StructuredStoryFeedback(state, input, record, taskId, execution, structured, context, cache);
         return execution.Findings.GroupBy(DeliveryMeaning, StringComparer.Ordinal).Select(group =>
         {
             var finding = group.First();
@@ -67,8 +70,13 @@ public sealed partial class FeatureIntakeService
                 .SelectMany(item => item.Execution!.Runs.Select(run => run.RunId)).Concat(execution.Runs.Select(run => run.RunId))
                 .Concat(saved?.RunIds ?? []).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
             var suggestion = cache?.Answers.FirstOrDefault(item => item.Id == id);
+            var severity = Regex.Match(finding, @"\b(blocking|major|minor|observation)\b", RegexOptions.IgnoreCase).Value.ToLowerInvariant();
+            var disposition = CisTaskReviewSemantics.TryDisposition(severity, null, false, out var interpreted) ? interpreted : null;
             return new CisStoryReviewFeedback(id, finding, applicable ? saved!.Answer : null, saved?.Actor, saved?.SavedAt)
             {
+                Severity = severity.Length > 0 ? severity : null,
+                Disposition = disposition,
+                RequiresDecision = disposition == "required" && execution.Status == "blocked",
                 BasisHash = basisHash,
                 RunIds = runs,
                 RetainedAnswer = applicable ? null : saved?.Answer,
@@ -77,6 +85,80 @@ public sealed partial class FeatureIntakeService
                     + (unknown is null ? "" : " Implementation coverage remains uncertain: " + unknown)
                     : saved.BasisHash is null ? "This retained response predates scoped finding bases; renew it against the current task evidence."
                     : "The finding's task contract or supporting implementation/review evidence changed. The earlier response is retained for review."),
+                SuggestedAnswer = suggestion?.Answer,
+                SuggestionReason = suggestion?.Evidence,
+                SuggestionModel = suggestion is null ? null : cache!.Provider + " / " + cache.Model
+            };
+        }).ToArray();
+    }
+
+    private static string StoryFindingMeaning(CisStoryReviewFinding finding)
+    {
+        _ = CisTaskReviewSemantics.TryDisposition(finding.Severity, finding.Disposition, false, out var disposition);
+        return JsonSerializer.Serialize(new
+        {
+            Repository = finding.RepositoryId,
+            finding.Severity,
+            Disposition = disposition,
+            Category = DeliveryMeaning(finding.Category),
+            Location = DeliveryMeaning(finding.Location),
+            Observation = DeliveryMeaning(finding.Observation),
+            Recommendation = DeliveryMeaning(finding.Recommendation),
+            Basis = finding.BasisReferences.Select(DeliveryMeaning).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)
+        }, Json);
+    }
+
+    private static IReadOnlyList<CisStoryReviewFeedback> StructuredStoryFeedback(WizardState state, DeliveryInput input,
+        StoryPlanRecord record, string taskId, CisStoryExecutionResult execution, IReadOnlyList<CisStoryReviewFinding> findings,
+        IReadOnlyDictionary<string, string> context, FeedbackCache? cache)
+    {
+        var materialContext = new SortedDictionary<string, string>(context.ToDictionary(item => item.Key, item => item.Value), StringComparer.Ordinal)
+        {
+            // Run IDs, ordering and reviewer prose do not change an equivalent finding.
+            ["review-evidence"] = JsonSerializer.Serialize(execution.Runs.Select(run => new
+            { run.RepositoryId, run.Stage, Validations = run.Validations.Select(DeliveryMeaning).Order(StringComparer.Ordinal) })
+                .DistinctBy(run => JsonSerializer.Serialize(run, Json), StringComparer.Ordinal)
+                .OrderBy(run => run.RepositoryId, StringComparer.Ordinal).ThenBy(run => run.Stage, StringComparer.Ordinal), Json)
+        };
+        return findings.GroupBy(StoryFindingMeaning, StringComparer.Ordinal).Select(group =>
+        {
+            var finding = group.First();
+            var valid = CisTaskReviewSemantics.TryDisposition(finding.Severity, finding.Disposition, false, out var disposition);
+            var display = $"{finding.RepositoryId}: {finding.Severity} ({disposition}) — {finding.Observation} {finding.Recommendation}";
+            var id = Hash(Encoding.UTF8.GetBytes(record.Plan.StoryId + "\n" + taskId + "\n" + group.Key));
+            var scoped = new SortedDictionary<string, string>(materialContext, StringComparer.Ordinal)
+            {
+                ["finding"] = group.Key,
+                ["review-material"] = JsonSerializer.Serialize(group.Select(item => item.MaterialBasis).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal), Json)
+            };
+            var basisHash = DeliveryBasisHash(scoped);
+            var legacyMeaning = DeliveryMeaning($"{finding.RepositoryId}: {finding.Severity} — {finding.Observation} {finding.Recommendation}");
+            var legacyId = Hash(Encoding.UTF8.GetBytes(record.Plan.StoryId + "\n" + taskId + "\n" + legacyMeaning));
+            var saved = record.Events.Where(item => item.TaskId == taskId).SelectMany(item => item.Feedback ?? []).LastOrDefault(item => item.Id == id || item.Id == legacyId);
+            var legacyBasis = DeliveryBasisHash(new SortedDictionary<string, string>(context.ToDictionary(item => item.Key, item => item.Value), StringComparer.Ordinal) { ["finding"] = legacyMeaning });
+            var unbound = input.UnboundBasisReasonsByStory.GetValueOrDefault(record.Plan.StoryId);
+            var compatibleLegacy = CisTaskReviewSemantics.TryDisposition(finding.Severity, null, false, out var historical)
+                && historical == disposition && saved?.Id == legacyId && saved.BasisHash == legacyBasis;
+            var applicable = valid && unbound is null && saved is not null && (saved.BasisHash == basisHash || compatibleLegacy);
+            var runs = record.Events.Where(item => item.TaskId == taskId)
+                .SelectMany(item => item.Execution?.StructuredFindings ?? []).Where(item => StoryFindingMeaning(item) == group.Key)
+                .Select(item => item.RunId).Concat(group.Select(item => item.RunId)).Concat(saved?.RunIds ?? [])
+                .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+            var suggestion = cache?.Answers.FirstOrDefault(item => item.Id == id);
+            return new CisStoryReviewFeedback(id, display, applicable ? saved!.Answer : null, saved?.Actor, saved?.SavedAt)
+            {
+                Severity = finding.Severity,
+                Disposition = disposition,
+                RequiresDecision = valid && disposition == "required" && execution.Status == "blocked" && group.Any(item => item.RequiresDecision),
+                BasisHash = basisHash,
+                RunIds = runs,
+                RetainedAnswer = applicable ? null : saved?.Answer,
+                ApplicabilityState = !valid || unbound is not null ? "unknown" : applicable ? "current" : saved is null ? "unanswered" : "needs-review",
+                ApplicabilityReason = !valid ? "The review disposition is invalid; obtain consistent review evidence before continuation."
+                    : unbound ?? (disposition == "optional" ? "Optional advice is retained; no correction or answer is required."
+                    : applicable ? "The same finding and material task basis retain the original response."
+                    : saved is not null ? "The finding's material evidence changed; its earlier response remains retained."
+                    : "Required corrections follow the governed continuation route; only a concrete unresolved decision needs an answer."),
                 SuggestedAnswer = suggestion?.Answer,
                 SuggestionReason = suggestion?.Evidence,
                 SuggestionModel = suggestion is null ? null : cache!.Provider + " / " + cache.Model
@@ -127,7 +209,14 @@ public sealed partial class FeatureIntakeService
             {
                 var current = feedback.Single(item => item.Id == pair.Key);
                 return new CisStoryReviewFeedback(pair.Key, current.Finding, pair.Value.Trim(), request.Actor.Trim(), now)
-                { BasisHash = current.BasisHash, RunIds = current.RunIds, ApplicabilityState = "current" };
+                {
+                    BasisHash = current.BasisHash,
+                    RunIds = current.RunIds,
+                    ApplicabilityState = "current",
+                    Disposition = current.Disposition,
+                    Severity = current.Severity,
+                    RequiresDecision = current.RequiresDecision
+                };
             }).ToArray();
             record = record with
             {
@@ -160,7 +249,8 @@ public sealed partial class FeatureIntakeService
                 ?? throw new InvalidDataException("Select a task with recorded findings.");
             if (progress.Execution is null || progress.Execution.Status == "running" || progress.Execution.Applied || progress.Status == "Complete")
                 throw new InvalidDataException("Suggestions are available for review findings awaiting a response.");
-            var questions = (progress.ReviewFeedback ?? []).Where(item => string.IsNullOrWhiteSpace(item.Answer)).ToArray();
+            var questions = (progress.ReviewFeedback ?? []).Where(item => item.Disposition != "optional"
+                && (item.RequiresDecision || item.Disposition is null) && string.IsNullOrWhiteSpace(item.Answer)).ToArray();
             if (questions.Length == 0) throw new InvalidDataException("There are no unanswered review findings.");
             var providers = textGeneration?.GetStatus().Providers ?? [];
             var provider = requestedProvider is null ? providers.FirstOrDefault(item => item.IsAvailable && item.IsLocal && item.Models.Count > 0)

@@ -7,8 +7,77 @@ using Xunit;
 
 namespace Cis.Modules.Testing.Tests;
 
+[Collection("Incremental environment")]
 public sealed class IncrementalRecoveryResumeTests
 {
+    [Fact]
+    public void ExplicitRecoveryOnlyRunsThePinnedRecoveryAndPostflightWithoutBroadeningWork()
+    {
+        using var fixture = FailedRecovery();
+        var before = fixture.Calls();
+        var report = File.ReadAllBytes(Report(fixture, Stage(fixture)));
+        File.Delete(fixture.Full(".cis/recovery-failure"));
+        var controller = new RecoveryInvocationController();
+        var result = new IncrementalTestService(fixture, controller).Run(new(fixture.Path, "profile.json", MaximumSeconds: 120)
+        { Work = new() { RecoveryOfExecutionId = "retained-native-execution" } }, 0, TestContext.Current.CancellationToken);
+        Assert.Equal("restored", result.Status);
+        Assert.False(result.ScopeComplete);
+        Assert.False(result.Qualified);
+        Assert.Equal(0, result.ExecutedMutationBatches);
+        var calls = fixture.Calls().Skip(before.Length).ToArray();
+        Assert.Equal(2, calls.Length);
+        Assert.StartsWith("recovery ", calls[0], StringComparison.Ordinal);
+        Assert.StartsWith("unit ", calls[1], StringComparison.Ordinal);
+        Assert.Equal("retained-native-execution", Assert.Single(controller.Requests).RecoveryOfExecutionId);
+        Assert.Equal(report, File.ReadAllBytes(Report(fixture, Stage(fixture))));
+    }
+
+    private sealed class RecoveryInvocationController : ICisNativeWorkController
+    {
+        public List<CisNativeWorkRequest> Requests { get; } = [];
+        public CisNativeWorkAdmission Inspect(string repositoryPath, CisNativeWorkOptions? association = null)
+            => new(false, "unaccounted", "fixture-protocol-only", null, null, []);
+        public CisNativeWorkAdmission InspectExecution(string authorityPath, CisAgentWorkReference reference) => Inspect(authorityPath);
+        public CisNativeWorkAdmission Admit(CisNativeWorkRequest request) { Requests.Add(request); return Inspect(request.RepositoryPath); }
+    }
+
+    [Fact]
+    public void StableRecoveryAllowsUnrelatedAmbientChangeButHoldsChangedDeclaredEnvironment()
+    {
+        var name = "CIS_INCREMENTAL_UNRELATED_INVOCATION_" + Guid.NewGuid().ToString("N");
+        var previous = Environment.GetEnvironmentVariable(name);
+        try
+        {
+            using var fixture = FailedRecovery();
+            var recipe = fixture.SavedState().RecoveryBasis;
+            var before = fixture.Calls();
+            fixture.Save(fixture.Profile with { Environment = new(fixture.Profile.Environment) { ["CIS_DECLARED_RESTORE_INPUT"] = "changed" } });
+            var held = fixture.Run();
+            Assert.Equal(4, held.ExitCode);
+            Assert.Contains(held.Diagnostics, message => message.Contains("recovery recipe changed", StringComparison.Ordinal));
+            Assert.Equal(before, fixture.Calls());
+            var changed = fixture.Profile;
+            fixture.Save(changed with
+            {
+                Environment = changed.Environment.Where(pair => pair.Key != "CIS_DECLARED_RESTORE_INPUT")
+                .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal)
+            });
+            File.Delete(fixture.Full(".cis/recovery-failure"));
+            Environment.SetEnvironmentVariable(name, "changed unrelated invocation value");
+            var controller = new RecoveryInvocationController();
+            var restored = new IncrementalTestService(fixture, controller).Run(new(fixture.Path, "profile.json", MaximumSeconds: 120)
+            { Work = new() { RecoveryOfExecutionId = "retained-native-execution" } }, 0, TestContext.Current.CancellationToken);
+            Assert.True(restored.ExitCode == 0, string.Join("; ", restored.Diagnostics));
+            Assert.Equal("restored", restored.Status);
+            Assert.False(restored.Qualified);
+            Assert.Equal(recipe, Assert.Single(controller.Requests).RecoveryBasis);
+            Assert.Equal(before.Length + 2, fixture.Calls().Length);
+            Assert.Equal(0, restored.ExecutedMutationBatches);
+            Assert.False(fixture.Plan().Batches.Single().MutationCurrent);
+        }
+        finally { Environment.SetEnvironmentVariable(name, previous); }
+    }
+
     [Fact]
     public void HealthyRecoveryRetryReusesTheExactCompletedNativeReport()
     {
@@ -110,10 +179,12 @@ public sealed class IncrementalRecoveryResumeTests
     public void AnInvocationTimeoutCannotBecomeACompletedNativeResultAfterRecovery()
     {
         using var fixture = new IncrementalTestServiceTests.Fixture();
-        fixture.Save(fixture.Profile with { SourceFiles = ["src/A.cs"], TimeoutSeconds = 1 });
+        fixture.Save(fixture.Profile with { SourceFiles = ["src/A.cs"] });
         fixture.Fault("src/A.cs", "mutation:timeout");
         fixture.Write(".cis/recovery-failure", "fail only recovery");
-        Assert.Equal(4, fixture.Run().ExitCode);
+        var timedOut = new IncrementalTestService(fixture).Run(new(fixture.Path, "profile.json", MaximumSeconds: 120),
+            1, TestContext.Current.CancellationToken);
+        Assert.True(timedOut.ExitCode == 4, string.Join("; ", timedOut.Diagnostics));
         Assert.Equal("timeout", Stage(fixture).Execution!.Status);
         File.Delete(fixture.Full(".cis/recovery-failure"));
         var result = fixture.Run("unit");

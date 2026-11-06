@@ -64,7 +64,8 @@ The first allocation supplies:
 | `tasks[].fixed` | A separately fixed task limit; defaults to `true`. |
 | `tasks[].allowRedistribution` | Whether remaining task allocation may be redistributed within delegated authority; defaults to `false`. |
 | `decisionReference` | Existing policy or controller allocation decision. |
-| `storageCeilingReference` | Applicable storage ceiling reference, without implying full enforcement. |
+| `storageCeilingReference` | Existing storage policy/decision reference shared by the containing work. Native and artifact expansion also require its finite `storage` policy. |
+| `storage` | Finite `maximumBytes`, declared owned `roots`, optional `restorationBytes` within that ceiling, and delegated `cleanupControllers`. It is allocation authority, not a test-profile limit. |
 | `controllers` | Identities delegated to operate this allocation. |
 | `acknowledgeHistoricalUnknown` | Explicit acknowledgment required for the initial unmeasured historical baseline. |
 | `expectedRevision` | Omit on initial allocation; supply the current revision on updates. |
@@ -227,6 +228,44 @@ cis agent work disposition CIS-0001 WORK-090 --input .\work-reconcile.json --act
 ```
 
 When a run manifest exists, use [`cis agent recover`](cis_agent_recover.md) only when all relevant owned identities are resolved and verified stopped. A terminal manifest with unfinalized accounting can also be reconciled through that operation; its appearance alone does not prove settlement. [`cis agent cancel`](cis_agent_cancel.md) can stop independently verified live owned processes even while another identity remains unresolved; unverifiable processes stay untargeted. Partial cleanup returns non-success and retains the reservation and conflicting-work hold. Once settlement is safe, recovery preserves a terminal run's recorded outcome, failure kind, and completion time, adds a reconciliation event, and settles its accounting once. Live processes, unresolved launch identity, and other unsafe recovery conditions remain visible holds.
+
+## Native verification and owned storage
+
+`cis test mutation run` and `cis test incremental run` use the same owner for preparation, native processes, result admission and required recovery. Supply `--change`, `--task` and `--actor` when no unambiguous approved binding is available; `--authority` identifies a linked owned repository's authority. A live governed parent is inherited through CIS-created context and verified against durable process ownership. `--parent-execution` names an existing parent; an ID or provider-written result cannot grant capacity. Read-only planning, status and evidence inspection do not launch native work.
+
+The command's `--max-seconds` and native profile limits only tighten the existing allocation. They do not allocate work. Child stages use their parent's positive remaining whole seconds, including fewer than 30, with preparation and launch bookkeeping charged inside that window. Normal roots retain the 30-second minimum. Nested active intervals count once; a new profile, batch or run ID does not create a logical attempt or reset costs. Genuinely non-adopted diagnostics report unaccounted coverage and cannot establish governed accounting.
+
+Native mutation expansion also needs current representative correctness evidence and an authorized controller's approach checkpoint. Inspect the actual baseline, detected mutation, survivor control, infrastructure rejection, restored health, native process observations and measured cost. Record the displayed `native-pilot:<basis>` evidence reference through `agent work progress` with Outcome, Approach, Decision and the next bounded action. This is the existing controller assessment, not another human acknowledgment or reviewer. Automatic summaries cannot supply it. A passing score is separate from valid evidence and readiness; recovery, required scope and storage holds remain binding.
+
+Allocate storage once at the owning boundary. The following fragment is **synthetic** and supplies no production authority:
+
+```json
+{
+  "storage": {
+    "maximumBytes": 1073741824,
+    "restorationBytes": 67108864,
+    "roots": [{"repositoryPath": "<authority-path>", "path": ".cis/local"}],
+    "cleanupControllers": ["Authorized controller"],
+    "allowNativeScratch": true
+  }
+}
+```
+
+Owned totals include declared physical paths, known CIS agent/management data and exact associated native scratch. Overlapping paths count once; separate copies, ZIPs, manifests and retrievals still count. Count-only roots are protected and grant no deletion permission. Native and artifact writers reserve growth before expansion, then reconcile surviving bytes. Existing per-run limits/free-space checks also apply. Monitoring is bounded and sampled; it is not a machine-wide filesystem sandbox. Inspect `artifacts inventory` and review `artifacts plan` before delegated `--yes` cleanup. Deletion frees measured bytes, never time or attempts; protected/current/recovery/accounting and user-managed material remain protected.
+
+When native restoration is required, resume its retained profile. `--recovery-of <execution-id>` performs only the original pinned recovery command and healthy postflight, including when an interrupted controller lost its ordinary result record. The exact owner, original attempt and recovery recipe remain bound. Safely stopped recovery can spend the existing protected restoration reserve; it cannot clear live/uncertain process ownership, change its command or run a new campaign. Missing reports remain missing. Ordinary archive retrieval/restoration is a new bounded operation and does not acquire native recovery authority.
+
+For an owned native cancellation, use `agent work disposition` with `kind: "cancel-native"`, the exact `executionId`, current revision, actor and reason. CIS targets only verified recorded identities. Unknown processes, the cancellation caller's own ancestry and other hosts are not targeted. Partial cleanup returns a hold; cancelling a driver alone does not prove every native child stopped. Inspect retained native recovery evidence and use the existing exact stopped-execution reconciliation route before capacity is released. Read-only diagnosis and cancellation remain available when normal expansion is held.
+
+For supported Windows native work, `kind: "reconcile"` verifies the original
+preparer and driver identities plus the recorded outer process job in its original
+Windows session. The job must be empty or verifiably destroyed. An unreadable job,
+reused identity, another host/session, historical unbound launch or missing Linux
+session proof remains held. Successful reconciliation charges the original bound
+conservatively and releases only pending work/storage reservations, preserving
+interrupted diagnostics and the original restoration obligation. The unchanged
+`--recovery-of` route can then use the remaining protected time and storage reserve;
+reconciliation grants no new allowance or attempt.
 
 ## Output and exit codes
 

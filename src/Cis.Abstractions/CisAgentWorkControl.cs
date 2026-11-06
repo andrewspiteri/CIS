@@ -24,6 +24,7 @@ public sealed record CisAgentWorkAllocationRequest(long ChangeSeconds, int Chang
     string StorageCeilingReference, string? ExpectedRevision = null, bool AcknowledgeHistoricalUnknown = false)
 {
     public IReadOnlyList<string> Controllers { get; init; } = [];
+    public CisOwnedStoragePolicy? Storage { get; init; }
 }
 
 /// <summary>Controller reflection. Numeric consumption is always measured by CIS.</summary>
@@ -54,6 +55,12 @@ public sealed record CisAgentWorkDispositionRequest(string Kind, string Expected
 public sealed record CisAgentWorkStage(string Route, string RelationshipId, string Name, string RepositoryId,
     string? CorrectionRoundId = null)
 {
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? NativeOperation { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? NativeRecoveryBasis { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? RepositoryPath { get; init; }
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public string? ContractDigest { get; init; }
 }
@@ -116,9 +123,15 @@ public sealed record CisAgentWorkExecution(string ExecutionId, string TaskId, st
     string StartedAtUtc, string? CompletedAtUtc, long ActiveMilliseconds, long ElapsedMilliseconds,
     long ReservedMilliseconds, int? ProcessId, string? ProcessStartedAtUtc, string? RecoveryReason)
 {
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public bool NativeRestorationRequired { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? RestorationOfExecutionId { get; init; }
     public bool Finalized { get; init; }
     public bool LaunchIntent { get; init; }
     public CisAgentWorkPreparationOwner? PreparationOwner { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public CisNativeWorkContainment? NativeContainment { get; init; }
     public CisAgentWorkStage? Stage { get; init; }
 }
 

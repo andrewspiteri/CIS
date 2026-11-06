@@ -10,3 +10,6 @@ applyTo: "**"
 - Retrieval is non-destructive; restore refuses conflicting content.
 - Delete-policy tombstones preserve hashes but cannot recover bytes.
 - Never target canonical, source, configuration, user-managed, or non-`.cis/local/` paths.
+- Governed operations inherit or explicitly bind the existing change/task/parent and reserve finite time and owner storage before writes. Resolve numeric storage policy at the original allocation boundary; family budgets and test profiles grant no new capacity.
+- Count live, archive/manifest, retrieval and exact owned scratch bytes once per physical path. Keep actual bytes separate from pending full-growth and accounting-write reservations; preserve current required, active/uncertain and accounting evidence.
+- Use only existing cleanup delegation and confirmation. Reconcile surviving bytes after deletion without resetting time or attempts. Unknown ownership or a protected-storage hold never authorizes deletion; ordinary archive restore is not native baseline-recovery authority.

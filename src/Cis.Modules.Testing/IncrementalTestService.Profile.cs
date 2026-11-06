@@ -17,10 +17,20 @@ public sealed partial class IncrementalTestService
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
     };
     private readonly ICisGraphSnapshotReader _graph;
-    public IncrementalTestService(ICisGraphSnapshotReader graph) => _graph = graph;
+    private readonly ICisNativeWorkController? _nativeWork;
+    private readonly ICisOwnedStorageController? _ownedStorage;
+    public IncrementalTestService(ICisGraphSnapshotReader graph, ICisNativeWorkController? nativeWork = null,
+        ICisOwnedStorageController? ownedStorage = null) => (_graph, _nativeWork, _ownedStorage) = (graph, nativeWork, ownedStorage);
 
     private sealed record Input(string Repository, IncrementalTestProfile Profile, string ProfilePath,
-        string ProfileHash, string Storage, string Root, string StatePath, string CommonIdentity);
+        string ProfileHash, string Storage, string Root, string StatePath, string CommonIdentity)
+    {
+        public ICisNativeWorkScope? Work { get; init; }
+        public ICisOwnedStorageController? OwnedStorage { get; init; }
+        public CancellationToken Cancellation { get; init; }
+        public MutationRunService.NativeStorageReservation? ActiveStorage { get; set; }
+        public HashSet<string> PreviousRequiredReports { get; } = new(PathComparer);
+    }
 
     private static Input Read(IncrementalTestOptions options, string? previousTestingProducer = null, string? previousHelperProducer = null,
         bool legacySessionEnvironment = false, string? environmentIdentity = null)
@@ -31,6 +41,7 @@ public sealed partial class IncrementalTestService
         var repository = Path.GetFullPath(options.RepositoryPath);
         var path = Safe(repository, options.ProfilePath);
         var profile = ReadJson<IncrementalTestProfile>(path, 262144);
+        if (profile.CorrectnessPilotProfile is not null) Safe(repository, profile.CorrectnessPilotProfile);
         Require(profile.SchemaVersion == 1 && Slug(profile.Id), "Profile requires schemaVersion 1 and a safe lowercase id.");
         Require(profile.SourceFiles is { Length: > 0 and <= 512 } && profile.TestFiles is { Length: > 0 and <= 2048 }
             && profile.ConfigFiles is { Length: <= 512 } && profile.ToolFiles is { Length: > 0 and <= 128 }, "Input inventories are missing or exceed their limits.");
@@ -88,6 +99,8 @@ public sealed partial class IncrementalTestService
             pair.Key is { Length: > 0 and <= 128 } && !pair.Key.Contains('=') && !pair.Key.Contains('\0')
             && pair.Value is { Length: <= 32768 } && !pair.Value.Contains('\0')), "Profile environment is invalid.");
         Require(profile.Environment.Keys.Distinct(PathComparer).Count() == profile.Environment.Count, "Environment names collide on this host.");
+        Require(!profile.Environment.Keys.Any(key => CisNativeWorkEnvironment.Keys.Contains(key, PathComparer)),
+            "Work authority coordinates belong to the invocation, not profile environment values.");
         var tools = profile.ToolFiles.Select(file => Path.GetFullPath(file, repository)).Distinct(PathComparer).Order(StringComparer.Ordinal).ToArray();
         foreach (var file in tools)
             Require(File.Exists(file) && !CisPathSafety.ContainsReparsePoint(Path.GetPathRoot(file)!, file), "Missing or linked tool input: " + file);
@@ -120,6 +133,7 @@ public sealed partial class IncrementalTestService
         if (!File.Exists(input.StatePath)) return new();
         var state = ReadJson<IncrementalTestState>(input.StatePath, 16 * 1024 * 1024);
         Require(state.SchemaVersion == 1 && state.Batches is { Count: <= 512 }, "Saved incremental state is invalid.");
+        input.PreviousRequiredReports.UnionWith(RequiredReports(input, state));
         return state;
     }
 

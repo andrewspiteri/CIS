@@ -25,8 +25,48 @@ internal static class ImplementationSkillPackRegistry
             [
                 Skill("dotnet-test", "Build and test affected .NET projects with bounded commands and preserved evidence. Use when changing C# or .NET code.",
                     "Verify .NET changes without turning a targeted edit into an unbounded solution-wide run.",
-                    ["Identify affected projects, adopted native framework, runner/platform and direct test projects; inspect inherited configuration. If no framework is adopted, consult .cis/local/examples/dotnet-engineering/README.md when installed and the engineering-defaults reference; verify compatibility before adopting a harness. The local example is reference material, not project implementation or passing project evidence.", "Run the native formatter and SDK/Sonar analyzers or adopted alternatives with declared blocking severities.", "Build the narrowest project boundary with warnings visible.", "Match execution to the checkpoint: ordinary edits use affected builds/focused native tests; coherent batches use affected regression and one review; documentation-only corrections use documentation/generation checks; mutation fixture/adapter changes require a small correctness pilot; feature candidates require full affected-module mutation and applicable checks; release candidates retain all required families/platforms/compatibility/package checks. State the behavioral outcome, relevant tests, time/storage budget and stop rule. Record justified inapplicability separately.", "Enable correlated test-mode logs, metrics and traces without changing application/authentication behavior; preserve partial evidence and first failures.", "Record exact commands, versions, source identity, results and unavailable prerequisites. Reassess required gates independently of the configured command list before completion."],
-                    "Do not report a build as proof that behavior or architecture tests passed."),
+                    [
+                        "Identify affected projects, adopted framework, native runner/platform and direct test projects; inspect inherited configuration. When no harness is adopted, consult `.cis/local/examples/dotnet-engineering/README.md` when installed and the engineering-defaults reference. Verify compatibility before adoption; examples are reference material, not project implementation or passing evidence.",
+                        "Run the native formatter and SDK/Sonar analyzers or adopted alternatives with declared blocking severities.",
+                        """
+                        Build the narrowest project boundary with warnings visible.
+                           Demonstrate ordinary native discovery and test execution on the supported
+                           installation; for applicable Windows/.NET work include normal Visual Studio
+                           Run All. Record an unavailable route and its completion implication explicitly.
+                        """,
+                        "Match execution to the checkpoint: ordinary edits use affected builds/focused native tests; coherent batches use affected regression and one review; documentation-only corrections use documentation/generation checks; mutation fixture/adapter changes require a small correctness pilot; feature candidates require full affected-module mutation and applicable checks; release candidates retain all required families/platforms/compatibility/package checks. State the behavioral outcome, relevant tests, time/storage budget and stop rule. Record justified inapplicability separately.",
+                        "Enable correlated test-mode logs, metrics and traces without changing business/authentication behavior; retain partial evidence and first failures.",
+                        """
+                        Record exact commands, versions, source identity, results, skipped checks, unavailable prerequisites and residual risk. Assess required gates independently of the configured command list before completion.
+
+                        For supported CIS native mutation/incremental execution, preserve validated
+                        inherited `CIS_WORK_*` authority, especially its parent. Otherwise use the existing
+                        approved owner with `--change`, `--task`, `--actor` and, for linked targets,
+                        `--authority`. Read `cis agent work status <change> --task <task>` before expansion;
+                        profile limits and `--max-seconds` tighten the finite allocation rather than grant
+                        time or attempts. Read-only plan/status/evidence inspection remains available.
+
+                        A new or changed mutation runner/fixture path needs the retained representative native
+                        controls in `cis test mutation run --kind canary --profile <pilot.json>`, followed
+                        by the existing controller's `agent work progress` assessment before governed
+                        mutation expansion. Link its `native-pilot:<basis>` evidence. Configure
+                        `correctnessPilotProfile` on the target mutation/incremental mutation profile and retain the
+                        separate per-run positive-kill canary. Synthetic protocol fixtures are fault tests,
+                        not evidence of actual mutant activation. Follow the two native command manuals.
+                        """,
+                    ],
+                    "Do not report a build as proof that behavior or architecture tests passed.",
+                    completionEvidence:
+                    """
+                    Preserve affected scope, exact commands, outcomes, generated artifacts, skipped checks, and residual risk in the canonical task or verification record.
+                    Separate measured warm, edited-code and completed-regression duration, including
+                    preparation/native/result-admission cost and monitoring overhead. Do not sum
+                    overlapping parent/child time or report an unfinished cutoff as a completed run.
+                    Keep owner/attempt coordinates out of material test identity; reuse compatible
+                    reports and reviewed producer revalidation while preserving historical cost and
+                    independent recovery holds. Inspect total owned/protected/reserved storage before
+                    expansion; local output caps do not authorize an independent storage allowance.
+                    """),
             ], declared: classification.DeclaredStack == "csharp");
 
         AddWhen(selected, classification, "core-testing", "Core testing",
@@ -60,6 +100,11 @@ internal static class ImplementationSkillPackRegistry
                            the documented direct native route; the incremental service currently selects
                            mutation work one source file at a time. Include zero-definition files in scope
                            without a separate compilation for each.
+                           For governed work, preserve inherited `CIS_WORK_*` authority and its live parent,
+                           or pass the existing `--change`, `--task`, `--actor` and linked `--authority`.
+                           Inspect `cis agent work status <change> --task <task>` and total owned storage;
+                           profile limits never allocate new time, attempts or bytes. Missing ownership
+                           holds before preparation. Non-adopted diagnostics remain explicitly unaccounted.
                         """,
                         """
                         Qualify a small representative canary through the native mutation runner: healthy
@@ -74,6 +119,19 @@ internal static class ImplementationSkillPackRegistry
                            and healthy restored execution. Qualify coverage-analysis and early-bail changes
                            on the actual adapter/async path. A positive kill count alone is insufficient.
                            Estimate the full-run budget from the pilot before expansion.
+                           Retain these controls through the existing `--kind canary` route with a
+                           representative profile's `correctnessPilot` definition; use
+                           `correctnessPilotProfile` on the target diagnostic/qualification/incremental
+                           profile. The first actual outcome needs the existing controller's substantive
+                           `agent work progress` assessment, including `native-pilot:<basis>` evidence,
+                           before expansion. This is routine controller reflection, not a new human gate.
+                           Native reports, actual launch references and relevant runner/adapter/fixture/
+                           configuration/tool/environment inputs determine currentness; a Boolean or
+                           synthetic report cannot establish governed readiness. Compatible proof remains
+                           reusable across unrelated production edits. Unknown or mismatched native paths
+                           hold rather than borrowing a different runner's proof. Keep the ordinary narrow
+                           positive-kill canary separate; a child round trip qualifies only the actual path
+                           observed and does not prove arbitrary cross-process mutant activation.
                         """,
                         """
                         Use native early bail by default. Distinguish runner-recorded intentional bail
@@ -95,6 +153,11 @@ internal static class ImplementationSkillPackRegistry
                            Normal native assertions and failed-test exceptions need no bespoke whitelist or
                            every-row direct-assertion proof; preserve actual infrastructure failures and any
                            stronger adopted policy.
+                           Keep `validEvidence`, `thresholdMet` and `qualified` distinct. A valid report at
+                           the unchanged threshold may remain unqualified under a genuine required-child,
+                           infrastructure, restoration or cleanup hold. Incremental receipts and partial
+                           diagnostics always remain unqualified. Native assertion-message changes or an
+                           alternative legitimate detecting test do not erase a native kill.
                         """,
                         """
                         After focused improvements and a healthy runner, execute the full required scope
@@ -129,6 +192,13 @@ internal static class ImplementationSkillPackRegistry
                     diagnostics only while useful for an unresolved issue, then remove resolved,
                     superseded and duplicate attempts under the repository retention policy. A later
                     failed or running attempt must not leave an older passing score looking current.
+                    Record preparation, native execution and result-admission costs separately, with
+                    warm and edited-code increments distinct from completed affected regression.
+                    Overlapping parent/child durations are not additive and an unfinished cutoff is
+                    not a completed measurement. If restoration is unresolved, resume only the original
+                    pinned recipe under its retained work reference; `--recovery-of` requests bounded
+                    restoration and healthy postflight, not another canary or campaign. Restored health
+                    cannot manufacture missing correctness observations.
                     """),
             ]);
 

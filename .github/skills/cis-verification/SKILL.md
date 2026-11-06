@@ -42,6 +42,19 @@ Gather affected components, contracts, risks, acceptance criteria, available too
    broad execution, including real children when applicable. Keep native outcomes,
    conservative interpretation and execution health distinct; only the complete
    final required scope can satisfy its gate.
+   Preserve validated inherited `CIS_WORK_*` owner/parent context for supported
+   native mutation/incremental execution, or use the existing explicit association
+   options. Inspect consumed/reserved/remaining owner capacity and total owned/
+   protected storage before expansion; profiles and new run IDs do not refill it.
+   Configure the target's `correctnessPilotProfile` and retain real baseline,
+   detection, survivor/control, infrastructure rejection, restoration and healthy
+   postflight observations for a new or changed runner path. Exercise actual
+   children only where claimed. Record the first outcome and approach decision via
+   existing `agent work progress` with its `native-pilot:<basis>` evidence before
+   broadening. An automatic execution summary grants no controller assessment.
+   Reuse compatible native reports while material inputs match; preserve historical
+   cost, required scope and independent recovery holds. Valid evidence and a met
+   threshold can coexist with `qualified: false` under a readiness hold.
 7. After evidence stabilizes, run `cis verify diff`. Confirm the snapshot names every
    planned repository, includes tracked and untracked changes, and is non-empty.
    Then run `cis verify validate`.
@@ -50,6 +63,10 @@ Gather affected components, contracts, risks, acceptance criteria, available too
 ## Output Expectations
 
 Report a clear verdict, exact evidence, unrun checks, blockers, and residual risk.
+Include ordinary native build/discovery/test results and applicable normal Visual
+Studio Run All, or the exact unavailable scope and completion implication. Separate
+measured warm, edited-code and completed-regression costs from estimates/unknowns;
+retain preparation/native/admission overhead without adding overlapping durations.
 
 ## Guardrails
 
@@ -59,6 +76,10 @@ compilation with complete verification. Focused iteration evidence is not full
 delivery or release acceptance. Preserve thresholds, failures and stronger policy;
 do not add a blanket every-row direct-assertion rule to ordinary native mutation
 results. Storage caps are real limits, not an invitation to retain endless archives.
+Before expanding verification machinery, record the existing necessity assessment:
+required invariant, available native alternative, measured or unknown cost,
+maintenance/pass-semantics effect and duplication avoided. Do not add another
+reviewer or benchmark solely to fill that assessment.
 
 ## Related Files
 

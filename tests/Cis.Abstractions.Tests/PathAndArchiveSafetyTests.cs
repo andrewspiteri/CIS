@@ -159,7 +159,8 @@ public sealed class PathAndArchiveSafetyTests
     public void ProcessRunner_BoundsOutputAndTerminatesTimeouts()
     {
         var output = Command("for /L %i in (1,1,500) do @echo 1234567890", "for i in $(seq 1 500); do echo 1234567890; done");
-        var bounded = CisProcessSafety.Run(output, TimeSpan.FromSeconds(10), maximumCharactersPerStream: 128);
+        var bounded = CisProcessSafety.Run(output, TimeSpan.FromSeconds(10), maximumCharactersPerStream: 128,
+            cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(0, bounded.ExitCode);
         Assert.True(bounded.OutputTruncated);
         Assert.True(bounded.StandardOutput.Length <= 128);
@@ -169,7 +170,7 @@ public sealed class PathAndArchiveSafetyTests
         var slow = Command("set /p waiting=", "read waiting");
         slow.RedirectStandardInput = true;
         var stopwatch = Stopwatch.StartNew();
-        var timed = CisProcessSafety.Run(slow, TimeSpan.FromMilliseconds(100));
+        var timed = CisProcessSafety.Run(slow, TimeSpan.FromMilliseconds(100), cancellationToken: TestContext.Current.CancellationToken);
         stopwatch.Stop();
         Assert.True(timed.TimedOut);
         Assert.Null(timed.ExitCode);
@@ -177,22 +178,45 @@ public sealed class PathAndArchiveSafetyTests
     }
 
     [Fact]
+    public void ProcessRunner_ReportsOwnedStartAndStopsControlledCancellation()
+    {
+        var command = Command("set /p waiting=", "read waiting");
+        command.RedirectStandardInput = true;
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        var observed = 0;
+        var result = CisProcessSafety.Run(command, TimeSpan.FromSeconds(10), processStarted: process =>
+        {
+            observed = process.Id;
+            if (OperatingSystem.IsWindows() || OperatingSystem.IsLinux())
+                Assert.True(CisProcessSafety.IsSameOrDescendant(process.Id, Environment.ProcessId));
+            Assert.False(CisProcessSafety.IsSameOrDescendant(process.Id, 0));
+            cancellation.Cancel();
+        }, cancellationToken: cancellation.Token);
+        Assert.True(observed > 1);
+        Assert.True(result.Cancelled);
+        Assert.False(result.TimedOut);
+        Assert.True(result.SafelyStopped);
+        Assert.Null(result.ExitCode);
+    }
+
+    [Fact]
     public void ProcessRunner_ValidatesArgumentsAndCapturesBothStreamsAndExitCode()
     {
-        Assert.Throws<ArgumentNullException>(() => CisProcessSafety.Run(null!, TimeSpan.FromSeconds(1)));
+        Assert.Throws<ArgumentNullException>(() => CisProcessSafety.Run(null!, TimeSpan.FromSeconds(1), cancellationToken: TestContext.Current.CancellationToken));
         var start = Command("exit /b 0", "exit 0");
-        Assert.Throws<ArgumentOutOfRangeException>(() => CisProcessSafety.Run(start, TimeSpan.Zero));
-        Assert.Throws<ArgumentOutOfRangeException>(() => CisProcessSafety.Run(start, TimeSpan.FromMilliseconds(-1)));
-        Assert.Throws<ArgumentOutOfRangeException>(() => CisProcessSafety.Run(start, TimeSpan.FromMilliseconds((double)int.MaxValue + 1)));
-        Assert.Throws<ArgumentOutOfRangeException>(() => CisProcessSafety.Run(start, TimeSpan.FromSeconds(1), 0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => CisProcessSafety.Run(start, TimeSpan.Zero, cancellationToken: TestContext.Current.CancellationToken));
+        Assert.Throws<ArgumentOutOfRangeException>(() => CisProcessSafety.Run(start, TimeSpan.FromMilliseconds(-1), cancellationToken: TestContext.Current.CancellationToken));
+        Assert.Throws<ArgumentOutOfRangeException>(() => CisProcessSafety.Run(start, TimeSpan.FromMilliseconds((double)int.MaxValue + 1), cancellationToken: TestContext.Current.CancellationToken));
+        Assert.Throws<ArgumentOutOfRangeException>(() => CisProcessSafety.Run(start, TimeSpan.FromSeconds(1), 0, cancellationToken: TestContext.Current.CancellationToken));
 
-        var exactUpperTimeout = CisProcessSafety.Run(Command("exit /b 0", "exit 0"), TimeSpan.FromMilliseconds(int.MaxValue), 1);
+        var exactUpperTimeout = CisProcessSafety.Run(Command("exit /b 0", "exit 0"), TimeSpan.FromMilliseconds(int.MaxValue), 1,
+            cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(0, exactUpperTimeout.ExitCode);
         Assert.False(exactUpperTimeout.TimedOut);
         Assert.False(exactUpperTimeout.OutputTruncated);
 
         var command = Command("(echo out&echo err 1>&2&exit /b 7)", "printf out; printf err >&2; exit 7");
-        var result = CisProcessSafety.Run(command, TimeSpan.FromSeconds(10), 32);
+        var result = CisProcessSafety.Run(command, TimeSpan.FromSeconds(10), 32, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(7, result.ExitCode);
         Assert.False(result.TimedOut);
         Assert.Contains("out", result.StandardOutput, StringComparison.Ordinal);
@@ -207,14 +231,15 @@ public sealed class PathAndArchiveSafetyTests
     [Fact]
     public void ProcessRunner_HandlesExactAndOversizedOutputOnBothStreams()
     {
-        var exact = CisProcessSafety.Run(Command("<nul set /p =12345678", "printf 12345678"), TimeSpan.FromSeconds(10), 8);
+        var exact = CisProcessSafety.Run(Command("<nul set /p =12345678", "printf 12345678"), TimeSpan.FromSeconds(10), 8,
+            cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal("12345678", exact.StandardOutput);
         Assert.False(exact.OutputTruncated);
 
         var oversized = CisProcessSafety.Run(
             Command("(for /L %i in (1,1,9000) do @<nul set /p =x)&(for /L %i in (1,1,9000) do @<nul set /p =e 1>&2)",
                 "i=0; while [ $i -lt 9000 ]; do printf x; printf e >&2; i=$((i+1)); done"),
-            TimeSpan.FromSeconds(20), 8_193);
+            TimeSpan.FromSeconds(20), 8_193, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(8_193, oversized.StandardOutput.Length);
         Assert.Equal(8_193, oversized.StandardError.Length);
         Assert.True(oversized.OutputTruncated);

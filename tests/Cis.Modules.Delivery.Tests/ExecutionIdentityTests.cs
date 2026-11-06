@@ -36,7 +36,7 @@ public sealed partial class EngineeringCompletionTests
             start.ArgumentList.Add("-c");
             start.ArgumentList.Add("safe.directory=" + fixture.Root);
             foreach (var argument in arguments) start.ArgumentList.Add(argument);
-            Assert.Equal(0, CisProcessSafety.Run(start, TimeSpan.FromSeconds(20)).ExitCode);
+            Assert.Equal(0, CisProcessSafety.Run(start, TimeSpan.FromSeconds(20), cancellationToken: TestContext.Current.CancellationToken).ExitCode);
         }
     }
 }

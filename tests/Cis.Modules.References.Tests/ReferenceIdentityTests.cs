@@ -226,7 +226,7 @@ public sealed class ReferenceIdentityTests
         {
             var start = new ProcessStartInfo("git") { WorkingDirectory = Authority };
             foreach (var argument in arguments) start.ArgumentList.Add(argument);
-            Assert.Equal(0, CisProcessSafety.Run(start, TimeSpan.FromSeconds(30)).ExitCode);
+            Assert.Equal(0, CisProcessSafety.Run(start, TimeSpan.FromSeconds(30), cancellationToken: TestContext.Current.CancellationToken).ExitCode);
         }
         private static void Write(string path, string content) { Directory.CreateDirectory(Path.GetDirectoryName(path)!); File.WriteAllText(path, content); }
         public void Dispose()

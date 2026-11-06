@@ -5,8 +5,113 @@ using Xunit;
 
 namespace Cis.Modules.Testing.Tests;
 
-public sealed class MutationRunServiceTests
+[Collection("Incremental environment")]
+public sealed partial class MutationRunServiceTests
 {
+    [Fact]
+    public void InitializedTargetsCannotBypassNativeWorkByConstructingAnUncomposedService()
+    {
+        using var fixture = new Target();
+        fixture.Write(".cis/repository.yml", "fixture initialized marker");
+        var result = fixture.Run();
+        Assert.Equal("held", result.Status);
+        Assert.Equal("missing-work-controller", result.WorkCoverage);
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Contains("composed work controller", StringComparison.Ordinal));
+        Assert.False(Directory.Exists(fixture.Full(MutationRunService.LocalRoot)));
+    }
+
+    [Theory]
+    [InlineData(".cis/repository.yml")]
+    [InlineData(".cis/workspace.yml")]
+    public void NestedTargetsCannotHideInitializedAuthorityFromAnUncomposedService(string marker)
+    {
+        using var fixture = new Target();
+        fixture.Write(marker, "fixture initialized authority marker");
+        fixture.Write("nested/target/profile.json", JsonSerializer.Serialize(fixture.Profile, Target.Json));
+        fixture.Write("nested/target/subject.cs", File.ReadAllText(fixture.Full("subject.cs")));
+        fixture.Write("nested/target/native.ps1", File.ReadAllText(fixture.Full("native.ps1")));
+
+        var result = new MutationRunService().Run(new(fixture.Full("nested/target"), "profile.json"), TestContext.Current.CancellationToken);
+
+        Assert.Equal("held", result.Status);
+        Assert.Equal("missing-work-controller", result.WorkCoverage);
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Contains("composed work controller", StringComparison.Ordinal));
+        Assert.False(Directory.Exists(fixture.Full("nested/target/" + MutationRunService.LocalRoot)));
+    }
+
+    [Fact]
+    public void DeniedNativeAssociationHoldsBeforeOutputAndNativePreparation()
+    {
+        using var fixture = new Target();
+        var controller = new DeniedNativeController();
+        var result = new MutationRunService(controller).Run(new(fixture.Path, "profile.json")
+        { Work = new("CIS-0001", "WORK-090", Actor: "Fixture controller") }, TestContext.Current.CancellationToken);
+        Assert.Equal("held", result.Status);
+        Assert.Single(controller.Requests);
+        Assert.False(Directory.Exists(fixture.Full(MutationRunService.LocalRoot)));
+    }
+
+    [Fact]
+    public void GovernedCanaryWithoutANarrowCommandCannotLaunchTheBroadCommand()
+    {
+        using var fixture = new Target();
+        fixture.Save(fixture.Profile with { CanaryCommand = null, Command = fixture.Command("Killed", marker: true) });
+        var controller = new CanaryAdmissionController();
+
+        var result = new MutationRunService(controller).Run(new(fixture.Path, "profile.json", "canary"), TestContext.Current.CancellationToken);
+
+        Assert.Equal(4, result.ExitCode);
+        Assert.Contains(result.Diagnostics, message => message.Contains("separate narrow canaryCommand", StringComparison.Ordinal));
+        Assert.Null(result.NativeExecution);
+        Assert.False(File.Exists(fixture.Full("broad-started")));
+        Assert.False(Directory.Exists(fixture.Full(MutationRunService.LocalRoot)));
+    }
+
+    private sealed class CanaryAdmissionController : ICisNativeWorkController
+    {
+        public CisNativeWorkAdmission Inspect(string repositoryPath, CisNativeWorkOptions? association = null)
+            => new(true, "admitted", "controlled prelaunch admission", null, null, []);
+        public CisNativeWorkAdmission InspectExecution(string authorityPath, CisAgentWorkReference reference) => Inspect(authorityPath);
+        public CisNativeWorkAdmission Admit(CisNativeWorkRequest request) => Inspect(request.RepositoryPath);
+    }
+
+    [Fact]
+    public async Task ControlledNativeCancellationReturnsActualStoppedJobEvidence()
+    {
+        using var fixture = new Target();
+        fixture.Write("native.ps1", """
+            param([string]$Output)
+            $ready = Join-Path $PSScriptRoot 'native-ready'
+            [IO.File]::WriteAllText(($ready + '.tmp'), [string]$PID)
+            [IO.File]::Move(($ready + '.tmp'), $ready)
+            while ($true) { Start-Sleep -Milliseconds 100 }
+            """);
+        fixture.Save(fixture.Profile with { Command = ["pwsh", "-NoProfile", "-NonInteractive", "-File", "native.ps1", "-Output", "{output}"] });
+        using var cancellation = new CancellationTokenSource();
+        var running = Task.Run(() => new MutationRunService().Run(new(fixture.Path, "profile.json"), cancellation.Token));
+        var deadline = DateTime.UtcNow.AddSeconds(15);
+        while (!File.Exists(fixture.Full("native-ready")) && !running.IsCompleted && DateTime.UtcNow < deadline)
+            await Task.Delay(25, TestContext.Current.CancellationToken);
+        Assert.True(File.Exists(fixture.Full("native-ready")), "The controlled native target did not reach its ready observation.");
+        var processId = int.Parse(File.ReadAllText(fixture.Full("native-ready")), System.Globalization.CultureInfo.InvariantCulture);
+        cancellation.Cancel();
+        var result = await running.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        Assert.Equal("cancelled", result.Status);
+        Assert.True(result.NativeExecution!.SafelyStopped);
+        Assert.False(result.Qualified);
+        try { using var process = System.Diagnostics.Process.GetProcessById(processId); Assert.True(process.HasExited); }
+        catch (ArgumentException) { }
+    }
+
+    private sealed class DeniedNativeController : ICisNativeWorkController
+    {
+        public List<CisNativeWorkRequest> Requests { get; } = [];
+        public CisNativeWorkAdmission Inspect(string repositoryPath, CisNativeWorkOptions? association = null)
+            => new(true, "held", "governed-native", null, null, ["Select the existing canonical owner before native preparation."]);
+        public CisNativeWorkAdmission InspectExecution(string authorityPath, CisAgentWorkReference reference) => Inspect(authorityPath);
+        public CisNativeWorkAdmission Admit(CisNativeWorkRequest request) { Requests.Add(request); return Inspect(request.RepositoryPath); }
+    }
+
     [Theory]
     [InlineData("id", "../other")]
     [InlineData("workingDirectory", "../other")]
@@ -225,16 +330,34 @@ public sealed class MutationRunServiceTests
     }
 
     [Fact]
-    public void SuccessfulQualificationKeepsNativeReportsAndOnlyRunSummaries()
+    public void QualificationWithoutRepresentativeProofHoldsBeforeNativePreparation()
     {
         using var fixture = new Target();
 
         var result = fixture.Run("qualification");
 
+        Assert.Equal("pilot-required", result.Status);
+        Assert.Equal(4, result.ExitCode);
+        Assert.False(result.Qualified);
+        Assert.Null(result.NativeExecution);
+        Assert.Null(result.Canary);
+        Assert.False(Directory.Exists(fixture.Full(MutationRunService.LocalRoot)));
+    }
+
+    [Fact]
+    public void SuccessfulQualificationKeepsNativeReportsAndOnlyRunSummaries()
+    {
+        using var fixture = new Target();
+        PrepareQualification(fixture);
+
+        var result = fixture.Run("qualification");
+
+        Assert.True(result.Qualified, JsonSerializer.Serialize(result, Target.Json));
         Assert.Equal("qualified", result.Status);
-        Assert.True(result.Qualified);
         Assert.False(result.Partial);
         Assert.True(result.SourceIdentity!.Unchanged);
+        Assert.True(result.Assessment!.Mutation!.ValidEvidence);
+        Assert.True(result.Assessment.Mutation.ThresholdMet);
         Assert.Equal(64, result.NativeExecution!.CisToolAssemblySha256!.Length);
         Assert.True(System.IO.Path.IsPathRooted(result.NativeExecution.ExecutablePath!));
         Assert.Equal("cleaned-after-assessment", result.Canary!.ReportAvailability);
@@ -283,16 +406,16 @@ public sealed class MutationRunServiceTests
             Command = fixture.Command("Killed", marker: true, declaredOtherSource: actual, declaredOtherStatus: "Killed"),
         });
 
-        var result = fixture.Run("qualification");
+        var result = fixture.Run("canary");
 
         Assert.Equal(allowed ? 0 : 4, result.ExitCode);
-        Assert.Equal(allowed, result.Qualified);
-        Assert.Equal(allowed, File.Exists(fixture.Full("broad-started")));
-        if (allowed) Assert.Equal(2, result.Assessment!.Mutation!.Killed);
+        Assert.False(result.Qualified);
+        Assert.False(File.Exists(fixture.Full("broad-started")));
+        if (allowed) Assert.Equal(1, result.Assessment!.Mutation!.Killed);
     }
 
     [Fact]
-    public void FullQualificationCannotUseTheCanaryPlaceholderForADeclaredFile()
+    public void PartialDiagnosticPlaceholderRetainsCountsWithoutClaimingCompleteScope()
     {
         using var fixture = new Target();
         fixture.Write("other.cs", "class Other { bool Value = true; }");
@@ -302,10 +425,29 @@ public sealed class MutationRunServiceTests
             Command = fixture.Command("Killed", declaredOtherSource: "File ignored by mutate filter", declaredOtherStatus: "None"),
         });
 
+        var result = fixture.Run();
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.False(result.Qualified);
+        Assert.True(result.Partial);
+        Assert.Equal(1, result.Assessment!.Mutation!.Killed);
+    }
+
+    [Fact]
+    public void FullQualificationCannotUseTheCanaryPlaceholderForADeclaredFile()
+    {
+        using var fixture = new Target();
+        var profile = PrepareQualification(fixture);
+        var command = profile.Command.ToArray();
+        command[^1] = "subject.cs,other.cs";
+        fixture.Save(profile with { SourceFiles = ["subject.cs", "other.cs"], Command = command });
+        fixture.Write(".cis/native-protocol-fault.json", "{\"declaredOtherSource\":\"File ignored by mutate filter\",\"declaredOtherStatus\":\"None\"}");
+
         var result = fixture.Run("qualification");
 
         Assert.Equal(4, result.ExitCode);
         Assert.Equal(0, result.Canary!.ExitCode);
+        Assert.NotNull(result.NativeExecution);
         Assert.False(result.Qualified);
         Assert.Contains(result.Diagnostics, item => item.Contains("does not match the declared source bytes", StringComparison.Ordinal));
     }
@@ -317,7 +459,12 @@ public sealed class MutationRunServiceTests
         string status, TestFailureKind failureKind)
     {
         using var fixture = new Target();
-        fixture.Save(fixture.Profile with { Command = fixture.Command("Survived", nativeExit: 2) });
+        if (kind == "qualification")
+        {
+            PrepareQualification(fixture);
+            fixture.Write(".cis/native-protocol-fault.json", "{\"status\":\"Survived\",\"nativeExit\":2}");
+        }
+        else fixture.Save(fixture.Profile with { Command = fixture.Command("Survived", nativeExit: 2) });
 
         var result = fixture.Run(kind);
 
@@ -336,23 +483,34 @@ public sealed class MutationRunServiceTests
     public void FailedCanaryPreventsTheBroadCommand()
     {
         using var fixture = new Target();
-        fixture.Save(fixture.Profile with { CanaryCommand = fixture.Command("Survived"), Command = fixture.Command("Killed", marker: true) });
+        fixture.Save(PilotProfile(fixture, true, marker: true) with { CanaryCommand = fixture.Command("Survived") });
 
-        var result = fixture.Run("qualification");
+        var result = fixture.Run("canary");
 
-        Assert.Equal("canary-failed", result.Status);
+        Assert.Equal("failed", result.Status);
         Assert.Equal(4, result.ExitCode);
         Assert.False(File.Exists(fixture.Full("broad-started")));
-        Assert.Null(result.NativeExecution);
-        Assert.Equal(0, result.Canary!.Assessment!.Mutation!.Killed);
-        Assert.True(File.Exists(fixture.Full(result.Canary.ReportPath!)));
+        Assert.NotNull(result.Pilot);
+        Assert.Equal("canary-failed", result.Pilot.Status);
+        Assert.False(result.Pilot.Ready);
+        Assert.True(result.Pilot.RecoveryRequired);
+        Assert.Empty(result.Pilot.Observations);
+        var summary = fixture.Full(MutationRunService.LocalRoot + "/sample/representative-pilot.json");
+        Assert.True(File.Exists(summary));
+        var retained = JsonSerializer.Deserialize<NativeCorrectnessPilotResult>(File.ReadAllBytes(summary), Target.Json)!;
+        Assert.True(retained.RecoveryRequired);
+        Assert.False(retained.Ready);
+        Assert.Empty(retained.Observations);
+        Assert.Equal(0, result.Assessment!.Mutation!.Killed);
+        Assert.True(File.Exists(fixture.Full(result.ReportPath!)));
     }
 
     [Fact]
     public void SourceDriftRetainsCountsAndPreventsQualification()
     {
         using var fixture = new Target();
-        fixture.Save(fixture.Profile with { Command = fixture.Command("Killed", changeSource: true) });
+        PrepareQualification(fixture);
+        fixture.Write(".cis/native-protocol-fault.json", "{\"changeSource\":true}");
 
         var result = fixture.Run("qualification");
 
@@ -368,7 +526,8 @@ public sealed class MutationRunServiceTests
     public void FailedNativeCommandPublishesItsReadableReportWithoutPublishingQualification()
     {
         using var fixture = new Target();
-        fixture.Save(fixture.Profile with { Command = fixture.Command("Killed", nativeExit: 7) });
+        PrepareQualification(fixture);
+        fixture.Write(".cis/native-protocol-fault.json", "{\"nativeExit\":7}");
 
         var result = fixture.Run("qualification");
 
@@ -381,7 +540,7 @@ public sealed class MutationRunServiceTests
     }
 
     [Fact]
-    public void PublicationBudgetBlocksTheSecondReportCopyWithoutLosingNativeCounts()
+    public void UnprovenQualificationDoesNotStartCostlyPublicationDespiteSufficientNativeBudget()
     {
         using var fixture = new Target();
         const long budget = 200_000;
@@ -395,6 +554,28 @@ public sealed class MutationRunServiceTests
 
         Assert.Equal(4, result.ExitCode);
         Assert.False(result.Qualified);
+        Assert.Equal("pilot-required", result.Status);
+        Assert.Null(result.NativeExecution);
+        Assert.False(File.Exists(fixture.Latest));
+        Assert.False(File.Exists(fixture.Full(MutationRunService.LocalRoot + "/sample/last-qualification.json")));
+        Assert.False(Directory.Exists(fixture.Full(MutationRunService.LocalRoot)));
+    }
+
+    [Fact]
+    public void PublicationBudgetBlocksTheSecondReportCopyWithoutLosingNativeCounts()
+    {
+        using var fixture = new Target();
+        var profile = PrepareQualification(fixture);
+        var existingBytes = Directory.EnumerateFiles(fixture.Full(MutationRunService.LocalRoot), "*", SearchOption.AllDirectories)
+            .Sum(path => new FileInfo(path).Length);
+        var budget = existingBytes + 200_000;
+        fixture.Write(".cis/native-protocol-fault.json", "{\"extraStatus\":\"Ignored\",\"extraSourceBytes\":131072}");
+        fixture.Save(profile with { MaxRetainedBytes = budget });
+
+        var result = fixture.Run("qualification");
+
+        Assert.Equal(4, result.ExitCode);
+        Assert.False(result.Qualified);
         Assert.Equal("exited", result.NativeExecution!.Status);
         Assert.Equal(0, result.NativeExecution.ExitCode);
         Assert.Equal(1, result.Assessment!.Mutation!.Killed);
@@ -403,7 +584,8 @@ public sealed class MutationRunServiceTests
         Assert.Contains(result.Diagnostics, item => item.Contains("retained storage limit", StringComparison.Ordinal));
         Assert.True(File.Exists(fixture.Latest));
         Assert.False(File.Exists(fixture.Full(MutationRunService.LocalRoot + "/sample/last-qualification.json")));
-        Assert.True(Directory.EnumerateFiles(fixture.Full(MutationRunService.LocalRoot), "*", SearchOption.AllDirectories).Sum(path => new FileInfo(path).Length) < budget);
+        Assert.True(Directory.EnumerateFiles(fixture.Full(MutationRunService.LocalRoot), "*", SearchOption.AllDirectories)
+            .Sum(path => new FileInfo(path).Length) < budget);
         using var marker = JsonDocument.Parse(File.ReadAllText(fixture.Full(MutationRunService.LocalRoot + "/sample/latest-run.json")));
         Assert.Equal(4, marker.RootElement.GetProperty("exitCode").GetInt32());
         Assert.False(marker.RootElement.GetProperty("qualified").GetBoolean());
@@ -413,8 +595,9 @@ public sealed class MutationRunServiceTests
     public void LaterFailedCanaryMarksUnchangedSourceQualificationAsHistorical()
     {
         using var fixture = new Target();
+        PrepareQualification(fixture);
         var passed = fixture.Run("qualification");
-        Assert.True(passed.Qualified);
+        Assert.True(passed.Qualified, JsonSerializer.Serialize(passed, Target.Json));
         var report = File.ReadAllBytes(fixture.Latest);
         // A new native failure can occur with the same pinned source/config/profile.
         fixture.Write("canary-fail", "a runtime prerequisite became unavailable");
@@ -436,10 +619,10 @@ public sealed class MutationRunServiceTests
     public void EarlyPublicationFailureLeavesTheRetainedSidecarUnqualified()
     {
         using var fixture = new Target();
-        var profile = fixture.Profile with { Command = fixture.Command("Killed", extraStatus: "Ignored", extraSourceBytes: 65_536) };
-        fixture.Save(profile);
+        var profile = PrepareQualification(fixture);
+        fixture.Write(".cis/native-protocol-fault.json", "{\"extraStatus\":\"Ignored\",\"extraSourceBytes\":65536}");
         var baseline = fixture.Run("qualification");
-        Assert.True(baseline.Qualified);
+        Assert.True(baseline.Qualified, JsonSerializer.Serialize(baseline, Target.Json));
         var reportBytes = new FileInfo(fixture.Latest).Length;
         var nativePeak = baseline.NativeExecution!.PeakRunBytes;
         // This host's actual guard footprint fits, but the assessment sidecar cannot.
@@ -463,15 +646,16 @@ public sealed class MutationRunServiceTests
     [Theory]
     [InlineData("Ignored", true)]
     [InlineData("Killed", false)]
-    public void OutOfScopeFilesMayContainOnlyNonEligibleDefinitions(string extraStatus, bool qualified)
+    public void OutOfScopeFilesMayContainOnlyNonEligibleDefinitions(string extraStatus, bool accepted)
     {
         using var fixture = new Target();
-        fixture.Save(fixture.Profile with { Command = fixture.Command("Killed", extraStatus: extraStatus) });
+        PrepareQualification(fixture);
+        fixture.Write(".cis/native-protocol-fault.json", JsonSerializer.Serialize(new { extraStatus }, Target.Json));
 
         var result = fixture.Run("qualification");
 
-        Assert.Equal(qualified, result.Qualified);
-        Assert.Equal(qualified ? 0 : 4, result.ExitCode);
+        Assert.Equal(accepted, result.Qualified);
+        Assert.Equal(accepted ? 0 : 4, result.ExitCode);
         Assert.NotNull(result.Assessment!.Mutation);
     }
 
@@ -479,7 +663,8 @@ public sealed class MutationRunServiceTests
     public void FailedPostflightHealthCheckPreservesNativeCountsAndBlocksQualification()
     {
         using var fixture = new Target();
-        fixture.Save(fixture.Profile with
+        var profile = PrepareQualification(fixture);
+        fixture.Save(profile with
         {
             HealthCheckCommand = ["pwsh", "-NoProfile", "-Command", "Write-Output 'checking {output}'; exit 7"],
         });
@@ -497,7 +682,8 @@ public sealed class MutationRunServiceTests
     public void PostflightDeletionCannotLeaveTheSourceIdentityMarkedUnchanged()
     {
         using var fixture = new Target();
-        fixture.Save(fixture.Profile with
+        var profile = PrepareQualification(fixture);
+        fixture.Save(profile with
         {
             HealthCheckCommand = ["pwsh", "-NoProfile", "-Command", "[IO.File]::Delete((Join-Path (Get-Location) 'subject.cs')); exit 0"],
         });
@@ -528,6 +714,23 @@ public sealed class MutationRunServiceTests
                     [switch]$NativeLogs, [switch]$FailBeforeReport, [switch]$OversizedLogs,
                     [string]$DeclaredOtherSource, [string]$DeclaredOtherStatus)
                 $ErrorActionPreference = 'Stop'
+                $configurationIndex = [Array]::IndexOf($args, '--config-file')
+                if ($configurationIndex -ge 0 -and -not [IO.File]::Exists((Join-Path $PSScriptRoot $args[$configurationIndex + 1]))) {
+                    [Console]::Error.WriteLine('The synthetic native configuration is missing.'); exit 7
+                }
+                # These explicit runtime faults test report/publication consumers,
+                # not genuine mutant activation or governed representative proof.
+                $faultPath = Join-Path $PSScriptRoot '.cis/native-protocol-fault.json'
+                if (-not $Canary -and [IO.File]::Exists($faultPath)) {
+                    $fault = [IO.File]::ReadAllText($faultPath) | ConvertFrom-Json
+                    if ($null -ne $fault.status) { $Status = $fault.status }
+                    if ($null -ne $fault.changeSource) { $ChangeSource = $fault.changeSource }
+                    if ($null -ne $fault.nativeExit) { $NativeExit = $fault.nativeExit }
+                    if ($null -ne $fault.extraStatus) { $ExtraStatus = $fault.extraStatus }
+                    if ($null -ne $fault.extraSourceBytes) { $ExtraSourceBytes = $fault.extraSourceBytes }
+                    if ($null -ne $fault.declaredOtherSource) { $DeclaredOtherSource = $fault.declaredOtherSource }
+                    if ($null -ne $fault.declaredOtherStatus) { $DeclaredOtherStatus = $fault.declaredOtherStatus }
+                }
                 if ($RequiredEnvironmentName) {
                     $actual = [Environment]::GetEnvironmentVariable($RequiredEnvironmentName)
                     if ($null -eq $actual) { throw 'The native target did not receive its scoped environment.' }
@@ -568,7 +771,8 @@ public sealed class MutationRunServiceTests
                 $files = @{ 'subject.cs' = @{ language = 'cs'; source = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'subject.cs')); mutants = @($mutant) } }
                 if ($ExtraStatus) {
                     $extra = $mutant.Clone(); $extra.status = $ExtraStatus
-                    $files['other.cs'] = @{ language = 'cs'; source = 'class Other {} //' + ('x' * $ExtraSourceBytes); mutants = @($extra) }
+                    $extraPath = if ($DeclaredOtherSource) { 'extra.cs' } else { 'other.cs' }
+                    $files[$extraPath] = @{ language = 'cs'; source = 'class Other {} //' + ('x' * $ExtraSourceBytes); mutants = @($extra) }
                 }
                 if ($DeclaredOtherSource) {
                     $others = @()
@@ -577,6 +781,8 @@ public sealed class MutationRunServiceTests
                     }
                     $files['other.cs'] = @{ language = 'cs'; source = $DeclaredOtherSource; mutants = $others }
                 }
+                $selectionIndex = [Array]::IndexOf($args, '--mutate')
+                if ($selectionIndex -ge 0 -and $args[$selectionIndex + 1] -eq 'subject.cs') { $files.Remove('other.cs') }
                 @{ schemaVersion = '2'; thresholds = @{ high = 90; low = 70 }; files = $files } |
                     ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $Output 'report.json')
                 $scratch = Join-Path $Output 'disposable'; [IO.Directory]::CreateDirectory($scratch) | Out-Null
@@ -586,9 +792,18 @@ public sealed class MutationRunServiceTests
                 """);
             Profile = new()
             {
-                SchemaVersion = 1, Id = "sample", Command = Command("Killed"), CanaryCommand = Command("Killed", canary: true),
-                ReportPath = "report.json", BreakThreshold = 90, SourceFiles = ["subject.cs"], ConfigFiles = ["native.ps1"],
-                TimeoutSeconds = 15, MaxRunBytes = 8 * 1024 * 1024, MaxRetainedBytes = 32 * 1024 * 1024, MinFreeBytes = 0,
+                SchemaVersion = 1,
+                Id = "sample",
+                Command = Command("Killed"),
+                CanaryCommand = Command("Killed", canary: true),
+                ReportPath = "report.json",
+                BreakThreshold = 90,
+                SourceFiles = ["subject.cs"],
+                ConfigFiles = ["native.ps1"],
+                TimeoutSeconds = 15,
+                MaxRunBytes = 8 * 1024 * 1024,
+                MaxRetainedBytes = 32 * 1024 * 1024,
+                MinFreeBytes = 0,
             };
             Save(Profile);
         }
@@ -616,7 +831,11 @@ public sealed class MutationRunServiceTests
         internal void Save(MutationRunProfile profile) => Write("profile.json", JsonSerializer.Serialize(profile, Json));
         internal MutationRunResult Run(string kind = "diagnostic") => new MutationRunService().Run(new(Path, "profile.json", kind));
         internal string Full(string relative) => System.IO.Path.Combine(Path, relative.Replace('/', System.IO.Path.DirectorySeparatorChar));
-        internal void Write(string relative, string text) => File.WriteAllText(Full(relative), text);
+        internal void Write(string relative, string text)
+        {
+            Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Full(relative))!);
+            File.WriteAllText(Full(relative), text);
+        }
         public void Dispose() { if (Directory.Exists(Path)) Directory.Delete(Path, recursive: true); }
     }
 }

@@ -746,8 +746,25 @@ internal sealed partial class RepositoryStarterBinder
         Optional advice does not manufacture corrections or answers; inconsistent verdicts are invalid.
         Material verification-machinery expansion receives necessity/native-alternative/cost judgment
         in the existing review; ordinary helpers and assertions require no extra ceremony or benchmark.
+        Native mutation/incremental work inherits a verified live CIS parent or uses explicit
+        `--change`, `--task`, `--actor` and applicable `--authority`. Preparation, native launch,
+        result admission and recovery share the canonical allowance and logical attempt. Missing
+        allocation or finite numeric owned-storage policy holds before costly preparation; profile
+        timeouts and byte caps never allocate capacity. A current representative pilot retains healthy
+        baseline, kill, survivor, infrastructure rejection, restored health and any claimed child
+        transport. Inspect its actual outcome and cost, then record substantive controller progress
+        with the displayed `native-pilot:<basis>` before broadening. Validity, threshold and qualification
+        remain distinct; accounting-only changes preserve compatible material evidence.
+
+        Total owned storage includes declared outputs/scratch and associated CIS agent/archive/retrieval
+        data. Overlapping physical paths count once; separate copies remain counted. Existing retention
+        plans, delegation and confirmation protect current/recovery/accounting and user material;
+        counting a path grants no deletion authority. Supported native/artifact enforcement uses bounded
+        sampling. `--recovery-of` performs only the original pinned restoration/postflight within its
+        existing reserve and attempt. Cancellation preserves uncertain reservations.
+
         Existing provider permissions and approval gates remain binding. Coverage excludes raw external
-        agent activity, independent hosts and complete storage enforcement. Authorities without
+        agent activity, independent hosts and arbitrary provider writes. Authorities without
         adopted accounting or applicable engineering defaults retain their non-adopted execution
         boundaries; product-document authoring and import operations retain their dedicated flows.
         """);
@@ -862,6 +879,8 @@ internal sealed partial class RepositoryStarterBinder
         | generation | .cis/local/generate | 30 | 20 | archive |
         | ai-cache | .cis/local/ai/cache | 7 | 50 | delete |
         | ai-qualification | .cis/local/ai/qualification | 90 | 20 | archive |
+
+        These family limits cover configured live data only. Governed native work and artifact writes also require the existing owner's finite storage allocation: numeric maximum bytes, explicit owned roots, an in-ceiling restoration reserve and cleanup delegation. A reference, native profile or new run ID grants no capacity. Declared roots count live output, archives/manifests, retrieval copies, known agents data and exact owned native scratch; overlapping paths count once and separate copies separately. Explicit count-only build/scratch roots in registered owned repositories remain protected and never grant deletion authority. Pending growth and bounded accounting-write headroom remain conservatively reserved until safely settled. Inventory/plan remain read-only; use the inherited association or --change/--task/--authority/--parent-execution/--actor. Preserve current required, active/uncertain and accounting evidence. Confirm only delegated eligible cleanup; freed bytes never reset time or attempts. Archive management is not a delete family, and ordinary archive restore does not spend native baseline-recovery time reserve.
         """);
         if (runtimeOnly) return;
         var testing = RepositoryTestingStarter.Create(repositoryPath, documentationRoot, classification);
@@ -1800,6 +1819,43 @@ internal sealed partial class RepositoryStarterBinder
             definition,
             $"{title} component '{component.Id}' was detected.",
             component.Evidence));
+        var nativeTestingGuidance = kind != "csharp" ? "" : component.Root.Replace('\\', '/') switch
+        {
+            "src/Cis.Modules.Testing" => """
+                Keep native mutation/incremental admission on the composed work and owned-storage
+                authorities before costly preparation. Preserve inherited owner/parent context,
+                actual launch identity, shared finite bounds and independent restoration holds;
+                profiles and run IDs do not create authority or fresh capacity. Keep invocation
+                coordinates out of material evidence identity.
+
+                Preserve native validity, threshold and qualification as separate facts. Require
+                current representative controls and the existing controller assessment before
+                governed mutation expansion; keep the narrow kill canary separate. Reuse only the actual
+                compatible runner/configuration path. Retain raw reports and native classifications;
+                do not introduce assertion-message whitelists, another harness or a scheduler.
+                """,
+            "tests/Cis.Modules.Testing.Tests" => """
+                Use the existing native/fake-clock fixtures for admission, storage and controlled
+                protocol faults. Synthetic reports prove those fault paths, not real mutant
+                activation or governed representative readiness. Preserve meaningful scope,
+                currentness, cleanup and publication assertions when adapting tests. A diagnostic
+                that is always unqualified alone cannot prove a hold downgraded an otherwise
+                qualifying result; retain native validity/threshold facts in that scenario.
+
+                Use the small real MSTest/Stryker fixture for baseline, detected mutation,
+                survivor/control, rejected infrastructure, restored health and the actual claimed
+                child route. Keep ordinary native discovery/tests and applicable Visual Studio Run
+                All distinct from prepared-driver success. Measure bounded setup/native/admission
+                cost; do not add a broad mutation campaign solely for command wiring.
+                """,
+            "tools/Cis.Testing.NativeFixture" => """
+                This fixture emits synthetic native protocol results for focused fault tests. It
+                cannot prove real mutant activation, native assertion strength or representative
+                runner readiness. Use the maintained real MSTest/Stryker fixture for those claims;
+                keep both routes bounded and preserve truthful evidence coverage.
+                """,
+            _ => "",
+        };
         artifacts.Add(new RepositoryStarterArtifact(
             artifactId,
             definition,
@@ -1808,7 +1864,8 @@ internal sealed partial class RepositoryStarterBinder
             $"# {title} guidance for {component.Id}\n\n" +
             $"Component root: `{component.Root}`.\n\n" +
             $"{guidance}\n\n" +
-            "Before changing behavior, inspect the applicable specifications, references, callers, and tests.\n",
+            "Before changing behavior, inspect the applicable specifications, references, callers, and tests.\n"
+                + (nativeTestingGuidance.Length == 0 ? "" : "\n" + nativeTestingGuidance + "\n"),
             null));
     }
 
@@ -2900,6 +2957,8 @@ internal sealed partial class RepositoryStarterBinder
         6. For a `delete` family, run `cis artifacts clean --family <name> --yes`; the cleanup record retains path, size, timestamp, and hash.
         7. Rerun inventory and repository doctor after storage maintenance.
 
+        Governed writes inherit the admitted parent or use --change, --task, --authority, --parent-execution and --actor. Resolve a missing numeric storage ceiling and explicit roots once at the original allocation boundary; retention budgets and native profiles grant no capacity. Inspect actual, protected, reserved and remaining owner bytes. Pending growth and accounting-write headroom remain conservatively reserved until safely settled; protected current evidence and unknown ownership hold expansion. Existing delegated cleanup plus confirmation needs no routine new human acknowledgment. Successful deletion frees measured storage, never time or attempts. Archive management is not a delete family; ordinary archive restore is not native baseline-recovery authority.
+
         Only configured immediate entries beneath `.cis/local/` are eligible. Canonical Markdown, source, configuration, and user-managed files are outside this authority. Never manually delete the archive manifest before its ZIP.
         """;
 
@@ -2916,6 +2975,9 @@ internal sealed partial class RepositoryStarterBinder
         - Compaction must create and verify a content-hashed ZIP and manifest before originals are removed.
         - Retrieval is non-destructive. Restore must verify the archive digest and refuse different existing content.
         - Delete-policy cleanup retains a hash tombstone. Do not claim deleted content is recoverable from the tombstone.
+        - Governed writes inherit or explicitly bind the existing owner and reserve finite time and owner storage before expansion. Resolve numeric storage policy through the original allocation authority; profiles and family budgets grant no new capacity.
+        - Count live output, archives/manifests, retrieval copies, known agents data and exact owned scratch once per physical path. Keep actual bytes separate from full pending growth and accounting-write reservations. Preserve current required, active/uncertain, accounting and unknown-owner material.
+        - Use existing cleanup delegation and confirmation, then reconcile surviving bytes without resetting time or attempts. A protected-storage hold never authorizes deletion; ordinary archive restore does not acquire native baseline-recovery authority.
         """;
 
     private static string CreateFrontendContextSkill(string documentationRoot) => $$"""
@@ -3076,6 +3138,8 @@ internal sealed partial class RepositoryStarterBinder
 
     When story reflection is due, `story work-status` reports `controller-assessment-required`. As the authorized orchestrating agent, inspect retained implementation, failed/valid review evidence, measured cost, reservations, remaining capacity and current revision. Record Outcome, nonempty Evidence, Approach, Decision and the next bounded action through `cis agent work progress <change-id> <task-id> --input <assessment.json> --actor <controller>` at the existing canonical owner; CIS supplies measured Cost. Keep `closeAttempt: false` unless the logical attempt has ended, then resume the same governed story with refreshed tokens. No routine human acknowledgment, extra reviewer or task `Blocked` transition is needed. Automatic `story-execution-summary` and legacy `story-controller-progress` records never qualify, and candidate reuse cannot refresh reflection credit. Explicit controller progress remains the existing owner-wide assessment route; incidental story summaries cannot satisfy direct-task reflection. Status reads record nothing; independent holds and counters remain binding.
 
+    Use the same owner for supported native mutation/incremental work. Inherit a verified live CIS parent or supply `--change`, `--task`, `--actor` and applicable `--authority`; inspect targeted holds before preparation. Profiles only tighten existing time/storage bounds. A current representative pilot must retain actual baseline, kill, survivor, infrastructure rejection, restored health and claimed child observations; inspect its cost and record the displayed `native-pilot:<basis>` through substantive authorized `agent work progress` before broadening. Native validity, threshold and readiness are separate. Keep compatible material evidence across bookkeeping changes. Inspect total owned/protected/reserved storage, including archives, retrieval copies and declared scratch, then use the existing reviewed cleanup plan and delegated confirmation. Unknown ownership is not zero usage or permission to delete. `--recovery-of` runs only the original pinned restoration/postflight under its existing reserve and attempt; missing reports stay missing. Native cancellation through work disposition targets verified identities and retains uncertain reservations. Read the native testing/artifacts manuals for exact inputs and the sampling/external-session boundary.
+
     Read the `cis agent run` and `cis agent resume` manuals from the CIS distribution for syntax, native matching limits and current resumption behavior.
 
     For story work, inspect `cis brd feature wizard story status` and its delivery-size assessment, task contract and blocking reasons. Use explicit `assess`, `decompose` and `prepare --input` proposals as documented in the wizard-status manual; reading status never prepares work. Unknown/stale or above-medium delivery needs assessment or bounded child outcomes before implementation. A bounded sensitive task may still require high reasoning strength and independent review. Preserve instance IDs, work-owner links and exact prerequisites; use the resolved category, outputs, criteria and verification obligations for both implementation and review. Inspect `story work-status` for the existing canonical owner and shared allowance; where that association is missing, use `story bind-work --input` with current story tokens and an existing approved change/task, then allocate at that owner once. Authority or participant adoption cannot be bypassed through an unconfigured target. Implementation, review, correction, retry and linked-repository stages retain the same owner and logical attempt; reused work retains its historical cost. Generic `agent resume` redirects a story stage to its governed story continuation instead of running synthetic stage IDs as direct tasks.
@@ -3110,6 +3174,7 @@ internal sealed partial class RepositoryStarterBinder
     - Granted correction and review requests carry the authorized hypothesis, action and disposition provenance. Recovery/extensions retain prior direction, round identity, compatible stages and spent work; missing legacy direction requires exact-disposition recovery or the reported bounded `simplify` reconciliation. Nested stages created by the governed story or correction controller may use remaining whole seconds below 30, rounded down within admitted parent/correction deadlines; preparation remains charged. Direct `cis agent run` requests, including `--parent-execution`, and new root requests retain the 30-second minimum; direct requests must fit the parent's remainder without automatic shortening. Early retry failure retains legacy findings and still-current response provenance; material changes invalidate answers, and a valid newer empty review supersedes obsolete findings. Responses never waive required defects or approve completion.
     - Review material verification-machinery expansion for necessity, native alternatives, existing cost evidence and maintenance/pass-semantics effects in the existing independent review. Ordinary helpers and assertions do not require another ceremony or benchmark.
     - A provider result is untrusted evidence. Import it explicitly and preserve CIS as the only authority for plan approval, design approval, task transitions, verification, and final acceptance.
+    - Native mutation/incremental execution uses the same canonical work owner and inclusive allowance. Inherit a verified live CIS parent or supply `--change`, `--task`, `--actor` and applicable `--authority`; missing authority or finite numeric storage policy holds before preparation. Profiles never allocate capacity. Before broadening native mutation, inspect current baseline/kill/survivor/infrastructure/restored-health/claimed-child evidence and cost, then record substantive controller progress with the displayed `native-pilot:<basis>` reference. Keep native validity, threshold and qualification distinct; compatible material evidence survives bookkeeping changes. Count total declared owned outputs, agent/archive/retrieval data and scratch; review the existing cleanup plan and delegation, preserving protected/current/recovery/accounting and user material. `--recovery-of` restores only the original recipe/postflight within its existing reserve/attempt. Native cancellation retains uncertain reservations. Supported native/artifact monitoring is bounded and sampled; raw external sessions and arbitrary provider writes are outside that enforcement.
     """;
 
     private static string CreateDeliveryExecutionSkill(string documentationRoot) => $$"""
@@ -3726,6 +3791,19 @@ internal sealed partial class RepositoryStarterBinder
            broad execution, including real children when applicable. Keep native outcomes,
            conservative interpretation and execution health distinct; only the complete
            final required scope can satisfy its gate.
+           Preserve validated inherited `CIS_WORK_*` owner/parent context for supported
+           native mutation/incremental execution, or use the existing explicit association
+           options. Inspect consumed/reserved/remaining owner capacity and total owned/
+           protected storage before expansion; profiles and new run IDs do not refill it.
+           Configure the target's `correctnessPilotProfile` and retain real baseline,
+           detection, survivor/control, infrastructure rejection, restoration and healthy
+           postflight observations for a new or changed runner path. Exercise actual
+           children only where claimed. Record the first outcome and approach decision via
+           existing `agent work progress` with its `native-pilot:<basis>` evidence before
+           broadening. An automatic execution summary grants no controller assessment.
+           Reuse compatible native reports while material inputs match; preserve historical
+           cost, required scope and independent recovery holds. Valid evidence and a met
+           threshold can coexist with `qualified: false` under a readiness hold.
         7. After evidence stabilizes, run `cis verify diff`. Confirm the snapshot names every
            planned repository, includes tracked and untracked changes, and is non-empty.
            Then run `cis verify validate`.
@@ -3734,6 +3812,10 @@ internal sealed partial class RepositoryStarterBinder
         ## Output Expectations
 
         Report a clear verdict, exact evidence, unrun checks, blockers, and residual risk.
+        Include ordinary native build/discovery/test results and applicable normal Visual
+        Studio Run All, or the exact unavailable scope and completion implication. Separate
+        measured warm, edited-code and completed-regression costs from estimates/unknowns;
+        retain preparation/native/admission overhead without adding overlapping durations.
 
         ## Guardrails
 
@@ -3743,6 +3825,10 @@ internal sealed partial class RepositoryStarterBinder
         delivery or release acceptance. Preserve thresholds, failures and stronger policy;
         do not add a blanket every-row direct-assertion rule to ordinary native mutation
         results. Storage caps are real limits, not an invitation to retain endless archives.
+        Before expanding verification machinery, record the existing necessity assessment:
+        required invariant, available native alternative, measured or unknown cost,
+        maintenance/pass-semantics effect and duplication avoided. Do not add another
+        reviewer or benchmark solely to fill that assessment.
 
         ## Related Files
 

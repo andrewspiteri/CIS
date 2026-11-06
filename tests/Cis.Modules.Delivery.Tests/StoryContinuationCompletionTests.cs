@@ -127,7 +127,7 @@ public sealed partial class DeliveryWorkflowTests
             var start = new ProcessStartInfo("git") { WorkingDirectory = root };
             start.ArgumentList.Add("-c"); start.ArgumentList.Add("safe.directory=" + root);
             foreach (var argument in arguments) start.ArgumentList.Add(argument);
-            var result = CisProcessSafety.Run(start, TimeSpan.FromSeconds(20));
+            var result = CisProcessSafety.Run(start, TimeSpan.FromSeconds(20), cancellationToken: TestContext.Current.CancellationToken);
             Assert.True(result.ExitCode == 0, result.StandardError);
         }
     }

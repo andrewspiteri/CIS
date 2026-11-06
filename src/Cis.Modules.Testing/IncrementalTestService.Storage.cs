@@ -22,15 +22,48 @@ public sealed partial class IncrementalTestService
 
     private static void Write<T>(Input input, string path, T value)
     {
+        Require(input.Work is null || input.Work.Remaining > TimeSpan.Zero,
+            "The admitted metadata preparation window ended before publication; inspect the existing owner allowance.");
         var bytes = JsonSerializer.SerializeToUtf8Bytes(value, Json);
         Require(bytes.Length <= 16 * 1024 * 1024, "Saved incremental metadata exceeds its size limit.");
         Directory.CreateDirectory(input.Root);
-        Require(Bytes(input.Storage) + bytes.Length <= input.Profile.MaxRetainedBytes, "Incremental storage cap prevents publication.");
+        var limit = input.ActiveStorage is { } active
+            ? Math.Min(input.Profile.MaxRetainedBytes, active.InitialNativeBytes + active.Admission.MaximumGrowthBytes)
+            : input.Profile.MaxRetainedBytes;
+        Require(Bytes(input.Storage) + bytes.Length <= limit, "Incremental storage cap prevents publication.");
         Require(new DriveInfo(input.Storage).AvailableFreeSpace - bytes.Length >= input.Profile.MinFreeBytes, "Incremental free-space reserve prevents publication.");
-        var temporary = Safe(input.Root, Path.GetFileName(path) + ".tmp");
-        File.WriteAllBytes(temporary, bytes);
-        File.Move(temporary, path, true);
+        if (input.ActiveStorage is null && input.Work is not null)
+        {
+            var next = value as IncrementalTestState;
+            var required = next is null ? [] : RequiredReports(input, next);
+            var superseded = next is { RecoveryRequired: false, ActiveExecutionUntilUtc: null }
+                ? input.PreviousRequiredReports.Except(required, PathComparer).ToArray() : [];
+            MutationRunService.OwnedJson(path, value, input.Repository, input.Work, input.OwnedStorage, required, superseded);
+        }
+        else
+        {
+            var temporary = Safe(input.Root, Path.GetFileName(path) + ".tmp");
+            File.WriteAllBytes(temporary, bytes);
+            File.Move(temporary, path, true);
+        }
     }
+
+    private static CisOwnedStorageResult? FinishNativeStorage(Input input, IncrementalTestState? state)
+    {
+        var reservation = input.ActiveStorage;
+        if (reservation is null) return null;
+        var required = (state is null ? [] : RequiredReports(input, state))
+            .Append(input.StatePath).Distinct(PathComparer).ToArray();
+        var superseded = state is { RecoveryRequired: false, ActiveExecutionUntilUtc: null }
+            ? input.PreviousRequiredReports.Except(required, PathComparer).ToArray() : [];
+        try { return MutationRunService.SettleNativeStorage(reservation, input.OwnedStorage, reservation.SafelyStopped, required, superseded); }
+        finally { input.ActiveStorage = null; reservation.Dispose(); }
+    }
+
+    private static string[] RequiredReports(Input input, IncrementalTestState state)
+        => state.Batches.Values.SelectMany(batch => new[] { batch.Unit?.ReportPath, batch.Mutation?.ReportPath })
+            .Where(path => !string.IsNullOrEmpty(path)).Select(path => Safe(input.Root, path!))
+            .Distinct(PathComparer).ToArray();
 
     private static string Work(Input input)
     {

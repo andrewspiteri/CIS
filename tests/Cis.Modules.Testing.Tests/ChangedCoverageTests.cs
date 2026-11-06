@@ -123,7 +123,7 @@ public sealed class ChangedCoverageTests
         {
             var start = new ProcessStartInfo("git") { WorkingDirectory = Root };
             foreach (var argument in arguments) start.ArgumentList.Add(argument);
-            var result = CisProcessSafety.Run(start, TimeSpan.FromSeconds(10));
+            var result = CisProcessSafety.Run(start, TimeSpan.FromSeconds(10), cancellationToken: TestContext.Current.CancellationToken);
             Assert.Equal(0, result.ExitCode);
             return result.StandardOutput;
         }

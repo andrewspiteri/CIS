@@ -18,16 +18,24 @@ public sealed partial class TestingServiceTests
         var json = JsonSerializer.SerializeToNode(result, new JsonSerializerOptions(JsonSerializerDefaults.Web))!.AsObject();
         json["cisRun"] = JsonSerializer.SerializeToNode(new
         {
-            schemaVersion = 1, runId = "test-run", profileId = "sample", kind,
-            partial = kind != "qualification", qualified = kind == "qualification",
-            sourceUnchanged = true, scopeMatched = true, executionStatus = "exited", nativeExitCode = 0,
+            schemaVersion = 1,
+            runId = "test-run",
+            profileId = "sample",
+            kind,
+            partial = kind != "qualification",
+            qualified = kind == "qualification",
+            sourceUnchanged = true,
+            scopeMatched = true,
+            executionStatus = "exited",
+            nativeExitCode = 0,
             healthCheckConfigured = false,
             sourceIdentity = new
             {
                 unchanged = true,
                 inputs = new[] { "src/example.cs", "mutation-profile.json" }.Select(path => new
                 {
-                    path, sha256 = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(File.ReadAllText(Path.Combine(repository.Path, path)))))
+                    path,
+                    sha256 = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(File.ReadAllText(Path.Combine(repository.Path, path)))))
                 }).ToArray(),
             },
         });
@@ -55,12 +63,15 @@ public sealed partial class TestingServiceTests
     }
 
     [Fact]
-    public void Reconcile_CurrentQualificationPreservesTheRecomputedNativeGate()
+    public void Reconcile_MissingRepresentativeProofPreservesNativeValidityAndThresholdWithoutQualification()
     {
         using var repository = TestRepository.Create();
         var suite = ReconcileRunAssessment(repository, RunAssessment(repository));
-        Assert.Equal("passed", suite.Status);
-        Assert.True(suite.Mutation!.Qualified);
+        Assert.Equal("pilot-required", suite.Status);
+        Assert.True(suite.Mutation!.ValidEvidence);
+        Assert.True(suite.Mutation.ThresholdMet);
+        Assert.False(suite.Mutation.Qualified);
+        Assert.Equal(TestFailureKind.MissingPrerequisite, suite.FailureKind);
         var belowGate = ReconcileRunAssessment(repository, RunAssessment(repository, "qualification", "Killed", "Survived"));
         Assert.Equal(50, belowGate.Mutation!.Score);
         Assert.False(belowGate.Mutation.Qualified);
@@ -119,7 +130,12 @@ public sealed partial class TestingServiceTests
         var assessment = RunAssessment(repository);
         repository.Write(".cis/local/testing/mutation/sample/latest-run.json", JsonSerializer.Serialize(new
         {
-            schemaVersion = 1, profileId = "sample", runId = "later-run", status, exitCode = status == "diagnostic-completed" ? 0 : 4, qualified = false,
+            schemaVersion = 1,
+            profileId = "sample",
+            runId = "later-run",
+            status,
+            exitCode = status == "diagnostic-completed" ? 0 : 4,
+            qualified = false,
         }));
         var suite = ReconcileRunAssessment(repository, assessment);
         Assert.Equal("stale", suite.Status);
@@ -150,6 +166,74 @@ public sealed partial class TestingServiceTests
         var suite = ReconcileRunAssessment(repository, assessment);
         Assert.Equal("invalid-evidence", suite.Status);
         Assert.False(suite.Mutation?.Qualified == true);
+    }
+
+    [Theory]
+    [InlineData("agent")]
+    [InlineData("human")]
+    public void NativeRunOutputSeparatesValidThresholdResultsFromReadinessAndQualification(string format)
+    {
+        // Existing synthetic protocol execution checks CLI projection only; it
+        // supplies no real mutant activation or governed representative proof.
+        using var fixture = new IncrementalTestServiceTests.Fixture();
+        var native = fixture.Profile.MutationCommand!.Select(value => value.Replace("{sourceFile}", "src/A.cs", StringComparison.Ordinal)
+            .Replace("{testFilter}", fixture.Profile.FullTestFilter, StringComparison.Ordinal)).ToArray();
+        var profile = new MutationRunProfile
+        {
+            SchemaVersion = 1,
+            Id = "output",
+            Command = native,
+            CanaryCommand = native,
+            SourceFiles = ["src/A.cs"],
+            ConfigFiles = ["config.json"],
+            ReportPath = fixture.Profile.MutationReportPath,
+            BreakThreshold = 90,
+            TimeoutSeconds = 15,
+            MinFreeBytes = 0,
+        };
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        fixture.Write("mutation-output.json", JsonSerializer.Serialize(profile, options));
+        var registry = new MutationCommandRegistry();
+        new TestingModule().RegisterCommands(registry, new MutationCommandServices(Service()));
+        using var output = new StringWriter();
+        var original = Console.Out;
+        try
+        {
+            Console.SetOut(output);
+            var exit = registry.Root.Parse(["test", "mutation", "run", "--repo", fixture.Path,
+                "--profile", "mutation-output.json", "--format", format]).Invoke();
+            Assert.True(exit == 0, output.ToString());
+            var rendered = output.ToString();
+            if (format == "agent")
+            {
+                Assert.Contains("validEvidence=true;thresholdMet=true;qualified=false", rendered, StringComparison.Ordinal);
+                Assert.Contains("pilotStatus=legacy-unaccounted;pilotReady=false;controllerAssessed=false", rendered, StringComparison.Ordinal);
+                Assert.Contains("pilotNextAction=", rendered, StringComparison.Ordinal);
+                Assert.Contains("remainingMilliseconds=unknown;restorationMilliseconds=unknown;usedAttempts=unknown;remainingAttempts=unknown", rendered, StringComparison.Ordinal);
+            }
+            else
+            {
+                Assert.Contains("Native evidence valid: true; threshold met: true; qualified: false.", rendered, StringComparison.Ordinal);
+                Assert.Contains("Representative pilot: legacy-unaccounted; controls ready: false; controller assessed: false.", rendered, StringComparison.Ordinal);
+                Assert.Contains("Pilot next action:", rendered, StringComparison.Ordinal);
+                Assert.Contains("Work capacity: unknown; no governed allowance observation.", rendered, StringComparison.Ordinal);
+            }
+            output.GetStringBuilder().Clear();
+            fixture.Write("mutation-output.json", JsonSerializer.Serialize(profile with { CorrectnessPilotProfile = "missing;pilot.json" }, options));
+            var held = registry.Root.Parse(["test", "mutation", "run", "--repo", fixture.Path,
+                "--profile", "mutation-output.json", "--format", format]).Invoke();
+            Assert.Equal(4, held);
+            if (format == "agent")
+            {
+                var action = Assert.Single(output.ToString().Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries),
+                    line => line.StartsWith("pilotNextAction=", StringComparison.Ordinal));
+                Assert.DoesNotContain(';', action);
+                Assert.Contains("missing,pilot.json", action, StringComparison.Ordinal);
+            }
+            else Assert.Contains("missing;pilot.json", output.ToString(), StringComparison.Ordinal);
+            Assert.Single(fixture.Calls());
+        }
+        finally { Console.SetOut(original); }
     }
 
     [Theory]

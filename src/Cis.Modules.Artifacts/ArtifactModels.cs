@@ -32,7 +32,10 @@ public sealed record LocalArtifactEntry(
     string Digest,
     string LastWriteUtc,
     bool Candidate,
-    string Action);
+    string Action)
+{
+    public bool Protected { get; init; }
+}
 
 public sealed record ArtifactArchiveManifest(
     int SchemaVersion,
@@ -55,5 +58,7 @@ public sealed record ArtifactOperationResult(
 {
     public IReadOnlyList<ArtifactFamilyStorage> FamilyStorage { get; init; } = [];
     public ArtifactStorageTotals? Storage { get; init; }
+    public Cis.Abstractions.CisOwnedStorageResult? OwnedStorage { get; init; }
+    public Cis.Abstractions.CisAgentWorkResult? Work { get; init; }
     public int ExitCode => Errors.Count > 0 ? 4 : 0;
 }

@@ -2,7 +2,10 @@ namespace Cis.Abstractions;
 
 /// <summary>Verify a completed native rerun without executing tests or changing raw reports.</summary>
 public sealed record IncrementalRefinementOptions(string RepositoryPath, string ProfilePath,
-    string RerunProfilePath, string Reason);
+    string RerunProfilePath, string Reason)
+{
+    public CisNativeWorkOptions? Work { get; init; }
+}
 
 public sealed record IncrementalMutationCounts(int Killed, int Survived, int TimedOut, int NoCoverage,
     int Denominator, double? Score);
@@ -44,4 +47,7 @@ public sealed record IncrementalRefinementResult(string Status, int ExitCode)
     public IReadOnlyList<MutationInputIdentity> Inputs { get; init; } = [];
     public IReadOnlyList<IncrementalRefinementCredit> Credits { get; init; } = [];
     public IReadOnlyList<string> Diagnostics { get; init; } = [];
+    public CisAgentWorkReference? WorkReference { get; init; }
+    public string WorkCoverage { get; init; } = "unaccounted-non-adopted";
+    public CisAgentWorkResult? WorkControl { get; init; }
 }

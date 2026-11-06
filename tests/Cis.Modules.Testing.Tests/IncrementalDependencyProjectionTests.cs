@@ -64,7 +64,7 @@ public sealed class IncrementalDependencyProjectionTests
         fixture.Write("tool.txt", "pinned external tool identity");
         fixture.Save(fixture.Profile with { ToolFiles = [.. fixture.Profile.ToolFiles, "tool.txt"] });
         var service = new IncrementalTestService(new ProjectionReader(fixture, "external"));
-        var executed = service.Run(new(fixture.Path, "profile.json", "unit", 4, 120));
+        var executed = service.Run(new(fixture.Path, "profile.json", "unit", 4, 120), 0, TestContext.Current.CancellationToken);
         Assert.True(executed.ExitCode == 0, string.Join("; ", executed.Diagnostics));
         Assert.Equal(2, executed.ExecutedUnitBatches);
 
@@ -87,7 +87,7 @@ public sealed class IncrementalDependencyProjectionTests
     {
         using var fixture = new IncrementalTestServiceTests.Fixture();
         var service = new IncrementalTestService(new ProjectionReader(fixture, "external"));
-        var executed = service.Run(new(fixture.Path, "profile.json", "all", 4, 120));
+        var executed = service.Run(new(fixture.Path, "profile.json", "all", 4, 120), 0, TestContext.Current.CancellationToken);
         Assert.True(executed.ExitCode == 0, string.Join("; ", executed.Diagnostics));
         Assert.Equal(2, executed.ExecutedMutationBatches);
         var calls = fixture.Calls().Length;

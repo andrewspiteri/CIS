@@ -17,15 +17,24 @@ public sealed class CisProcessJob : IDisposable
 {
     private readonly SafeFileHandle handle;
 
-    public CisProcessJob()
+    public CisProcessJob() : this(null) { }
+
+    public CisProcessJob(string? name)
     {
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
-        handle = Native.CreateJobObject(IntPtr.Zero, null);
+        if (name is not null) ValidateNativeName(name);
+        handle = Native.CreateJobObject(IntPtr.Zero, name);
+        var createdError = Marshal.GetLastWin32Error();
         if (handle.IsInvalid)
         {
             var error = new Win32Exception(Marshal.GetLastWin32Error());
             handle.Dispose();
             throw error;
+        }
+        if (name is not null && createdError == 183) // ERROR_ALREADY_EXISTS: never adopt another job.
+        {
+            handle.Dispose();
+            throw new InvalidDataException("The fresh native job identity already exists.");
         }
         var limits = new ExtendedLimits
         {
@@ -67,6 +76,53 @@ public sealed class CisProcessJob : IDisposable
     }
 
     public void Dispose() => handle.Dispose();
+
+    public static bool IsNamedNativeJobMember(CisNativeWorkContainment containment, Process process)
+    {
+        ValidateNativeBinding(containment);
+        using var job = Native.OpenJobObject(0x0004, false, containment.JobName); // JOB_OBJECT_QUERY
+        if (job.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+        if (!Native.QueryExtendedJobInformation(job, 9, out var limits, (uint)Marshal.SizeOf<ExtendedLimits>(), IntPtr.Zero))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        var flags = limits.Basic.LimitFlags;
+        if ((flags & 0x00002000) == 0 || (flags & (0x00000800 | 0x00001000)) != 0)
+            return false; // Require kill-on-close and deny both forms of breakaway.
+        if (!Native.IsProcessInJob(process.SafeHandle, job, out var member))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        return member;
+    }
+
+    public static bool IsNamedNativeJobEmptyOrDestroyed(CisNativeWorkContainment containment)
+    {
+        ValidateNativeBinding(containment);
+        using var job = Native.OpenJobObject(0x0004, false, containment.JobName);
+        if (job.IsInvalid)
+        {
+            var error = Marshal.GetLastWin32Error();
+            if (error == 2) return true; // The uniquely created job was destroyed after its associated processes exited.
+            throw new Win32Exception(error);
+        }
+        if (!Native.QueryInformationJobObject(job, 1, out var accounting, (uint)Marshal.SizeOf<BasicAccounting>(), IntPtr.Zero))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        return accounting.ActiveProcesses == 0;
+    }
+
+    private static void ValidateNativeBinding(CisNativeWorkContainment containment)
+    {
+        ArgumentNullException.ThrowIfNull(containment);
+        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
+        ValidateNativeName(containment.JobName);
+        using var current = Process.GetCurrentProcess();
+        if (containment.Protocol != CisNativeWorkContainment.WindowsOuterJob || containment.WindowsSessionId != current.SessionId)
+            throw new InvalidDataException("Native job inspection requires its exact Windows protocol and original local session.");
+    }
+
+    private static void ValidateNativeName(string name)
+    {
+        const string prefix = @"Local\cis-native-";
+        if (!name.StartsWith(prefix, StringComparison.Ordinal) || !Guid.TryParseExact(name[prefix.Length..], "N", out _))
+            throw new InvalidDataException("Native job identity must name its original unique local CIS job.");
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct BasicLimits
@@ -122,6 +178,21 @@ public sealed class CisProcessJob : IDisposable
         [DllImport("kernel32.dll", EntryPoint = "CreateJobObjectW", CharSet = CharSet.Unicode, SetLastError = true)]
         [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         internal static extern SafeFileHandle CreateJobObject(IntPtr attributes, string? name);
+
+        [DllImport("kernel32.dll", EntryPoint = "OpenJobObjectW", CharSet = CharSet.Unicode, SetLastError = true)]
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+        internal static extern SafeFileHandle OpenJobObject(uint desiredAccess, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, string name);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool IsProcessInJob(SafeProcessHandle process, SafeFileHandle job, [MarshalAs(UnmanagedType.Bool)] out bool result);
+
+        [DllImport("kernel32.dll", EntryPoint = "QueryInformationJobObject", SetLastError = true)]
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool QueryExtendedJobInformation(SafeFileHandle job, int informationClass,
+            out ExtendedLimits information, uint length, IntPtr returnedLength);
 
         [DllImport("kernel32.dll", SetLastError = true)]
         [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]

@@ -24,7 +24,7 @@ public sealed class MutationRunnerScriptTests
     public void TimeoutStopsTheNativeProcessAndRetainsItsFirstOutput()
     {
         using var fixture = new RunnerFixture();
-        var result = fixture.Run("Write-Output started; Start-Sleep -Seconds 30", "-TimeoutSeconds 3");
+        var result = fixture.Run("Write-Output started; Start-Sleep -Seconds 30", "-TimeoutSeconds 6");
 
         Assert.Equal("timeout", result.GetProperty("status").GetString());
         Assert.Contains("started", File.ReadAllText(Path.Combine(fixture.RunRoot, "stdout.log")));
@@ -41,6 +41,29 @@ public sealed class MutationRunnerScriptTests
 
         Assert.Equal("storage-limit", result.GetProperty("status").GetString());
         Assert.True(result.GetProperty("peakRunBytes").GetInt64() >= 32768);
+        Assert.InRange(result.GetProperty("durationMilliseconds").GetInt64(), 0, 8_000);
+    }
+
+    [Fact]
+    public void OwnedSiblingBuildGrowthUsesTheAdmittedUnionBoundBeforeTheGlobalCeiling()
+    {
+        using var fixture = new RunnerFixture();
+        var nativeStorage = Path.Combine(fixture.Root, "native-storage");
+        var build = Path.Combine(fixture.Root, "native-build");
+        Directory.CreateDirectory(nativeStorage);
+        Directory.CreateDirectory(build);
+        const long globalCeiling = 2 * 1024 * 1024;
+        const long admittedGrowth = 16 * 1024;
+        var output = Path.Combine(build, "payload.bin").Replace("'", "''");
+
+        var result = fixture.Run($"[IO.File]::WriteAllBytes('{output}', [byte[]]::new(32768)); Start-Sleep -Seconds 30",
+            $"-MaximumRunBytes 1048576 -MaximumRetainedBytes 1048576 -OwnedPaths @('{fixture.Root.Replace("'", "''")}') -MaximumOwnedBytes {admittedGrowth}",
+            nativeStorage);
+
+        Assert.Equal("storage-limit", result.GetProperty("status").GetString());
+        Assert.InRange(result.GetProperty("peakOwnedBytes").GetInt64(), 32768, globalCeiling - 1);
+        Assert.True(result.GetProperty("peakRunBytes").GetInt64() < admittedGrowth);
+        Assert.True(result.GetProperty("peakRetainedBytes").GetInt64() < admittedGrowth);
         Assert.InRange(result.GetProperty("durationMilliseconds").GetInt64(), 0, 8_000);
     }
 
@@ -164,7 +187,7 @@ public sealed class MutationRunnerScriptTests
             {{(timeout ? "Start-Sleep -Seconds 30" : "exit 0")}}
             """;
 
-        var result = fixture.Run(script, timeout ? "-TimeoutSeconds 4" : "");
+        var result = fixture.Run(script, timeout ? "-TimeoutSeconds 8" : "");
 
         Assert.Equal(timeout ? "timeout" : "child-leak", result.GetProperty("status").GetString());
         var childId = int.Parse(File.ReadAllText(Path.Combine(fixture.RunRoot, "child.pid")), System.Globalization.CultureInfo.InvariantCulture);
@@ -190,7 +213,7 @@ public sealed class MutationRunnerScriptTests
         public string Root { get; } = Path.Combine(Path.GetTempPath(), "cis-mutation-guard-" + Guid.NewGuid().ToString("N"));
         public string RunRoot => Path.Combine(Root, "run");
 
-        public JsonElement Run(string childScript, string options)
+        public JsonElement Run(string childScript, string options, string? storageRoot = null)
         {
             var directory = new DirectoryInfo(RepositoryRoot());
             var module = Path.Combine(directory.FullName, "tools", "MutationRunner.psm1").Replace("'", "''");
@@ -198,13 +221,13 @@ public sealed class MutationRunnerScriptTests
             var script = $$"""
                 $ErrorActionPreference = 'Stop'
                 Import-Module '{{module}}' -Force
-                $result = Invoke-BoundedMutationProcess -FilePath (Get-Process -Id $PID).Path -Arguments @('-NoProfile', '-EncodedCommand', '{{encodedChild}}') -WorkingDirectory '{{directory.FullName.Replace("'", "''")}}' -RunRoot '{{RunRoot.Replace("'", "''")}}' -StorageRoot '{{Root.Replace("'", "''")}}' -MinimumFreeBytes 0 {{options}}
+                $result = Invoke-BoundedMutationProcess -FilePath (Get-Process -Id $PID).Path -Arguments @('-NoProfile', '-EncodedCommand', '{{encodedChild}}') -WorkingDirectory '{{directory.FullName.Replace("'", "''")}}' -RunRoot '{{RunRoot.Replace("'", "''")}}' -StorageRoot '{{(storageRoot ?? Root).Replace("'", "''")}}' -MinimumFreeBytes 0 {{options}}
                 $result | ConvertTo-Json -Compress
                 """;
             var startInfo = new ProcessStartInfo("pwsh");
             foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-EncodedCommand", Encode(script) })
                 startInfo.ArgumentList.Add(argument);
-            var result = CisProcessSafety.Run(startInfo, TimeSpan.FromSeconds(15));
+            var result = CisProcessSafety.Run(startInfo, TimeSpan.FromSeconds(15), cancellationToken: TestContext.Current.CancellationToken);
             Assert.False(result.TimedOut, result.StandardError);
             Assert.True(result.ExitCode == 0, result.StandardError + result.StandardOutput);
             using var json = JsonDocument.Parse(result.StandardOutput);

@@ -8,15 +8,18 @@ public sealed partial class IncrementalTestService
 {
     private const string ChangedExecutionInputs = "Relevant inputs changed during execution; this result cannot be reused.";
     private static TestSuiteExecution ReadUnit(Input input, string path)
+        => ReadNativeUnitReport(input.Repository, input.Profile.Id, input.Profile.WorkingDirectory, input.Profile.UnitResultFormat, path);
+
+    internal static TestSuiteExecution ReadNativeUnitReport(string repository, string id, string workingDirectory, string format, string path)
     {
         Require(new FileInfo(path).Length is > 0 and <= 100 * 1024 * 1024, "Unit report must contain 1 byte through 100 MiB.");
-        var profile = new TestSuiteProfile(input.Profile.Id, input.Profile.Id, "unit", "native", "run", input.Profile.WorkingDirectory,
-            input.Profile.UnitResultFormat, path, "-", "-", "-", "always", "local", "current-result");
-        var context = new TestResultAdapterContext(input.Repository, profile, path, null, null);
+        var profile = new TestSuiteProfile(id, id, "unit", "native", "run", workingDirectory,
+            format, path, "-", "-", "-", "always", "local", "current-result");
+        var context = new TestResultAdapterContext(repository, profile, path, null, null);
         var xml = XDocument.Load(path);
-        var rows = xml.Descendants().Where(node => node.Name.LocalName == (input.Profile.UnitResultFormat == "trx" ? "UnitTestResult" : "testcase")).ToArray();
+        var rows = xml.Descendants().Where(node => node.Name.LocalName == (format == "trx" ? "UnitTestResult" : "testcase")).ToArray();
         Require(rows.Length > 0, "Unit report contains no executed tests.");
-        if (input.Profile.UnitResultFormat == "trx")
+        if (format == "trx")
         {
             var summary = xml.Descendants().Single(node => node.Name.LocalName == "ResultSummary");
             Require(summary.Attribute("outcome")?.Value is "Completed" or "Passed" or "Failed", "Unit host did not complete normally.");
@@ -35,7 +38,7 @@ public sealed partial class IncrementalTestService
             Require(xml.Root?.Name.LocalName is "testsuite" or "testsuites", "Unit JUnit report has an unexpected root.");
             if (xml.Root?.Attribute("tests") is not null) Require(Count(xml.Root, "tests") == rows.Length, "JUnit summary does not match executed rows.");
         }
-        ICisTestResultAdapter adapter = input.Profile.UnitResultFormat == "trx" ? new TrxTestResultAdapter() : new JUnitTestResultAdapter();
+        ICisTestResultAdapter adapter = format == "trx" ? new TrxTestResultAdapter() : new JUnitTestResultAdapter();
         return adapter.Read(context);
     }
 

@@ -43,6 +43,9 @@ public sealed partial class MutationRunService
             "Environment requires at most 64 bounded names/values without NUL or '=' in names.");
         Require(profile.Environment.Keys.Distinct(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal).Count() == profile.Environment.Count,
             "Environment names must be unique under this host's comparison rules.");
+        Require(!profile.Environment.Keys.Any(key => CisNativeWorkEnvironment.Keys.Contains(key,
+                OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal)),
+            "Work authority coordinates belong to the invocation, not profile environment values.");
         ValidateCommand(profile.Command);
         if (profile.CanaryCommand is not null) ValidateCommand(profile.CanaryCommand);
         Require(Directory.Exists(Resolve(repository, profile.WorkingDirectory, allowRoot: true)), "Mutation workingDirectory does not exist.");
@@ -57,6 +60,7 @@ public sealed partial class MutationRunService
         foreach (var input in inputs) Require(File.Exists(Resolve(repository, input)), "Missing declared source/config input: " + input);
         if (kind == "qualification")
             Require(profile.SourceFiles.Length > 0 && profile.CanaryCommand is { Length: > 0 }, "Qualification requires declared sourceFiles and a separate canaryCommand.");
+        ValidateCorrectnessPilot(repository, profile);
         return (profile, path, Hash(bytes));
     }
 

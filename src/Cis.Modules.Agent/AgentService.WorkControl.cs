@@ -24,6 +24,7 @@ public sealed partial class AgentService
             if (diagnostics.Count > 0 || identities.Any(identity => identity is null)) return WorkFailure(diagnostics);
             var canonical = identities.Select(identity => identity!).ToArray();
             request = request with { Tasks = request.Tasks.Select((task, index) => task with { TaskId = canonical[index].TaskId }).ToArray() };
+            if (request.Storage is { } storage) request = request with { Storage = NormalizeOwnedStoragePolicy(context, storage) };
             var allocated = CurrentWorkView(context, _workLedger.Allocate(context, changeId.ToUpperInvariant(), request, canonical, actor, reason,
                 ReadRunManifests(context).Any(run => run.Work is not null)), changeId.ToUpperInvariant(), null);
             return allocated.Work is null ? allocated : allocated with
@@ -62,6 +63,8 @@ public sealed partial class AgentService
         try
         {
             var request = ReadWorkInput<CisAgentWorkDispositionRequest>(context, inputPath);
+            if (request.Kind == "cancel-native")
+                return CancelNativeWork(context, changeId, taskId, request, actor, reason);
             if (request.CorrectionRelationshipId is { } relationship && request.Kind != "reconcile-story-history"
                 && _workLedger.ReadCorrections(context, relationship).Work?.CorrectionOnly == true)
                 return _workLedger.DispositionCorrection(context, relationship, request, actor, reason);
@@ -74,17 +77,26 @@ public sealed partial class AgentService
                 : WorkIdentity(context, changeId, taskId, diagnostics, accountingOnly: true);
             CisAgentWorkPreparationOwner? verifiedPreparationOwner = null;
             var preparationStopped = false;
+            IReadOnlyList<CisAgentWorkExecution>? verifiedNativeTree = null;
             if (identity is not null && request.Kind == "reconcile" && request.ExecutionId is not null)
             {
                 var execution = _workLedger.Read(context, identity.ChangeId, identity.TaskId).Work?.Executions
                     .SingleOrDefault(item => item.ExecutionId == request.ExecutionId);
                 verifiedPreparationOwner = execution?.PreparationOwner;
                 preparationStopped = PreparationOwnerStopped(verifiedPreparationOwner);
+                if (execution is { Stage.NativeOperation: not null, Finalized: false })
+                {
+                    var retained = _workLedger.NativeExecution(context, request.ExecutionId);
+                    if (retained is null) return WorkFailure(["The retained native execution disappeared; restore its original accounting."]);
+                    verifiedNativeTree = VerifyNativeReconciliation(context, retained.Value.Reference, diagnostics);
+                    if (diagnostics.Count > 0)
+                        return _workLedger.Read(context, identity.ChangeId, identity.TaskId) with { Status = "held", Errors = diagnostics };
+                }
             }
             if (request.Kind == "reconcile-story-history" && identity is not null && diagnostics.Count == 0)
                 return ReconcileStoryHistory(context, identity, request, actor, reason, diagnostics);
             return identity is null || diagnostics.Count > 0 ? WorkFailure(diagnostics)
-                : CurrentWorkView(context, _workLedger.Disposition(context, identity, request, actor, reason, verifiedPreparationOwner, preparationStopped),
+                : CurrentWorkView(context, _workLedger.Disposition(context, identity, request, actor, reason, verifiedPreparationOwner, preparationStopped, verifiedNativeTree),
                     identity.ChangeId, identity.TaskId);
         }
         catch (Exception error) when (WorkException(error)) { return WorkFailure([error.Message]); }
@@ -419,7 +431,7 @@ public sealed partial class AgentService
     }
 
     private CisAgentWorkIdentity? WorkIdentity(CisRepositoryContext context, string changeId, string taskId,
-        List<string> diagnostics, bool accountingOnly = false)
+        List<string> diagnostics, bool accountingOnly = false, bool nativeVerification = false)
     {
         if (!WorkId(changeId) || !WorkId(taskId))
         { diagnostics.Add("ERROR: Work ownership requires safe canonical change and task identities."); return null; }
@@ -445,7 +457,7 @@ public sealed partial class AgentService
         if (taskPath is null) { diagnostics.Add("ERROR: No canonical approved task was found for work ownership: " + taskId); return null; }
         var bytes = 0;
         var task = ReadAuthorityArtifact(context, Relative(context.RepositoryPath, taskPath), ref bytes).Content;
-        ValidateTaskEligibility(context, changeId, task, diagnostics, accountingOnly: accountingOnly);
+        ValidateTaskEligibility(context, changeId, task, diagnostics, accountingOnly: accountingOnly, nativeVerification: nativeVerification);
         var canonicalTask = (FrontMatter(task, "task_id") ?? Path.GetFileNameWithoutExtension(taskPath)).ToUpperInvariant();
         var parents = new List<string>(); var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { canonicalTask };
         var current = task;

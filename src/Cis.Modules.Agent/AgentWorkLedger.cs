@@ -16,11 +16,14 @@ internal sealed record AgentWorkAdmission(CisAgentWorkResult Result, CisAgentWor
 internal sealed record AgentWorkCorrectionAdmission(CisAgentWorkResult Result, CisAgentWorkCorrectionRound? Round);
 
 /// <summary>Direct-task accounting. All mutations are short authority-wide transactions.</summary>
-internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
+internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
 {
     internal const string RelativePath = CisAgentWorkPaths.Ledger;
     internal const string AdoptionPath = CisAgentWorkPaths.Adoption;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
+    private static readonly JsonSerializerOptions LedgerJson = new(Json) { WriteIndented = false };
+    private const int MaximumLedgerBytes = 8 * 1024 * 1024;
+    private const int NativeAdmissionLedgerBytes = 6 * 1024 * 1024;
     private readonly Func<DateTimeOffset> now = clock ?? (() => DateTimeOffset.UtcNow);
 
     private sealed class Ledger
@@ -60,6 +63,7 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
         public long Milliseconds { get; set; }
         public int Attempts { get; set; }
         public long Restoration { get; set; }
+        public long RestorationSpent { get; set; }
         public long Consumed { get; set; }
         public int UsedAttempts { get; set; }
         public string DecisionReference { get; set; } = "";
@@ -72,6 +76,7 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
         public Dictionary<string, Execution> Executions { get; set; } = new(StringComparer.Ordinal);
         public List<AllocationAudit> AllocationHistory { get; set; } = [];
         public Dictionary<string, HistoricalCharge> HistoricalRuns { get; set; } = new(StringComparer.Ordinal);
+        public StorageAllocation? Storage { get; set; }
     }
     private sealed record HistoricalCharge(string RelationshipId, string OwnerTaskId, long Milliseconds,
         string Actor, string Reason, string RecordedAtUtc);
@@ -83,6 +88,7 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
         public long Milliseconds { get; set; }
         public int Attempts { get; set; }
         public long Restoration { get; set; }
+        public long RestorationSpent { get; set; }
         public bool Fixed { get; set; }
         public bool AllowRedistribution { get; set; }
         public long Consumed { get; set; }
@@ -112,7 +118,12 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
         public bool Stopped { get; set; }
         public bool Finalized { get; set; }
         public bool ConservativeRecovery { get; set; }
+        public string? RestorationOfExecutionId { get; set; }
+        public bool NativeRestorationRequired { get; set; }
+        public bool NativeCancellationRequested { get; set; }
         public CisAgentWorkPreparationOwner? PreparationOwner { get; set; }
+        public string? Controller { get; set; }
+        public CisNativeWorkContainment? NativeContainment { get; set; }
         public CisAgentWorkStage? Stage { get; set; }
         public int? ProcessId { get; set; }
         public string? ProcessStartedAtUtc { get; set; }
@@ -201,6 +212,7 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
                 if (request.DecisionReference != change.DecisionReference || request.StorageCeilingReference != change.StorageReference)
                     throw new InvalidDataException("Retain the owning allocation and storage authority references; ordinary redistribution does not replace them.");
             }
+            ApplyStorageAllocation(authority, state, change!, request.Storage, actor, isNew);
             var canonical = tasks.ToDictionary(item => item.TaskId, StringComparer.Ordinal);
             var oldTotal = change!.Owners.Values.Sum(item => item.Milliseconds);
             var oldAttempts = change.Owners.Values.Sum(item => (long)item.Attempts);
@@ -263,7 +275,7 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
     internal AgentWorkAdmission Admit(CisRepositoryContext authority, CisAgentWorkIdentity identity, string executionId,
         int requestedSeconds, int maximumRunSeconds, string? parentExecutionId = null, string? logicalAttemptId = null,
         CisAgentWorkPreparationOwner? preparationOwner = null, bool clampToRemaining = false, CisAgentWorkStage? stage = null,
-        string? controller = null)
+        string? controller = null, string? restorationOfExecutionId = null, bool nativeChildContinuation = false)
     {
         CisAgentWorkReference? reference = null; var timeout = 0;
         var result = Mutate(authority, state =>
@@ -272,6 +284,10 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
             ValidateIdentity(authority, identity.ChangeId, identity); Text(executionId, "Execution identity");
             var change = ChangeFor(state, identity.ChangeId); var owner = FindOwner(change, identity) ?? throw new InvalidDataException("No task or allocated canonical ancestor owns this task's work allowance.");
             if (controller is not null) Authorize(change, controller);
+            if (stage?.NativeOperation is not null && !NativeLedgerMaintenance(stage, restorationOfExecutionId)
+                && JsonSerializer.SerializeToUtf8Bytes(state, LedgerJson).Length >= NativeAdmissionLedgerBytes)
+                return (state, Result(state, change, identity.TaskId, "held", false,
+                    "Native accounting history is near its finite ledger capacity. Existing settlement, cancellation, delegated deletion and pinned restoration remain available; preserve retained execution proof before admitting more work."));
             if (change.Executions.ContainsKey(executionId)) throw new InvalidDataException("This execution identity already has accounting state; inspect or reconcile it instead of reserving again.");
             var minimumSeconds = parentExecutionId is null ? 30 : 1;
             if (requestedSeconds < minimumSeconds || requestedSeconds > maximumRunSeconds || maximumRunSeconds < 30)
@@ -286,20 +302,43 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
                 if (!change.Executions.TryGetValue(parentExecutionId, out parent) || parent.Stopped || parent.Reference.OwnerTaskId != owner.Id
                     || parent.Reference.TaskId != identity.TaskId && !identity.AncestorTaskIds.Contains(parent.Reference.TaskId, StringComparer.Ordinal))
                     throw new InvalidDataException("A child execution must inherit a live canonical parent and its unchanged accounting owner.");
-                hold = change.Executions.Values.FirstOrDefault(item => !item.Finalized && item.Reference.OwnerTaskId == owner.Id && item.RecoveryReason is not null)?.RecoveryReason ?? owner.Hold;
+                hold = change.Executions.Values.FirstOrDefault(item => !item.Finalized && item.Reference.OwnerTaskId == owner.Id && item.RecoveryReason is not null)?.RecoveryReason
+                    ?? owner.Hold ?? NativeCancellationHold(change, owner)
+                    ?? (nativeChildContinuation && parent.Stage?.NativeOperation is not null && NativeContinuationOwnsRestoration(change, parent)
+                        ? null : NativeRestorationHold(change, owner));
+            }
+            var restorationOf = restorationOfExecutionId ?? parent?.RestorationOfExecutionId;
+            Execution? original = null;
+            if (restorationOf is not null)
+            {
+                if (!change.Executions.TryGetValue(restorationOf, out original) || original.Reference.OwnerTaskId != owner.Id
+                    || original.Reference.TaskId != identity.TaskId
+                    || original.Stage?.NativeOperation is null || !original.NativeRestorationRequired || !original.Stopped
+                    || original.RecoveryReason is not null || original.Stage.NativeRecoveryBasis is null
+                    || original.Stage.NativeRecoveryBasis != stage?.NativeRecoveryBasis
+                    || NativeSubtree(change, original.Reference.ExecutionId).Any(item => !item.Stopped || item.RecoveryReason is not null))
+                    throw new InvalidDataException("Restoration requires the exact stopped native execution, unchanged recovery recipe and accounting owner; a new run or caller flag grants no reserve.");
+                hold = change.Executions.Values.FirstOrDefault(item => !item.Finalized && item.Reference.OwnerTaskId == owner.Id
+                    && item.RecoveryReason is not null)?.RecoveryReason ?? owner.Hold ?? NativeCancellationHold(change, owner);
+                if (parent is null && change.Executions.Values.Any(item => !item.Finalized && item.Reference.OwnerTaskId == owner.Id))
+                    hold ??= "An owned execution remains active; preserve its reservation before starting separate restoration.";
             }
             if (hold is not null) return (state, Result(state, change, identity.TaskId, "held", false, hold));
-            if (correctionCapacity is { } exhaustedCapacity && exhaustedCapacity.Remaining < minimumSeconds * 1000L)
+            if (restorationOf is null && correctionCapacity is { } exhaustedCapacity && exhaustedCapacity.Remaining < minimumSeconds * 1000L)
                 return (state, Result(state, change, identity.TaskId, "held", false, exhaustedCapacity.Action));
             var milliseconds = checked((long)requestedSeconds * 1000);
             // The inherited deadline and the new reservation share one origin. Time spent
             // persisting admission must not move a child beyond its parent's bound.
             var started = Tick();
-            var available = parent is null ? Math.Min(owner.Milliseconds - owner.Consumed - Reserved(change, owner.Id) - owner.Restoration,
-                change.Milliseconds - change.Consumed - Reserved(change, null) - change.Restoration)
+            var available = parent is null ? Math.Min(owner.Milliseconds - owner.Consumed - Reserved(change, owner.Id) - ProtectedRestoration(owner),
+                change.Milliseconds - change.Consumed - Reserved(change, null) - ProtectedRestoration(change))
                 : Math.Max(0, parent.Started + parent.Bound - started);
-            if (correctionCapacity is { } boundedCapacity) available = Math.Min(available, boundedCapacity.Remaining);
-            if (stage?.CorrectionRoundId is { } correctionId)
+            if (restorationOf is not null && parent is null)
+                available = Math.Min(ProtectedRestoration(owner) - ReservedRestoration(change, owner.Id),
+                    Math.Min(owner.Milliseconds - owner.Consumed - Reserved(change, owner.Id),
+                        change.Milliseconds - change.Consumed - Reserved(change, null)));
+            if (restorationOf is null && correctionCapacity is { } boundedCapacity) available = Math.Min(available, boundedCapacity.Remaining);
+            if (restorationOf is null && stage?.CorrectionRoundId is { } correctionId)
             {
                 var relationship = CorrectionFor(state, stage.RelationshipId);
                 var correction = relationship.Rounds.SingleOrDefault(round => round.Id == correctionId)
@@ -320,14 +359,15 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
                     : parent is not null ? "The admitted parent has no usable whole-second execution remainder. Retain its measured work before another bounded continuation."
                     : "Remaining hard allowance cannot support the minimum operation while preserving restoration capacity. Seek the applicable allocation authority."));
             }
-            if (owner.OpenAttempt is null)
+            if (restorationOf is null && owner.OpenAttempt is null)
             {
                 if (owner.UsedAttempts >= owner.Attempts || change.UsedAttempts >= change.Attempts)
                     return (state, Result(state, change, identity.TaskId, "held", false, "The logical-attempt allowance is exhausted. Seek the applicable allocation authority."));
                 owner.OpenAttempt = owner.Id + ":" + ++owner.UsedAttempts; change.UsedAttempts++;
             }
-            if (logicalAttemptId is not null && logicalAttemptId != owner.OpenAttempt) throw new InvalidDataException("Run identifiers cannot open or replace the current logical attempt. Close it through controller progress first.");
-            reference = new(state.AdoptionId, authority.RepositoryId, change.Id, identity.TaskId, owner.Id, executionId, owner.OpenAttempt, parentExecutionId);
+            var attempt = restorationOf is not null ? original!.Reference.LogicalAttemptId : owner.OpenAttempt!;
+            if (logicalAttemptId is not null && logicalAttemptId != attempt) throw new InvalidDataException("Run identifiers cannot open or replace the current logical attempt. Close it through controller progress first.");
+            reference = new(state.AdoptionId, authority.RepositoryId, change.Id, identity.TaskId, owner.Id, executionId, attempt, parentExecutionId);
             change.Executions[executionId] = new()
             {
                 Reference = reference,
@@ -335,7 +375,10 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
                 Started = started,
                 Bound = milliseconds,
                 PreparationOwner = preparationOwner,
+                Controller = controller?.Trim(),
                 Stage = stage,
+                RestorationOfExecutionId = restorationOf,
+                NativeRestorationRequired = stage?.NativeRecoveryBasis is not null,
                 Intervals = [new(started, null)]
             };
             change.Bindings[identity.TaskId] = owner.Id;
@@ -356,18 +399,27 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
         => ExecutionChange(authority, reference, (state, change, execution) =>
         {
             if (execution.Stopped) throw new InvalidDataException("A stopped execution cannot launch again.");
+            if (NativeCancellationHold(change, change.Owners[execution.Reference.OwnerTaskId]) is { } cancellation)
+                throw new InvalidDataException(cancellation);
             execution.LaunchIntent = true; execution.Status = "launch-intent";
             return Result(state, change, reference.TaskId, "launch-intent", true);
         });
 
-    internal CisAgentWorkResult AttachProcess(CisRepositoryContext authority, CisAgentWorkReference reference, int processId, string startedAtUtc)
+    internal CisAgentWorkResult AttachProcess(CisRepositoryContext authority, CisAgentWorkReference reference, int processId, string startedAtUtc,
+        CisNativeWorkContainment? containment = null)
         => ExecutionChange(authority, reference, (state, change, execution) =>
         {
             if (execution.Stopped || !execution.LaunchIntent || processId <= 0 || !DateTimeOffset.TryParse(startedAtUtc, out _))
                 throw new InvalidDataException("Attach only a verified owned process to a live launch intent.");
+            if (NativeCancellationHold(change, change.Owners[execution.Reference.OwnerTaskId]) is { } cancellation)
+                throw new InvalidDataException(cancellation);
             if (execution.ProcessId is not null && (execution.ProcessId != processId || execution.ProcessStartedAtUtc != startedAtUtc))
                 throw new InvalidDataException("An execution's owned process identity cannot be replaced.");
+            if (containment is not null && (execution.Stage?.NativeOperation is null
+                || execution.NativeContainment is not null && execution.NativeContainment != containment))
+                throw new InvalidDataException("Native containment must retain its original actual native-driver binding.");
             execution.ProcessId = processId; execution.ProcessStartedAtUtc = startedAtUtc; execution.Status = "running";
+            if (containment is not null) execution.NativeContainment = containment;
             return Result(state, change, reference.TaskId, "running", true);
         });
 
@@ -398,9 +450,19 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
         }
         var stopped = Tick(); if (stopped < execution.Started) throw new InvalidDataException("The accounting clock moved backwards; reconcile usage before releasing capacity.");
         execution.Stopped = true; execution.Completed = stopped; execution.Status = status; execution.TerminalStatus = status; execution.Summary = summary;
+        execution.NativeCancellationRequested = false;
         execution.ConservativeRecovery = conservativeRecovery;
         execution.Evidence = evidence?.ToList() ?? []; execution.RecoveryReason = null;
         execution.Intervals[^1] = execution.Intervals[^1] with { End = stopped };
+        if (execution.Stage?.NativeOperation is not null && NativeSubtree(change, reference.ExecutionId).All(item => !item.LaunchIntent))
+            foreach (var native in NativeSubtree(change, reference.ExecutionId)) native.NativeRestorationRequired = false;
+        if (execution.Stage?.NativeOperation is not null && (status is "native-finished" or "Restored")
+            && NativeSubtree(change, reference.ExecutionId).All(item => item.Stopped && item.RecoveryReason is null))
+        {
+            foreach (var native in NativeSubtree(change, reference.ExecutionId)) native.NativeRestorationRequired = false;
+            if (status == "Restored" && execution.RestorationOfExecutionId is { } restored)
+                foreach (var native in NativeSubtree(change, restored)) native.NativeRestorationRequired = false;
+        }
         var root = change.Executions[execution.RootId];
         var tree = change.Executions.Values.Where(item => item.RootId == root.RootId).ToArray();
         if (root.Stopped && tree.All(item => item.Stopped))
@@ -409,7 +471,13 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
             if (tree.Any(item => item.ConservativeRecovery)) charge = Math.Max(charge, root.Bound);
             change.Consumed = checked(change.Consumed + charge);
             var owner = change.Owners[root.Reference.OwnerTaskId]; owner.Consumed = checked(owner.Consumed + charge);
+            if (root.RestorationOfExecutionId is not null)
+            {
+                owner.RestorationSpent = checked(owner.RestorationSpent + Math.Min(charge, ProtectedRestoration(owner)));
+                change.RestorationSpent = checked(change.RestorationSpent + Math.Min(charge, ProtectedRestoration(change)));
+            }
             foreach (var item in tree) { item.Finalized = true; item.Status = item.TerminalStatus ?? item.Status; }
+            SettleReconciledNativeStorage(change, tree);
             var checkpoint = new CisAgentWorkCheckpoint(root.Status + ": " + (root.Summary ?? "Inspect retained result."), root.Evidence,
                 owner.Hypothesis ?? "Execute the current canonical task within its allocation.",
                 tree.Any(item => item.ConservativeRecovery) ? "Usage conservatively reconciled after stopped-process verification; the full reserved bound is charged."
@@ -420,12 +488,15 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
         else
         {
             if (root.Stopped) root.Status = "waiting-for-owned-children";
-            var owner = change.Owners[root.Reference.OwnerTaskId];
-            owner.Checkpoints.Add(new(reference.LogicalAttemptId, "CIS measured execution", Time(stopped),
-                new(status + ": " + (summary ?? "Inspect retained result."), evidence ?? [], owner.Hypothesis ?? "Execute the current bounded task.",
-                    "Owned execution time remains included in the parent reservation until every owned execution safely settles.", owner.NextAction),
-                owner.Consumed, Reserved(change, owner.Id))
-            { Origin = "execution-summary" });
+            if (execution.Stage?.NativeOperation is null)
+            {
+                var owner = change.Owners[root.Reference.OwnerTaskId];
+                owner.Checkpoints.Add(new(reference.LogicalAttemptId, "CIS measured execution", Time(stopped),
+                    new(status + ": " + (summary ?? "Inspect retained result."), evidence ?? [], owner.Hypothesis ?? "Execute the current bounded task.",
+                        "Owned execution time remains included in the parent reservation until every owned execution safely settles.", owner.NextAction),
+                    owner.Consumed, Reserved(change, owner.Id))
+                { Origin = "execution-summary" });
+            }
         }
         return Result(state, change, reference.TaskId, "settled", true);
     }
@@ -478,7 +549,8 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
         });
 
     internal CisAgentWorkResult Disposition(CisRepositoryContext authority, CisAgentWorkIdentity identity, CisAgentWorkDispositionRequest request, string actor, string reason,
-        CisAgentWorkPreparationOwner? verifiedPreparationOwner = null, bool preparationStopped = false)
+        CisAgentWorkPreparationOwner? verifiedPreparationOwner = null, bool preparationStopped = false,
+        IReadOnlyList<CisAgentWorkExecution>? verifiedNativeTree = null)
         => Mutate(authority, state =>
         {
             if (state is null) throw new InvalidDataException("An owning work allocation is required before disposition.");
@@ -513,6 +585,8 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
                         || execution.Reference.TaskId != identity.TaskId || execution.Reference.OwnerTaskId != owner.Id)
                         throw new InvalidDataException("Reconciliation requires the exact execution ID belonging to this retained task, owner and authority.");
                     if (execution.Finalized) return (state, Result(state, change, identity.TaskId, "unchanged", false));
+                    if (execution.Stage?.NativeOperation is not null)
+                        return (state, ReconcileNativeCore(state, change, owner, execution, request, actor, reason, verifiedNativeTree));
                     if (execution.LaunchIntent || execution.ProcessId is not null)
                         return (state, Result(state, change, identity.TaskId, "held", false,
                             "A launch intent or owned process exists. Use cis agent recover with verified stopped-process evidence; no-PID launched work remains uncertain."));
@@ -1149,9 +1223,11 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
             using var held = AcquireTransactionLock(lockPath);
             var current = Load(authority); var next = action(current);
             if (!next.Result.Applied) return next.Result;
+            foreach (var change in next.State.Changes.Values) CompactStorageState(next.State, change);
+            foreach (var change in next.State.Changes.Values) ValidateStorageRecordBounds(change);
             next.State.Revision++;
-            var serialized = JsonSerializer.Serialize(next.State, Json);
-            if (serialized.Length > 8 * 1024 * 1024) throw new InvalidDataException("The durable work ledger reached its 8 MiB bound; preserve accounting and resolve storage capacity before more work.");
+            var serialized = JsonSerializer.Serialize(next.State, LedgerJson);
+            if (Encoding.UTF8.GetByteCount(serialized) > MaximumLedgerBytes) throw new InvalidDataException("The durable work ledger reached its 8 MiB bound; preserve accounting and resolve storage capacity before more work.");
             Atomic(path, serialized);
             if (!next.State.CorrectionOnly && !File.Exists(marker)) Atomic(marker, JsonSerializer.Serialize(new Adoption(1, authority.RepositoryId, next.State.AdoptionId,
                 next.State.Changes.Values.First().Actor, next.State.Changes.Values.First().Reason, Time(Tick())), Json));
@@ -1167,7 +1243,7 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
         if (!File.Exists(path) && !File.Exists(marker)) return null;
         if (!File.Exists(path)) throw new InvalidDataException("Adopted work accounting is incomplete. Restore its ledger and adoption reference; missing state cannot become a fresh allowance.");
         var adoption = File.Exists(marker) ? JsonSerializer.Deserialize<Adoption>(ReadSnapshot(marker, 65536), Json) : null;
-        var state = JsonSerializer.Deserialize<Ledger>(ReadSnapshot(path, 8 * 1024 * 1024), Json);
+        var state = JsonSerializer.Deserialize<Ledger>(ReadSnapshot(path, MaximumLedgerBytes), Json);
         if (state is not { SchemaVersion: 1, Changes: not null, Corrections: not null }
             || state.AuthorityId != authority.RepositoryId || string.IsNullOrWhiteSpace(state.AdoptionId) || state.Revision < 1 || state.BaselineStarted <= 0
             || state.CorrectionOnly && (adoption is not null || state.Changes.Count != 0 || state.Corrections.Count == 0)
@@ -1206,14 +1282,17 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
         foreach (var (id, change) in state.Changes)
         {
             if (change is null || change.Id != id || change.Milliseconds < 0 || change.Attempts < 1 || change.Consumed < 0 || change.UsedAttempts < 0
-                || change.Restoration < 0 || change.Restoration > change.Milliseconds || change.Owners is null || change.Bindings is null || change.Executions is null
+                || change.Restoration < 0 || change.Restoration > change.Milliseconds || change.RestorationSpent < 0 || change.RestorationSpent > change.Restoration
+                || change.Owners is null || change.Bindings is null || change.Executions is null
                 || change.Controllers is null || change.Controllers.Count == 0 || change.AllocationHistory is null || change.HistoricalRuns is null
                 || change.HistoricalRuns.Any(pair => !BoundedText(pair.Key) || pair.Value is null || pair.Value.Milliseconds <= 0
                     || !change.Owners.ContainsKey(pair.Value.OwnerTaskId)))
                 throw new InvalidDataException("A containing-change accounting record is corrupt; restore it without replenishing capacity.");
+            ValidateStorageState(authority, state, change);
             foreach (var (ownerId, owner) in change.Owners)
                 if (owner is null || owner.Id != ownerId || owner.Milliseconds < 0 || owner.Attempts < 1 || owner.Consumed < 0 || owner.UsedAttempts < 0
-                    || owner.Restoration < 0 || owner.Restoration > owner.Milliseconds || owner.Checkpoints is null || owner.Outcomes is null
+                    || owner.Restoration < 0 || owner.Restoration > owner.Milliseconds || owner.RestorationSpent < 0 || owner.RestorationSpent > owner.Restoration
+                    || owner.Checkpoints is null || owner.Outcomes is null
                     || owner.ReflectionWindowMilliseconds is < 30_000)
                     throw new InvalidDataException("A task accounting owner is corrupt; restore its recorded consumption and allocation.");
             if (change.Bindings.Values.Any(owner => !change.Owners.ContainsKey(owner)))
@@ -1224,9 +1303,15 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
                     || execution.Reference.AuthorityRepositoryId != state.AuthorityId || execution.Reference.ChangeId != change.Id
                     || !change.Owners.ContainsKey(execution.Reference.OwnerTaskId) || change.Bindings.GetValueOrDefault(execution.Reference.TaskId) != execution.Reference.OwnerTaskId
                     || execution.Started <= 0 || execution.Bound <= 0 || execution.Intervals is null || execution.Intervals.Count == 0
+                    || execution.Controller is not null && !BoundedText(execution.Controller)
                     || !change.Executions.ContainsKey(execution.RootId) || execution.Reference.ParentExecutionId is { } parent && !change.Executions.ContainsKey(parent))
                     throw new InvalidDataException("An execution reservation or inherited accounting reference is corrupt; reconcile it before execution.");
                 if (execution.PreparationOwner is not null) ValidatePreparationOwner(execution.PreparationOwner);
+                if (execution.NativeRestorationRequired && (execution.Stage?.NativeOperation is null || execution.Stage.NativeRecoveryBasis is null)
+                    || execution.RestorationOfExecutionId is { } originalId && (!change.Executions.TryGetValue(originalId, out var original)
+                        || original.Reference.OwnerTaskId != execution.Reference.OwnerTaskId
+                        || original.Stage?.NativeRecoveryBasis != execution.Stage?.NativeRecoveryBasis))
+                    throw new InvalidDataException("Native restoration ownership or its retained recipe is corrupt; reconcile it without replenishing capacity.");
             }
         }
         return state;
@@ -1244,15 +1329,24 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
                 item.Completed is { } end ? Time(end) : null, UnionMilliseconds(item.Intervals.Select(interval => (interval.Start, interval.End ?? Tick()))),
                 Math.Max(0, (item.Completed ?? Tick()) - item.Started), item.RootId == item.Reference.ExecutionId && !item.Finalized ? item.Bound : 0,
                 item.ProcessId, item.ProcessStartedAtUtc, item.RecoveryReason ?? UnownedPreparation(item))
-            { Finalized = item.Finalized, LaunchIntent = item.LaunchIntent, PreparationOwner = item.PreparationOwner, Stage = item.Stage }).ToArray();
+            {
+                Finalized = item.Finalized,
+                LaunchIntent = item.LaunchIntent,
+                PreparationOwner = item.PreparationOwner,
+                NativeContainment = item.NativeContainment,
+                Stage = item.Stage,
+                NativeRestorationRequired = item.NativeRestorationRequired,
+                RestorationOfExecutionId = item.RestorationOfExecutionId
+            }).ToArray();
         return new(status, new(state.AuthorityId, change.Id, taskId, owner?.Id, Revision(state), state.AdoptionId,
             change.Executions.Values.Any(item => item.ConservativeRecovery) || change.HistoricalRuns.Count > 0
                 ? "Measured from the authorized baseline with conservative full-bound recovery charges; earlier historical effort is unmeasured."
                 : "Measured from the authorized baseline; earlier historical effort is unmeasured.", executions.Any(item => item.RecoveryReason is not null) ? "uncertain" : "known",
-            hold, explicitHold ?? (hold == ReflectionAction || correctionCapacity is { } capacity && hold == capacity.Action ? hold : owner?.NextAction) ?? "Select a canonical task and inspect its remaining allowance.",
+            hold, explicitHold ?? (hold == ReflectionAction || hold is not null && owner is not null && hold == NativeRestorationHold(change, owner)
+                || correctionCapacity is { } capacity && hold == capacity.Action ? hold : owner?.NextAction) ?? "Select a canonical task and inspect its remaining allowance.",
             Math.Max(0, Tick() - state.BaselineStarted),
-            new(change.Milliseconds, change.Consumed, Reserved(change, null), change.Restoration, change.Attempts, change.UsedAttempts),
-            owner is null ? null : new(owner.Milliseconds, owner.Consumed, Reserved(change, owner.Id), owner.Restoration, owner.Attempts, owner.UsedAttempts),
+            new(change.Milliseconds, change.Consumed, Reserved(change, null), ProtectedRestoration(change), change.Attempts, change.UsedAttempts),
+            owner is null ? null : new(owner.Milliseconds, owner.Consumed, Reserved(change, owner.Id), ProtectedRestoration(owner), owner.Attempts, owner.UsedAttempts),
             owner?.OpenAttempt, owner?.RepeatedBlockers ?? 0, change.DecisionReference, state.AuthorityId, change.StorageReference,
             executions, owner?.Checkpoints ?? change.Owners.Values.SelectMany(item => item.Checkpoints).ToList())
         {
@@ -1277,11 +1371,11 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
     private string? Hold(Change change, Owner owner, CisAgentWorkStage? stage = null,
         (long Remaining, string Action)? correctionCapacity = null)
         => change.Executions.Values.FirstOrDefault(item => !item.Finalized && item.Reference.OwnerTaskId == owner.Id && item.RecoveryReason is not null)?.RecoveryReason
-            ?? owner.Hold
+            ?? owner.Hold ?? NativeCancellationHold(change, owner) ?? NativeRestorationHold(change, owner)
             ?? (change.Executions.Values.Any(item => !item.Finalized && item.Reference.OwnerTaskId == owner.Id)
                 ? change.Executions.Values.Where(item => item.Reference.OwnerTaskId == owner.Id).Select(UnownedPreparation).FirstOrDefault(reason => reason is not null)
                     ?? "An owned execution or child reservation is still active. Inspect or reconcile it before conflicting work."
-                : owner.Milliseconds - owner.Consumed - owner.Restoration < 30_000 || change.Milliseconds - change.Consumed - Reserved(change, null) - change.Restoration < 30_000
+                : owner.Milliseconds - owner.Consumed - ProtectedRestoration(owner) < 30_000 || change.Milliseconds - change.Consumed - Reserved(change, null) - ProtectedRestoration(change) < 30_000
                     ? "Remaining hard allowance cannot support the minimum operation while preserving restoration capacity. Use cis agent work allocate through the original allocation authority for unused outer capacity or a valid delegated transfer; fixed limits remain binding."
                     : owner.OpenAttempt is null && (owner.UsedAttempts >= owner.Attempts || change.UsedAttempts >= change.Attempts)
                         ? "The logical-attempt allowance is exhausted. Seek the applicable allocation authority."

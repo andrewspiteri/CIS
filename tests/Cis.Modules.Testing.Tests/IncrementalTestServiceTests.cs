@@ -233,7 +233,8 @@ public sealed class IncrementalTestServiceTests
         fixture.Write("stryker.json", template);
         fixture.Save(fixture.Profile with
         {
-            ConfigFiles = ["config.json", "stryker.json"], StrykerConfigFile = "stryker.json",
+            ConfigFiles = ["config.json", "stryker.json"],
+            StrykerConfigFile = "stryker.json",
             MutationCommand = [fixture.Profile.UnitCommand[0], fixture.Profile.UnitCommand[1], "config-mutation", "{output}", "{mutationConfig}"],
         });
         var result = fixture.Run();
@@ -389,7 +390,7 @@ public sealed class IncrementalTestServiceTests
     {
         using var fixture = new Fixture();
         Assert.Equal(0, fixture.Run("unit").ExitCode);
-        var forced = new IncrementalTestService(fixture).Run(new(fixture.Path, "profile.json", "unit", 1, 120, true));
+        var forced = new IncrementalTestService(fixture).Run(new(fixture.Path, "profile.json", "unit", 1, 120, true), 0, TestContext.Current.CancellationToken);
         Assert.Equal(3, forced.ExitCode);
         Assert.Equal(1, forced.ExecutedUnitBatches);
         Assert.Equal(1, forced.PendingUnitBatches);
@@ -404,13 +405,13 @@ public sealed class IncrementalTestServiceTests
         var before = fixture.SavedState();
         var calls = fixture.Calls().Count(call => call.StartsWith("mutation ", StringComparison.Ordinal));
 
-        var forced = new IncrementalTestService(fixture).Run(new(fixture.Path, "profile.json", "unit", 1, 120, true));
+        var forced = new IncrementalTestService(fixture).Run(new(fixture.Path, "profile.json", "unit", 1, 120, true), 0, TestContext.Current.CancellationToken);
 
         Assert.Equal(3, forced.ExitCode);
         Assert.Equal(1, forced.ExecutedUnitBatches);
         Assert.Equal(0, forced.ExecutedMutationBatches);
         // Less than the mutation recovery reserve, but enough for the pending unit refresh.
-        var resumed = new IncrementalTestService(fixture).Run(new(fixture.Path, "profile.json", "all", 4, 30));
+        var resumed = new IncrementalTestService(fixture).Run(new(fixture.Path, "profile.json", "all", 4, 30), 0, TestContext.Current.CancellationToken);
         Assert.Equal(0, resumed.ExitCode);
         Assert.Equal(1, resumed.ExecutedUnitBatches);
         Assert.Equal(0, resumed.ExecutedMutationBatches);
@@ -432,7 +433,7 @@ public sealed class IncrementalTestServiceTests
         Assert.Equal(0, fixture.Run().ExitCode);
         fixture.Fault("src/A.cs", "unit:unit-failure");
 
-        var result = new IncrementalTestService(fixture).Run(new(fixture.Path, "profile.json", "unit", 1, 120, true));
+        var result = new IncrementalTestService(fixture).Run(new(fixture.Path, "profile.json", "unit", 1, 120, true), 0, TestContext.Current.CancellationToken);
 
         Assert.Equal(4, result.ExitCode);
         Assert.Null(result.CompleteScopeScore);
@@ -507,13 +508,21 @@ public sealed class IncrementalTestServiceTests
                 dotnet = System.IO.Path.GetFullPath("../../../dotnet" + (OperatingSystem.IsWindows() ? ".exe" : ""), RuntimeEnvironment.GetRuntimeDirectory());
             Profile = new()
             {
-                SchemaVersion = 1, Id = "sample", SourceFiles = ["src/A.cs", "src/B.cs"], TestFiles = ["tests/ATests.cs", "tests/BTests.cs"],
-                ConfigFiles = ["config.json"], ToolFiles = [dotnet, fixture], FullTestFilter = "FullyQualifiedName~Fixture.",
-                UnitCommand = [dotnet, fixture, "unit", "{output}", "{sourceFile}", "{testFilter}"], UnitReportPath = "unit.trx",
+                SchemaVersion = 1,
+                Id = "sample",
+                SourceFiles = ["src/A.cs", "src/B.cs"],
+                TestFiles = ["tests/ATests.cs", "tests/BTests.cs"],
+                ConfigFiles = ["config.json"],
+                ToolFiles = [dotnet, fixture],
+                FullTestFilter = "FullyQualifiedName~Fixture.",
+                UnitCommand = [dotnet, fixture, "unit", "{output}", "{sourceFile}", "{testFilter}"],
+                UnitReportPath = "unit.trx",
                 MutationCommand = [dotnet, fixture, "mutation", "{output}", "{sourceFile}", "{testFilter}"],
                 CanarySourceFile = "src/A.cs",
                 RecoveryCommand = [dotnet, fixture, "recovery", "{output}", "{sourceFile}"],
-                TimeoutSeconds = 10, RecoveryTimeoutSeconds = 10, MinFreeBytes = 0,
+                TimeoutSeconds = 10,
+                RecoveryTimeoutSeconds = 10,
+                MinFreeBytes = 0,
             };
             Save(Profile);
         }

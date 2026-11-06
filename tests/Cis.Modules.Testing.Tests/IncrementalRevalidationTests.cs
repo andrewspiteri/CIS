@@ -5,6 +5,42 @@ namespace Cis.Modules.Testing.Tests;
 
 public sealed class IncrementalRevalidationTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void GovernedRevalidationCannotRewriteStateThroughAnUncomposedService(bool retainedAssociation)
+    {
+        using var fixture = new IncrementalTestServiceTests.Fixture();
+        if (retainedAssociation)
+            fixture.WriteState(new() { WorkAssociation = new("CIS-0001", "WORK-090", AuthorityPath: fixture.Path, Actor: "Fixture controller") });
+        else fixture.Write(".cis/workspace.yml", "initialized fixture authority");
+        var root = fixture.Full(IncrementalTestService.LocalRoot);
+        var before = Directory.Exists(root)
+            ? Directory.GetFiles(root, "*", SearchOption.AllDirectories).ToDictionary(path => path, File.ReadAllBytes)
+            : new Dictionary<string, byte[]>();
+
+        var result = Revalidate(fixture);
+
+        Assert.Equal("held", result.Status);
+        Assert.Equal("missing-work-controller", result.WorkCoverage);
+        Assert.Empty(fixture.Calls());
+        var after = Directory.Exists(root) ? Directory.GetFiles(root, "*", SearchOption.AllDirectories) : [];
+        Assert.Equal(before.Keys.Order(StringComparer.Ordinal), after.Order(StringComparer.Ordinal));
+        foreach (var item in before) Assert.Equal(item.Value, File.ReadAllBytes(item.Key));
+    }
+
+    [Fact]
+    public void MetadataRevalidationCannotSpendAnOriginalNativeRestorationReserve()
+    {
+        using var fixture = new IncrementalTestServiceTests.Fixture();
+        var result = new IncrementalTestService(fixture).Revalidate(new(fixture.Path, "profile.json")
+        { Work = new() { RecoveryOfExecutionId = "native/original" } }, typeof(IncrementalTestService).Assembly.Location, "Reviewed compatible update.");
+        Assert.Equal(4, result.ExitCode);
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Contains("Metadata admission cannot use --recovery-of", StringComparison.Ordinal));
+        Assert.False(Directory.Exists(fixture.Full(IncrementalTestService.LocalRoot)));
+        Assert.Empty(fixture.Calls());
+    }
+
     [Fact]
     public void CompletedReportsAreRecheckedWithoutNativeExecution()
     {
@@ -77,7 +113,7 @@ public sealed class IncrementalRevalidationTests
         using var fixture = new IncrementalTestServiceTests.Fixture();
         Assert.Equal(0, fixture.Run().ExitCode);
         var calls = fixture.Calls();
-        var result = new IncrementalTestService(fixture).Run(new(fixture.Path, "profile.json"), 30);
+        var result = new IncrementalTestService(fixture).Run(new(fixture.Path, "profile.json"), 30, TestContext.Current.CancellationToken);
         Assert.Equal(0, result.ExitCode);
         Assert.Equal(0, result.ExecutedMutationBatches);
         Assert.Equal(2, result.ReusedMutationBatches);

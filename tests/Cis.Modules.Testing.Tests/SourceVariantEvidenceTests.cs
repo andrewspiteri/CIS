@@ -158,7 +158,7 @@ public sealed class SourceVariantEvidenceTests
                 foreach (string argument in new[] { "restore", "NativeTests.csproj", "--ignore-failed-sources", "--disable-parallel" }) { restore.ArgumentList.Add(argument); }
                 restore.Environment["MSBUILDDISABLENODEREUSE"] = "1";
                 restore.Environment["DOTNET_CLI_USE_MSBUILD_SERVER"] = "0";
-                var restored = CisProcessSafety.Run(restore, TimeSpan.FromSeconds(120), 16384);
+                var restored = CisProcessSafety.Run(restore, TimeSpan.FromSeconds(120), 16384, cancellationToken: TestContext.Current.CancellationToken);
                 Assert.True(restored.ExitCode == 0 && !restored.TimedOut && !restored.OutputTruncated, restored.StandardOutput + restored.StandardError);
                 var profile = new IncrementalTestProfile
                 {

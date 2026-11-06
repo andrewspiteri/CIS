@@ -39,15 +39,18 @@ public sealed partial class TestingService
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private readonly ICisRepositoryContextResolver _resolver;
     private readonly ICisWorkspaceRegistry? _workspaceRegistry;
+    private readonly ICisNativeWorkController? _nativeWork;
     private readonly WorkflowService _workflows;
     private readonly IReadOnlyDictionary<string, ICisTestResultAdapter> _adapters;
 
     public TestingService(ICisRepositoryContextResolver resolver, WorkflowService workflows,
-        IEnumerable<ICisTestResultAdapter> adapters, ICisWorkspaceRegistry? workspaceRegistry = null)
+        IEnumerable<ICisTestResultAdapter> adapters, ICisWorkspaceRegistry? workspaceRegistry = null,
+        ICisNativeWorkController? nativeWork = null)
     {
         _resolver = resolver;
         _workflows = workflows;
         _workspaceRegistry = workspaceRegistry;
+        _nativeWork = nativeWork;
         _adapters = adapters.ToDictionary(item => item.Format, StringComparer.OrdinalIgnoreCase);
     }
 

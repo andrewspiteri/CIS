@@ -1,6 +1,10 @@
 namespace Cis.Abstractions;
 
-public sealed record MutationRunOptions(string RepositoryPath, string ProfilePath, string Kind = "diagnostic");
+public sealed record MutationRunOptions(string RepositoryPath, string ProfilePath, string Kind = "diagnostic")
+{
+    public CisNativeWorkOptions? Work { get; init; }
+    public int MaximumSeconds { get; init; } = 3600;
+}
 
 public sealed record MutationRunProfile
 {
@@ -20,6 +24,8 @@ public sealed record MutationRunProfile
     public long MinFreeBytes { get; init; } = 1073741824;
     public string[] SourceFiles { get; init; } = [];
     public string[] ConfigFiles { get; init; } = [];
+    public string? CorrectnessPilotProfile { get; init; }
+    public NativeCorrectnessPilotDefinition? CorrectnessPilot { get; init; }
 }
 
 public sealed record MutationRunLimits(int TimeoutSeconds, long MaxRunBytes, long MaxRetainedBytes, long MinFreeBytes);
@@ -31,6 +37,11 @@ public sealed record MutationNativeExecution(string Status, int? ExitCode, long 
     public string? ExecutablePath { get; init; }
     public string[]? Command { get; init; }
     public string? CisToolAssemblySha256 { get; init; }
+    public CisAgentWorkReference? WorkReference { get; init; }
+    public string WorkCoverage { get; init; } = "unaccounted-non-adopted";
+    public bool SafelyStopped { get; init; }
+    public int OwnedProcessPeak { get; init; }
+    public long PeakOwnedBytes { get; init; }
 }
 
 public sealed record MutationRunResult(string Status, int ExitCode, string Kind)
@@ -52,4 +63,8 @@ public sealed record MutationRunResult(string Status, int ExitCode, string Kind)
     public DateTimeOffset StartedUtc { get; init; }
     public DateTimeOffset FinishedUtc { get; init; }
     public IReadOnlyList<string> Diagnostics { get; init; } = [];
+    public NativeCorrectnessPilotResult? Pilot { get; init; }
+    public CisAgentWorkReference? WorkReference { get; init; }
+    public string WorkCoverage { get; init; } = "unaccounted-non-adopted";
+    public CisAgentWorkResult? WorkControl { get; init; }
 }

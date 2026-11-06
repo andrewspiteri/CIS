@@ -1251,7 +1251,7 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
             "the bounded task below and its structured final report", requireBrdReview ? "review" : null) + AuthorityArtifactPrompt(envelope) + prompt;
         var request = new CisAgentExecutionRequest(manifest.RunId, manifest.Attempt, manifest.Provider, manifest.Transport, manifest.Mode,
             manifest.Permission, manifest.WorkingDirectory, prompt, TimeSpan.FromSeconds(manifest.TimeoutSeconds), manifest.ProviderSessionId,
-            approveWithinCeiling, manifest.Actor, AllowedEnvironment(),
+            approveWithinCeiling, manifest.Actor, NativeProviderEnvironment(context, work?.Reference, manifest.Actor),
             TimeSpan.FromSeconds(manifest.StartupTimeoutSeconds > 0
                 ? manifest.StartupTimeoutSeconds : Math.Min(30, manifest.TimeoutSeconds)),
             TimeSpan.FromSeconds(manifest.IdleTimeoutSeconds > 0
@@ -2525,7 +2525,7 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         catch (JsonException) { return null; }
     }
     private void ValidateTaskEligibility(CisRepositoryContext context, string changeId, string taskText, List<string> diagnostics,
-        IReadOnlyDictionary<string, AgentAuthorityArtifact>? snapshots = null, bool accountingOnly = false)
+        IReadOnlyDictionary<string, AgentAuthorityArtifact>? snapshots = null, bool accountingOnly = false, bool nativeVerification = false)
     {
         var total = 0;
         AgentAuthorityArtifact Read(string path)
@@ -2537,6 +2537,8 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         }
         var status = FrontMatter(taskText, "task_status") ?? FrontMatter(taskText, "status") ?? string.Empty;
         if (!accountingOnly && status is not ("Ready" or "InProgress")) diagnostics.Add($"ERROR: Direct execution requires task status Ready or InProgress; current status is '{status}'.");
+        if (nativeVerification && status is not ("Ready" or "InProgress" or "Complete"))
+            diagnostics.Add($"ERROR: Native verification requires approved work that is Ready, InProgress or Complete; current status is '{status}'.");
         var planPath = Path.Combine(context.DocumentationPath, "changes", changeId, "plan.md");
         var planText = File.Exists(planPath) ? Read(planPath).Content : string.Empty;
         if (!File.Exists(planPath) || !string.Equals(FrontMatter(planText, "status"), "Approved", StringComparison.OrdinalIgnoreCase)) diagnostics.Add("ERROR: Direct execution requires an approved current plan.");
@@ -2559,7 +2561,7 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         var impactPath = Path.Combine(context.DocumentationPath, "changes", changeId, "impact.md");
         if (!File.Exists(impactPath) || Read(impactPath).Content.Contains("| proposed |", StringComparison.OrdinalIgnoreCase)) diagnostics.Add("ERROR: Direct execution requires fully dispositioned impact findings.");
         var designPath = Path.Combine(context.DocumentationPath, "changes", changeId, "design.md");
-        if (!accountingOnly && planText.Contains("feature_spec_frontend: true", StringComparison.OrdinalIgnoreCase)
+        if ((!accountingOnly || nativeVerification) && planText.Contains("feature_spec_frontend: true", StringComparison.OrdinalIgnoreCase)
             && !IsDesignPreparationTask(taskText)
             && (!File.Exists(designPath) || !Read(designPath).Content.Contains("approval_status: Approved", StringComparison.OrdinalIgnoreCase)))
             diagnostics.Add("ERROR: Direct execution is blocked by the global design approval barrier.");

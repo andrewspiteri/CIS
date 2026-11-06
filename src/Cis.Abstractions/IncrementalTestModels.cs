@@ -29,10 +29,14 @@ public sealed record IncrementalTestProfile
     public long MaxRunBytes { get; init; } = 134217728;
     public long MaxRetainedBytes { get; init; } = 268435456;
     public long MinFreeBytes { get; init; } = 1073741824;
+    public string? CorrectnessPilotProfile { get; init; }
 }
 
 public sealed record IncrementalTestOptions(string RepositoryPath, string ProfilePath,
-    string Layer = "all", int MaximumBatches = 4, int MaximumSeconds = 1200, bool Force = false);
+    string Layer = "all", int MaximumBatches = 4, int MaximumSeconds = 1200, bool Force = false)
+{
+    public CisNativeWorkOptions? Work { get; init; }
+}
 
 public sealed record IncrementalTestBatch(string Id, string SourceFile, string Selection,
     string[] TestFiles, string TestFilter, string UnitFingerprint, string MutationFingerprint,
@@ -65,6 +69,12 @@ public sealed record IncrementalTestState
     public bool RecoveryRequired { get; init; }
     public string? RecoverySourceFile { get; init; }
     public DateTimeOffset? ActiveExecutionUntilUtc { get; init; }
+    public CisAgentWorkReference? WorkReference { get; init; }
+    public CisAgentWorkReference? ActiveWorkReference { get; init; }
+    public string? WorkAuthorityPath { get; init; }
+    public CisNativeWorkOptions? WorkAssociation { get; init; }
+    public string WorkCoverage { get; init; } = "unaccounted-non-adopted";
+    public string? RecoveryBasis { get; init; }
     public Dictionary<string, IncrementalBatchState> Batches { get; init; } = new(StringComparer.Ordinal);
 }
 
@@ -94,4 +104,8 @@ public sealed record IncrementalTestResult(string Status, int ExitCode)
     public long RetainedBytes { get; init; }
     public IReadOnlyList<IncrementalTestBatch> Batches { get; init; } = [];
     public IReadOnlyList<string> Diagnostics { get; init; } = [];
+    public NativeCorrectnessPilotResult? Pilot { get; init; }
+    public CisAgentWorkReference? WorkReference { get; init; }
+    public string WorkCoverage { get; init; } = "unaccounted-non-adopted";
+    public CisAgentWorkResult? WorkControl { get; init; }
 }

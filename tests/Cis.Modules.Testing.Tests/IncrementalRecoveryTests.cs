@@ -16,7 +16,7 @@ public sealed class IncrementalRecoveryTests
 
         if (forceUnit)
         {
-            var refresh = new IncrementalTestService(fixture).Run(new(fixture.Path, "profile.json", "unit", 4, 120, true));
+            var refresh = new IncrementalTestService(fixture).Run(new(fixture.Path, "profile.json", "unit", 4, 120, true), 0, TestContext.Current.CancellationToken);
             Assert.Equal(0, refresh.ExitCode);
             Assert.Null(fixture.SavedState().Batches.Values.Single(batch => batch.SourceFile == "src/A.cs").Mutation);
         }

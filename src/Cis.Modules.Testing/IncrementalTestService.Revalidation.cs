@@ -8,11 +8,23 @@ public sealed partial class IncrementalTestService
     public IncrementalTestResult Revalidate(IncrementalTestOptions options, string previousTestingAssembly, string reason,
         bool legacySessionEnvironment = false)
     {
+        CisNativeWorkAdmission? admission = null;
+        ICisNativeWorkScope? work = null;
+        IncrementalTestResult Complete(IncrementalTestResult result) => result with
+        {
+            WorkReference = admission?.Reference,
+            WorkCoverage = admission?.Coverage ?? "unaccounted-non-adopted",
+            WorkControl = work?.Finish("native-finished", "Incremental revalidation metadata: " + result.Status,
+                result.StatePath is { } state ? [state] : []) ?? admission?.Control
+        };
         try
         {
             Require(reason is { Length: > 0 and <= 1024 } && !string.IsNullOrWhiteSpace(reason), "A reviewed compatibility reason is required.");
             Require(!options.Force, "Cache revalidation cannot force execution.");
-            var input = Read(options);
+            admission = AdmitMetadata(options, "incremental-revalidate");
+            if (!admission.Allowed) return Complete(new("held", 4) { Diagnostics = admission.Errors });
+            work = admission.Scope;
+            var input = MetadataInput(options, work);
             Require(Path.IsPathFullyQualified(previousTestingAssembly) && File.Exists(previousTestingAssembly)
                 && !CisPathSafety.IsUnderRoot(input.Repository, previousTestingAssembly, allowRoot: true)
                 && !CisPathSafety.ContainsReparsePoint(Path.GetPathRoot(previousTestingAssembly)!, previousTestingAssembly),
@@ -73,8 +85,12 @@ public sealed partial class IncrementalTestService
                             AmbientEnvironmentIdentity(input.Profile, legacySessionEnvironment), AmbientEnvironmentIdentity(input.Profile, false),
                             legacySessionEnvironment, reason, DateTimeOffset.UtcNow)];
                     }
-                    return stage with { Fingerprint = fingerprint, ProducerRevalidations = history,
-                        Diagnostics = addDiagnostic ? stage.Diagnostics.Append(diagnostic).Distinct(StringComparer.Ordinal).ToArray() : stage.Diagnostics };
+                    return stage with
+                    {
+                        Fingerprint = fingerprint,
+                        ProducerRevalidations = history,
+                        Diagnostics = addDiagnostic ? stage.Diagnostics.Append(diagnostic).Distinct(StringComparer.Ordinal).ToArray() : stage.Diagnostics
+                    };
                 }
             }
             // Reports and native execution records are unchanged. Failed/incomplete results stay held.
@@ -82,12 +98,17 @@ public sealed partial class IncrementalTestService
             var final = Select(Read(options), state, false);
             var result = Summarize(input, options, final, state, "cache-revalidated", 0) with
             {
-                ReusedUnitBatches = units, ReusedMutationBatches = mutations, RetainedBytes = Bytes(input.Storage),
+                ReusedUnitBatches = units,
+                ReusedMutationBatches = mutations,
+                RetainedBytes = Bytes(input.Storage),
+                WorkReference = admission.Reference,
+                WorkCoverage = admission.Coverage,
                 Diagnostics = [$"Revalidated {units} unit and {mutations} mutation results; {awaitingRecovery} completed native reports still await recovery. {reason}"],
             };
             SaveLatest(input, result);
-            return result;
+            return Complete(result);
         }
-        catch (Exception error) when (Expected(error)) { return new("revalidation-failed", 4) { Diagnostics = [error.Message] }; }
+        catch (Exception error) when (Expected(error)) { return Complete(new("revalidation-failed", 4) { Diagnostics = [error.Message] }); }
+        finally { work?.Dispose(); }
     }
 }

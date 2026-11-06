@@ -9,6 +9,29 @@ namespace Cis.Modules.Testing.Tests;
 
 public sealed class IncrementalRefinementTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void GovernedRefinementCannotPublishThroughAnUncomposedService(bool retainedAssociation)
+    {
+        using var fixture = new Fixture();
+        if (retainedAssociation)
+            fixture.Inner.WriteState(fixture.Inner.SavedState() with
+            { WorkAssociation = new("CIS-0001", "WORK-090", AuthorityPath: fixture.Inner.Path, Actor: "Fixture controller") });
+        else fixture.Inner.Write(".cis/repository.yml", "initialized fixture authority");
+        var root = fixture.Inner.Full(IncrementalTestService.LocalRoot);
+        var before = Directory.GetFiles(root, "*", SearchOption.AllDirectories).ToDictionary(path => path, File.ReadAllBytes);
+
+        var result = fixture.Refine();
+
+        Assert.Equal("held", result.Status);
+        Assert.Equal("missing-work-controller", result.WorkCoverage);
+        Assert.Null(result.SidecarPath);
+        Assert.Empty(fixture.Inner.Calls());
+        Assert.Equal(before.Keys.Order(StringComparer.Ordinal), Directory.GetFiles(root, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal));
+        foreach (var item in before) Assert.Equal(item.Value, File.ReadAllBytes(item.Key));
+    }
+
     [Fact]
     public void CompletedExactNativeRerunAddsSeparateCreditWithoutExecutingOrRewritingReports()
     {
@@ -33,6 +56,20 @@ public sealed class IncrementalRefinementTests
         foreach (var pair in before) Assert.Equal(pair.Value, File.ReadAllText(pair.Key));
         Assert.Empty(fixture.Inner.Calls());
         Assert.Equal(50, fixture.Service.Plan(new(fixture.Inner.Path, "profile.json")).CompleteScopeScore);
+    }
+
+    [Fact]
+    public void DifferentPilotReferencesCannotBeNormalizedWithoutBothCurrentNativeProofs()
+    {
+        using var fixture = new Fixture(originalPilot: "missing-original-pilot.json", rerunPilot: "missing-rerun-pilot.json");
+        var before = fixture.Reports().ToDictionary(path => path, File.ReadAllText);
+        var result = fixture.Refine();
+        Assert.Equal(4, result.ExitCode);
+        Assert.Contains(result.Diagnostics, message => message.Contains("correctness pilot is not current", StringComparison.Ordinal));
+        Assert.Empty(result.Credits);
+        Assert.Null(result.SidecarPath);
+        Assert.Empty(fixture.Inner.Calls());
+        foreach (var pair in before) Assert.Equal(pair.Value, File.ReadAllText(pair.Key));
     }
 
     [Fact]
@@ -242,15 +279,18 @@ public sealed class IncrementalRefinementTests
         fixture.ChangeRerunStage(stage =>
         {
             var proof = stage.ProducerRevalidations[0];
-            return stage with { ProducerRevalidations = fault switch
+            return stage with
             {
-                "report" => [proof with { ReportSha256 = new('a', 64) }],
-                "fingerprint" => [proof with { PreviousFingerprint = new('a', 64) }],
-                "helper" => [proof with { PreviousHelperSha256 = new('a', 64) }],
-                "artifact" => [proof with { PreviousHelperAssemblyPath = fixture.Inner.Full("tool.txt") }],
-                "reason" => [proof with { Reason = "" }],
-                _ => Enumerable.Repeat(proof, 9).ToArray(),
-            } };
+                ProducerRevalidations = fault switch
+                {
+                    "report" => [proof with { ReportSha256 = new('a', 64) }],
+                    "fingerprint" => [proof with { PreviousFingerprint = new('a', 64) }],
+                    "helper" => [proof with { PreviousHelperSha256 = new('a', 64) }],
+                    "artifact" => [proof with { PreviousHelperAssemblyPath = fixture.Inner.Full("tool.txt") }],
+                    "reason" => [proof with { Reason = "" }],
+                    _ => Enumerable.Repeat(proof, 9).ToArray(),
+                }
+            };
         });
         Assert.Equal(4, fixture.Refine().ExitCode);
         Assert.Empty(fixture.Inner.Calls());
@@ -371,12 +411,13 @@ public sealed class IncrementalRefinementTests
         private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
         internal Fixture(bool refreshOriginal = true, bool narrow = true, int? rerunGuard = null,
-            int? rerunAdditionalTimeout = null, bool budgetOnOriginal = false)
+            int? rerunAdditionalTimeout = null, bool budgetOnOriginal = false,
+            string? originalPilot = null, string? rerunPilot = null)
         {
             Inner.Write("tool.txt", "immutable fixture tool input");
             Inner.Write("tests/ATests.cs", "class ATests { public void Value() {} }");
             Inner.Write("tests/BTests.cs", "class BTests { public void Value() {} }");
-            Original = Inner.Profile with { ToolFiles = [.. Inner.Profile.ToolFiles, "tool.txt"] };
+            Original = Inner.Profile with { ToolFiles = [.. Inner.Profile.ToolFiles, "tool.txt"], CorrectnessPilotProfile = originalPilot };
             if (rerunAdditionalTimeout is not null)
             {
                 Inner.Write("stryker.json", "{\"stryker-config\":{\"additional-timeout\":15000,\"mutation-level\":\"Complete\"}}");
@@ -392,10 +433,13 @@ public sealed class IncrementalRefinementTests
             Inner.Save(Original);
             Rerun = Original with
             {
-                Id = "rerun", SourceFiles = ["src/B.cs"], CanarySourceFile = "src/B.cs",
+                Id = "rerun",
+                SourceFiles = ["src/B.cs"],
+                CanarySourceFile = "src/B.cs",
                 FullTestFilter = narrow ? "(" + Original.FullTestFilter + ")&(FullyQualifiedName=Fixture.BTests.Value)" : Original.FullTestFilter,
                 TimeoutSeconds = rerunGuard ?? Original.TimeoutSeconds,
                 RerunAdditionalTimeoutMilliseconds = rerunAdditionalTimeout,
+                CorrectnessPilotProfile = rerunPilot ?? Original.CorrectnessPilotProfile,
                 MutationCommand = [.. Original.MutationCommand!, "--mutate", "{sourceFile}{0..2}{4..6}"],
             };
             ChangeRerun(Rerun);
@@ -459,12 +503,18 @@ public sealed class IncrementalRefinementTests
                     var saved = _states[id].Batches[batch.Id];
                     _states[id].Batches[batch.Id] = saved with
                     {
-                        Unit = saved.Unit! with { Fingerprint = batch.UnitFingerprint,
-                            Execution = saved.Unit.Execution! with { CisToolAssemblySha256 = Hash(helper) } },
-                        Mutation = saved.Mutation! with { Fingerprint = batch.MutationFingerprint,
+                        Unit = saved.Unit! with
+                        {
+                            Fingerprint = batch.UnitFingerprint,
+                            Execution = saved.Unit.Execution! with { CisToolAssemblySha256 = Hash(helper) }
+                        },
+                        Mutation = saved.Mutation! with
+                        {
+                            Fingerprint = batch.MutationFingerprint,
                             Execution = saved.Mutation.Execution! with { CisToolAssemblySha256 = Hash(helper) },
                             RecoveryExecution = saved.Mutation.RecoveryExecution! with { CisToolAssemblySha256 = Hash(helper) },
-                            PostflightExecution = saved.Mutation.PostflightExecution! with { CisToolAssemblySha256 = Hash(helper) } },
+                            PostflightExecution = saved.Mutation.PostflightExecution! with { CisToolAssemblySha256 = Hash(helper) }
+                        },
                     };
                 }
                 Save(id);
@@ -508,18 +558,27 @@ public sealed class IncrementalRefinementTests
                 var testSource = File.ReadAllText(Inner.Full("tests/" + letter + "Tests.cs"));
                 Inner.Write(mutation, JsonSerializer.Serialize(new
                 {
-                    schemaVersion = "2", thresholds = new { high = 100, low = 90 },
-                    files = new Dictionary<string, object> { [batch.SourceFile] = new
+                    schemaVersion = "2",
+                    thresholds = new { high = 100, low = 90 },
+                    files = new Dictionary<string, object>
                     {
-                        language = "cs", source = File.ReadAllText(Inner.Full(batch.SourceFile)),
-                        mutants = new[] { new { id = "0", mutatorName = "Boolean", replacement = "false", location = Location(1, 2), status,
+                        [batch.SourceFile] = new
+                        {
+                            language = "cs",
+                            source = File.ReadAllText(Inner.Full(batch.SourceFile)),
+                            mutants = new[] { new { id = "0", mutatorName = "Boolean", replacement = "false", location = Location(1, 2), status,
                             killedBy = status == "Killed" ? new[] { "native-" + letter } : [], coveredBy = new[] { "native-" + letter } } },
-                    } },
-                    testFiles = new Dictionary<string, object> { ["tests/" + letter + "Tests.cs"] = new
+                        }
+                    },
+                    testFiles = new Dictionary<string, object>
                     {
-                        language = "cs", source = testSource,
-                        tests = new[] { new { id = "native-" + letter, name = "Fixture." + letter + "Tests.Value", location = Location(1, testSource.Length + 1) } },
-                    } },
+                        ["tests/" + letter + "Tests.cs"] = new
+                        {
+                            language = "cs",
+                            source = testSource,
+                            tests = new[] { new { id = "native-" + letter, name = "Fixture." + letter + "Tests.Value", location = Location(1, testSource.Length + 1) } },
+                        }
+                    },
                 }, Json));
                 var relative = "reports/" + batch.Id;
                 var unitStage = new IncrementalStageResult(batch.UnitFingerprint, "completed", true, relative + "-unit.xml", Hash(Inner.Full(unit)),
@@ -531,7 +590,8 @@ public sealed class IncrementalRefinementTests
                     DateTimeOffset.UtcNow.AddSeconds(-3), [])
                 {
                     RecoveryExecution = Execution(profile, batch, profile.RecoveryCommand!, true),
-                    PostflightExecution = Execution(profile, batch, profile.UnitCommand, true), PostflightPassed = 1,
+                    PostflightExecution = Execution(profile, batch, profile.UnitCommand, true),
+                    PostflightPassed = 1,
                 };
                 state.Batches.Add(batch.Id, new(batch.SourceFile, unitStage, mutationStage));
             }
@@ -542,6 +602,7 @@ public sealed class IncrementalRefinementTests
             var output = Inner.Full(IncrementalTestService.LocalRoot + "/" + profile.Id + "/work/012345abcdef");
             return new("exited", 0, 1, 1, 1, false, null)
             {
+                SafelyStopped = true,
                 CisToolAssemblySha256 = Hash(typeof(CisProcessJob).Assembly.Location),
                 ExecutablePath = command[0],
                 Command = command.Select(value => value.Replace("{sourceFile}", batch.SourceFile, StringComparison.Ordinal)
@@ -555,7 +616,7 @@ public sealed class IncrementalRefinementTests
             var suite = new TestSuiteProfile(profile.Id, profile.Id, "mutation", "native", "run", ".", "stryker-json", path,
                 "-", "-", "-", "always", "local", "current-result");
             return new StrykerJsonResultAdapter().Read(new(Inner.Path, suite, path, null, null, profile.BreakThreshold)).Mutation! with
-                { Qualified = false, Scope = "incremental-batch", SourcePath = "" };
+            { Qualified = false, Scope = "incremental-batch", SourcePath = "" };
         }
         private static object Location(int start, int end) => new { start = new { line = 1, column = start }, end = new { line = 1, column = end } };
         private static string Hash(string path) => Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path)));

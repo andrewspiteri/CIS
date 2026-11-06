@@ -3,7 +3,7 @@ title: "cis test incremental"
 type: command-reference
 status: Draft
 owner: "Andrew Spiteri"
-last_reviewed: "2026-10-28"
+last_reviewed: "2026-11-06"
 review_cadence: on incremental execution contract change
 cis:
   stable_id: change-impact-studio:manual:cis-test-incremental
@@ -16,17 +16,56 @@ completed result immediately and reuses it while its relevant inputs still match
 An interrupted file batch repeats that file; earlier completed files remain saved.
 This command provides development feedback. It does not replace release qualification.
 
+## Native work authority and representative readiness
+
+`run` admits native work through the existing approved change/task and finite work
+and storage allocation before costly preparation. It validates inherited
+`CIS_WORK_AUTHORITY`, `CIS_WORK_CHANGE`, `CIS_WORK_TASK`, `CIS_WORK_ACTOR` and
+`CIS_WORK_PARENT_EXECUTION` against durable authority. Preserve an inherited parent.
+For a standalone invocation, use an unambiguous approved binding or explicit
+`--change <id> --task <id> --actor <controller>`; add `--authority <repository>` for
+a linked owned target and `--parent-execution <id>` when needed. Profile ceilings
+and `--max-seconds` tighten existing capacity; they never grant a fresh allowance.
+Missing or ambiguous ownership holds before native preparation. Read-only `plan`,
+`status` and `verify` do not launch native work.
+
+`refine` and `revalidate` publish derived metadata. They use the same inherited or
+explicit work association flags, a short existing allowance and exact metadata
+growth reservations, without launching native tests. Completed-state association
+does not allocate capacity or waive a current hold. `--recovery-of` is rejected
+for these metadata operations; restore through the original `run` route.
+
+Before adopted pending mutation work expands, set
+`correctnessPilotProfile` to a maintained small native representative mutation
+profile. Run its existing canary route and inspect the native controls, costs and
+actual child coverage as described in
+[`cis test mutation run`](cis_test_mutation_run.md#representative-native-profile).
+The actual target commands, native configuration, source/test project XML, tools
+and environment must match its exercised path; unknown or changed paths hold.
+The controller records the first outcome and approach decision through existing
+[`agent work progress`](cis_agent_work.md#record-progress), with the returned
+`native-pilot:<basis>` evidence reference and current revision, before expansion.
+Routine controller assessment needs no new human acknowledgment. A per-file
+positive-kill canary remains separate and cannot supply this broader proof.
+
+Genuinely non-adopted diagnostics retain explicit unaccounted coverage. They cannot
+supply governed accounting or complete qualification. Current cached evidence can
+still be inspected and reused without another native launch; a missing or changed
+pilot blocks actual expansion, rather than deleting compatible reports.
+
 Mutation profiles designate a `canarySourceFile` with tests known to detect at
 least `minimumCanaryKills` native mutants. That file runs first and its successful
 result can be reused. A canary with no required kills stops further mutation work;
 check the native adapter, mutant activation and assertions before continuing.
-Unit-only profiles do not require a mutation canary.
+Unit-only profiles and `--layer unit` do not require a mutation pilot or per-file
+mutation canary. Their existing native unit health and currentness checks still apply.
 
 ```text
 cis graph build --repo <repository> --format agent
 cis test incremental plan --profile <relative.json> --repo <repository> --format agent
 cis test incremental run --profile <relative.json> --repo <repository> --layer all --max-batches 4 --max-seconds 1200 --format agent
 cis test incremental status --profile <relative.json> --repo <repository> --format agent
+cis test incremental run --profile <relative.json> --repo <target> --change CIS-0001 --task WORK-090 --authority <authority> --actor "Existing controller" --layer all --max-batches 1 --max-seconds 300 --format json
 ```
 
 `plan` and `status` read the current graph, inputs and saved reports without running
@@ -42,6 +81,13 @@ layer; preserved mutation reports remain available to a later mutation run.
 
 ## Selection and reuse
 
+Work owner, attempt, parent and run IDs are invocation coordinates, not material
+test inputs. The five `CIS_WORK_*` authority variables above do not invalidate
+compatible evidence and cannot be supplied through profile `environment`.
+Validated invocation context still reaches actual native launches. Unchanged graph
+rebuilds and unrelated documentation do not rerun tests. Relevant code, tests,
+dependencies, native configuration, tools and producer interpretation still do.
+
 SSH connection identifiers and shell session bookkeeping do not invalidate saved
 results. CIS omits `SSH_CLIENT`, `SSH_CONNECTION`, `SSH_TTY`, `XDG_SESSION_ID`,
 `TERM_SESSION_ID`, `WT_SESSION`, `SHLVL`, `_`, `PWD` and `OLDPWD` from ambient
@@ -50,6 +96,8 @@ is their working directory and `SHLVL` is `0`. Explicit profile environment valu
 override these defaults and remain pinned inputs. Other inherited variables,
 including `PATH` and `SSH_AUTH_SOCK`, remain identity inputs unless the profile
 overrides them. Inherited values are hashed, never saved in reports.
+`CODEX_TOOL_CALL_ID` and `CODEX_APP_TOOLS_PIPE_PATH` are also canonicalized to empty
+as invocation bookkeeping; explicitly declared profile overrides remain material.
 
 A fresh, complete graph without extraction errors or warnings is required. Refresh
 it after source or test changes. Each declared production file is one batch. CIS
@@ -96,6 +144,13 @@ An exact native file with an empty mutant array adds no kills or denominator;
 filter placeholders and files whose mutants are all ignored or compile errors
 cannot use that empty-file rule.
 
+The incremental route still prepares one mutation source per invocation. Measure
+that setup cost before expansion. When compatible sources share expensive project
+preparation, the existing multi-source mutation profile can group them in one
+native invocation; retain each source's native coverage and complete-scope facts.
+Zero-definition files need exact empty native scope, not a separate compilation
+solely to increase batch count. This command introduces no additional scheduler.
+
 ## Profile
 
 Supply repository-relative source, test, configuration and report paths. The input
@@ -122,6 +177,7 @@ This illustrative .NET profile requires the specified installed tools and projec
   "unitResultFormat": "trx",
   "mutationCommand": ["/opt/dotnet/dotnet", "/opt/stryker/Stryker.CLI.dll", "--config-file", "{mutationConfig}", "--output", "{output}"],
   "strykerConfigFile": "src/Service/stryker.json",
+  "correctnessPilotProfile": "native-pilot.json",
   "canarySourceFile": "src/Service/Policy.cs",
   "minimumCanaryKills": 1,
   "mutationReportPath": "reports/mutation-report.json",
@@ -197,6 +253,11 @@ Defaults are four file batches and 1,200 seconds per invocation. The maximums ar
 native guard startup, cleanup and final publication can add overhead. Each native
 phase has its own profile timeout. A large interrupted file repeats at most that
 file's bounded attempt; there is no per-mutant checkpoint inside a file.
+For governed work, the owner, correction and actual parent remainder additionally
+bound preparation, execution and result admission. A child uses its positive
+remaining time after preparation; a new file, resume or run ID does not refill
+capacity. Inspect `workControl.work` for consumed/reserved/remaining work and each
+retained native stage's `workReference` for the actual launch.
 
 For a large file, `run --native-timeout-seconds <1-3600>` overrides the invocation
 guard within the command's remaining wall budget. Use one file batch when it needs
@@ -213,6 +274,13 @@ Set the invoking process's `TMPDIR` to a short owned location when needed.
 directory. Free-space checks cover both filesystems. Existing unrelated reports
 count toward the cap and are not deleted to make room. The command shares the
 existing mutation execution lease.
+Governed storage also counts the allocation's total declared roots and exact
+scratch, including declared sibling build outputs. Local caps and free-space
+requirements remain additional constraints. Read owned/protected/reserved capacity
+through the existing artifacts inventory and plan, then use delegated cleanup
+authority with the existing confirmation mechanism. Protected current evidence and
+accounting/recovery state cannot be removed to create capacity. Sampling can
+overshoot between checks and does not provide machine-wide enforcement.
 
 Before instrumentation, CIS durably marks recovery as required. After every mutation
 attempt, including a missing report or hard timeout, it runs `recoveryCommand` and
@@ -237,8 +305,24 @@ not extend `recoveryTimeoutSeconds`.
 An interrupted invocation records the previous native guard's maximum activity
 window; another invocation refuses to overlap it, then performs any required
 recovery before reuse. Native infrastructure or cleanup failures remain failures.
+Governed pending recovery enters restoration-only execution under its retained
+owner/reference and unchanged recipe before any new batch. If local recovery
+context is lost, `run --recovery-of <retained-execution-id>` requests only that
+pinned restoration and full-filter healthy postflight; it does not rerun mutation
+or grant broader work. A restored baseline does not manufacture missing results.
+The versioned recovery recipe pins declared environment values, commands, native
+configuration, tools and platform separately from full material evidence identity.
+Unrelated invocation environment changes can permit bounded restoration while old
+reports remain noncurrent. Changed declared recovery inputs hold before launch;
+legacy opaque recipes do not gain an automatic compatibility migration.
 
 ## Saved results and scores
+
+Keep native `validEvidence`, `thresholdMet` and readiness separate. A native report
+can remain valid at the unchanged threshold while required-child, infrastructure,
+restoration or cleanup obligations hold readiness. Incremental summaries and
+verification receipts always retain `qualified: false`; scope completeness or
+cache reuse cannot relabel them as complete production qualification.
 
 State lives under `.cis/local/testing/incremental/<id>/`. It contains one current
 unit report and one current mutation report per source batch, compact state and
@@ -248,6 +332,9 @@ mutation reports containing timeouts retain at most the last 128 KiB of each
 standard-output/error log. Successful recovery and postflight captures are
 transient and do not overwrite those retained tails. Saved current reports are
 a reusable cache, not an attempt archive.
+Governed storage protection follows these current state/report references.
+Superseded report claims are released only after the replacement state is published
+and the original native ownership and restoration obligations are safely resolved.
 
 `knownScore` covers current readable native findings only. `completeScopeScore`
 remains absent while any required source batch is unfinished or recovery is on
@@ -277,6 +364,10 @@ ranges, and a shorter outer invocation guard (`timeoutSeconds`). Other command o
 setting differences fail verification. A shorter outer guard still requires a
 completed native execution with healthy recovery and postflight; a guard timeout
 or abort cannot gain credit. A longer outer guard is rejected.
+`correctnessPilotProfile` references may differ only when each original/rerun
+native path independently has current representative proof and the required
+controller assessment. This does not relax the exact source, configuration,
+native report or producer checks for refinement.
 
 An explicit rerun profile may set `rerunAdditionalTimeoutMilliseconds` to give a
 bounded diagnostic more time inside Stryker. The value must be 1–60,000 ms, at
@@ -289,6 +380,11 @@ test timeout settings must agree. The override is part of the rerun's input
 identity, and the saved native command must still match that profile. It cannot
 turn a native Timeout, guard timeout or incomplete execution into kill credit;
 only a completed native Killed result can supply the separate credit.
+For governed execution, the referenced representative pilot must have exercised
+the effective larger `additional-timeout` configuration. CIS compares that one
+recognized rendered override with the pilot's native configuration; an unchanged
+smaller-timeout pilot does not qualify the rerun. Keep the same work owner and
+finite allowance when obtaining that bounded representative evidence.
 
 Killing test IDs must have matching native definitions in both reports, including
 current test source text and valid locations. Only original `Timeout` to rerun
@@ -416,3 +512,6 @@ Exit codes are `0` for a completed requested layer or a readable plan, `2` for a
 invalid plan, `3` for remaining work after a scheduling limit, and `4` for execution,
 recovery, state or evidence failure. A completed mutation scope can return `0` with
 survivors; inspect the score and threshold separately.
+Human and agent output include representative readiness, controller assessment,
+restoration status, evidence reference and next action when a pilot record applies.
+These observations do not change the incremental result's unqualified scope.

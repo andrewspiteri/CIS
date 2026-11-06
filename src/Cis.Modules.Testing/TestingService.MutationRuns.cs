@@ -6,7 +6,7 @@ namespace Cis.Modules.Testing;
 
 public sealed partial class TestingService
 {
-    private static TestSuiteExecution ApplyMutationRunContext(string repository, TestSuiteExecution execution, JsonElement run)
+    private TestSuiteExecution ApplyMutationRunContext(string repository, TestSuiteExecution execution, JsonElement run)
     {
         if (run.ValueKind != JsonValueKind.Object || !run.TryGetProperty("schemaVersion", out var schema)
             || schema.ValueKind != JsonValueKind.Number || !schema.TryGetInt32(out var version) || version != 1)
@@ -84,12 +84,15 @@ public sealed partial class TestingService
         if (!healthy) diagnostics.Add("Native mutation execution or its configured health check failed; report counts do not clear that failure.");
         if (!partial && !scopeMatched) diagnostics.Add("The reported source scope does not match the declared qualification profile.");
         if (!partial && !declaredQualified) diagnostics.Add("The producing mutation run did not qualify its declared scope.");
-        var qualified = execution.Mutation?.Qualified == true && declaredQualified && !partial && current && healthy && scopeMatched;
+        var pilotReady = partial || QualificationPilotCurrent(repository, run, paths, diagnostics);
+        var qualified = execution.Mutation?.Qualified == true && declaredQualified && !partial && current && healthy && scopeMatched && pilotReady;
         var status = !current ? "stale" : !healthy || !partial && (!scopeMatched || !declaredQualified) ? "failed"
-            : partial ? "partial" : execution.Status;
+            : partial ? "partial" : !pilotReady && execution.Status == "passed" ? "pilot-required" : execution.Status;
         var failure = !current ? TestFailureKind.InvalidEvidence : !healthy
             ? executionStatus == "timeout" ? TestFailureKind.Timeout : TestFailureKind.Infrastructure
-            : partial ? TestFailureKind.MissingPrerequisite : status == "failed" ? TestFailureKind.InvalidEvidence : execution.FailureKind;
+            : partial ? TestFailureKind.MissingPrerequisite : status == "failed"
+                ? execution.FailureKind == TestFailureKind.None ? TestFailureKind.InvalidEvidence : execution.FailureKind
+                : !pilotReady ? TestFailureKind.MissingPrerequisite : execution.FailureKind;
         return execution with
         {
             Status = status,
@@ -101,6 +104,42 @@ public sealed partial class TestingService
             } : null,
             Diagnostics = diagnostics,
         };
+    }
+
+    private bool QualificationPilotCurrent(string repository, JsonElement run, HashSet<string> pinnedPaths,
+        ICollection<string> diagnostics)
+    {
+        try
+        {
+            var relative = RunText(run, "profilePath");
+            if (!CisPathSafety.TryResolveUnderRoot(repository, relative, out var profilePath)
+                || !pinnedPaths.Contains(profilePath))
+                throw new InvalidDataException("Qualification needs its current source-pinned native profile path.");
+            var reference = run.TryGetProperty("correctnessPilotProfile", out var pilotProperty)
+                && pilotProperty.ValueKind == JsonValueKind.String ? pilotProperty.GetString() : null;
+            CisNativeWorkAdmission? admission = null;
+            if (run.TryGetProperty("nativeExecution", out var native) && native.ValueKind == JsonValueKind.Object
+                && native.TryGetProperty("workReference", out var work) && work.ValueKind == JsonValueKind.Object)
+            {
+                var retained = work.Deserialize<CisAgentWorkReference>(JsonOptions)
+                    ?? throw new InvalidDataException("The native work reference is empty.");
+                var authority = _workspaceRegistry?.Resolve(repository).Workspace?.AuthorityRepository?.RepositoryPath ?? repository;
+                admission = _nativeWork?.InspectExecution(authority, retained);
+                if (admission?.Status != "verified" || admission.Reference != retained || admission.Errors.Count != 0)
+                    throw new InvalidDataException("The qualification's actual native launch is not verified in its authoritative work ledger.");
+            }
+            else if (CisNativeWorkEnvironment.RequiresController(repository, null))
+                throw new InvalidDataException("An adopted qualification requires the actual retained native work reference.");
+            var pilot = MutationRunService.InspectMutationCorrectnessPilot(repository, relative, reference, admission, _nativeWork);
+            if (!pilot.Ready || admission?.Required == true && !pilot.ControllerAssessed)
+                throw new InvalidDataException(pilot.NextAction);
+            return true;
+        }
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException or ArgumentException)
+        {
+            diagnostics.Add("Representative runner readiness is missing: " + error.Message + " Native validity and threshold observations are retained separately.");
+            return false;
+        }
     }
 
     private static string RunText(JsonElement value, string name)

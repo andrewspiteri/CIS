@@ -20,6 +20,7 @@ public sealed partial class TestingModule : ICisModule
         services.AddSingleton<ICisTestResultAdapter, TrxTestResultAdapter>();
         services.AddSingleton<ICisTestResultAdapter, StrykerJsonResultAdapter>();
         services.AddSingleton<TestingService>();
+        services.AddSingleton<MutationRunService>();
         services.AddSingleton<IncrementalTestService>();
     }
 
@@ -32,7 +33,7 @@ public sealed partial class TestingModule : ICisModule
         root.Subcommands.Add(Reconcile(service));
         root.Subcommands.Add(Trace(service));
         root.Subcommands.Add(Status(service));
-        root.Subcommands.Add(Mutation());
+        root.Subcommands.Add(Mutation(services));
         root.Subcommands.Add(Incremental(services));
         commands.Add(root);
     }
@@ -81,7 +82,7 @@ public sealed partial class TestingModule : ICisModule
         return command;
     }
 
-    private static Command Mutation()
+    private static Command Mutation(IServiceProvider services)
     {
         var mutation = new Command("mutation", "Run bounded native mutation profiles and assess their unchanged reports.");
         var assess = new Command("assess", "Calculate conservative and native scores for the reported mutants.");
@@ -99,8 +100,22 @@ public sealed partial class TestingModule : ICisModule
             Description = "canary, diagnostic, or qualification; diagnostic results do not qualify the complete scope."
         };
         run.Options.Add(runRepository); run.Options.Add(runFormat); run.Options.Add(profile); run.Options.Add(kind);
+        var work = NativeAssociation(run);
+        var maximum = new Option<int>("--max-seconds")
+        {
+            DefaultValueFactory = _ => 3600,
+            Description = "Outer native work ceiling within the existing owner/parent allowance; does not allocate time."
+        };
+        run.Options.Add(maximum);
         run.SetAction(parse => RunMutation(new(parse.GetValue(runRepository)!, parse.GetValue(profile)!,
-            parse.GetValue(kind)!), parse.GetValue(runFormat)!));
+            parse.GetValue(kind)!)
+        {
+            MaximumSeconds = parse.GetValue(maximum),
+            Work = new(parse.GetValue(work.Change),
+                parse.GetValue(work.Task), parse.GetValue(work.Parent), parse.GetValue(work.Authority), parse.GetValue(work.Actor))
+            { RecoveryOfExecutionId = parse.GetValue(work.Recovery) }
+        },
+            parse.GetValue(runFormat)!, services));
         mutation.Subcommands.Add(run);
         return mutation;
     }
@@ -120,16 +135,21 @@ public sealed partial class TestingModule : ICisModule
             command.Options.Add(repository); command.Options.Add(format); command.Options.Add(profile);
             command.Options.Add(layer); command.Options.Add(batches); command.Options.Add(seconds); command.Options.Add(force);
             if (operation == "run") command.Options.Add(nativeTimeout);
+            var work = NativeAssociation(command);
             command.SetAction(parse =>
             {
                 var output = parse.GetValue(format)!;
                 if (output is not ("human" or "agent" or "json")) return 2;
                 var reader = services.GetService<ICisGraphSnapshotReader>();
                 if (reader is null) return RenderIncremental(new("missing-graph-module", 2) { Diagnostics = ["The installed graph module is required."] }, output);
-                var service = new IncrementalTestService(reader);
+                var service = new IncrementalTestService(reader, services.GetService<ICisNativeWorkController>(), services.GetService<ICisOwnedStorageController>());
                 var options = new IncrementalTestOptions(parse.GetValue(repository)!, parse.GetValue(profile)!, parse.GetValue(layer)!,
-                    parse.GetValue(batches), parse.GetValue(seconds), parse.GetValue(force));
-                return RenderIncremental(operation == "run" ? service.Run(options, parse.GetValue(nativeTimeout)) : service.Plan(options), output);
+                    parse.GetValue(batches), parse.GetValue(seconds), parse.GetValue(force))
+                {
+                    Work = new(parse.GetValue(work.Change), parse.GetValue(work.Task), parse.GetValue(work.Parent), parse.GetValue(work.Authority), parse.GetValue(work.Actor))
+                    { RecoveryOfExecutionId = parse.GetValue(work.Recovery) }
+                };
+                return RenderIncremental(operation == "run" ? WithNativeCancellation(token => service.Run(options, parse.GetValue(nativeTimeout), token)) : service.Plan(options), output);
             });
             root.Subcommands.Add(command);
         }
@@ -140,13 +160,20 @@ public sealed partial class TestingModule : ICisModule
         revalidate.Options.Add(revalidateRepository); revalidate.Options.Add(revalidateFormat); revalidate.Options.Add(revalidateProfile);
         revalidate.Options.Add(previous); revalidate.Options.Add(reason);
         revalidate.Options.Add(legacySession);
+        var revalidateWork = NativeAssociation(revalidate);
         revalidate.SetAction(parse =>
         {
             var output = parse.GetValue(revalidateFormat)!;
             if (output is not ("human" or "agent" or "json")) return 2;
             var reader = services.GetService<ICisGraphSnapshotReader>();
             if (reader is null) return RenderIncremental(new("missing-graph-module", 2), output);
-            return RenderIncremental(new IncrementalTestService(reader).Revalidate(new(parse.GetValue(revalidateRepository)!, parse.GetValue(revalidateProfile)!),
+            return RenderIncremental(new IncrementalTestService(reader, services.GetService<ICisNativeWorkController>(),
+                services.GetService<ICisOwnedStorageController>()).Revalidate(new(parse.GetValue(revalidateRepository)!, parse.GetValue(revalidateProfile)!)
+                {
+                    Work = new(parse.GetValue(revalidateWork.Change), parse.GetValue(revalidateWork.Task), parse.GetValue(revalidateWork.Parent),
+                        parse.GetValue(revalidateWork.Authority), parse.GetValue(revalidateWork.Actor))
+                    { RecoveryOfExecutionId = parse.GetValue(revalidateWork.Recovery) }
+                },
                 parse.GetValue(previous)!, parse.GetValue(reason)!, parse.GetValue(legacySession)), output);
         });
         root.Subcommands.Add(revalidate);
@@ -155,14 +182,21 @@ public sealed partial class TestingModule : ICisModule
         var rerunProfile = Required("--rerun-profile"); var refinementReason = Required("--reason");
         refine.Options.Add(refineRepository); refine.Options.Add(refineFormat); refine.Options.Add(refineProfile);
         refine.Options.Add(rerunProfile); refine.Options.Add(refinementReason);
+        var refineWork = NativeAssociation(refine);
         refine.SetAction(parse =>
         {
             var output = parse.GetValue(refineFormat)!;
             if (output is not ("human" or "agent" or "json")) return 2;
             var reader = services.GetService<ICisGraphSnapshotReader>();
             if (reader is null) return RenderRefinement(new("missing-graph-module", 2), output);
-            return RenderRefinement(new IncrementalTestService(reader).Refine(new(parse.GetValue(refineRepository)!,
-                parse.GetValue(refineProfile)!, parse.GetValue(rerunProfile)!, parse.GetValue(refinementReason)!)), output);
+            return RenderRefinement(new IncrementalTestService(reader, services.GetService<ICisNativeWorkController>(),
+                services.GetService<ICisOwnedStorageController>()).Refine(new(parse.GetValue(refineRepository)!,
+                parse.GetValue(refineProfile)!, parse.GetValue(rerunProfile)!, parse.GetValue(refinementReason)!)
+                {
+                    Work = new(parse.GetValue(refineWork.Change), parse.GetValue(refineWork.Task), parse.GetValue(refineWork.Parent),
+                        parse.GetValue(refineWork.Authority), parse.GetValue(refineWork.Actor))
+                    { RecoveryOfExecutionId = parse.GetValue(refineWork.Recovery) }
+                }), output);
         });
         root.Subcommands.Add(refine);
         var verify = new Command("verify", "Verify current saved unit and mutation evidence without executing or changing the cache.");
@@ -178,7 +212,8 @@ public sealed partial class TestingModule : ICisModule
             if (output is not ("human" or "agent" or "json")) return 2;
             var reader = services.GetService<ICisGraphSnapshotReader>();
             if (reader is null) return RenderEvidence(new("missing-graph-module", 2), output);
-            return RenderEvidence(new IncrementalTestService(reader).Verify(new(parse.GetValue(verifyRepository)!,
+            return RenderEvidence(new IncrementalTestService(reader, services.GetService<ICisNativeWorkController>(),
+                services.GetService<ICisOwnedStorageController>()).Verify(new(parse.GetValue(verifyRepository)!,
                 parse.GetValue(verifyProfile)!, parse.GetValue(refinementProfiles))), output);
         });
         root.Subcommands.Add(verify);
@@ -211,12 +246,14 @@ public sealed partial class TestingModule : ICisModule
         else if (format == "agent")
         {
             Console.WriteLine($"status={result.Status};exitCode={result.ExitCode};qualified=false;requiresBaseline={result.RequiresBaseline.ToString().ToLowerInvariant()};credits={result.Credits.Count};sidecar={result.SidecarPath}");
+            RenderNativeWork(result.WorkCoverage, result.WorkReference, result.WorkControl);
             Console.WriteLine(FormattableString.Invariant($"rawKilled={result.Raw?.Killed};rawTimedOut={result.Raw?.TimedOut};rawScore={result.Raw?.Score};effectiveKilled={result.Effective?.Killed};effectiveTimedOut={result.Effective?.TimedOut};effectiveScore={result.Effective?.Score};denominator={result.Raw?.Denominator}"));
             foreach (var diagnostic in result.Diagnostics) Console.WriteLine($"diagnostic={diagnostic.Replace(';', ',')}");
         }
         else
         {
             Console.WriteLine($"Native rerun verification: {result.Status}; {result.Credits.Count} verified timeout kills.");
+            Console.WriteLine($"Work accounting: {result.WorkCoverage}; owner {result.WorkReference?.ChangeId}/{result.WorkReference?.OwnerTaskId}.");
             if (result.Raw is { } raw && result.Effective is { } effective)
                 Console.WriteLine(FormattableString.Invariant($"Raw score: {raw.Score:F6}% ({raw.Killed}/{raw.Denominator}); effective score: {effective.Score:F6}% ({effective.Killed}/{effective.Denominator})."));
             foreach (var diagnostic in result.Diagnostics) Console.WriteLine(diagnostic);
@@ -231,6 +268,8 @@ public sealed partial class TestingModule : ICisModule
         else if (format == "agent")
         {
             Console.WriteLine($"status={result.Status};exitCode={result.ExitCode};profile={result.ProfileId};layer={result.Layer};scopeComplete={result.ScopeComplete.ToString().ToLowerInvariant()};qualified=false");
+            RenderNativeWork(result.WorkCoverage, result.WorkReference, result.WorkControl);
+            RenderPilot(result.Pilot, agent: true);
             Console.WriteLine($"executedUnitBatches={result.ExecutedUnitBatches};executedMutationBatches={result.ExecutedMutationBatches};reusedUnitBatches={result.ReusedUnitBatches};reusedMutationBatches={result.ReusedMutationBatches};pendingUnitBatches={result.PendingUnitBatches};pendingMutationBatches={result.PendingMutationBatches}");
             Console.WriteLine(FormattableString.Invariant($"knownScore={result.KnownScore};completeScopeScore={result.CompleteScopeScore};killed={result.Killed};knownDenominator={result.KnownDenominator};durationMilliseconds={result.DurationMilliseconds};retainedBytes={result.RetainedBytes}"));
             foreach (var batch in result.Batches) Console.WriteLine($"source={batch.SourceFile};selection={batch.Selection};unitCurrent={batch.UnitCurrent.ToString().ToLowerInvariant()};mutationCurrent={batch.MutationCurrent.ToString().ToLowerInvariant()}");
@@ -239,6 +278,9 @@ public sealed partial class TestingModule : ICisModule
         else
         {
             Console.WriteLine($"Incremental {result.Layer}: {result.Status}; {result.PendingUnitBatches} unit batches and {result.PendingMutationBatches} mutation batches pending.");
+            Console.WriteLine($"Work accounting: {result.WorkCoverage}; owner {result.WorkReference?.ChangeId}/{result.WorkReference?.OwnerTaskId}.");
+            RenderNativeCapacity(result.WorkControl, agent: false);
+            RenderPilot(result.Pilot, agent: false);
             Console.WriteLine($"Executed: {result.ExecutedUnitBatches} unit, {result.ExecutedMutationBatches} mutation. Reused: {result.ReusedUnitBatches} unit, {result.ReusedMutationBatches} mutation.");
             if (result.CompleteScopeScore is { } score) Console.WriteLine(FormattableString.Invariant($"Current declared-scope mutation score: {score:F6}% ({result.Killed}/{result.KnownDenominator})."));
             else if (result.KnownScore is { } known) Console.WriteLine(FormattableString.Invariant($"Completed batches only: {known:F6}% ({result.Killed}/{result.KnownDenominator}); full scope remains incomplete."));
@@ -248,32 +290,105 @@ public sealed partial class TestingModule : ICisModule
         return result.ExitCode;
     }
 
-    private static int RunMutation(MutationRunOptions options, string format)
+    private static int RunMutation(MutationRunOptions options, string format, IServiceProvider services)
     {
         if (format is not ("json" or "agent" or "human"))
         {
             Console.Error.WriteLine("Unsupported format. Use human, json, or agent.");
             return 2;
         }
-        var result = new MutationRunService().Run(options);
+        var result = WithNativeCancellation(token => new MutationRunService(services.GetService<ICisNativeWorkController>(),
+            services.GetService<ICisOwnedStorageController>()).Run(options, token));
         if (format == "json") Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
         else if (format == "agent")
         {
             Console.WriteLine($"status={result.Status};exitCode={result.ExitCode};profile={result.ProfileId ?? "none"};runId={result.RunId ?? "none"};kind={result.Kind};partial={result.Partial.ToString().ToLowerInvariant()};qualified={result.Qualified.ToString().ToLowerInvariant()}");
+            RenderNativeWork(result.WorkCoverage, result.WorkReference, result.WorkControl);
+            RenderPilot(result.Pilot, agent: true);
             if (result.Assessment?.Mutation is { } mutation)
-                Console.WriteLine(FormattableString.Invariant($"conservativeScore={mutation.Score};nativeScore={mutation.NativeScore};killed={mutation.Killed};denominator={mutation.Denominator};report={result.ReportPath}"));
+                Console.WriteLine(FormattableString.Invariant($"validEvidence={mutation.ValidEvidence.ToString().ToLowerInvariant()};thresholdMet={(mutation.ThresholdMet is { } threshold ? threshold.ToString().ToLowerInvariant() : "unknown")};qualified={result.Qualified.ToString().ToLowerInvariant()};conservativeScore={mutation.Score};nativeScore={mutation.NativeScore};killed={mutation.Killed};denominator={mutation.Denominator};report={result.ReportPath}"));
             foreach (var diagnostic in result.Diagnostics) Console.WriteLine($"diagnostic={diagnostic.Replace(';', ',')}");
         }
         else
         {
             Console.WriteLine($"Mutation {result.Kind}: {result.Status} ({result.ProfileId ?? "invalid profile"}).");
+            Console.WriteLine($"Work accounting: {result.WorkCoverage}; owner {result.WorkReference?.ChangeId}/{result.WorkReference?.OwnerTaskId}.");
+            RenderNativeCapacity(result.WorkControl, agent: false);
+            RenderPilot(result.Pilot, agent: false);
             if (result.Assessment?.Mutation is { } mutation)
+            {
+                Console.WriteLine($"Native evidence valid: {mutation.ValidEvidence.ToString().ToLowerInvariant()}; threshold met: {(mutation.ThresholdMet is { } threshold ? threshold.ToString().ToLowerInvariant() : "unknown")}; qualified: {result.Qualified.ToString().ToLowerInvariant()}.");
                 Console.WriteLine(FormattableString.Invariant($"Conservative score: {mutation.Score:F6}% ({mutation.Killed}/{mutation.Denominator}); native score: {mutation.NativeScore:F6}%."));
+            }
             if (result.SummaryPath is { } summary) Console.WriteLine($"Run summary: {summary}");
             foreach (var diagnostic in result.Diagnostics) Console.WriteLine(diagnostic);
             Console.WriteLine("Qualification applies to the declared profile scope; project release requirements remain separate.");
         }
         return result.ExitCode;
+    }
+
+    private static (Option<string?> Change, Option<string?> Task, Option<string?> Parent, Option<string?> Authority, Option<string?> Actor, Option<string?> Recovery)
+        NativeAssociation(Command command)
+    {
+        var change = new Option<string?>("--change") { Description = "Existing approved containing change; no new allocation." };
+        var task = new Option<string?>("--task") { Description = "Existing canonical accounting task/owner." };
+        var parent = new Option<string?>("--parent-execution") { Description = "Existing live governed parent, also inherited from verified CIS context." };
+        var authority = new Option<string?>("--authority") { Description = "Owning authority repository for a linked owned target." };
+        var actor = new Option<string?>("--actor") { Description = "Already authorized controller identity." };
+        var recovery = new Option<string?>("--recovery-of") { Description = "Only restore one retained native execution using its unchanged pinned recipe; never broadens test execution." };
+        command.Options.Add(change); command.Options.Add(task); command.Options.Add(parent); command.Options.Add(authority); command.Options.Add(actor);
+        command.Options.Add(recovery);
+        return (change, task, parent, authority, actor, recovery);
+    }
+
+    private static T WithNativeCancellation<T>(Func<CancellationToken, T> action)
+    {
+        using var cancellation = new CancellationTokenSource();
+        ConsoleCancelEventHandler handler = (_, item) => { item.Cancel = true; cancellation.Cancel(); };
+        Console.CancelKeyPress += handler;
+        try { return action(cancellation.Token); }
+        finally { Console.CancelKeyPress -= handler; }
+    }
+
+    private static void RenderNativeWork(string coverage, CisAgentWorkReference? reference, CisAgentWorkResult? control)
+    {
+        Console.WriteLine($"workCoverage={coverage.Replace(';', ',').Replace('\r', ' ').Replace('\n', ' ')};change={reference?.ChangeId};task={reference?.TaskId};owner={reference?.OwnerTaskId};execution={reference?.ExecutionId};logicalAttempt={reference?.LogicalAttemptId};parentExecution={reference?.ParentExecutionId}");
+        RenderNativeCapacity(control, agent: true);
+    }
+
+    private static void RenderNativeCapacity(CisAgentWorkResult? control, bool agent)
+    {
+        static string Number(long? value) => value?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unknown";
+        var work = control?.Work;
+        var task = work?.Task;
+        if (agent)
+            Console.WriteLine($"consumedMilliseconds={Number(task?.ConsumedMilliseconds)};reservedMilliseconds={Number(task?.ReservedMilliseconds)};remainingMilliseconds={Number(task?.RemainingMilliseconds)};restorationMilliseconds={Number(task?.RestorationMilliseconds)};usedAttempts={Number(task?.UsedAttempts)};remainingAttempts={Number(task?.RemainingAttempts)};changeConsumedMilliseconds={Number(work?.Change.ConsumedMilliseconds)};changeReservedMilliseconds={Number(work?.Change.ReservedMilliseconds)};changeRemainingMilliseconds={Number(work?.Change.RemainingMilliseconds)};changeRestorationMilliseconds={Number(work?.Change.RestorationMilliseconds)};changeUsedAttempts={Number(work?.Change.UsedAttempts)};changeRemainingAttempts={Number(work?.Change.RemainingAttempts)};nextAction={work?.NextAction.Replace(';', ',').Replace('\r', ' ').Replace('\n', ' ') ?? "unknown"}");
+        else if (work is null)
+            Console.WriteLine("Work capacity: unknown; no governed allowance observation.");
+        else
+        {
+            Console.WriteLine($"Task work milliseconds: consumed {Number(task?.ConsumedMilliseconds)}, reserved {Number(task?.ReservedMilliseconds)}, remaining {Number(task?.RemainingMilliseconds)}, restoration {Number(task?.RestorationMilliseconds)}; attempts used {Number(task?.UsedAttempts)}, remaining {Number(task?.RemainingAttempts)}.");
+            Console.WriteLine($"Change work milliseconds: consumed {Number(work.Change.ConsumedMilliseconds)}, reserved {Number(work.Change.ReservedMilliseconds)}, remaining {Number(work.Change.RemainingMilliseconds)}, restoration {Number(work.Change.RestorationMilliseconds)}; attempts used {Number(work.Change.UsedAttempts)}, remaining {Number(work.Change.RemainingAttempts)}.");
+            Console.WriteLine("Work next action: " + work.NextAction);
+        }
+    }
+
+    private static void RenderPilot(NativeCorrectnessPilotResult? pilot, bool agent)
+    {
+        if (pilot is null) return;
+        static string Value(string? value) => (value ?? "none").Replace(';', ',').Replace('\r', ' ').Replace('\n', ' ');
+        if (agent)
+        {
+            Console.WriteLine($"pilotStatus={Value(pilot.Status)};pilotReady={pilot.Ready.ToString().ToLowerInvariant()};controllerAssessed={pilot.ControllerAssessed.ToString().ToLowerInvariant()};pilotRestored={pilot.Restored.ToString().ToLowerInvariant()};pilotRecoveryRequired={pilot.RecoveryRequired.ToString().ToLowerInvariant()};pilotEvidenceReference={Value(pilot.EvidenceReference)}");
+            Console.WriteLine($"pilotNextAction={Value(pilot.NextAction)}");
+        }
+        else
+        {
+            Console.WriteLine($"Representative pilot: {pilot.Status}; controls ready: {pilot.Ready.ToString().ToLowerInvariant()}; controller assessed: {pilot.ControllerAssessed.ToString().ToLowerInvariant()}.");
+            Console.WriteLine($"Pilot baseline restored: {pilot.Restored.ToString().ToLowerInvariant()}; recovery required: {pilot.RecoveryRequired.ToString().ToLowerInvariant()}.");
+            if (pilot.EvidenceReference is { } reference) Console.WriteLine("Pilot evidence: " + reference);
+            Console.WriteLine("Pilot next action: " + pilot.NextAction);
+        }
     }
 
     private static int AssessMutation(string repository, string report, double threshold, string format)

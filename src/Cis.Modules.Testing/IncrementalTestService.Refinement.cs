@@ -14,19 +14,32 @@ public sealed partial class IncrementalTestService
     /// <summary>Attest only exact native Timeout-to-Killed reruns; never execute native work.</summary>
     public IncrementalRefinementResult Refine(IncrementalRefinementOptions options)
     {
+        CisNativeWorkAdmission? admission = null;
+        ICisNativeWorkScope? work = null;
+        IncrementalRefinementResult Complete(IncrementalRefinementResult result) => result with
+        {
+            WorkReference = admission?.Reference,
+            WorkCoverage = admission?.Coverage ?? "unaccounted-non-adopted",
+            WorkControl = work?.Finish("native-finished", "Incremental refinement metadata: " + result.Status,
+                result.SidecarPath is { } sidecar ? [sidecar] : []) ?? admission?.Control
+        };
         try
         {
             Require(!string.IsNullOrWhiteSpace(options.Reason) && options.Reason.Length <= 2048 && !options.Reason.Contains('\0'),
                 "A bounded reason recording review of the rerun filter and mutation ranges is required.");
-            var originalOptions = new IncrementalTestOptions(options.RepositoryPath, options.ProfilePath);
+            var originalOptions = new IncrementalTestOptions(options.RepositoryPath, options.ProfilePath) { Work = options.Work };
             var rerunOptions = new IncrementalTestOptions(options.RepositoryPath, options.RerunProfilePath);
-            var original = Read(originalOptions);
+            admission = AdmitMetadata(originalOptions, "incremental-refine");
+            if (!admission.Allowed) return Complete(new("held", 4) { Diagnostics = admission.Errors });
+            work = admission.Scope;
+            var original = MetadataInput(originalOptions, work);
             var rerun = Read(rerunOptions);
-            CompatibleRefinementProfiles(original, rerun);
             Directory.CreateDirectory(Path.GetDirectoryName(Safe(original.Repository, MutationRunService.LocalRoot + "/run.lock"))!);
             using var lease = new FileStream(Safe(original.Repository, MutationRunService.LocalRoot + "/run.lock"),
                 FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-            var result = EvaluateRefinement(options, original, rerun);
+            CompatibleRefinementProfiles(original, rerun);
+            var result = EvaluateRefinement(options, original, rerun) with
+            { WorkReference = admission.Reference, WorkCoverage = admission.Coverage };
             if (!result.RequiresBaseline)
             {
                 Require(JsonSerializer.SerializeToUtf8Bytes(result, Json).Length <= 1024 * 1024,
@@ -34,12 +47,13 @@ public sealed partial class IncrementalTestService
                 Directory.CreateDirectory(Safe(original.Root, "refinements"));
                 Write(original, Safe(original.Repository, result.SidecarPath!), result);
             }
-            return result;
+            return Complete(result);
         }
         catch (Exception error) when (Expected(error) || error is KeyNotFoundException or FormatException)
         {
-            return new("refinement-failed", 4) { Diagnostics = [error.Message] };
+            return Complete(new("refinement-failed", 4) { Diagnostics = [error.Message] });
         }
+        finally { work?.Dispose(); }
     }
 
     private IncrementalRefinementResult EvaluateRefinement(IncrementalRefinementOptions options, Input original, Input rerun)
@@ -112,14 +126,22 @@ public sealed partial class IncrementalTestService
         var sidecar = "refinements/" + rerun.Profile.Id + ".json";
         var result = new IncrementalRefinementResult(needsBaseline ? "needs-baseline" : "refined", needsBaseline ? 3 : 0)
         {
-            ProfileId = original.Profile.Id, RerunProfileId = rerun.Profile.Id,
-            OriginalProfileSha256 = original.ProfileHash, RerunProfileSha256 = rerun.ProfileHash,
-            OriginalProfilePath = Relative(original.Repository, original.ProfilePath), RerunProfilePath = Relative(rerun.Repository, rerun.ProfilePath),
+            ProfileId = original.Profile.Id,
+            RerunProfileId = rerun.Profile.Id,
+            OriginalProfileSha256 = original.ProfileHash,
+            RerunProfileSha256 = rerun.ProfileHash,
+            OriginalProfilePath = Relative(original.Repository, original.ProfilePath),
+            RerunProfilePath = Relative(rerun.Repository, rerun.ProfilePath),
             EnvironmentSha256 = HashObject(new { inherited = AmbientEnvironmentIdentity(original.Profile, false), declared = original.Profile.Environment }),
             TestingProducerSha256 = HashFile(typeof(IncrementalTestService).Assembly.Location),
             HelperProducerSha256 = HashFile(typeof(CisProcessJob).Assembly.Location),
-            Reason = options.Reason, VerifiedUtc = DateTimeOffset.UtcNow, RequiresBaseline = needsBaseline,
-            Raw = raw, Effective = effective, Bindings = bindings, Credits = needsBaseline ? [] : credits,
+            Reason = options.Reason,
+            VerifiedUtc = DateTimeOffset.UtcNow,
+            RequiresBaseline = needsBaseline,
+            Raw = raw,
+            Effective = effective,
+            Bindings = bindings,
+            Credits = needsBaseline ? [] : credits,
             BaselineBindings = selection.Batches.Select(batch =>
             {
                 var unit = state.Batches[batch.Id].Unit!;
@@ -144,7 +166,7 @@ public sealed partial class IncrementalTestService
     private static IncrementalMutationCounts Counts(int killed, int survived, int timeout, int uncovered, int denominator)
         => new(killed, survived, timeout, uncovered, denominator, denominator > 0 ? killed * 100d / denominator : null);
 
-    private static void CompatibleRefinementProfiles(Input original, Input rerun)
+    private void CompatibleRefinementProfiles(Input original, Input rerun)
     {
         Require(original.Profile.Id != rerun.Profile.Id && original.Profile.MutationCommand is not null && rerun.Profile.MutationCommand is not null,
             "Refinement requires distinct original and rerun mutation profile IDs in the same repository.");
@@ -154,17 +176,46 @@ public sealed partial class IncrementalTestService
             "Rerun source scope is outside the original profile.");
         Require(rerun.Profile.TimeoutSeconds <= original.Profile.TimeoutSeconds,
             "The rerun outer invocation guard must not be longer than the original guard.");
+        Require(original.Profile.CorrectnessPilotProfile == rerun.Profile.CorrectnessPilotProfile
+            || original.Profile.CorrectnessPilotProfile is not null && rerun.Profile.CorrectnessPilotProfile is not null,
+            "A different representative reference requires current proof for both the original and rerun profile.");
+        RequireRefinementPilot(original);
+        RequireRefinementPilot(rerun);
         var expected = original.Profile with { MutationCommand = RefinementCommand(original) };
         var normalized = rerun.Profile with
         {
-            Id = original.Profile.Id, SourceFiles = original.Profile.SourceFiles,
-            CanarySourceFile = original.Profile.CanarySourceFile, FullTestFilter = original.Profile.FullTestFilter,
+            Id = original.Profile.Id,
+            SourceFiles = original.Profile.SourceFiles,
+            CanarySourceFile = original.Profile.CanarySourceFile,
+            FullTestFilter = original.Profile.FullTestFilter,
             TimeoutSeconds = original.Profile.TimeoutSeconds,
             RerunAdditionalTimeoutMilliseconds = null,
+            CorrectnessPilotProfile = original.Profile.CorrectnessPilotProfile,
             MutationCommand = RefinementCommand(rerun),
         };
         Require(HashObject(expected) == HashObject(normalized),
-            "Only reviewed test-filter narrowing, source subset, canary selection, native mutation ranges, a bounded rerun additional timeout and a shorter outer invocation guard may differ between profiles.");
+            "Only reviewed test-filter narrowing, source subset, canary selection, native mutation ranges, independently verified pilot references, a bounded rerun additional timeout and a shorter outer invocation guard may differ between profiles.");
+    }
+
+    private void RequireRefinementPilot(Input input)
+    {
+        var required = CisNativeWorkEnvironment.RequiresController(input.Repository, null);
+        if (input.Profile.CorrectnessPilotProfile is null && !required) return;
+        CisNativeWorkAdmission? admission = null;
+        if (required)
+        {
+            var state = State(input);
+            var reference = state.Batches.Values.Select(batch => batch.Mutation?.Execution?.WorkReference
+                ?? batch.Unit?.Execution?.WorkReference).FirstOrDefault(item => item is not null);
+            Require(reference is not null && state.WorkAuthorityPath is not null && _nativeWork is not null,
+                "Governed refinement needs the retained actual native work reference and installed authority controller.");
+            admission = _nativeWork.InspectExecution(state.WorkAuthorityPath, reference);
+            Require(admission.Status == "verified" && admission.Reference == reference && admission.Errors.Count == 0,
+                "The refinement's actual native launch is not verified by its authoritative work ledger.");
+        }
+        var pilot = MutationRunService.InspectIncrementalPilotPath(input.Repository, input.Profile, admission, _nativeWork);
+        Require(pilot.Ready && (admission?.Required != true || pilot.ControllerAssessed),
+            "Native runner correctness pilot is not current for refinement: " + pilot.NextAction);
     }
 
     private static string[] RefinementCommand(Input input)
@@ -313,8 +364,10 @@ public sealed partial class IncrementalTestService
             var id = mutant.GetProperty("id").GetString()!;
             var definition = HashObject(new
             {
-                source = file.GetProperty("source").GetString(), id,
-                mutatorName = mutant.GetProperty("mutatorName").GetString(), replacement = mutant.GetProperty("replacement").GetString(),
+                source = file.GetProperty("source").GetString(),
+                id,
+                mutatorName = mutant.GetProperty("mutatorName").GetString(),
+                replacement = mutant.GetProperty("replacement").GetString(),
                 location = RefinementLocation(mutant.GetProperty("location"), file.GetProperty("source").GetString()!),
             });
             var killedBy = mutant.TryGetProperty("killedBy", out var ids)
@@ -346,8 +399,13 @@ public sealed partial class IncrementalTestService
                     Require(!string.IsNullOrWhiteSpace(id) && !string.IsNullOrWhiteSpace(test.GetProperty("name").GetString()),
                         "Native test identity or name is missing.");
                     var location = RefinementLocation(test.GetProperty("location"), testFile.Value.GetProperty("source").GetString()!);
-                    Require(tests.TryAdd(id, new(relative, HashObject(new { file = relative,
-                        source = testFile.Value.GetProperty("source").GetString(), name = test.GetProperty("name").GetString(), location }))),
+                    Require(tests.TryAdd(id, new(relative, HashObject(new
+                    {
+                        file = relative,
+                        source = testFile.Value.GetProperty("source").GetString(),
+                        name = test.GetProperty("name").GetString(),
+                        location
+                    }))),
                         "Native test IDs are duplicated.");
                 }
             }

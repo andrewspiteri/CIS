@@ -26,6 +26,8 @@ public sealed partial class AgentModule : ICisModule
             textGeneration: serviceProvider.GetService<ICisTextGenerationService>(),
             taskContracts: serviceProvider.GetService<ICisEngineeringTaskContractReader>()));
         services.AddSingleton<ICisStoryTaskExecutor>(provider => provider.GetRequiredService<AgentService>());
+        services.AddSingleton<ICisNativeWorkController>(provider => provider.GetRequiredService<AgentService>());
+        services.AddSingleton<ICisOwnedStorageController>(provider => provider.GetRequiredService<AgentService>());
         services.AddSingleton<AgentEvidenceService>();
         services.AddSingleton<ICisRepositoryDoctorCheck, AgentProviderDoctorCheck>();
     }

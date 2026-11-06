@@ -19,7 +19,7 @@ public sealed class CisHostBuilderTests
         var included = recipe.Descendants("Content").Select(item => item.Attribute("Include")!.Value.Replace("../../", "", StringComparison.Ordinal)).Order(StringComparer.Ordinal).ToArray();
         var command = new System.Diagnostics.ProcessStartInfo("git") { WorkingDirectory = root };
         foreach (var argument in new[] { "-c", "safe.directory=" + root.Replace('\\', '/'), "ls-files", "--cached", "--others", "--exclude-standard", "--", "examples/dotnet-engineering/" }) command.ArgumentList.Add(argument);
-        var files = CisProcessSafety.Run(command, TimeSpan.FromSeconds(15));
+        var files = CisProcessSafety.Run(command, TimeSpan.FromSeconds(15), cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(0, files.ExitCode);
         Assert.False(files.TimedOut || files.OutputTruncated);
         Assert.Equal(files.StandardOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Order(StringComparer.Ordinal), included);

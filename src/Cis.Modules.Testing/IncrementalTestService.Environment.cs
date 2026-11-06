@@ -12,18 +12,31 @@ public sealed partial class IncrementalTestService
     [
         "SSH_CLIENT", "SSH_CONNECTION", "SSH_TTY", "XDG_SESSION_ID", "TERM_SESSION_ID",
         "WT_SESSION", "SHLVL", "_", "PWD", "OLDPWD",
+        "CODEX_TOOL_CALL_ID", "CODEX_APP_TOOLS_PIPE_PATH",
     ];
 
     private static string AmbientEnvironmentIdentity(IncrementalTestProfile profile, bool legacy)
     {
-        var omitted = legacy ? new HashSet<string>(PathComparer) : SessionEnvironmentNames
-            .Concat(profile.Environment.Keys).ToHashSet(PathComparer);
+        var omitted = (legacy ? [] : SessionEnvironmentNames.Concat(profile.Environment.Keys))
+            .Concat(CisNativeWorkEnvironment.Keys).ToHashSet(PathComparer);
+        // Work coordinates authorize this invocation; they do not change the native
+        // source/test/configuration identity. Keep them available for validated launch.
         // Only a combined digest is retained; inherited values may include credentials.
         return HashObject(Environment.GetEnvironmentVariables().Cast<DictionaryEntry>()
             .Where(pair => !omitted.Contains((string)pair.Key))
             .OrderBy(pair => (string)pair.Key, StringComparer.Ordinal)
             .Select(pair => new { name = (string)pair.Key, value = (string?)pair.Value }).ToArray());
     }
+
+    internal static string PilotEnvironmentIdentity(Dictionary<string, string> declared)
+        => HashObject(new
+        {
+            ambient = AmbientEnvironmentIdentity(new IncrementalTestProfile { Environment = declared }, false),
+            declared = declared.OrderBy(pair => pair.Key, StringComparer.Ordinal).ToArray(),
+        });
+
+    internal static Dictionary<string, string> PilotNativeEnvironment(Dictionary<string, string> declared, string working)
+        => NativeEnvironment(new IncrementalTestProfile { Environment = declared }, working);
 
     private static Dictionary<string, string> NativeEnvironment(IncrementalTestProfile profile, string working)
     {

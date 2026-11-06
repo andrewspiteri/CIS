@@ -1,12 +1,13 @@
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Cis.Abstractions;
 using Cis.Modules.Artifacts;
 using Cis.Modules.Repository;
 
 namespace Cis.Modules.Artifacts.Tests;
 
-public sealed class ArtifactRetentionTests
+public sealed partial class ArtifactRetentionTests
 {
     [Theory]
     [InlineData("archive")]
@@ -46,7 +47,8 @@ public sealed class ArtifactRetentionTests
             Assert.Contains(plan.Entries, entry => entry.Candidate && entry.Path == ".cis/local/agents/runs");
             Assert.Contains(plan.Entries, entry => entry.Candidate && entry.Path == ".cis/local/agents/old.log");
         }
-        var service = repository.Service();
+        var authority = new ArtifactAuthority(repository.Path);
+        var service = repository.Service(authority, authority);
         // Neither diagnostic is old enough for age-based selection in this preview.
         // Byte pressure still cannot spend accounting state as disposable evidence.
         WritePolicy(365);
@@ -592,7 +594,11 @@ public sealed class ArtifactRetentionTests
                 """);
             return fixture;
         }
-        public ArtifactRetentionService Service() => new(new CisRepositoryContextResolver(), () => DateTimeOffset.Parse("2026-08-27T12:00:00Z"));
+        public ArtifactRetentionService Service(ICisNativeWorkController? native = null, ICisOwnedStorageController? storage = null)
+        {
+            if (native is null && storage is null) { var authority = new ArtifactAuthority(Path, governed: false); native = authority; storage = authority; }
+            return new(new CisRepositoryContextResolver(), () => DateTimeOffset.Parse("2026-08-27T12:00:00Z"), native, storage);
+        }
         public void Write(string relative, string content)
         {
             var path = System.IO.Path.Combine(Path, relative.Replace('/', System.IO.Path.DirectorySeparatorChar));

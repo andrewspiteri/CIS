@@ -49,7 +49,10 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
         public CorrectionGrant? Grant { get; set; }
     }
     private sealed record CorrectionGrant(string Id, IReadOnlyList<string> Findings, int MaximumSeconds,
-        string NextAction, string Actor, string RecordedAtUtc, CisAgentWorkCorrectionContext? Context = null);
+        string NextAction, string Actor, string RecordedAtUtc, CisAgentWorkCorrectionContext? Context = null)
+    {
+        public CisAgentWorkCorrectionDirection? AuthorizedDirection { get; init; }
+    }
     private sealed record Adoption(int SchemaVersion, string AuthorityId, string AdoptionId, string Actor, string Reason, string CreatedAtUtc);
     private sealed class Change
     {
@@ -270,8 +273,9 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
             var change = ChangeFor(state, identity.ChangeId); var owner = FindOwner(change, identity) ?? throw new InvalidDataException("No task or allocated canonical ancestor owns this task's work allowance.");
             if (controller is not null) Authorize(change, controller);
             if (change.Executions.ContainsKey(executionId)) throw new InvalidDataException("This execution identity already has accounting state; inspect or reconcile it instead of reserving again.");
-            if (requestedSeconds is < 30 || requestedSeconds > maximumRunSeconds || maximumRunSeconds < 30)
-                throw new InvalidDataException($"The requested execution bound must be between 30 and the adopted {maximumRunSeconds}-second ceiling.");
+            var minimumSeconds = parentExecutionId is null ? 30 : 1;
+            if (requestedSeconds < minimumSeconds || requestedSeconds > maximumRunSeconds || maximumRunSeconds < 30)
+                throw new InvalidDataException($"The requested execution bound must be between {minimumSeconds} and the adopted {maximumRunSeconds}-second ceiling.");
             if (preparationOwner is not null) ValidatePreparationOwner(preparationOwner);
             owner.ReflectionWindowMilliseconds = checked((long)maximumRunSeconds * 1000);
             var correctionCapacity = StoryCorrectionCapacity(state, change, owner.Id, stage);
@@ -285,12 +289,15 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
                 hold = change.Executions.Values.FirstOrDefault(item => !item.Finalized && item.Reference.OwnerTaskId == owner.Id && item.RecoveryReason is not null)?.RecoveryReason ?? owner.Hold;
             }
             if (hold is not null) return (state, Result(state, change, identity.TaskId, "held", false, hold));
-            if (correctionCapacity is { Remaining: < 30_000 } exhaustedCapacity)
+            if (correctionCapacity is { } exhaustedCapacity && exhaustedCapacity.Remaining < minimumSeconds * 1000L)
                 return (state, Result(state, change, identity.TaskId, "held", false, exhaustedCapacity.Action));
             var milliseconds = checked((long)requestedSeconds * 1000);
+            // The inherited deadline and the new reservation share one origin. Time spent
+            // persisting admission must not move a child beyond its parent's bound.
+            var started = Tick();
             var available = parent is null ? Math.Min(owner.Milliseconds - owner.Consumed - Reserved(change, owner.Id) - owner.Restoration,
                 change.Milliseconds - change.Consumed - Reserved(change, null) - change.Restoration)
-                : Math.Max(0, parent.Started + parent.Bound - Tick());
+                : Math.Max(0, parent.Started + parent.Bound - started);
             if (correctionCapacity is { } boundedCapacity) available = Math.Min(available, boundedCapacity.Remaining);
             if (stage?.CorrectionRoundId is { } correctionId)
             {
@@ -302,13 +309,15 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
                 if (correction.MaximumSeconds is { } correctionSeconds)
                     available = Math.Min(available, Math.Max(0, checked((long)correctionSeconds * 1000) - CorrectionMeasured(change, correction)));
             }
-            if (clampToRemaining && milliseconds > available && available >= 30_000)
+            if (clampToRemaining && milliseconds > available && available >= minimumSeconds * 1000L)
                 milliseconds = available / 1000 * 1000;
             if (milliseconds > available)
             {
                 var shorter = Math.Max(0, available / 1000);
                 return (state, Result(state, change, identity.TaskId, "held", false,
-                    shorter >= 30 ? $"Remaining capacity permits a shorter execution bound of at most {shorter} seconds."
+                    shorter >= minimumSeconds && (clampToRemaining || shorter >= 30) ? $"Remaining capacity permits a shorter execution bound of at most {shorter} seconds."
+                    : parent is not null && shorter >= 1 ? "The admitted parent has less than the 30-second minimum needed for a direct child run. Retain its measured work; after this parent safely settles, use an eligible continuation under the same owner and allowance."
+                    : parent is not null ? "The admitted parent has no usable whole-second execution remainder. Retain its measured work before another bounded continuation."
                     : "Remaining hard allowance cannot support the minimum operation while preserving restoration capacity. Seek the applicable allocation authority."));
             }
             if (owner.OpenAttempt is null)
@@ -319,7 +328,6 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
             }
             if (logicalAttemptId is not null && logicalAttemptId != owner.OpenAttempt) throw new InvalidDataException("Run identifiers cannot open or replace the current logical attempt. Close it through controller progress first.");
             reference = new(state.AdoptionId, authority.RepositoryId, change.Id, identity.TaskId, owner.Id, executionId, owner.OpenAttempt, parentExecutionId);
-            var started = Tick();
             change.Executions[executionId] = new()
             {
                 Reference = reference,
@@ -437,21 +445,24 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
                 Text(storyRelationshipId, "Story reflection relationship"); Text(storyContractDigest, "Story reflection contract");
                 if (checkpoint.CloseAttempt || checkpoint.MaterialNewInformation || checkpoint.BlockerKey is not null
                     || checkpoint.Hypothesis is not null || checkpoint.ExpectedResult is not null)
-                    throw new InvalidDataException("Automatic story reflection assesses its current context without claiming new material information, changing approach authority or closing a logical attempt.");
+                    throw new InvalidDataException("Automatic story execution summaries cannot claim new material information, change approach authority or close a logical attempt.");
             }
             Text(checkpoint.Outcome, "Outcome"); Text(checkpoint.Approach, "Approach"); Text(checkpoint.Decision, "Decision"); Text(checkpoint.NextAction, "Next action");
-            if (checkpoint.Evidence is null || checkpoint.Evidence.Count > 40 || (checkpoint.MaterialNewInformation || story) && checkpoint.Evidence.Count == 0)
+            if (checkpoint.Evidence is null || checkpoint.Evidence.Count > 40 || checkpoint.MaterialNewInformation && checkpoint.Evidence.Count == 0)
                 throw new InvalidDataException("Material new information requires bounded evidence references.");
             if (checkpoint.CloseAttempt && (owner.OpenAttempt is null || change.Executions.Values.Any(item => !item.Finalized && item.Reference.OwnerTaskId == owner.Id)))
                 throw new InvalidDataException("Close only an existing logical attempt whose owned executions have safely settled.");
             owner.Checkpoints.Add(new(owner.OpenAttempt ?? owner.Id + ":pending", actor.Trim(), Time(Tick()), checkpoint, MeasuredOwnerMilliseconds(change, owner), Reserved(change, owner.Id))
             {
-                Origin = story ? "story-controller-progress" : "controller-progress",
+                Origin = story ? "story-execution-summary" : "controller-progress",
                 StoryRelationshipId = storyRelationshipId,
                 StoryContractDigest = storyContractDigest
             });
-            owner.Hypothesis = checkpoint.Hypothesis ?? owner.Hypothesis; owner.ExpectedResult = checkpoint.ExpectedResult ?? owner.ExpectedResult;
-            owner.NextAction = checkpoint.NextAction;
+            if (!story)
+            {
+                owner.Hypothesis = checkpoint.Hypothesis ?? owner.Hypothesis; owner.ExpectedResult = checkpoint.ExpectedResult ?? owner.ExpectedResult;
+                owner.NextAction = checkpoint.NextAction;
+            }
             if (checkpoint.CloseAttempt)
             {
                 owner.RepeatedBlockers = !checkpoint.MaterialNewInformation && checkpoint.BlockerKey is not null
@@ -480,7 +491,7 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
                 var relation = CorrectionFor(state, correctionRelationship);
                 if (relation.OwnerTaskId != owner.Id || relation.Identity?.ChangeId != identity.ChangeId)
                     throw new InvalidDataException("The correction continuation must retain this exact canonical owner and containing change.");
-                correctionDecision = GrantCorrection(change, relation, request, actor);
+                correctionDecision = GrantCorrection(change, relation, request, actor, reason);
             }
             switch (request.Kind)
             {
@@ -600,6 +611,16 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
             if (!correctionOnlyBinding || active is not null) CheckCorrectionOwner(relation, identity, owner, actor);
             if (active is not null)
             {
+                var directions = CorrectionDirections(state, relation, active, out var directionHold);
+                if (directionHold is not null)
+                    return (state, CorrectionResult(state, relation, "held", false, directionHold));
+                var recoveredDirection = directions is not null
+                    && (active.AuthorizedDirections is null || !active.AuthorizedDirections.SequenceEqual(directions));
+                if (recoveredDirection)
+                {
+                    active = active with { AuthorizedDirections = directions };
+                    relation.Rounds[relation.Rounds.FindIndex(round => round.Id == active.Id)] = active;
+                }
                 if (context is not null && active.Context is not null && context.ContractDigest != active.Context.ContractDigest)
                     throw new InvalidDataException("Observe the newly approved task contract before superseding an older correction; its round number and cost remain retained.");
                 var changedRoot = rootReference is not null && relation.ActiveRootExecutionId != rootReference.ExecutionId;
@@ -610,7 +631,7 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
                         "The correction round is still claimed by an unresolved owned root. Reconcile its exact execution before continuing the same round."));
                 if (changedRoot) relation.ActiveRootExecutionId = rootReference!.ExecutionId;
                 selected = active;
-                return (state, CorrectionResult(state, relation, "correction-resumed", changedRoot || attachIdentity));
+                return (state, CorrectionResult(state, relation, "correction-resumed", changedRoot || attachIdentity || recoveredDirection));
             }
             relation.RequiredFindings = findings.ToList();
             if (context is not null)
@@ -619,6 +640,9 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
                 relation.ObservedContractDigest = context.ContractDigest;
             }
             var grant = relation.Grant;
+            var grantedDirection = grant is null ? null : CorrectionDirection(state, relation, grant.Id, grant.AuthorizedDirection);
+            if (grant is not null && grantedDirection is null)
+                return (state, CorrectionResult(state, relation, "held", false, MissingCorrectionDirection(relation, grant.Id)));
             if (grant?.Context is { } grantedContext && context is not null
                 && (grantedContext.ContractDigest != context.ContractDigest || grantedContext.MaterialBasis != context.MaterialBasis
                     || !grantedContext.Candidates.SequenceEqual(context.Candidates)))
@@ -626,7 +650,12 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
             if (relation.Rounds.Count >= 2 && (grant is null || !grant.Findings.SequenceEqual(findings, StringComparer.Ordinal)))
                 return (state, CorrectionResult(state, relation, "held", true, CorrectionLimit));
             selected = new(Guid.NewGuid().ToString("N"), relationshipId, relation.Rounds.Count + 1, "started", grant?.RecordedAtUtc ?? Time(Tick()), findings, [])
-            { DispositionReference = grant?.Id, MaximumSeconds = grant?.MaximumSeconds, Context = grant?.Context ?? context };
+            {
+                DispositionReference = grant?.Id,
+                MaximumSeconds = grant?.MaximumSeconds,
+                Context = grant?.Context ?? context,
+                AuthorizedDirections = grantedDirection is null ? null : [grantedDirection]
+            };
             relation.Rounds.Add(selected); relation.Grant = null;
             if (correctionOnlyBinding) relation.Actor = actor.Trim();
             relation.ActiveRootExecutionId = rootReference?.ExecutionId;
@@ -793,7 +822,7 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
             return (state, Result(state, change, identity.TaskId, applied ? "history-reconciled" : "unchanged", applied));
         });
 
-    private string GrantCorrection(Change change, CorrectionRelationship relation, CisAgentWorkDispositionRequest request, string actor)
+    private string GrantCorrection(Change change, CorrectionRelationship relation, CisAgentWorkDispositionRequest request, string actor, string reason)
     {
         if (request.Kind != "simplify" || request.CorrectionRelationshipId != relation.Id)
             throw new InvalidDataException("A post-limit correction needs a specific simplify disposition for its retained required context.");
@@ -820,26 +849,116 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
                     && (!execution.Finalized || execution.RecoveryReason is not null)))
                 throw new InvalidDataException("All owned root and child executions for this granted round must be safely finalized before another bounded step; live or uncertain ownership retains its hold.");
             var measured = CorrectionMeasured(change, active);
-            if (checked((long)currentMaximum * 1000) - measured >= 30_000)
+            var remaining = checked((long)currentMaximum * 1000) - measured;
+            var priorDirections = CorrectionDirections(change, relation, active, out var directionHold);
+            if (remaining >= 30_000 && directionHold is null)
                 throw new InvalidDataException("The current granted round still has a usable bounded step; use its remaining capacity before extending it.");
-            var totalSeconds = Math.Max(currentMaximum, checked((measured + 999) / 1000 + request.CorrectionMaximumSeconds.Value));
+            if (remaining >= 30_000 && checked((long)request.CorrectionMaximumSeconds.Value * 1000) > remaining)
+                throw new InvalidDataException("Reconcile missing correction direction with a bounded simplify action that fits the existing remaining seconds; reconciliation does not replenish its cap.");
+            // Match extension rounding for the cumulative cap. The next root floors
+            // its remainder, so fractional spent work cannot erase a valid 30-second step.
+            var nextStepMaximum = checked((measured + 999) / 1000 + request.CorrectionMaximumSeconds.Value);
+            var totalSeconds = remaining >= 30_000
+                ? Math.Min(currentMaximum, nextStepMaximum)
+                : Math.Max(currentMaximum, nextStepMaximum);
             if (totalSeconds > 31_536_000)
                 throw new InvalidDataException("The cumulative correction bound must remain finite and within the existing one-year accounting limit.");
             var decision = Guid.NewGuid().ToString("N");
+            var direction = new CisAgentWorkCorrectionDirection(decision, request.Kind, request.Hypothesis!, request.NextAction!,
+                actor.Trim(), Time(Tick()), reason, request.Evidence);
+            var unresolved = new[] { active.DispositionReference! }.Concat(active.ContinuationReferences ?? [])
+                .Where(reference => priorDirections?.Any(prior => prior.DispositionReference == reference) != true).ToArray();
             var at = relation.Rounds.FindIndex(round => round.Id == active.Id);
             relation.Rounds[at] = active with
             {
                 MaximumSeconds = checked((int)totalSeconds),
-                ContinuationReferences = (active.ContinuationReferences ?? []).Append(decision).ToArray()
+                ContinuationReferences = (active.ContinuationReferences ?? []).Append(decision).ToArray(),
+                AuthorizedDirections = (priorDirections ?? []).Append(direction).ToArray(),
+                UnresolvedDirectionReferences = unresolved.Length == 0 ? null : unresolved
             };
             relation.Hypothesis = request.Hypothesis;
             return decision;
         }
         relation.Hypothesis = request.Hypothesis;
-        relation.Grant = new(Guid.NewGuid().ToString("N"), findings, request.CorrectionMaximumSeconds.Value,
-            request.NextAction!, actor.Trim(), Time(Tick()), relation.RequiredContext);
+        var grantId = Guid.NewGuid().ToString("N");
+        var recordedAt = Time(Tick());
+        relation.Grant = new(grantId, findings, request.CorrectionMaximumSeconds.Value,
+            request.NextAction!, actor.Trim(), recordedAt, relation.RequiredContext)
+        {
+            AuthorizedDirection = new(grantId, request.Kind, request.Hypothesis!, request.NextAction!,
+                actor.Trim(), recordedAt, reason, request.Evidence)
+        };
         return relation.Grant.Id;
     }
+
+    private static CisAgentWorkCorrectionDirection? CorrectionDirection(Ledger state, CorrectionRelationship relation,
+        string reference, CisAgentWorkCorrectionDirection? retained)
+        => CorrectionDirection(relation.Identity is { } identity ? state.Changes.GetValueOrDefault(identity.ChangeId) : null,
+            relation, reference, retained);
+
+    private static CisAgentWorkCorrectionDirection? CorrectionDirection(Change? change, CorrectionRelationship relation,
+        string reference, CisAgentWorkCorrectionDirection? retained)
+    {
+        if (retained is not null && retained.DispositionReference == reference && ValidCorrectionDirection(retained)) return retained;
+        // A pre-fix grant copied neither the hypothesis nor the reason. Recover only
+        // its exact authorized disposition, never the owner's newer hypothesis or a review.
+        var prefix = "simplify [continuation:" + reference + "]: ";
+        var matches = relation.OwnerTaskId is { } ownerId && change?.Owners.GetValueOrDefault(ownerId) is { } owner
+            ? owner.Checkpoints.Where(checkpoint => checkpoint.Origin == "controller-disposition"
+                && checkpoint.Checkpoint.Decision.StartsWith(prefix, StringComparison.Ordinal)).ToArray() : [];
+        if (matches.Length != 1) return null;
+        var record = matches[0];
+        var recovered = new CisAgentWorkCorrectionDirection(reference, "simplify", record.Checkpoint.Approach,
+            record.Checkpoint.NextAction, record.Actor, record.RecordedAtUtc, record.Checkpoint.Decision[prefix.Length..],
+            record.Checkpoint.Evidence);
+        return ValidCorrectionDirection(recovered) ? recovered : null;
+    }
+
+    private static bool ValidCorrectionDirection(CisAgentWorkCorrectionDirection direction)
+        => BoundedText(direction.DispositionReference) && direction.Kind == "simplify" && BoundedText(direction.Hypothesis)
+            && BoundedText(direction.NextAction) && BoundedText(direction.Actor) && BoundedText(direction.Reason)
+            && DateTimeOffset.TryParse(direction.RecordedAtUtc, out _)
+            && direction.Evidence is { Count: > 0 and <= 40 } && direction.Evidence.All(BoundedText);
+
+    private static IReadOnlyList<CisAgentWorkCorrectionDirection>? CorrectionDirections(Ledger state,
+        CorrectionRelationship relation, CisAgentWorkCorrectionRound round, out string? hold)
+        => CorrectionDirections(relation.Identity is { } identity ? state.Changes.GetValueOrDefault(identity.ChangeId) : null,
+            relation, round, out hold);
+
+    private static IReadOnlyList<CisAgentWorkCorrectionDirection>? CorrectionDirections(Change? change,
+        CorrectionRelationship relation, CisAgentWorkCorrectionRound round, out string? hold)
+    {
+        hold = null;
+        if (round.DispositionReference is null) return null; // Ordinary automatic rounds require no disposition.
+        var directions = new List<CisAgentWorkCorrectionDirection>();
+        var references = new[] { round.DispositionReference! }.Concat(round.ContinuationReferences ?? []).ToArray();
+        foreach (var reference in references)
+        {
+            var retained = round.AuthorizedDirections?.Where(direction => direction.DispositionReference == reference).ToArray();
+            if (retained is { Length: > 1 }) { hold ??= MissingCorrectionDirection(relation, reference); continue; }
+            var direction = CorrectionDirection(change, relation, reference, retained?.SingleOrDefault());
+            if (direction is null)
+            {
+                // A later explicit simplify decision can authorize future work while
+                // preserving an irrecoverable earlier disposition as unknown history.
+                if (reference == references[^1] || round.UnresolvedDirectionReferences?.Contains(reference, StringComparer.Ordinal) != true)
+                    hold ??= MissingCorrectionDirection(relation, reference);
+                continue;
+            }
+            directions.Add(direction);
+        }
+        return directions;
+    }
+
+    private static string MissingCorrectionDirection(CorrectionRelationship relation, string reference)
+        => "The authorized hypothesis, next action and disposition provenance are missing for correction disposition '"
+            + reference + "' in correctionRelationshipId '" + relation.Id
+            + "'. Restore verified retained controller-disposition evidence if available. Otherwise use cis agent work disposition "
+            + "with kind=simplify, the current revision, exact correctionRelationshipId and required findings, changed hypothesis, "
+            + "specific nextAction, evidence and correctionMaximumSeconds. A safely finalized started round may reconcile future direction "
+            + "within its existing usable remaining cap, or receive an eligible bounded extension when exhausted; its missing prior direction "
+            + "stays explicitly unknown. Preserve prior rounds, stages and spent work. "
+            + "A review, provider response or generic continuation cannot establish this authority.";
 
     private static IReadOnlyList<string> FindingReferences(IReadOnlyList<string> references)
     {
@@ -948,6 +1067,20 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
         var contextCurrent = contractDigest is null || currentContext is null || currentContext.ContractDigest == contractDigest;
         var grant = relation?.Grant;
         if (contractDigest is not null && grant?.Context is { } granted && granted.ContractDigest != contractDigest) grant = null;
+        var grantedDirection = grant is null || relation is null ? null : CorrectionDirection(state, relation, grant.Id, grant.AuthorizedDirection);
+        var rounds = relation?.Rounds.ToArray() ?? [];
+        if (relation is not null)
+        {
+            if (grant is not null && grantedDirection is null) hold ??= MissingCorrectionDirection(relation, grant.Id);
+            for (var index = 0; index < rounds.Length; index++)
+            {
+                if (rounds[index].Status != "started"
+                    || contractDigest is not null && rounds[index].Context is { } roundContext && roundContext.ContractDigest != contractDigest) continue;
+                var directions = CorrectionDirections(state, relation, rounds[index], out var directionHold);
+                hold ??= directionHold;
+                if (directions is not null) rounds[index] = rounds[index] with { AuthorizedDirections = directions };
+            }
+        }
         var actorAction = state.CorrectionOnly && relation is not null ? CorrectionActorAction(relation, contractDigest) : null;
         if (actorAction is not null && !string.IsNullOrWhiteSpace(actor) && relation!.Actor != actor.Trim()) hold ??= actorAction;
         hold ??= contextCurrent && relation is { RequiredFindings.Count: > 0, Grant: null } && relation.Rounds.Count >= 2
@@ -966,13 +1099,14 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
             {
                 Work = result.Work! with
                 {
-                    Corrections = relation.Rounds,
+                    Corrections = rounds,
                     CorrectionRelationshipId = relation.Id,
                     RequiredCorrectionFindingReferences = contextCurrent ? relation.RequiredFindings : [],
                     RequiredCorrectionContext = contextCurrent ? currentContext : null,
-                    CorrectionContinuationAvailable = grant is not null && capacity is not { Remaining: < 30_000 },
+                    CorrectionContinuationAvailable = grant is not null && grantedDirection is not null && capacity is not { Remaining: < 30_000 },
                     CorrectionContinuation = grant is null ? null : new(grant.Id, relation.Id, grant.MaximumSeconds, grant.NextAction,
                         grant.Actor, grant.RecordedAtUtc, grant.Context)
+                    { AuthorizedDirection = grantedDirection }
                 }
             };
         }
@@ -982,13 +1116,14 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
             Math.Max(0, Tick() - state.BaselineStarted), new(0, 0, 0, 0, 0, 0), null, null, 0, "", state.AuthorityId, "", [], [])
         {
             CorrectionOnly = true,
-            Corrections = relation?.Rounds ?? [],
+            Corrections = rounds,
             CorrectionRelationshipId = relation?.Id,
             RequiredCorrectionFindingReferences = contextCurrent ? relation?.RequiredFindings ?? [] : [],
             RequiredCorrectionContext = contextCurrent ? currentContext : null,
-            CorrectionContinuationAvailable = grant is not null,
+            CorrectionContinuationAvailable = grant is not null && grantedDirection is not null,
             CorrectionContinuation = grant is null ? null : new(grant.Id, relation!.Id, grant.MaximumSeconds, grant.NextAction,
                 grant.Actor, grant.RecordedAtUtc, grant.Context)
+            { AuthorizedDirection = grantedDirection }
         }, [], applied);
     }
 
@@ -1047,7 +1182,9 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
                     || round.Status is not ("started" or "completed" or "superseded") || round.Stages is null || round.FindingReferences is null
                     || round.ExecutionIds is null || round.MaximumSeconds is < 30 or > 31_536_000
                     || round.MaximumSeconds > 3600 && (round.DispositionReference is null || round.ContinuationReferences is not { Count: > 0 })
-                    || round.ContinuationReferences is { } references && (references.Count > 10000 || references.Any(reference => !BoundedText(reference)))).Any(invalid => invalid)
+                    || round.ContinuationReferences is { } references && (references.Count > 10000 || references.Any(reference => !BoundedText(reference)))
+                    || round.AuthorizedDirections is { Count: > 10001 }
+                    || round.UnresolvedDirectionReferences is { } unresolved && (unresolved.Count > 10000 || unresolved.Any(reference => !BoundedText(reference)))).Any(invalid => invalid)
                 || relationship.Rounds.Count(round => round.Status == "started") > 1)
                 throw new InvalidDataException("Story correction history is incomplete or invalid; restore it without replenishing rounds.");
             if (relationship.RequiredContext is { } required)
@@ -1158,15 +1295,9 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
             && MeasuredOwnerMilliseconds(change, owner) - LastReflectionForRoute(change, owner, stage) >= window;
 
     private long LastReflectionForRoute(Change change, Owner owner, CisAgentWorkStage? stage)
-    {
-        var controller = LastControllerReflection(change, owner);
-        if (stage is not { Route: "story-task", ContractDigest: { } digest } || !BoundedText(digest) || !BoundedText(stage.RelationshipId)) return controller;
-        var measured = MeasuredOwnerMilliseconds(change, owner);
-        return Math.Max(controller, owner.Checkpoints.Where(record => record.Origin == "story-controller-progress"
-                && record.StoryRelationshipId == stage.RelationshipId && record.StoryContractDigest == digest
-                && ValidReflectionFields(change, record, measured))
-            .Select(record => record.ActiveMilliseconds).DefaultIfEmpty(0).Max());
-    }
+        // Both current and pre-fix automatic story snapshots lack controller judgment.
+        // Explicit authorized progress remains the existing owner-wide assessment route.
+        => LastControllerReflection(change, owner);
 
     private long LastControllerReflection(Change change, Owner owner)
     {
@@ -1179,6 +1310,7 @@ internal sealed class AgentWorkLedger(Func<DateTimeOffset>? clock = null)
     {
         if (!ValidReflectionFields(change, record, measured)) return false;
         if (record!.Origin is not null) return record.Origin == "controller-progress";
+        if (record.StoryRelationshipId is not null || record.StoryContractDigest is not null) return false;
         // These are exact historical CIS producer identities, not a classifier
         // over the controller's engineering judgment or narrative.
         return record.Actor != "CIS measured execution"

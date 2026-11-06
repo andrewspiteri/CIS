@@ -29,6 +29,30 @@ public sealed partial class FeatureIntakeService
         if (cache?.Revision != StoryRevision(record) || cache.Binding != state.Binding || cache.Answers is null || cache.Answers.Any(item => item is null)) cache = null;
         var task = record.Plan.Tasks.Single(item => item.Id == taskId);
         var basis = input.MaterialBasisByStory.GetValueOrDefault(record.Plan.StoryId);
+        var reviewEvidence = execution;
+        if (execution.ReviewEvidenceRunIds is { } evidenceIds)
+        {
+            var evidence = evidenceIds.ToHashSet(StringComparer.Ordinal);
+            if (evidence.Count != evidenceIds.Count || evidence.Any(id => !execution.Runs.Any(run => run.RunId == id)))
+                throw new InvalidDataException("The retained review refers to missing or duplicate run evidence; inspect its original execution before continuing.");
+            reviewEvidence = execution with { Runs = execution.Runs.Where(run => evidence.Contains(run.RunId)).ToArray() };
+        }
+        if (execution.StructuredFindings is null)
+        {
+            var reviewRuns = reviewEvidence.Runs.Where(run => run.Stage.Equals("Review", StringComparison.OrdinalIgnoreCase))
+                .Select(run => run.RunId).Order(StringComparer.Ordinal).ToArray();
+            if (reviewRuns.Length > 0)
+            {
+                // An early retry failure retains the previous review, not a new material review.
+                // Bind its legacy basis to the original evidence, while current task/source basis still applies.
+                var meanings = execution.Findings.Select(DeliveryMeaning).Order(StringComparer.Ordinal).ToArray();
+                reviewEvidence = record.Events.Where(item => item.TaskId == taskId).Select(item => item.Execution)
+                    .FirstOrDefault(prior => prior is { StructuredFindings: null }
+                        && prior.Findings.Select(DeliveryMeaning).Order(StringComparer.Ordinal).SequenceEqual(meanings)
+                        && prior.Runs.Where(run => run.Stage.Equals("Review", StringComparison.OrdinalIgnoreCase))
+                            .Select(run => run.RunId).Order(StringComparer.Ordinal).SequenceEqual(reviewRuns)) ?? reviewEvidence;
+            }
+        }
         var context = new SortedDictionary<string, string>(basis?.ToDictionary(item => item.Key, item => item.Value) ?? [], StringComparer.Ordinal)
         {
             ["task"] = JsonSerializer.Serialize(new
@@ -41,7 +65,7 @@ public sealed partial class FeatureIntakeService
                 Acceptance = task.AcceptanceCriteria.Select(DeliveryMeaning).Order(StringComparer.Ordinal),
                 DependsOn = task.DependsOn.Order(StringComparer.Ordinal)
             }, Json),
-            ["review-evidence"] = JsonSerializer.Serialize(execution.Runs.Select(run => new
+            ["review-evidence"] = JsonSerializer.Serialize(reviewEvidence.Runs.Select(run => new
             {
                 run.RepositoryId,
                 run.Stage,
@@ -53,7 +77,7 @@ public sealed partial class FeatureIntakeService
                 .OrderBy(run => run.RepositoryId, StringComparer.Ordinal).ThenBy(run => run.Stage, StringComparer.Ordinal).ThenBy(run => run.Summary, StringComparer.Ordinal), Json)
         };
         if (execution.StructuredFindings is { } structured)
-            return StructuredStoryFeedback(state, input, record, taskId, execution, structured, context, cache);
+            return StructuredStoryFeedback(state, input, record, taskId, reviewEvidence, structured, context, cache);
         return execution.Findings.GroupBy(DeliveryMeaning, StringComparer.Ordinal).Select(group =>
         {
             var finding = group.First();
@@ -61,7 +85,7 @@ public sealed partial class FeatureIntakeService
             var id = Hash(Encoding.UTF8.GetBytes(record.Plan.StoryId + "\n" + taskId + "\n" + meaning));
             var findingBasis = new SortedDictionary<string, string>(context, StringComparer.Ordinal) { ["finding"] = meaning };
             var basisHash = DeliveryBasisHash(findingBasis);
-            var legacyIds = group.Select(item => Hash(Encoding.UTF8.GetBytes(taskId + "\n" + string.Join('|', execution.Runs.Select(run => run.RunId)) + "\n" + item))).ToHashSet(StringComparer.Ordinal);
+            var legacyIds = group.Select(item => Hash(Encoding.UTF8.GetBytes(taskId + "\n" + string.Join('|', reviewEvidence.Runs.Select(run => run.RunId)) + "\n" + item))).ToHashSet(StringComparer.Ordinal);
             var saved = record.Events.Where(item => item.TaskId == taskId).SelectMany(item => item.Feedback ?? []).LastOrDefault(item => item.Id == id || legacyIds.Contains(item.Id));
             var unknown = input.BasisReasonsByStory.GetValueOrDefault(record.Plan.StoryId);
             var unbound = input.UnboundBasisReasonsByStory.GetValueOrDefault(record.Plan.StoryId);
@@ -76,7 +100,7 @@ public sealed partial class FeatureIntakeService
             {
                 Severity = severity.Length > 0 ? severity : null,
                 Disposition = disposition,
-                RequiresDecision = disposition == "required" && execution.Status == "blocked",
+                RequiresDecision = disposition == "required" && reviewEvidence.Status == "blocked",
                 BasisHash = basisHash,
                 RunIds = runs,
                 RetainedAnswer = applicable ? null : saved?.Answer,
@@ -149,7 +173,7 @@ public sealed partial class FeatureIntakeService
             {
                 Severity = finding.Severity,
                 Disposition = disposition,
-                RequiresDecision = valid && disposition == "required" && execution.Status == "blocked" && group.Any(item => item.RequiresDecision),
+                RequiresDecision = valid && disposition == "required" && group.Any(item => item.RequiresDecision),
                 BasisHash = basisHash,
                 RunIds = runs,
                 RetainedAnswer = applicable ? null : saved?.Answer,

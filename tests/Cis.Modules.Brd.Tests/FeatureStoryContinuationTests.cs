@@ -179,6 +179,146 @@ public sealed partial class FeatureIntakeTests
         Assert.Equal(before, f.Snapshot());
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void StoryContinuation_LegacyAnswerSurvivesRealEarlyProviderFailureAndReachesTheNextRequest(bool failReview, bool structured)
+    {
+        using var f = new Fixture(); File.WriteAllText(f.Request.SourcePath, PrivacyStory);
+        var archive = AddDeliveryCode(f, "backend", "archive.ts", "export class Archive { getDocumentVersion() {} }");
+        CreateIntake(f);
+        var reader = new PlanningService(null!, null!, null!, new CisRepositoryContextResolver(), workspaceRegistry: f.Registry);
+        var provider = new LegacyRetryProvider { FailImplementation = !failReview, FailReview = failReview };
+        var agent = new AgentService(new CisRepositoryContextResolver(), [provider], textGeneration: new LegacyRetryModels(), workspaceRegistry: f.Registry);
+        var executor = new LegacyReviewContinuationExecutor(agent, structured);
+        FeatureIntakeService Fresh() => new(f.Registry, f.Importer, new DocumentationCatalogMerger(), [f.Baseline], taskContracts: reader, storyExecutor: executor);
+        var service = Fresh(); var id = service.Navigation(f.Authority).Features.Single().Stories.Single().Id;
+        var read = service.Story(f.Authority, "referrals", id, false);
+        var assessed = service.AssessStory(f.Authority, new("referrals", id, read.PlanningBasisHash!, read.PlanningRevision, "Fixture controller", FixtureSize("medium")));
+        var proposal = service.PrepareStory(f.Authority, new("referrals", id, assessed.InputHash!, assessed.Revision!, "Fixture controller", [FixtureContract("T1", [1, 2])]));
+        Assert.Empty(proposal.Errors);
+        var current = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "approve", proposal.PlanHash!, proposal.Revision!, "Fixture reviewer", "Review the bounded accepted privacy contract.");
+        Assert.Empty(current.Errors);
+        CisFeatureStoryResult Execute(CisFeatureStoryResult previous)
+        {
+            var selected = service.ExecuteStoryTask(f.Authority, "referrals", id, "T1", cancellation: TestContext.Current.CancellationToken);
+            Assert.Empty(selected.Errors);
+            return service.ExecuteStoryTask(f.Authority, "referrals", id, "T1", true, previous.PlanHash!, previous.Revision!, selected.ExecutionPlan!.Hash,
+                "Fixture controller", cancellation: TestContext.Current.CancellationToken);
+        }
+        // Seed the historical wire shape; all retries below use production AgentService result construction.
+        current = Execute(current); Assert.Empty(current.Errors);
+        var question = Assert.Single(current.TaskProgress[0].ReviewFeedback!);
+        Assert.Equal(structured, current.TaskProgress[0].Execution!.StructuredFindings is not null); Assert.True(question.RequiresDecision);
+        const string answer = "Keep the existing document archive under the accepted owner.";
+        current = service.SaveStoryFeedback(f.Authority, new("referrals", id, "T1", current.PlanHash!, current.Revision!, "Fixture controller", new() { [question.Id] = answer })
+        { ExpectedBasisHashes = new Dictionary<string, string> { [question.Id] = question.BasisHash! } });
+        Assert.Empty(current.Errors);
+        var saved = Assert.Single(current.TaskProgress[0].ReviewFeedback!);
+        current = Execute(current);
+        Assert.Equal(failReview ? "review-failed" : "failed", current.TaskProgress[0].Execution!.Status); Assert.NotEmpty(current.Errors);
+        Assert.Equal(failReview ? 2 : 1, provider.Requests.Count); Assert.Equal("implement", provider.Requests[0].Mode);
+        var firstFailure = current.TaskProgress[0].Execution!;
+        Assert.Equal(structured, firstFailure.StructuredFindings is not null); Assert.Equal(question.Finding, Assert.Single(firstFailure.Findings));
+        Assert.NotNull(firstFailure.ReviewEvidenceRunIds);
+        Assert.All(firstFailure.ReviewEvidenceRunIds, run => Assert.Contains(firstFailure.Runs, retainedRun => retainedRun.RunId == run));
+        if (failReview)
+        {
+            Assert.Contains(firstFailure.Runs, run => run.RunId == provider.Requests[1].RunId && run.Stage == "Review");
+            Assert.DoesNotContain(provider.Requests[1].RunId, firstFailure.ReviewEvidenceRunIds);
+        }
+        current = Fresh().Story(f.Authority, "referrals", id, false);
+        var retained = Assert.Single(current.TaskProgress[0].ReviewFeedback!);
+        Assert.Equal(saved.Id, retained.Id); Assert.Equal(saved.Answer, retained.Answer); Assert.Equal(saved.Actor, retained.Actor);
+        Assert.Equal(saved.SavedAt, retained.SavedAt); Assert.Equal(saved.BasisHash, retained.BasisHash);
+        Assert.Equal("current", retained.ApplicabilityState); Assert.Null(retained.RetainedAnswer); Assert.True(retained.RequiresDecision);
+        Assert.All(saved.RunIds!, run => Assert.Contains(run, retained.RunIds!));
+        Assert.False(current.TaskProgress[0].CanComplete); Assert.False(firstFailure.Applied);
+        current = Execute(current);
+        Assert.Equal(failReview ? 3 : 2, provider.Requests.Count);
+        Assert.Equal(failReview ? "review" : "implement", provider.Requests[^1].Mode);
+        var sent = Assert.Single(executor.LastWork!.ReviewResponses);
+        Assert.Equal(saved.Id, sent.Id); Assert.Equal(saved.BasisHash, sent.BasisHash); Assert.Equal("current", sent.ApplicabilityState);
+        Assert.Equal(saved.Actor, sent.Actor); Assert.Equal(saved.SavedAt, sent.SavedAt);
+        var prompt = provider.Requests[^1].Prompt;
+        var start = prompt.IndexOf("<human-review-responses>\n", StringComparison.Ordinal) + "<human-review-responses>\n".Length;
+        var end = prompt.IndexOf("\n</human-review-responses>", start, StringComparison.Ordinal);
+        using (var responses = JsonDocument.Parse(prompt[start..end]))
+        {
+            var response = Assert.Single(responses.RootElement.EnumerateArray());
+            Assert.Equal(saved.Id, response.GetProperty("id").GetString()); Assert.Equal(answer, response.GetProperty("answer").GetString());
+            Assert.Equal(saved.Actor, response.GetProperty("actor").GetString()); Assert.Equal(saved.SavedAt, response.GetProperty("savedAt").GetString());
+        }
+        File.AppendAllText(archive, "\nexport const documentVersionChanged = true;");
+        current = Fresh().Story(f.Authority, "referrals", id, false);
+        Assert.Empty(current.Errors);
+        var changed = Assert.Single(current.TaskProgress[0].ReviewFeedback!);
+        Assert.Equal(saved.Id, changed.Id); Assert.Null(changed.Answer); Assert.Equal(saved.Answer, changed.RetainedAnswer);
+        Assert.Equal("needs-review", changed.ApplicabilityState); Assert.NotEqual(saved.BasisHash, changed.BasisHash);
+        Assert.False(current.TaskProgress[0].CanComplete);
+        provider.FailImplementation = false;
+        provider.FailReview = false;
+        var beforeReady = provider.Requests.Count;
+        current = Execute(current); Assert.Empty(current.Errors);
+        Assert.Empty(executor.LastWork!.ReviewResponses);
+        Assert.Equal("reviewed", current.TaskProgress[0].Execution!.Status);
+        Assert.NotNull(current.TaskProgress[0].Execution!.StructuredFindings);
+        Assert.Empty(current.TaskProgress[0].Execution!.StructuredFindings!);
+        Assert.Empty(current.TaskProgress[0].Execution!.Findings);
+        Assert.Empty(Fresh().Story(f.Authority, "referrals", id, false).TaskProgress[0].ReviewFeedback!);
+        Assert.Equal(failReview ? new[] { "review" } : new[] { "implement", "review" },
+            provider.Requests.Skip(beforeReady).Select(request => request.Mode));
+        if (failReview) Assert.Single(provider.Requests, request => request.Mode == "implement");
+    }
+
+    private sealed class LegacyReviewContinuationExecutor(AgentService agent, bool structured) : ICisStoryTaskExecutor
+    {
+        private readonly StructuredStoryExecutor historical = new() { LegacyBlockedQuestion = !structured };
+        public CisStoryTaskWork? LastWork { get; private set; }
+        public CisStoryWorkStatus InspectWork(CisStoryTaskWork work) => agent.InspectWork(work);
+        public CisStoryExecutionPlan SelectModels(CisStoryTaskWork work) => agent.SelectModels(work);
+        public CisStoryExecutionResult Execute(CisStoryTaskWork work, CisStoryExecutionPlan selection, bool allowRemote, Func<bool> stillCurrent,
+            CancellationToken cancellationToken, Action<CisAgentProviderEvent>? progress)
+        {
+            LastWork = work;
+            return historical.Calls == 0 ? historical.Execute(work, selection, allowRemote, stillCurrent, cancellationToken, progress)
+                : agent.Execute(work, selection, allowRemote, stillCurrent, cancellationToken, progress);
+        }
+    }
+
+    private sealed class LegacyRetryModels : ICisTextGenerationService
+    {
+        public CisAiStatus GetStatus() => new([new("codex", "available", "test", true, [new("gpt-6-astra"), new("gpt-6-sol")], null)]);
+        public CisTextGenerationResult Generate(CisTextGenerationRequest request) => throw new InvalidOperationException("Model selection does not generate text.");
+    }
+
+    private sealed class LegacyRetryProvider : ICisAgentProvider
+    {
+        public List<CisAgentExecutionRequest> Requests { get; } = [];
+        public bool FailImplementation { get; set; } = true;
+        public bool FailReview { get; set; }
+        public CisAgentProviderDescriptor Descriptor => new("codex", "Fixture coding agent", "test", true, ["exec-json"], ["implement", "review"], ["read-only", "workspace-write"], false, false, "Test only");
+        public CisAgentProviderDiagnosis Diagnose(string repositoryPath) => new("codex", "ready", true, null, "test", true, [], []);
+        public CisAgentProviderExecutionResult Execute(CisAgentExecutionRequest request, Action<CisAgentProviderEvent> onEvent, CancellationToken cancellationToken)
+        {
+            Requests.Add(request);
+            if (request.Mode == "implement" && FailImplementation)
+                return new(CisAgentRunStates.Failed, 1, null, "Provider unavailable before implementation or review.", [], [], [], null, null, null, null, ["Provider unavailable"]);
+            if (request.Mode == "review" && FailReview)
+                return new(CisAgentRunStates.Succeeded, 0, null, "Malformed independent review result.", [], [], [], null, null, null, null, []);
+            if (request.Mode == "implement") File.WriteAllText(Path.Combine(request.WorkingDirectory, "task-report.md"), "Retained accepted archive ownership and privacy contract.");
+            return new(CisAgentRunStates.Succeeded, 0, null, JsonSerializer.Serialize(new
+            {
+                summary = request.Mode == "implement" ? "Retained the bounded privacy report." : "Reviewed the current privacy report without findings.",
+                changedFiles = request.Mode == "implement" ? new[] { "task-report.md" } : [],
+                validations = new[] { "Checked the accepted archive ownership contract." },
+                evidence = new[] { "task-report.md" },
+                review = request.Mode == "review" ? new AgentBrdReview("ready", ["Checked the accepted scope."], []) : null
+            }), [], [], [], null, null, null, null, []);
+        }
+    }
+
     [Fact]
     public void StoryContinuation_AdoptedControlsRequireCurrentInspectorBeforeLegacyExecutorCanRun()
     {

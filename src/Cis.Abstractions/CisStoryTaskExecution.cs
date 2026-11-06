@@ -84,6 +84,10 @@ public sealed record CisStoryExecutionResult(string Status, CisStoryExecutionPla
     public CisStoryWorkStatus? Work { get; init; }
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public IReadOnlyList<CisStoryReviewFinding>? StructuredFindings { get; init; }
+    // Run evidence for the last complete valid review, including its implementation basis.
+    // Runs may also retain later failed attempts that cannot replace that review.
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? ReviewEvidenceRunIds { get; init; }
 }
 
 public interface ICisStoryTaskExecutor

@@ -66,6 +66,17 @@ public sealed partial class AgentExecutionTests
         Assert.True(granted.ExitCode == 0, string.Join("; ", granted.Errors));
         var before = provider.Requests.Count;
         var fresh = Controller();
+        var assessmentState = fresh.InspectWork(bound);
+        Assert.Equal("controller-assessment-required", assessmentState.Status);
+        var assessment = new CisAgentWorkCheckpoint(
+            "Two correction rounds remain recorded, conservative historical usage is charged, and a specific bounded simplification is authorized.",
+            disposition.Evidence, disposition.Hypothesis!,
+            "Proceed only with the authorized correction and its independent review within remaining capacity.", disposition.NextAction!)
+        { CloseAttempt = false };
+        var assessed = fresh.RecordWorkProgress(repository.Path, "CIS-0001", "WORK-090",
+            WriteWorkInput(repository, "bounded-history-assessment.json", new CisAgentWorkProgressRequest(assessment, assessmentState.Control!.Work!.Revision)), WorkActor);
+        Assert.Equal(0, assessed.ExitCode);
+        Assert.Equal(10_800_000, assessed.Work!.Task!.ConsumedMilliseconds);
         var completed = fresh.Execute(bound, fresh.SelectModels(bound), true, () => true, TestContext.Current.CancellationToken, null);
         Assert.True(completed.Applied, string.Join("; ", completed.Errors));
         Assert.Equal(["implement", "review"], provider.Requests.Skip(before).Select(request => request.Mode).ToArray());

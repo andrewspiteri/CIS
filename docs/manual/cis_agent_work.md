@@ -3,7 +3,7 @@ title: "cis agent work"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-11-04"
+last_reviewed: "2026-11-06"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-agent-work
@@ -108,6 +108,8 @@ cis agent run CIS-0001 WORK-090 --provider claude --mode implement --permission 
 
 Provider permissions, explicit command rules, plan eligibility, isolation, and current evidence still apply. A launch reserves task and change capacity before expensive preparation. The requested total bound is at least 30 seconds and must fit the provider profile, remaining task and change allowance, and restoration reserve. The reviewed profile permits at most 3,600 seconds per run. Known preparation uses part of that same bound; the provider receives its positive remainder, preserving fractional seconds. There is no second 30-second minimum after preparation. Startup and idle limits are bounded by that remainder. An oversized request or exhausted remainder holds before provider invocation. Inspect the returned hold and supported next action when less capacity remains.
 
+A nested stage inside an admitted story or correction window may use the parent's remaining whole seconds, including fewer than 30. CIS rounds down and keeps the child within both the parent deadline and any correction cap; preparation stays charged. Less than one usable second holds before provider launch. This does not change the 30-second minimum for a new root request, adopted ceilings or restoration reserves.
+
 Recovery uncertainty holds conflicting work for the affected accounting owner. Other independent owners may proceed when their own authority and holds permit it and the remaining shared change capacity still fits. The uncertain reservation continues to count against that shared allowance.
 
 ### Record progress
@@ -118,7 +120,9 @@ This is routine execution work, not another approval or reviewer call. A valid c
 
 One qualifying checkpoint comes through the controller progress operation and records Outcome, nonempty Evidence, Approach, Decision, and the next bounded action. CIS records its origin and measured Cost context; the checkpoint cannot overwrite consumption. Optional `hypothesis` and `expectedResult` identify the investigation. Set `closeAttempt` only when that logical attempt has concluded. A `blockerKey` identifies a repeated blocker; `materialNewInformation` records the controller's judgment rather than asking a semantic classifier to infer progress. Recording reflection permits continuation automatically when all other gates allow it; it does not clear repeated-blocker, allocation, recovery, permission or required-review holds.
 
-The supported story controller records its own routine reflection under existing delegation from the approved task, retained native results and measured cost. `story work-status` reports `routine-reflection-autonomous` when reflection is the only pending action; continue through the story route without a manual progress ceremony. These records identify their story relationship and approved task contract. They qualify only for that same story context and never satisfy direct-task controller reflection, claim new material information, close the logical attempt or clear another hold. Reading status records no checkpoint.
+When story reflection is due, `story work-status` reports `controller-assessment-required` and the supported next command. The already-authorized orchestrating agent inspects retained implementation, failed or valid review evidence, measured consumption, reservations and remaining capacity. It then uses `cis agent work progress <change-id> <task-id> --input <assessment.json> --actor <controller>` at the existing canonical owner with the current revision. Record Outcome, nonempty Evidence, Approach, Decision and the next bounded action; CIS supplies measured Cost. Keep `closeAttempt: false` unless the logical attempt has actually concluded, then resume the same governed story with refreshed tokens. Routine assessment needs no human acknowledgment, extra reviewer or canonical task `Blocked` transition.
+
+Automatic `story-execution-summary` records, including candidate-reuse and failed-review summaries, preserve observations but never qualify as controller assessment. Legacy `story-controller-progress` records do not qualify either. Another run ID or reuse of the same implementation does not refresh reflection credit. Explicit authorized controller progress remains the existing owner-wide assessment route; incidental story summaries cannot satisfy direct-task reflection. Status reads remain non-mutating, and repeated-blocker, correction, hard-capacity, recovery, permission and approval holds retain their own requirements.
 
 For example, read the current revision and write one input file:
 
@@ -151,6 +155,10 @@ Two consecutive logical attempts with the same blocker and no material new infor
 Supported disposition kinds are `continue`, `simplify`, `hold`, `reconcile`, and `reconcile-story-history`. Use a fresh revision, supporting evidence, and an explicit rationale. A bare continuation, reworded hypothesis, or increased allocation does not clear every hold. Hard exhaustion, uncertain recovery, and existing approval or permission gates remain separate.
 
 For a story correction-limit hold, a relevant `simplify` disposition also identifies the retained `correctionRelationshipId`, current `correctionFindingReferences`, and `correctionMaximumSeconds` for one bounded next step. Use the relationship and references returned by status; do not invent them. The bound must fit existing authority and remaining capacity. Prior rounds remain recorded, an interrupted started round remains charged/retained, and a grant is not two fresh rounds. Routine reflection without a correction-limit hold still uses the ordinary progress/disposition fields; it needs no additional human approval when existing delegation suffices.
+
+The pending continuation's `authorizedDirection` and the round's ordered `authorizedDirections` retain the controller's hypothesis, specific next action, actor, time, reason, evidence and disposition reference. The applicable direction reaches the correction provider and subsequent independent reviewer. Recreation, interrupted-round recovery and a valid extension retain that direction, prior directions, compatible completed stages, round identity and spent work. An extension supplies the applicable new direction; it does not waive findings, grant permissions or reset allowance.
+
+For a pre-fix pending grant or granted round missing copied direction, CIS recovers only the exact retained authorized disposition. If it cannot establish that direction, status names the missing reference and holds execution. Restore verified retained disposition evidence where available. Otherwise use the same `simplify` route with current revision, exact relationship/findings, changed hypothesis, specific `nextAction`, evidence and a finite `correctionMaximumSeconds`. A safely finalized started round can reconcile future direction within its usable remaining cap, or receive an eligible bounded extension when exhausted. Unrecoverable prior direction remains explicitly unknown; provider/review prose or a generic continuation cannot supply it. Ordinary automatic rounds that required no disposition retain their existing behavior.
 
 In genuinely non-adopted correction-only work, another actor may claim the next numbered round for the same relationship and identity only when none is started, preserving counts and the two-round automatic limit; started work stays with its original controller or requires explicit canonical binding, authority-wide finite accounting and supported history reconciliation, never a ledger edit or actor rename.
 

@@ -3,7 +3,7 @@ title: "cis brd feature wizard status"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-11-04"
+last_reviewed: "2026-11-06"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-brd-feature-wizard-status
@@ -184,6 +184,13 @@ step against its retained findings before a fresh review can replace their wordi
 revised and approved task contract supersedes obsolete pending correction context; prior
 rounds, spent work and history remain recorded.
 
+The granted hypothesis, specific next action and disposition provenance accompany the actual
+correction provider request and subsequent independent review. Recovery preserves them;
+an extension supplies its new applicable direction while retaining prior direction and work.
+Missing pre-fix direction can be recovered only from its exact retained authorized disposition.
+If unavailable, follow the reported bounded `simplify` reconciliation action in
+[`cis agent work`](cis_agent_work.md#record-a-disposition-and-resume); do not invent an approach.
+
 A started grant whose remaining bound cannot support the minimum operation stays held.
 Retrying or reallocating the containing task does not extend that correction's separate cap.
 After every associated owned root and child is safely finalized without recovery uncertainty,
@@ -198,11 +205,27 @@ attempts, restoration reserves, hard task/change allowances and provider limits 
 Recovery uncertainty and genuine authority/permission/evidence holds remain independent.
 Routine useful reflection and delegated continuation do not require another human sign-off.
 
-`routine-reflection-autonomous` means the otherwise healthy story can continue. At admission,
-CIS records `story-controller-progress` from its approved contract, retained native evidence
-and measured cost under existing delegation. It qualifies only that story relationship and
-contract; it does not clear the direct-task reflection gate. Status remains read-only, and
-correction, capacity, recovery, permission and approval holds remain effective.
+Inside an already admitted valid window, a nested stage can use fewer than 30 remaining
+seconds. CIS rounds down to whole seconds and preserves the parent/correction deadline;
+preparation remains charged. No usable whole second holds before launch. A new root request
+still requires at least 30 seconds within the adopted ceiling and restoration reserves.
+
+`controller-assessment-required` means the authorized orchestrating agent must assess the
+approach before another expensive continuation. Inspect retained implementation, failed or
+valid review evidence, measured cost, reservations, remaining capacity and current revision.
+Use `cis agent work progress <change-id> <task-id> --input <assessment.json> --actor <controller>`
+at the displayed canonical owner. Record Outcome, nonempty Evidence, Approach, Decision and
+the next bounded action; CIS supplies measured Cost. Keep `closeAttempt: false` unless the
+logical attempt has ended, then resume this governed story with refreshed tokens. The
+[work manual](cis_agent_work.md#record-progress) provides the input envelope.
+
+Automatic `story-execution-summary` records preserve candidate/review outcomes but never
+supply controller judgment, even when the candidate is reused. Legacy `story-controller-progress`
+records do not qualify. Explicit authorized progress uses the existing owner-wide route;
+incidental story records cannot satisfy direct-task reflection. Routine assessment needs
+no human acknowledgment, extra reviewer or task `Blocked` transition. Status remains
+read-only; independent correction, repeated-blocker, capacity, recovery, permission and
+approval holds and logical-attempt counts remain binding.
 
 ### Review findings and answers
 
@@ -214,6 +237,12 @@ corrective; a free-text answer cannot fix or waive it. Only an explicitly identi
 human decision or question requires an answer; other holds name the permitted next action.
 Retained historical blocked questions keep their established answer flow. Inconsistent review verdicts
 are held for clarification within the same work context.
+
+An early retry failure before a new review preserves legacy string-only findings and their
+still-current saved answers, identity, actor, time and original review evidence. A material
+task/source/evidence change still requires renewed assessment. Absent `structuredFindings`
+remains distinct from an explicitly empty newer review: a valid current empty collection
+replaces obsolete legacy findings. Saved answers never waive required defects or approve completion.
 
 Historical findings without disposition keep their established meaning: blocking, major and
 minor are corrective; observations are advisory. Unknown or malformed values do not become

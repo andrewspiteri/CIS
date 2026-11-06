@@ -128,6 +128,19 @@ public sealed partial class AgentWorkLedgerTests
         Assert.Equal(3, same.Number); Assert.Equal(120, same.MaximumSeconds);
         Assert.Equal(firstDecision, same.DispositionReference);
         var continuation = Assert.Single(same.ContinuationReferences!);
+        Assert.Collection(same.AuthorizedDirections!,
+            original =>
+            {
+                Assert.Equal(firstDecision, original.DispositionReference);
+                Assert.Equal(replacement.Hypothesis, original.Hypothesis);
+                Assert.Equal(replacement.NextAction, original.NextAction);
+            },
+            current =>
+            {
+                Assert.Equal(continuation, current.DispositionReference);
+                Assert.Equal(extension.Hypothesis, current.Hypothesis);
+                Assert.Equal(extension.NextAction, current.NextAction);
+            });
         Assert.Contains(retained.Checkpoints, checkpoint => checkpoint.Checkpoint.Decision.Contains(continuation, StringComparison.Ordinal));
         Assert.Equal(active.Context!.MaterialBasis, same.Context!.MaterialBasis);
         Assert.Equal("corrected-stage", Assert.Single(same.Stages).RunId);

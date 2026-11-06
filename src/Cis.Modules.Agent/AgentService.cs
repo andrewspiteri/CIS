@@ -1237,6 +1237,13 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         IReadOnlyList<string>? expectedQuestionIds = null, bool taskReview = false,
         IReadOnlyList<string>? evidenceDirectories = null, WorkExecutionScope? work = null)
     {
+        var minimumSeconds = work?.Reference.ParentExecutionId is null ? 30 : 1;
+        if (manifest.TimeoutSeconds < minimumSeconds || manifest.TimeoutSeconds > 3600
+            || work is not null && manifest.TimeoutSeconds > work.TimeoutSeconds)
+        {
+            diagnostics.Add("ERROR: The run manifest must retain its admitted execution bound; only a child of an admitted parent may use a shorter positive remainder.");
+            return New(context, "held", envelope, diagnostics: diagnostics);
+        }
         manifest = manifest with { Status = CisAgentRunStates.Starting, UpdatedAtUtc = UtcNow() }; WriteManifest(context, manifest); AppendEvent(context, manifest, new("state", "Agent run is starting."));
         // Every supported host receives policy explicitly, including direct author/review and resumed runs.
         // The task envelope retains authority; referenced source artifacts remain untrusted evidence.
@@ -1261,6 +1268,7 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
             if (work is not null)
             {
                 var remaining = work.RemainingProviderTime();
+                if (remaining > request.Timeout) remaining = request.Timeout;
                 if (remaining <= TimeSpan.Zero) throw new InvalidDataException("Preparation exhausted the admitted execution window before provider invocation.");
                 request = request with
                 {
@@ -1270,6 +1278,26 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
                 };
             }
             work?.Launch();
+            if (work?.Reference.ParentExecutionId is not null)
+            {
+                // Persisting launch intent consumes the same child window. Recheck
+                // at handoff so that preparation cannot extend its parent's deadline.
+                var remaining = work.RemainingProviderTime();
+                if (remaining <= TimeSpan.Zero)
+                {
+                    // This branch precedes Execute: this controller knows the
+                    // provider was never invoked, despite the retained launch intent.
+                    work.Returned();
+                    throw new InvalidDataException("Launch preparation exhausted the admitted child execution window before provider invocation.");
+                }
+                if (remaining < request.Timeout)
+                    request = request with
+                    {
+                        Timeout = remaining,
+                        StartupTimeout = request.StartupTimeout is { } startup && startup < remaining ? startup : remaining,
+                        IdleTimeout = request.IdleTimeout is { } idle && idle < remaining ? idle : remaining
+                    };
+            }
             providerResult = provider.Execute(request, item =>
             {
                 var current = ReadManifest(context, manifest.RunId, []) ?? manifest;

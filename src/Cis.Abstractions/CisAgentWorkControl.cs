@@ -66,8 +66,16 @@ public sealed record CisAgentWorkCandidateTree(string RepositoryId, string Basel
 public sealed record CisAgentWorkCorrectionContext(string ContractDigest, string MaterialBasis,
     IReadOnlyList<CisStoryReviewFinding> Findings, IReadOnlyList<CisAgentWorkCandidateTree> Candidates);
 
+/// <summary>The exact controller disposition governing one bounded correction step.</summary>
+public sealed record CisAgentWorkCorrectionDirection(string DispositionReference, string Kind, string Hypothesis,
+    string NextAction, string Actor, string RecordedAtUtc, string Reason, IReadOnlyList<string> Evidence);
+
 public sealed record CisAgentWorkCorrectionContinuation(string Id, string RelationshipId, int MaximumSeconds,
-    string NextAction, string Actor, string RecordedAtUtc, CisAgentWorkCorrectionContext? Context);
+    string NextAction, string Actor, string RecordedAtUtc, CisAgentWorkCorrectionContext? Context)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public CisAgentWorkCorrectionDirection? AuthorizedDirection { get; init; }
+}
 
 /// <summary>A retained correction round and its accounting basis.</summary>
 /// <param name="Id">The retained round identity.</param>
@@ -90,6 +98,10 @@ public sealed record CisAgentWorkCorrectionRound(string Id, string RelationshipI
     public CisAgentWorkCorrectionContext? Context { get; init; }
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public IReadOnlyList<string>? ContinuationReferences { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<CisAgentWorkCorrectionDirection>? AuthorizedDirections { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? UnresolvedDirectionReferences { get; init; }
 }
 
 public sealed record CisAgentWorkAllowance(long AllocatedMilliseconds, long ConsumedMilliseconds,

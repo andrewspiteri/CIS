@@ -247,25 +247,44 @@ public sealed partial class AgentService
                     NextAction = corrections.Work.NextAction
                 }
             };
-        if (binding.Required && binding.Identity is { } currentIdentity
-            && !_workLedger.HistoricalReconciled(binding.Authority, currentIdentity, binding.RelationshipId, binding.HistoricalRunIds))
-            control = control with { Status = "held", Errors = control.Errors.Append(HistoricalAction(binding)).ToArray() };
-        if (control.ExitCode == 0 && control.Work?.HoldReason == AgentWorkLedger.ReflectionAction)
+        var historicalHold = binding.Required && binding.Identity is { } currentIdentity
+            && !_workLedger.HistoricalReconciled(binding.Authority, currentIdentity, binding.RelationshipId, binding.HistoricalRunIds);
+        if (historicalHold)
             control = control with
             {
-                Status = "routine-reflection-autonomous",
-                Work = control.Work with { HoldReason = null, NextAction = StoryReflectionAction }
+                Status = "held",
+                Errors = control.Errors.Append(HistoricalAction(binding)).ToArray(),
+                Work = control.Work is null ? null : control.Work with { NextAction = HistoricalAction(binding) }
             };
+        if (control.Work is { HoldReason: AgentWorkLedger.ReflectionAction } reflectionWork)
+        {
+            control = control with
+            {
+                Errors = control.Errors.Append(StoryReflectionAction(binding)).Distinct(StringComparer.Ordinal).ToArray()
+            };
+            if (!historicalHold && corrections.Status != "held")
+                control = control with
+                {
+                    Status = "controller-assessment-required",
+                    Work = reflectionWork with { NextAction = StoryReflectionAction(binding) }
+                };
+        }
         var nextAction = binding.BindingReason ?? control.Work?.NextAction ?? (binding.Required ? "Establish the owning allocation through cis agent work allocate."
             : "Continue the supported story route; its correction count remains durable without adopting an allowance.");
         if (control.Status == "missing-allocation" || binding.Required && control.Work is { CorrectionOnly: false, Task: null }
             || control.Work is { CorrectionOnly: true, RequiredCorrectionFindingReferences.Count: > 0 } && control.Work.Corrections.Count >= 2)
             nextAction += " " + AllocationScopeNotice;
-        return new(control.ExitCode == 0 ? control.Status == "routine-reflection-autonomous" ? control.Status : "current" : "held", binding.Required, binding.Identity is not null && historyBindingCurrent,
+        return new(control.Status == "controller-assessment-required" ? control.Status : control.ExitCode == 0 ? "current" : "held", binding.Required, binding.Identity is not null && historyBindingCurrent,
             binding.Identity, control, nextAction, control.Errors);
     }
 
-    private const string StoryReflectionAction = "Continue the supported story route. At admission CIS records a routine reflection from the approved task, retained native results and measured cost under existing controller delegation. This does not satisfy direct-task controller reflection or clear another hold.";
+    private static string StoryReflectionAction(StoryWorkBinding binding)
+        => "Controller assessment is due. Inspect retained implementation and failed/valid review evidence, measured consumption, reservations and remaining capacity. "
+            + "The already-authorized orchestrating agent must record its Outcome, Evidence, Approach, Decision and next bounded action through cis agent work progress "
+            + binding.Identity?.ChangeId + " " + binding.Identity?.TaskId
+            + " --input <assessment.json> --actor <authorized-controller>, using the current revision and closeAttempt:false when continuing this logical attempt. "
+            + "CIS supplies measured Cost; candidate reuse and automatic execution summaries do not supply engineering judgment. "
+            + "Then resume the same governed story. No routine human acknowledgment or extra reviewer is required; independent holds remain binding.";
 
     private CisAgentWorkResult ReadStoryWork(StoryWorkBinding binding)
     {
@@ -292,30 +311,11 @@ public sealed partial class AgentService
 
     private bool ReflectStoryBeforeAdmission(StoryWorkBinding binding, List<string> diagnostics)
     {
-        var identity = binding.Identity ?? throw new InvalidDataException("Story reflection requires its canonical accounting owner.");
         var current = ReadStoryWork(binding);
         if (current.ExitCode != 0) { WorkDiagnostics(current, diagnostics); return false; }
         if (current.Work?.HoldReason != AgentWorkLedger.ReflectionAction) return true;
-        var evidence = ReadRunManifests(binding.Authority).Where(run => run.StoryRelationshipId == binding.RelationshipId
-                && run.TaskContractDigest == binding.ContractDigest
-                && run.Work is { } reference && reference.OwnerTaskId == current.Work.OwnerTaskId && reference.ChangeId == identity.ChangeId)
-            .OrderByDescending(run => run.UpdatedAtUtc, StringComparer.Ordinal).Take(20)
-            .Select(run => "agent-run:" + run.RunId + ":" + run.Status + ":" + (run.ResultDigest ?? "no-result"))
-            .Concat(identity.AcceptedOutcomeReferences.Take(18).Select(reference => "canonical-outcome:" + reference))
-            .Append("approved-story-contract:" + binding.ContractDigest).ToArray();
-        var checkpoint = new CisAgentWorkCheckpoint("CIS story controller evaluated retained native run statuses and the approved task '"
-            + (binding.ScopeTitle is { Length: > 2000 } title ? title[..2000] : binding.ScopeTitle ?? binding.RelationshipId)
-            + "' before admission. Measured owner cost: " + current.Work.Task?.ConsumedMilliseconds
-            + "ms settled, " + current.Work.Task?.ReservedMilliseconds + "ms reserved; reflection window "
-            + current.Work.ReflectionWindowMilliseconds + "ms. Earlier unmeasured effort remains unknown.",
-            evidence, binding.ReflectionApproach ?? "Evaluate the retained approved task contract and native candidate evidence before its next bounded stage.",
-            "Continue the same approved story contract under existing controller delegation; this snapshot has no separate allowance or recovery hold. Preserve all subsequent correction, permission and task gates.",
-            "Inspect or review this contract's retained candidate through the supported story route; stop on any newly observed hold.")
-        { CloseAttempt = false };
-        var recorded = _workLedger.Progress(binding.Authority, identity, new(checkpoint, current.Work.Revision), binding.Actor,
-            binding.RelationshipId, binding.ContractDigest);
-        WorkDiagnostics(recorded, diagnostics);
-        return recorded.ExitCode == 0;
+        diagnostics.Add("ERROR: " + StoryReflectionAction(binding));
+        return false;
     }
 
     private WorkExecutionScope? AdmitStoryStage(StoryWorkBinding binding, WorkExecutionScope? root, string executionId,
@@ -323,7 +323,10 @@ public sealed partial class AgentService
     {
         if (!binding.Required) return null;
         if (binding.Identity is null || root is null) { diagnostics.Add("ERROR: A story stage needs its admitted canonical root."); return null; }
-        var admission = _workLedger.Admit(binding.Authority, binding.Identity, executionId, binding.MaximumRunSeconds,
+        var requestedSeconds = Math.Min(binding.MaximumRunSeconds, checked((int)Math.Floor(root.RemainingProviderTime().TotalSeconds)));
+        if (requestedSeconds <= 0)
+        { diagnostics.Add("ERROR: The admitted story root has no usable whole-second execution remainder. Retain its measured work before another bounded continuation."); return null; }
+        var admission = _workLedger.Admit(binding.Authority, binding.Identity, executionId, requestedSeconds,
             binding.MaximumRunSeconds, root.Reference.ExecutionId, root.Reference.LogicalAttemptId, CapturePreparationOwner(), true,
             new("story-task", binding.RelationshipId, stage, repositoryId, correctionRoundId)
             { ContractDigest = binding.ContractDigest }, binding.Actor);
@@ -364,15 +367,17 @@ public sealed partial class AgentService
         WorkDiagnostics(result, diagnostics); return result.ExitCode == 0;
     }
 
-    private bool StoryWorkCheckpoint(StoryWorkBinding binding, WorkExecutionScope? root, string actor, string outcome,
-        IReadOnlyList<string> evidence, string decision, string nextAction, List<string> diagnostics)
+    private bool RecordStoryExecutionSummary(StoryWorkBinding binding, WorkExecutionScope? root, string actor, string outcome,
+        IReadOnlyList<string> evidence, List<string> diagnostics)
     {
         if (!binding.Required) return true;
-        if (binding.Identity is null || root is null) { diagnostics.Add("ERROR: Story reflection has lost its canonical work reservation."); return false; }
+        if (binding.Identity is null || root is null) { diagnostics.Add("ERROR: The story execution summary has lost its canonical work reservation."); return false; }
         var current = ReadStoryWork(binding);
         if (current.Work is null) { WorkDiagnostics(current, diagnostics); return false; }
         var checkpoint = new CisAgentWorkCheckpoint(outcome, evidence,
-            binding.ReflectionApproach ?? "Evaluate this approved task's retained candidate and independent review evidence.", decision, nextAction)
+            "Automatic execution observation for the approved story contract; no controller assessment is asserted.",
+            "No engineering continuation decision was made by this automatic summary.",
+            "Inspect this evidence and the current work status before the next permitted stage.")
         { CloseAttempt = false };
         var recorded = _workLedger.Progress(binding.Authority, binding.Identity, new(checkpoint, current.Work.Revision), actor,
             binding.RelationshipId, binding.ContractDigest);

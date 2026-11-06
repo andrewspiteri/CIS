@@ -3,7 +3,7 @@ title: "cis agent run"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-10-09"
+last_reviewed: "2026-11-06"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-agent-run
@@ -52,6 +52,8 @@ At a safe continuation boundary, admission also checks cumulative active work si
 Task review reports explicit `required` or `optional` disposition independently of severity and names its supporting task/policy/invariant basis. A minor required defect blocks readiness; consistent optional advice does not. Contradictory verdicts are invalid evidence. When an actual diff materially expands verification machinery, the existing reviewer records necessity, native alternatives, available cost evidence and maintenance/pass-semantics effects; ordinary helpers and assertions do not create another review ceremony.
 
 `--parent-execution` refers to a valid owned parent execution, and `--logical-attempt` continues a known logical investigation. CIS resolves both against the same authority, change and task relationships. These options do not create a new allocation or authorize another owner. Nested work is charged inclusively once; independent roots each consume change capacity.
+
+Nested stages created by the governed story or correction controller may use an admitted parent's remaining whole seconds even below 30. CIS rounds down, respects the same parent/correction deadline and charges preparation; less than one usable second holds before launch. Direct `cis agent run` requests still require at least 30 seconds. With `--parent-execution`, the requested bound must fit the parent's remaining window without automatic shortening. The root minimum and all adopted ceilings, finite correction caps and restoration reserves remain unchanged.
 
 Participant runs receive bounded, hash-checked snapshots of the selected authority documents. When present, the task dossier's `test-cases.csv` accompanies `test-cases.md`, so the agent can inspect the export itself. These snapshots retain authority-relative identities and do not overwrite participant files.
 

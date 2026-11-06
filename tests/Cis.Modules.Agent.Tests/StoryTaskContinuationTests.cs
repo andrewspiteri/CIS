@@ -149,9 +149,10 @@ public sealed partial class AgentExecutionTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void StoryContinuationValidatesGrantBeforeStartingAndRetainsPreparationCost(bool baselineChanged)
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public void StoryContinuationValidatesGrantBeforeStartingAndRetainsPreparationCost(bool baselineChanged, bool legacyGrant)
     {
         using var repository = AgentRepository.Create(git: true);
         AdoptWorkControl(repository); repository.Write("app.txt", "original"); repository.CommitAll("grant material baseline");
@@ -169,14 +170,21 @@ public sealed partial class AgentExecutionTests
             CorrectionRelationshipId = before.CorrectionRelationshipId,
             CorrectionFindingReferences = before.RequiredCorrectionFindingReferences,
             CorrectionMaximumSeconds = 60,
-            Hypothesis = "Correct only the retained acceptance invariant through the existing native implementation.",
-            NextAction = "Make the single bounded correction and review the retained candidate.",
+            Hypothesis = "The existing native assertion can replace the custom comparator for the retained acceptance invariant.",
+            NextAction = "Replace only the custom comparator with the existing native assertion and run its focused test.",
             Evidence = ["agent-run:" + held.Runs.Last(run => run.Stage == "Review").RunId]
         };
         var granted = first.DisposeWork(repository.Path, "CIS-0001", "WORK-090",
             WriteWorkInput(repository, "retained-material-grant.json", grant), WorkActor, "Authorize the retained bounded correction.");
         Assert.True(granted.ExitCode == 0, string.Join("; ", granted.Errors));
         var grantId = first.InspectWork(work).Control!.Work!.CorrectionContinuation!.Id;
+        if (legacyGrant)
+        {
+            var path = Path.Combine(repository.Path, CisAgentWorkPaths.Ledger);
+            var ledger = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!;
+            ledger["corrections"]![before.CorrectionRelationshipId!]!["grant"]!.AsObject().Remove("authorizedDirection");
+            File.WriteAllText(path, ledger.ToJsonString());
+        }
         var calls = provider.Requests.Count;
         if (baselineChanged)
         {
@@ -216,6 +224,13 @@ public sealed partial class AgentExecutionTests
         Assert.Equal(admittedAt, round.StartedAtUtc);
         Assert.Equal(before.Task!.ConsumedMilliseconds + (baselineChanged ? 18_000 : 11_000), after.Task!.ConsumedMilliseconds);
         Assert.Equal(new[] { "implement", "review" }, provider.Requests.Skip(calls).Select(request => request.Mode));
+        foreach (var request in provider.Requests.Skip(calls))
+        {
+            var direction = ReadAuthorizedCorrectionDirection(request);
+            Assert.Equal(grant.Hypothesis, direction.GetProperty("applicable").GetProperty("hypothesis").GetString());
+            Assert.Equal(grant.NextAction, direction.GetProperty("applicable").GetProperty("nextAction").GetString());
+            Assert.Equal(grantId, direction.GetProperty("applicable").GetProperty("dispositionReference").GetString());
+        }
         Assert.All(provider.Requests.Skip(calls), request => Assert.True(request.Timeout <= TimeSpan.FromSeconds(baselineChanged ? 46 : 53)));
         Assert.Equal(1, after.Task.UsedAttempts);
         Assert.All(after.Corrections, round => Assert.Equal("completed", round.Status));
@@ -353,33 +368,74 @@ public sealed partial class AgentExecutionTests
     }
 
     [Fact]
-    public void StoryContinuationRecordsDueReflectionAutonomouslyBeforeAdmission()
+    public void StoryContinuationRequiresControllerAssessmentAfterFailedReviewsWithoutReimplementing()
     {
         using var repository = AgentRepository.Create(git: true);
         AdoptWorkControl(repository);
-        repository.Write("docs/cis/references/agent-provider-profile.md", "| maximum-run-seconds | 60 | Fixture adopted reflection window. |\n| direct-dirty-working-tree | denied | Preserve isolation. |\n");
-        repository.Write("app.txt", "original"); repository.CommitAll("routine reflection baseline");
-        var clock = new WorkControlClock(); var provider = new StoryExecutionProvider { DuringExecution = () => clock.Advance(2) };
-        var service = new AgentService(new CisRepositoryContextResolver(), [provider], clock: clock.Read,
+        repository.Write("docs/cis/references/agent-provider-profile.md", "| maximum-run-seconds | 30 | Fixture adopted reflection window. |\n| direct-dirty-working-tree | denied | Preserve isolation. |\n");
+        repository.Write("app.txt", "original"); repository.CommitAll("controller assessment baseline");
+        var clock = new WorkControlClock();
+        var unavailableReviewer = new StoryExecutionProvider { MalformedReview = true, DuringExecution = () => clock.Advance(10) };
+        AgentService Controller(StoryExecutionProvider provider) => new(new CisRepositoryContextResolver(), [provider], clock: clock.Read,
             textGeneration: new StoryExecutionModels(), taskContracts: new StoryContinuationContracts());
-        AllocateWorkFixture(repository, service, 180, 180);
-        var context = new CisRepositoryContextResolver().Resolve(repository.Path).Context!;
-        var ledger = new AgentWorkLedger(clock.Read);
-        var identity = new CisAgentWorkIdentity(context.RepositoryId, "CIS-0001", "WORK-090", [], ["docs/cis/changes/CIS-0001/agent-tasks/WORK-090.md"]);
-        var earlier = ledger.Admit(context, identity, "earlier-owned-execution", 60, 60);
-        Assert.True(earlier.Admitted); clock.Advance(60);
-        Assert.Equal(0, ledger.Settle(context, earlier.Reference!, "succeeded", true, "Earlier measured bounded execution", identity.AcceptedOutcomeReferences).ExitCode);
-        Assert.True(service.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!.ReflectionDue);
+        var first = Controller(unavailableReviewer);
+        AllocateWorkFixture(repository, first, 180, 180);
         var work = GovernedStoryWork(repository.Path);
-        Assert.Equal("routine-reflection-autonomous", service.InspectWork(work).Status);
-        var result = service.Execute(work, service.SelectModels(work), true, () => true, TestContext.Current.CancellationToken, null);
-        Assert.True(result.Applied, string.Join("; ", result.Errors)); Assert.Equal(2, provider.Requests.Count);
-        var after = service.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!;
-        Assert.Equal(64_000, after.Task!.ConsumedMilliseconds); Assert.Equal(1, after.Task.UsedAttempts);
-        Assert.True(after.ReflectionDue); // Autonomous story reflection does not rewrite the direct-task 3A decision.
-        Assert.Contains(after.Checkpoints, checkpoint => checkpoint.Origin == "story-controller-progress"
-            && checkpoint.StoryContractDigest == CisStoryEngineeringContract.Digest(work)
-            && checkpoint.Checkpoint.Evidence.Count > 0 && !checkpoint.Checkpoint.CloseAttempt);
+        var failed = first.Execute(work, first.SelectModels(work), true, () => true, TestContext.Current.CancellationToken, null);
+        Assert.Equal("review-failed", failed.Status);
+        var implementation = Assert.Single(failed.Runs, run => run.Stage == "Implementation");
+        var retryWork = work with { PreviousExecution = failed };
+        var second = Controller(unavailableReviewer);
+        var failedAgain = second.Execute(retryWork, second.SelectModels(retryWork), true, () => true, TestContext.Current.CancellationToken, null);
+        Assert.Equal("review-failed", failedAgain.Status);
+        Assert.Equal(3, unavailableReviewer.Requests.Count);
+        Assert.Single(unavailableReviewer.Requests, request => request.Mode == "implement");
+        var before = second.InspectWork(work).Control!.Work!;
+        Assert.Equal(30_000, before.Task!.ConsumedMilliseconds);
+        Assert.True(before.ReflectionDue); Assert.Empty(before.Corrections);
+        Assert.Contains(before.Checkpoints, checkpoint => checkpoint.Origin == "story-execution-summary"
+            && checkpoint.Checkpoint.Outcome.Contains("Independent review failed", StringComparison.Ordinal)
+            && checkpoint.Checkpoint.Evidence.Any(reference => reference.StartsWith("agent-run:", StringComparison.Ordinal)));
+        Assert.DoesNotContain(before.Checkpoints, checkpoint => checkpoint.Origin == "controller-progress");
+        var ledgerPath = Path.Combine(repository.Path, CisAgentWorkPaths.Ledger);
+        var bytes = File.ReadAllBytes(ledgerPath);
+        var fresh = Controller(unavailableReviewer);
+        var inspect = fresh.InspectWork(work);
+        Assert.Equal("controller-assessment-required", inspect.Status);
+        Assert.Contains("cis agent work progress CIS-0001 WORK-090", inspect.NextAction, StringComparison.Ordinal);
+        Assert.Equal(bytes, File.ReadAllBytes(ledgerPath));
+        var heldWork = work with { PreviousExecution = failedAgain };
+        var held = fresh.Execute(heldWork, fresh.SelectModels(heldWork), true, () => true, TestContext.Current.CancellationToken, null);
+        Assert.Equal("held", held.Status);
+        Assert.Equal(3, unavailableReviewer.Requests.Count);
+        Assert.Equal(implementation.RunId, Assert.Single(held.Runs, run => run.Stage == "Implementation").RunId);
+        Assert.Equal(30_000, fresh.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!.Task!.ConsumedMilliseconds);
+
+        var assessment = new CisAgentWorkCheckpoint(
+            "The implementation is retained; two independent reviews returned invalid evidence. No required implementation defect has been established.",
+            failedAgain.Runs.Select(run => "agent-run:" + run.RunId).ToArray(),
+            "Repair the reviewer availability/output path and reuse the same implementation rather than rewrite unreviewed work.",
+            "Retry one independent review after the reviewer is repaired, within the remaining owner allowance.",
+            "Review the retained candidate once; retain any new failure for another engineering assessment.")
+        { CloseAttempt = false };
+        var progress = fresh.RecordWorkProgress(repository.Path, "CIS-0001", "WORK-090",
+            WriteWorkInput(repository, "controller-assessment.json", new CisAgentWorkProgressRequest(assessment, inspect.Control!.Work!.Revision)), WorkActor);
+        Assert.Equal(0, progress.ExitCode);
+        Assert.Equal(30_000, progress.Work!.LastControllerReflectionMilliseconds);
+        Assert.Equal(before.LogicalAttemptId, progress.Work.LogicalAttemptId);
+        Assert.False(progress.Work.ReflectionDue);
+
+        var repairedReviewer = new StoryExecutionProvider { DuringExecution = () => clock.Advance(10) };
+        var continued = Controller(repairedReviewer);
+        var resumedWork = work with { PreviousExecution = held };
+        var completed = continued.Execute(resumedWork, continued.SelectModels(resumedWork), true, () => true, TestContext.Current.CancellationToken, null);
+        Assert.True(completed.Applied, string.Join("; ", completed.Errors));
+        Assert.Equal("review", Assert.Single(repairedReviewer.Requests).Mode);
+        Assert.Equal(implementation.RunId, Assert.Single(completed.Runs, run => run.Stage == "Implementation").RunId);
+        var after = continued.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!;
+        Assert.Equal(40_000, after.Task!.ConsumedMilliseconds);
+        Assert.Equal(before.OwnerTaskId, after.OwnerTaskId); Assert.Equal(1, after.Task.UsedAttempts);
+        Assert.Equal(before.LogicalAttemptId, after.LogicalAttemptId); Assert.Empty(after.Corrections);
     }
 
     [Fact]
@@ -540,9 +596,11 @@ public sealed partial class AgentExecutionTests
             Assert.Equal("story-task", manifest.ExecutionRoute); Assert.Equal("CIS-0001", manifest.Work!.ChangeId);
             Assert.Equal(view.LogicalAttemptId, manifest.Work.LogicalAttemptId);
         });
-        var representative = Assert.Single(view.Checkpoints, checkpoint => checkpoint.Origin == "story-controller-progress"
+        var representative = Assert.Single(view.Checkpoints, checkpoint => checkpoint.Origin == "story-execution-summary"
             && checkpoint.Checkpoint.Outcome.StartsWith("First representative repository result retained", StringComparison.Ordinal));
         Assert.Equal(2_000, representative.ActiveMilliseconds);
+        Assert.Equal(0, view.LastControllerReflectionMilliseconds);
+        Assert.Contains("No engineering continuation decision", representative.Checkpoint.Decision, StringComparison.Ordinal);
         Assert.Empty(view.Corrections);
         var beforeCalls = provider.Requests.Count;
         var resumed = service.Resume(authority.Path, result.Runs[0].RunId, "continue", WorkActor,

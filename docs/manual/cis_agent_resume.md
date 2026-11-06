@@ -3,7 +3,7 @@ title: "cis agent resume"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-10-09"
+last_reviewed: "2026-11-06"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-agent-resume
@@ -33,6 +33,10 @@ For a direct task under adopted engineering defaults or authority-wide work acco
 For a retained story stage, generic `agent resume` returns a non-success redirect to the story's `execution-plan` / `execute` route. Use `cis brd feature wizard story work-status` to inspect its canonical owner, remaining allowance, recovery state and correction history. Governed continuation reuses compatible candidates and current story/review authority; synthetic `STORY-*`, `*-IMPLEMENT` and `*-REVIEW` labels never become direct accounting owners. A new invocation or provider session does not clear the two-round automatic correction history. A relevant authorized disposition may permit one bounded next correction, while measured cost, recovery uncertainty and all approval/permission gates remain binding.
 
 Resume also enforces due controller reflection at that safe admission boundary. Cumulative active work reaches the same adopted window across runs and resumes; automatic settlement and disposition summaries do not reset it. Record a structured `agent work progress` checkpoint with the current revision and measured Cost context. It may use `closeAttempt: false` and permit autonomous continuation without new human approval or task `Blocked` state when all other gates allow it. Reflection does not clear hard allowance, repeated-blocker, recovery, permission or required-review holds.
+
+Story status reports `controller-assessment-required` when that assessment is due. The authorized orchestrating agent inspects retained implementation and failed/valid review evidence, cost and remaining capacity, then records Outcome, nonempty Evidence, Approach, Decision and the next bounded action through the existing canonical owner's `agent work progress` route. Automatic `story-execution-summary` and legacy `story-controller-progress` records never qualify; candidate reuse cannot refresh assessment credit. Explicit controller progress retains its owner-wide meaning, and incidental story records cannot clear direct-task reflection. No extra reviewer or routine human acknowledgment is needed.
+
+Granted correction continuation retains the authorized hypothesis, action and disposition provenance for both correction and review; an eligible extension adds its applicable direction without resetting history or spent work. Missing legacy direction must follow the exact-disposition recovery or bounded `simplify` reconciliation described by [`cis agent work`](cis_agent_work.md#record-a-disposition-and-resume). Within an already admitted parent, nested stages use only remaining whole seconds, rounded down, including fewer than 30; preparation remains charged and the root request minimum stays 30 seconds.
 
 A `PRODUCT/BRD-DRAFT` run can also resume after a provider interruption or a copy-back
 rejection, such as a missing coverage citation. CIS verifies that the canonical BRD still

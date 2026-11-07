@@ -41,7 +41,9 @@ public sealed partial class MutationRunServiceTests
             Assert.Equal(result.Pilot!.BasisSha256, reused.BasisSha256);
             foreach (var key in CisNativeWorkEnvironment.Keys) Environment.SetEnvironmentVariable(key, "bookkeeping-only-currentness-probe");
             var authorityHeld = MutationRunService.InspectCorrectnessPilot(fixture.Path, "representative.json");
-            Assert.False(authorityHeld.Ready); Assert.True(authorityHeld.NativeReady);
+            // Invocation coordinates cannot supply this ungoverned pilot's missing authority provenance.
+            Assert.False(authorityHeld.Ready); Assert.False(authorityHeld.NativeReady);
+            Assert.Equal("pilot-required", authorityHeld.Status);
             Assert.Equal(reused.BasisSha256, authorityHeld.BasisSha256);
             Assert.Equal(currentReport, File.ReadAllBytes(fixture.Latest));
             Assert.Equal(observed.Length, Captures().Length);

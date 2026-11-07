@@ -1,10 +1,93 @@
 using Cis.Abstractions;
+using System.Text.Json;
 using Xunit;
 
 namespace Cis.Modules.Testing.Tests;
 
 public sealed class IncrementalRevalidationTests
 {
+    [Fact]
+    public void FailedRevalidationKeepsItsLeaseThroughFinalizationAndDoesNotOverwriteASameParentInvocation()
+    {
+        using var fixture = new IncrementalTestServiceTests.Fixture();
+        fixture.Save(fixture.Profile with { MutationCommand = null, MaxRetainedBytes = 32 * 1024 * 1024 });
+        var authority = new IncrementalNativeWorkTests.UnitInvocationAuthority(fixture.Path);
+        var parentAdmission = authority.Admit(new(fixture.Path, "native/shared-revalidation-parent", "controlled-parent", 120));
+        Assert.True(parentAdmission.Allowed);
+        using var parent = parentAdmission.Scope!;
+        var service = new IncrementalTestService(fixture, authority, authority);
+        var options = new IncrementalTestOptions(fixture.Path, "profile.json", "unit", 4, 120)
+        {
+            Work = new("CIS-0001", "WORK-090", parent.Reference.ExecutionId, fixture.Path, "Controlled unit controller")
+        };
+        var seeded = service.Run(options, 0, TestContext.Current.CancellationToken);
+        Assert.True(seeded.ExitCode == 0, string.Join("; ", seeded.Diagnostics));
+        var calls = fixture.Calls();
+        var statePath = fixture.Full(IncrementalTestService.LocalRoot + "/sample/state.json");
+        var latestPath = fixture.Full(IncrementalTestService.LocalRoot + "/sample/latest-run.json");
+        var graphReads = 0;
+        var expectedFailure = false;
+        var finalizationObserved = false;
+        IncrementalTestResult? competing = null;
+        const string reason = "Reviewed compatible producer while exercising the failure-publication boundary.";
+        fixture.BeforeGraphRead = () =>
+        {
+            if (++graphReads != 3) return;
+            // Old/current selection have completed and the retained batches have
+            // been updated. Fail the final selection before result publication.
+            fixture.BeforeGraphRead = null;
+            expectedFailure = true;
+            throw new IOException("Controlled final graph read failed after retained cache entries were updated.");
+        };
+        authority.BeforeStorageReservation = (operation, reference, operationId) =>
+        {
+            if (!expectedFailure || finalizationObserved || operation != "incremental-revalidate"
+                || !operationId.StartsWith("evidence-mutation/", StringComparison.Ordinal)) return;
+            finalizationObserved = true;
+            Assert.Equal(parent.Reference.ExecutionId, reference.ParentExecutionId);
+            var stateBefore = File.ReadAllBytes(statePath);
+            var latestBefore = File.ReadAllBytes(latestPath);
+            var attempted = service.Run(options, 0, TestContext.Current.CancellationToken);
+            competing = attempted;
+            Assert.Equal(4, attempted.ExitCode);
+            Assert.Equal(parent.Reference.ExecutionId, attempted.WorkReference!.ParentExecutionId);
+            Assert.Equal(0, attempted.ExecutedUnitBatches);
+            Assert.Contains(attempted.Diagnostics, diagnostic => diagnostic.Contains("run.lock", StringComparison.Ordinal));
+            // Failure to acquire the native lease cannot publish a failure over
+            // the state or latest marker owned by the first invocation.
+            Assert.Equal(stateBefore, File.ReadAllBytes(statePath));
+            Assert.Equal(latestBefore, File.ReadAllBytes(latestPath));
+        };
+
+        var failed = service.Revalidate(options, typeof(IncrementalTestService).Assembly.Location, reason);
+
+        Assert.True(expectedFailure); Assert.True(finalizationObserved); Assert.NotNull(competing);
+        Assert.Equal("revalidation-failed", failed.Status); Assert.Equal(4, failed.ExitCode);
+        Assert.Contains(failed.Diagnostics, diagnostic => diagnostic.Contains("Controlled final graph read failed", StringComparison.Ordinal));
+        Assert.True(CisNativeWorkSettlement.Complete(authority.InspectSettlement(fixture.Path, failed.WorkReference!), failed.WorkReference!));
+        Assert.All(fixture.SavedState().Batches.Values,
+            batch => Assert.Contains(batch.Unit!.Diagnostics, diagnostic => diagnostic.Contains(reason, StringComparison.Ordinal)));
+        authority.BeforeStorageReservation = null;
+        var accepted = service.Run(options, 0, TestContext.Current.CancellationToken);
+        Assert.True(accepted.ExitCode == 0, string.Join("; ", accepted.Diagnostics));
+        Assert.Equal(0, accepted.ExecutedUnitBatches); Assert.Equal(2, accepted.ReusedUnitBatches);
+        Assert.Equal(parent.Reference.ExecutionId, accepted.WorkReference!.ParentExecutionId);
+        var finalState = fixture.SavedState();
+        Assert.Equal(accepted.WorkReference, finalState.WorkReference);
+        Assert.False(finalState.RecoveryRequired);
+        Assert.Null(finalState.ActiveExecutionUntilUtc); Assert.Null(finalState.ActiveWorkReference);
+        var latest = JsonSerializer.Deserialize<IncrementalTestResult>(File.ReadAllBytes(latestPath),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        Assert.Equal(accepted.WorkReference, latest.WorkReference);
+        Assert.Equal(accepted.Status, latest.Status);
+        Assert.All(service.Plan(options).Batches, batch => Assert.True(batch.UnitCurrent));
+        Assert.Equal(calls, fixture.Calls());
+        using var released = new FileStream(fixture.Full(MutationRunService.LocalRoot + "/run.lock"),
+            FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        Assert.True(CisNativeWorkSettlement.Complete(parent.Finish("native-finished", "The controlled same-parent invocations settled.", []),
+            parent.Reference));
+    }
+
     [Fact]
     public void RevalidationSettlementFailureHoldsItsLatestReceiptWithoutRepeatingNativeWork()
     {

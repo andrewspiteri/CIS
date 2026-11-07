@@ -36,10 +36,12 @@ public sealed partial class IncrementalTestService
         var diagnostics = new List<string>();
         CisNativeWorkAdmission? admission = null;
         ICisNativeWorkScope? work = null;
+        FileStream? lease = null;
         string? recoveryOf = null;
         var restorationCompleted = false;
         NativeCorrectnessPilotResult? pilot = null;
-        IncrementalTestResult Complete(IncrementalTestResult result) => FinishIncrementalResult(input, state,
+        // Settle admitted work after any failure, but publish only while owning the native lease.
+        IncrementalTestResult Complete(IncrementalTestResult result) => FinishIncrementalResult(lease is null ? null : input, state,
             result with { WorkReference = admission?.Reference, WorkCoverage = admission?.Coverage ?? "unaccounted-non-adopted", Pilot = pilot },
             work, state?.RecoveryRequired == true || recoveryOf is not null && !restorationCompleted ? "RecoveryRequired"
                 : recoveryOf is not null ? "Restored" : "native-finished", admission?.Control);
@@ -85,7 +87,7 @@ public sealed partial class IncrementalTestService
             // Share the native build/output lease with the existing mutation command.
             var leasePath = Safe(input.Repository, MutationRunService.LocalRoot + "/run.lock");
             Directory.CreateDirectory(Path.GetDirectoryName(leasePath)!);
-            using var lease = new FileStream(leasePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            lease = new FileStream(leasePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             state = State(input);
             state = state with
             {
@@ -272,7 +274,7 @@ public sealed partial class IncrementalTestService
                 DurationMilliseconds = watch.ElapsedMilliseconds,
                 Diagnostics = diagnostics.Append(error.Message).ToArray(),
             };
-            if (input is not null)
+            if (input is not null && lease is not null)
             {
                 try { SaveLatest(input, result); }
                 catch (Exception saveError) when (Expected(saveError)) { result = result with { Diagnostics = result.Diagnostics.Append(saveError.Message).ToArray() }; }
@@ -290,7 +292,11 @@ public sealed partial class IncrementalTestService
                 Diagnostics = diagnostics.Append("Native work was cancelled; unfinished recovery remains held.").ToArray()
             });
         }
-        finally { work?.Dispose(); }
+        finally
+        {
+            try { work?.Dispose(); }
+            finally { lease?.Dispose(); }
+        }
     }
 
     private (CisNativeWorkOptions? Association, string? RecoveryOf, string? RecoveryBasis) RetainedWork(IncrementalTestOptions options)

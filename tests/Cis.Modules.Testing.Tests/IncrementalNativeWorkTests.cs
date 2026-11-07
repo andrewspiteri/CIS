@@ -140,6 +140,7 @@ public sealed class IncrementalNativeWorkTests
         private readonly Dictionary<string, (CisAgentWorkReference Reference, string Operation, bool Finished)> _executions = new(StringComparer.Ordinal);
         private readonly Dictionary<string, CisOwnedStorageOperation> _operations = new(StringComparer.Ordinal);
         public Func<string, string?, bool>? FailFinish { get; init; }
+        public Action<string, CisAgentWorkReference, string>? BeforeStorageReservation { get; set; }
         public bool Reconciled { get; set; }
         public bool NextOperationHeld { get; init; }
         public bool FailRootFinalizationReservation { get; init; }
@@ -178,7 +179,7 @@ public sealed class IncrementalNativeWorkTests
             return new(status, view, [], false);
         }
         public CisNativeWorkAdmission Admit(CisNativeWorkRequest request)
-            => Admit(request.ExecutionId, request.MaximumSeconds, null, request.Operation);
+            => Admit(request.ExecutionId, request.MaximumSeconds, request.Association?.ParentExecutionId, request.Operation);
         private CisNativeWorkAdmission Admit(string executionId, int maximumSeconds, string? parent, string operation)
         {
             var reference = new CisAgentWorkReference("fixture", "unit-protocol", "CIS-0001", "WORK-090", "WORK-090", executionId, "fixture-attempt", parent);
@@ -195,6 +196,7 @@ public sealed class IncrementalNativeWorkTests
             long maximumGrowthBytes, IReadOnlyList<CisOwnedStoragePath>? claims = null, bool cleanup = false,
             bool clampToRemaining = false, string? actor = null)
         {
+            BeforeStorageReservation?.Invoke(_executions[reference.ExecutionId].Operation, reference, operationId);
             if (FailRootFinalizationReservation && reference.ParentExecutionId is null
                 && operationId.StartsWith("evidence-mutation/", StringComparison.Ordinal) && maximumGrowthBytes > 0)
                 return new(new("held", true, Storage().Storage, ["Controlled result-finalization storage admission failure."]), null, 0);

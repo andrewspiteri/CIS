@@ -27,6 +27,11 @@ treating saved native success as proof that accounting finished. Reconcile that
 exact execution through its original authority; a later run reuses still-current
 reports instead of executing them again solely for bookkeeping.
 
+`run` and `revalidate` keep the native output lease through final publication,
+including failure handling and supported cancellation. If another invocation owns
+that lease, the new invocation returns failure and settles its admitted work
+without replacing the current state or latest result.
+
 The same settlement rule applies to governed `revalidate` and `refine` metadata
 receipts. Their successful native/derived observations remain distinct from the
 receipt's overall status. A failed metadata `Finish` does not publish a completed

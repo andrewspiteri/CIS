@@ -10,9 +10,11 @@ public sealed partial class IncrementalTestService
     {
         CisNativeWorkAdmission? admission = null;
         ICisNativeWorkScope? work = null;
+        FileStream? lease = null;
         Input? input = null;
         IncrementalTestState? retainedState = null;
-        IncrementalTestResult Complete(IncrementalTestResult result) => FinishIncrementalResult(input, retainedState,
+        // Settle admitted work after any failure, but publish only while owning the native lease.
+        IncrementalTestResult Complete(IncrementalTestResult result) => FinishIncrementalResult(lease is null ? null : input, retainedState,
             result with { WorkReference = admission?.Reference, WorkCoverage = admission?.Coverage ?? "unaccounted-non-adopted" },
             work, "native-finished", admission?.Control);
         try
@@ -35,7 +37,7 @@ public sealed partial class IncrementalTestService
             var oldHelperHash = HashFile(previousHelper);
             var oldInput = Read(options, oldHash, oldHelperHash, legacySessionEnvironment);
             Directory.CreateDirectory(Path.GetDirectoryName(Safe(input.Repository, MutationRunService.LocalRoot + "/run.lock"))!);
-            using var lease = new FileStream(Safe(input.Repository, MutationRunService.LocalRoot + "/run.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            lease = new FileStream(Safe(input.Repository, MutationRunService.LocalRoot + "/run.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             var state = State(input);
             retainedState = state;
             Require(StateSettlementErrors(input.Repository, state, Safe(input.Root, "latest-run.json")).Length == 0,
@@ -110,6 +112,10 @@ public sealed partial class IncrementalTestService
             return Complete(result);
         }
         catch (Exception error) when (Expected(error)) { return Complete(new("revalidation-failed", 4) { Diagnostics = [error.Message] }); }
-        finally { work?.Dispose(); }
+        finally
+        {
+            try { work?.Dispose(); }
+            finally { lease?.Dispose(); }
+        }
     }
 }

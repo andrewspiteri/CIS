@@ -493,6 +493,7 @@ public sealed class IncrementalTestServiceTests
         internal bool IncludeNewATests { get; set; }
         internal string BuildSuffix { get; set; } = "";
         internal string? GraphFault { get; init; }
+        internal Action? BeforeGraphRead { get; set; }
         internal Fixture()
         {
             Directory.CreateDirectory(Path);
@@ -539,6 +540,7 @@ public sealed class IncrementalTestServiceTests
 
         public CisGraphSnapshotReadResult Read(string repositoryPath)
         {
+            BeforeGraphRead?.Invoke();
             var files = new List<string> { "src/A.cs", "src/B.cs", "src/Shared.cs", "tests/ATests.cs", "tests/BTests.cs", "config.json" };
             var nodes = new List<CisGraphNode> { Node("a", "src/A.cs"), Node("b", "src/B.cs"), Node("shared", "src/Shared.cs"),
                 Node("at", "tests/ATests.cs", "Fixture.ATests"), Node("bt", "tests/BTests.cs", "Fixture.BTests") };

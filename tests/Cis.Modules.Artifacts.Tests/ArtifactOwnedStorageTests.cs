@@ -7,6 +7,33 @@ namespace Cis.Modules.Artifacts.Tests;
 public sealed partial class ArtifactRetentionTests
 {
     [Fact]
+    public void DisjointReservedGrowthDoesNotRejectThisOperationsPermittedCompaction()
+    {
+        using var repository = Fixture.Create();
+        using var other = Fixture.Create();
+        repository.Write(".cis/local/runs/old/result.txt", new string('a', 200_000));
+        repository.Age(".cis/local/runs/old/result.txt", new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        var otherRoot = Path.Combine(other.Path, ".cis/local");
+        var authority = new ArtifactAuthority(repository.Path)
+        {
+            OtherReservedBytes = 2 * 1024 * 1024,
+            AdditionalOwned = [otherRoot],
+            AfterFirstReservation = () => other.Write(".cis/local/build/output.txt", new string('b', 1024 * 1024))
+        };
+
+        var result = repository.Service(authority, authority).Compact(repository.Path, "runs", true);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal("compacted", result.Status);
+        Assert.Single(authority.RequestedGrowth); Assert.Single(authority.GrantedGrowth);
+        Assert.True(result.OwnedStorage!.Storage!.OwnedBytes > authority.GrantedGrowth[0]);
+        Assert.Equal(2 * 1024 * 1024, result.OwnedStorage.Storage.ReservedBytes);
+        Assert.Equal(1024 * 1024, new FileInfo(Path.Combine(otherRoot, "build/output.txt")).Length);
+        Assert.False(Directory.Exists(Path.Combine(repository.Path, ".cis/local/runs/old")));
+        Assert.Single(result.Archives);
+    }
+
+    [Fact]
     public void EmptyNestedArchiveNamesCannotSpendCapacityReservedForOtherWork()
     {
         using var repository = Fixture.Create();
@@ -172,8 +199,12 @@ public sealed partial class ArtifactRetentionTests
     private sealed class ArtifactAuthority(string repository, bool governed = true) : ICisNativeWorkController, ICisOwnedStorageController
     {
         private readonly CisAgentWorkReference reference = new("fixture-adoption", "artifacts-fixture", "CIS-0001", "WORK-A", "WORK-A", "native-artifacts", "fixture-attempt", null);
+        private readonly Dictionary<string, (string Id, long Growth, long Initial, string[] Paths)> reservations = new(StringComparer.Ordinal);
+        private bool firstReservationObserved;
         public string[] Protected { get; init; } = [];
         public string[]? Owned { get; init; }
+        public string[] AdditionalOwned { get; init; } = [];
+        public Action? AfterFirstReservation { get; init; }
         public bool DenyGrowth { get; set; }
         public long OtherReservedBytes { get; init; }
         public long? MaximumGrantedGrowth { get; init; }
@@ -194,29 +225,58 @@ public sealed partial class ArtifactRetentionTests
         {
             if (!governed) return new("unaccounted", false, null, []);
             var local = Path.GetFullPath(Path.Combine(repository, ".cis/local"));
-            var bytes = Directory.Exists(local) ? Directory.EnumerateFiles(local, "*", SearchOption.AllDirectories).Sum(path => new FileInfo(path).Length) : 0;
+            var bytes = Bytes(new[] { local }.Concat(AdditionalOwned));
             var controls = new[] { CisAgentWorkPaths.Ledger, CisAgentWorkPaths.Adoption, CisAgentWorkPaths.Lock }
                 .Select(path => Path.GetFullPath(Path.Combine(repository, path))).ToArray();
             return new("current", true, new("artifacts-fixture", "CIS-0001", "WORK-A", "fixture finite ceiling", 16 * 1024 * 1024,
-                bytes, 0, OtherReservedBytes, (Owned ?? [local]).Select(Path.GetFullPath).ToArray(),
+                bytes, 0, OtherReservedBytes, (Owned ?? [local]).Concat(AdditionalOwned).Select(Path.GetFullPath).ToArray(),
                 Protected.Concat(controls).Select(Path.GetFullPath).ToArray(), "fixture-revision"), []);
         }
         public CisOwnedStorageAdmission Reserve(string repositoryPath, CisAgentWorkReference work, string operationId,
             long maximumGrowthBytes, IReadOnlyList<CisOwnedStoragePath>? claims = null, bool cleanup = false,
             bool clampToRemaining = false, string? actor = null)
         {
-            RequestedGrowth.Add(maximumGrowthBytes);
             var inventory = ((ICisOwnedStorageController)this).Inspect(repositoryPath);
+            if (reservations.TryGetValue(operationId, out var previous))
+            {
+                var paths = previous.Paths.Concat((claims ?? []).Select(claim => Path.GetFullPath(claim.Path))).Distinct().ToArray();
+                var initial = previous.Initial + Bytes(paths) - Bytes(previous.Paths);
+                reservations[operationId] = (previous.Id, previous.Growth, initial, paths);
+                ClaimedPaths.AddRange((claims ?? []).Select(claim => Path.GetFullPath(claim.Path)));
+                return new(inventory, previous.Id, previous.Growth)
+                { Operation = new(paths, initial, Bytes(paths), previous.Growth) };
+            }
+            RequestedGrowth.Add(maximumGrowthBytes);
             var granted = Math.Min(maximumGrowthBytes, MaximumGrantedGrowth ?? long.MaxValue);
             if (DenyGrowth || inventory.Storage is null || granted > inventory.Storage.RemainingBytes)
                 return new(inventory with { Status = "held", Errors = ["The finite owner ceiling holds artifact growth."] }, null, 0);
             ClaimedPaths.AddRange((claims ?? []).Select(claim => Path.GetFullPath(claim.Path)));
             GrantedGrowth.Add(granted);
-            return new(inventory, "fixture-reservation", granted);
+            var domain = (claims ?? []).Select(claim => Path.GetFullPath(claim.Path)).Distinct().ToArray();
+            var baseline = Bytes(domain);
+            var id = Guid.NewGuid().ToString("N");
+            reservations[operationId] = (id, granted, baseline, domain);
+            var admission = new CisOwnedStorageAdmission(inventory, id, granted)
+            { Operation = new(domain, baseline, baseline, granted) };
+            if (!firstReservationObserved) { firstReservationObserved = true; AfterFirstReservation?.Invoke(); }
+            return admission;
         }
         public CisOwnedStorageResult Settle(string repositoryPath, CisAgentWorkReference work, string reservationId,
             bool safelyStopped, IReadOnlyList<string>? requiredPaths = null, IReadOnlyList<string>? supersededRequiredPaths = null)
-        { Assert.True(safelyStopped); Settlements++; return ((ICisOwnedStorageController)this).Inspect(repositoryPath); }
+        {
+            Assert.True(safelyStopped); Settlements++;
+            foreach (var key in reservations.Where(pair => pair.Value.Id == reservationId).Select(pair => pair.Key).ToArray()) reservations.Remove(key);
+            return ((ICisOwnedStorageController)this).Inspect(repositoryPath);
+        }
+        private static long Bytes(IEnumerable<string> roots)
+        {
+            var files = new HashSet<string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+            foreach (var root in roots)
+                foreach (var file in File.Exists(root) ? new[] { root }
+                    : Directory.Exists(root) ? Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories) : [])
+                    files.Add(Path.GetFullPath(file));
+            return files.Sum(path => new FileInfo(path).Length);
+        }
         private sealed class Scope(ArtifactAuthority owner, CisAgentWorkReference work, string repository) : ICisNativeWorkScope
         {
             public string AuthorityPath => repository;

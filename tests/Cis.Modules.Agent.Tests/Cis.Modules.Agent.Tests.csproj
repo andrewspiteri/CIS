@@ -5,10 +5,19 @@
     <ProjectReference Include="..\..\src\Cis.Host\Cis.Host.csproj" />
     <ProjectReference Include="..\..\src\Cis.Providers.Agent.Codex\Cis.Providers.Agent.Codex.csproj" />
     <ProjectReference Include="..\..\src\Cis.Providers.Agent.Claude\Cis.Providers.Agent.Claude.csproj" />
+    <ProjectReference Include="..\..\tools\Cis.Testing.NativeFixture\Cis.Testing.NativeFixture.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit.v3" />
     <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
   </ItemGroup>
+  <Target Name="CopyNativeTestingFixture" AfterTargets="Build">
+    <ItemGroup>
+      <NativeTestingFixture Include="../../tools/Cis.Testing.NativeFixture/bin/$(Configuration)/$(TargetFramework)/Cis.Testing.NativeFixture.dll" />
+      <NativeTestingFixture Include="../../tools/Cis.Testing.NativeFixture/bin/$(Configuration)/$(TargetFramework)/Cis.Testing.NativeFixture.runtimeconfig.json" />
+      <NativeTestingFixture Include="../../tools/Cis.Testing.NativeFixture/bin/$(Configuration)/$(TargetFramework)/Cis.Testing.NativeFixture.deps.json" />
+    </ItemGroup>
+    <Copy SourceFiles="@(NativeTestingFixture)" DestinationFolder="$(TargetDir)native-fixture" />
+  </Target>
 </Project>

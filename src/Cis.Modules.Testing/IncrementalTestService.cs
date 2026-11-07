@@ -14,8 +14,10 @@ public sealed partial class IncrementalTestService
         {
             var input = Read(options);
             var state = State(input);
-            return Summarize(input, options, Select(input, state, options.Force), state,
+            var result = Summarize(input, options, Select(input, state, options.Force), state,
                 state.RecoveryRequired || state.ActiveExecutionUntilUtc is not null ? "recovery-required" : "planned", 0);
+            return StateSettlementErrors(input.Repository, state, Safe(input.Root, "latest-run.json")) is { Length: > 0 } errors
+                ? result with { Status = "settlement-required", ExitCode = 4, ScopeComplete = false, Diagnostics = errors } : result;
         }
         catch (Exception error) when (Expected(error)) { return new("invalid-plan", 2) { Diagnostics = [error.Message] }; }
     }
@@ -37,28 +39,10 @@ public sealed partial class IncrementalTestService
         string? recoveryOf = null;
         var restorationCompleted = false;
         NativeCorrectnessPilotResult? pilot = null;
-        IncrementalTestResult Complete(IncrementalTestResult result)
-        {
-            if (input is not null)
-            {
-                var storage = FinishNativeStorage(input, state);
-                if (storage is { Allowed: false }) result = result with
-                {
-                    Status = "failed",
-                    ExitCode = 4,
-                    Diagnostics = result.Diagnostics.Concat(storage.Errors).ToArray()
-                };
-            }
-            return result with
-            {
-                WorkReference = admission?.Reference,
-                WorkCoverage = admission?.Coverage ?? "unaccounted-non-adopted",
-                Pilot = pilot,
-                WorkControl = work?.Finish(state?.RecoveryRequired == true || recoveryOf is not null && !restorationCompleted ? "RecoveryRequired"
-                    : recoveryOf is not null ? "Restored" : "native-finished", "Native incremental execution: " + result.Status,
-                    result.StatePath is { } retained ? [retained] : []) ?? admission?.Control
-            };
-        }
+        IncrementalTestResult Complete(IncrementalTestResult result) => FinishIncrementalResult(input, state,
+            result with { WorkReference = admission?.Reference, WorkCoverage = admission?.Coverage ?? "unaccounted-non-adopted", Pilot = pilot },
+            work, state?.RecoveryRequired == true || recoveryOf is not null && !restorationCompleted ? "RecoveryRequired"
+                : recoveryOf is not null ? "Restored" : "native-finished", admission?.Control);
         try
         {
             var retained = RetainedWork(options);
@@ -165,6 +149,7 @@ public sealed partial class IncrementalTestService
                     StatePath = Relative(input.Repository, input.StatePath),
                     Diagnostics = pilot.Diagnostics.Append(pilot.NextAction).ToArray()
                 });
+            PrepareReportMutations(input, state, selection.Batches, options);
             PruneRetired(input, state, selection.Batches.Select(batch => batch.Id));
             SaveLatest(input, new("running", 4) { ProfileId = input.Profile.Id, Layer = options.Layer });
             if (state.ActiveExecutionUntilUtc is not null)
@@ -225,7 +210,8 @@ public sealed partial class IncrementalTestService
                     state.Batches[batch.Id] = saved;
                     Save(input, state);
                     CleanWork(input, !result.Completed);
-                    if (!result.Completed) { diagnostics.AddRange(result.Diagnostics); failed = true; break; }
+                    if (!result.Completed || execution.SettlementErrors.Count > 0)
+                    { diagnostics.AddRange(result.Diagnostics); failed = true; break; }
                 }
                 if (!mutationWanted || Current(input, batch.SourceFile, saved.Mutation, batch.MutationFingerprint, true)) continue;
                 if (options.MaximumSeconds - watch.Elapsed.TotalSeconds <= reserve + 2) break;
@@ -255,7 +241,8 @@ public sealed partial class IncrementalTestService
                 assessed = assessed with { Status = assessed.Completed ? assessed.Mutation?.TimedOut > 0 ? "completed-with-timeouts" : "completed" : "failed" };
                 state.Batches[batch.Id] = saved with { Mutation = assessed };
                 Save(input, state);
-                if (!assessed.Completed) { diagnostics.AddRange(assessed.Diagnostics); failed = true; break; }
+                if (!assessed.Completed || input.SettlementErrors.Count > 0)
+                { diagnostics.AddRange(assessed.Diagnostics); failed = true; break; }
             }
             var final = Select(Read(options), state, false);
             var resultSummary = Summarize(input, options, final, state, failed ? cancellationToken.IsCancellationRequested ? "cancelled" : "failed" : "completed", failed ? 4 : 0) with
@@ -306,7 +293,7 @@ public sealed partial class IncrementalTestService
         finally { work?.Dispose(); }
     }
 
-    private static (CisNativeWorkOptions? Association, string? RecoveryOf, string? RecoveryBasis) RetainedWork(IncrementalTestOptions options)
+    private (CisNativeWorkOptions? Association, string? RecoveryOf, string? RecoveryBasis) RetainedWork(IncrementalTestOptions options)
     {
         var repository = Path.GetFullPath(options.RepositoryPath);
         var profilePath = Safe(repository, options.ProfilePath);
@@ -331,6 +318,9 @@ public sealed partial class IncrementalTestService
         var path = Safe(repository, LocalRoot + "/" + id + "/state.json");
         if (!File.Exists(path)) return (null, null, recipe);
         var state = ReadJson<IncrementalTestState>(path, 16 * 1024 * 1024);
+        if (!state.RecoveryRequired && state.ActiveExecutionUntilUtc is null)
+            Require(StateSettlementErrors(repository, state, Safe(repository, LocalRoot + "/" + id + "/latest-run.json")).Length == 0,
+                "Required native settlement remains unresolved. Reconcile the exact retained work reference before another invocation; its valid reports do not need to be rerun.");
         if (!state.RecoveryRequired && state.ActiveExecutionUntilUtc is null && state.ActiveWorkReference is null) return (null, null, recipe);
         Require(state.RecoveryBasis is null || state.RecoveryBasis == recipe,
             "The retained recovery recipe changed. Inspect the original native work and obtain a bounded authorized recovery decision; a new profile cannot spend its restoration reserve.");
@@ -394,8 +384,15 @@ public sealed partial class IncrementalTestService
             .Replace("{mutationConfig}", mutationConfig ?? "", StringComparison.Ordinal)).ToArray();
         limits = limits with { Environment = NativeEnvironment(input.Profile, working) };
         var execution = MutationRunService.Execute(input.Repository, output, input.Storage, limits, expanded, work, input.Cancellation,
-            input.OwnedStorage, input.ActiveStorage);
-        work?.Finish("native-finished", "Native incremental stage completed: " + execution.Status, []);
+            input.OwnedStorage, input.ActiveStorage) with
+        { SettlementReference = input.Work?.Reference, WorkAuthorityPath = work?.AuthorityPath };
+        if (work is not null)
+        {
+            var control = work.Finish("native-finished", "Native incremental stage completed: " + execution.Status, []);
+            var errors = MutationRunService.SettlementErrors(control, work.Reference);
+            execution = execution with { SettlementErrors = errors };
+            input.SettlementErrors.AddRange(errors);
+        }
         state = state with
         {
             ActiveExecutionUntilUtc = execution.SafelyStopped ? null : state.ActiveExecutionUntilUtc,

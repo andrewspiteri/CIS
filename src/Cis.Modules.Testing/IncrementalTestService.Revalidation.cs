@@ -10,13 +10,11 @@ public sealed partial class IncrementalTestService
     {
         CisNativeWorkAdmission? admission = null;
         ICisNativeWorkScope? work = null;
-        IncrementalTestResult Complete(IncrementalTestResult result) => result with
-        {
-            WorkReference = admission?.Reference,
-            WorkCoverage = admission?.Coverage ?? "unaccounted-non-adopted",
-            WorkControl = work?.Finish("native-finished", "Incremental revalidation metadata: " + result.Status,
-                result.StatePath is { } state ? [state] : []) ?? admission?.Control
-        };
+        Input? input = null;
+        IncrementalTestState? retainedState = null;
+        IncrementalTestResult Complete(IncrementalTestResult result) => FinishIncrementalResult(input, retainedState,
+            result with { WorkReference = admission?.Reference, WorkCoverage = admission?.Coverage ?? "unaccounted-non-adopted" },
+            work, "native-finished", admission?.Control);
         try
         {
             Require(reason is { Length: > 0 and <= 1024 } && !string.IsNullOrWhiteSpace(reason), "A reviewed compatibility reason is required.");
@@ -24,7 +22,7 @@ public sealed partial class IncrementalTestService
             admission = AdmitMetadata(options, "incremental-revalidate");
             if (!admission.Allowed) return Complete(new("held", 4) { Diagnostics = admission.Errors });
             work = admission.Scope;
-            var input = MetadataInput(options, work);
+            input = MetadataInput(options, work);
             Require(Path.IsPathFullyQualified(previousTestingAssembly) && File.Exists(previousTestingAssembly)
                 && !CisPathSafety.IsUnderRoot(input.Repository, previousTestingAssembly, allowRoot: true)
                 && !CisPathSafety.ContainsReparsePoint(Path.GetPathRoot(previousTestingAssembly)!, previousTestingAssembly),
@@ -39,6 +37,9 @@ public sealed partial class IncrementalTestService
             Directory.CreateDirectory(Path.GetDirectoryName(Safe(input.Repository, MutationRunService.LocalRoot + "/run.lock"))!);
             using var lease = new FileStream(Safe(input.Repository, MutationRunService.LocalRoot + "/run.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             var state = State(input);
+            retainedState = state;
+            Require(StateSettlementErrors(input.Repository, state, Safe(input.Root, "latest-run.json")).Length == 0,
+                "Reconcile the original native and metadata work before producer revalidation; compatibility cannot clear unsettled accounting.");
             Require(state.ActiveExecutionUntilUtc is null, "An active native invocation must finish before cache revalidation.");
             var old = Select(oldInput, state, false);
             var current = Select(input, state, false);

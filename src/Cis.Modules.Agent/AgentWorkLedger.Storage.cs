@@ -20,7 +20,12 @@ internal sealed partial class AgentWorkLedger
     private sealed record StorageClaim(string Path, string OwnerTaskId, bool Scratch, bool Required,
         string? RequiredByExecutionId = null, string? SupersededByExecutionId = null);
     private sealed record StorageReservation(CisAgentWorkReference Reference, string OperationId, long MaximumGrowthBytes,
-        long RecordHeadroomBytes, IReadOnlyList<string> Paths, bool Cleanup, bool Finalized = false);
+        long RecordHeadroomBytes, IReadOnlyList<string> Paths, bool Cleanup, bool Finalized = false)
+    {
+        public IReadOnlyList<string> OperationPaths { get; init; } = [];
+        public IReadOnlyList<string> AccountingPaths { get; init; } = [];
+        public long? InitialOperationBytes { get; init; }
+    }
     private sealed record StorageSnapshot(Ledger State, Change Change, string OwnerTaskId, long OwnedBytes,
         long ProtectedBytes, IReadOnlyList<string> Paths, IReadOnlyList<string> ProtectedPaths);
 
@@ -79,6 +84,9 @@ internal sealed partial class AgentWorkLedger
                 || pair.Value.SupersededByExecutionId is { } replacement && !change.Executions.ContainsKey(replacement))
             || storage.Reservations.Any(pair => !BoundedText(pair.Key) || pair.Value is null
                 || pair.Value.MaximumGrowthBytes < 0 || pair.Value.RecordHeadroomBytes < 0 || pair.Value.Paths is null
+                || pair.Value.OperationPaths is null || pair.Value.AccountingPaths is null || pair.Value.InitialOperationBytes < 0
+                || pair.Value.OperationPaths.Any(path => !Path.IsPathFullyQualified(path))
+                || pair.Value.AccountingPaths.Any(path => !Path.IsPathFullyQualified(path))
                 || !change.Executions.TryGetValue(pair.Value.Reference.ExecutionId, out var execution) || execution.Reference != pair.Value.Reference))
             throw new InvalidDataException("Owned-storage accounting is incomplete; restore its original claims and reservations rather than assuming zero usage.");
         foreach (var grouped in StorageGroup(state, change)) ValidateStoragePolicy(authority, grouped.Storage!.Policy);
@@ -126,6 +134,7 @@ internal sealed partial class AgentWorkLedger
             // temporarily use that headroom to free an otherwise full ordinary pool.
             var existing = allocation.Reservations.FirstOrDefault(pair => pair.Value.Reference == reference
                 && pair.Value.OperationId == operationId);
+            var operation = StorageOperation(authority, snapshot.State, change, reference, claims, existing.Value);
             var retainedProtection = 0;
             var deletionRepository = execution.Stage?.RepositoryPath ?? authority.RepositoryPath;
             var deletionPaths = new[] { ".cis/local/artifacts", ".cis/local/testing/mutation/run.lock" }
@@ -143,14 +152,24 @@ internal sealed partial class AgentWorkLedger
                 var merged = previous.Paths.Concat((claims ?? []).Select(claim => Path.GetFullPath(claim.Path)))
                     .Distinct(StoragePathComparer).ToArray();
                 if (merged.Length > 100) throw new InvalidDataException("One native storage operation may retain at most 100 exact owned path claims.");
-                if (merged.Length == previous.Paths.Count && (claims ?? []).All(claim => allocation.Claims.TryGetValue(Path.GetFullPath(claim.Path), out var current)
+                foreach (var claim in (claims ?? []).Where(item => item.MutatesExisting))
+                    ValidateStorageMutation(snapshot.State, change, reference, Path.GetFullPath(claim.Path), existing.Key);
+                ValidateOperationOverlap(snapshot.State, change, reference, operation.Paths, operation.Accounting, existing.Key);
+                if (merged.Length == previous.Paths.Count && operation.Paths.SequenceEqual(previous.OperationPaths, StoragePathComparer)
+                    && (claims ?? []).All(claim => allocation.Claims.TryGetValue(Path.GetFullPath(claim.Path), out var current)
                     && current.Scratch == claim.Scratch && (!claim.Required || current.Required
                         && current.OwnerTaskId == reference.OwnerTaskId && current.SupersededByExecutionId is null)))
-                    return new(StorageProtectionResult(StorageResult(snapshot, "reserved"), (claims ?? []).Count(claim =>
+                    return OperationAdmission(StorageProtectionResult(StorageResult(snapshot, "reserved"), (claims ?? []).Count(claim =>
                         allocation.Claims.GetValueOrDefault(Path.GetFullPath(claim.Path)) is { Required: true } prior
-                        && prior.OwnerTaskId != reference.OwnerTaskId)), existing.Key, previous.MaximumGrowthBytes);
+                        && prior.OwnerTaskId != reference.OwnerTaskId)), existing.Key, previous.MaximumGrowthBytes, operation);
                 var headroom = checked(new FileInfo(SafePath(authority, RelativePath)).Length + StorageRecordHeadroom
-                    + JsonSerializer.SerializeToUtf8Bytes(claims ?? [], Json).LongLength * 4);
+                    + JsonSerializer.SerializeToUtf8Bytes(new
+                    {
+                        claims = claims ?? [],
+                        operation.Paths,
+                        operation.Accounting,
+                        operation.Initial
+                    }, Json).LongLength * 4);
                 var extraHeadroom = Math.Max(0, headroom - previous.RecordHeadroomBytes);
                 var allPending = StorageGroup(snapshot.State, change).Sum(item => item.Storage!.Reservations.Values.Where(item => !item.Finalized)
                     .Sum(item => checked(item.MaximumGrowthBytes + item.RecordHeadroomBytes)));
@@ -163,24 +182,36 @@ internal sealed partial class AgentWorkLedger
                     CheckRevision(current, Revision(snapshot.State));
                     var currentChange = ChangeFor(current, reference.ChangeId);
                     MatchStorageExecution(current, currentChange, reference, requireLive: true);
+                    ValidateOperationOverlap(current, currentChange, reference, operation.Paths, operation.Accounting, existing.Key);
+                    foreach (var claim in (claims ?? []).Where(item => item.MutatesExisting))
+                        ValidateStorageMutation(current, currentChange, reference, Path.GetFullPath(claim.Path), existing.Key);
                     foreach (var claim in claims ?? [])
                         if (RegisterStorageClaim(current, currentChange, reference, claim, existing.Key)) retainedProtection++;
                     currentChange.Storage!.Reservations[existing.Key] = previous with
                     {
                         Paths = merged,
+                        OperationPaths = operation.Paths,
+                        AccountingPaths = operation.Accounting,
+                        InitialOperationBytes = operation.Initial,
                         RecordHeadroomBytes = checked(previous.RecordHeadroomBytes + extraHeadroom)
                     };
                     return (current, Result(current, currentChange, reference.TaskId, "storage-claimed", true));
                 });
                 return registered.ExitCode == 0
-                    ? new(StorageProtectionResult(InspectStorage(authority, reference.ChangeId, reference.TaskId) with { Status = "reserved" }, retainedProtection), existing.Key, previous.MaximumGrowthBytes)
+                    ? OperationAdmission(StorageProtectionResult(InspectStorage(authority, reference.ChangeId, reference.TaskId) with { Status = "reserved" }, retainedProtection), existing.Key, previous.MaximumGrowthBytes, operation)
                     : new(new(registered.Status, true, null, registered.Errors), null, 0);
             }
             var group = StorageGroup(snapshot.State, change);
             var pending = group.Sum(item => item.Storage!.Reservations.Values.Where(item => !item.Finalized)
                 .Sum(item => checked(item.MaximumGrowthBytes + item.RecordHeadroomBytes)));
             var recordHeadroom = checked(new FileInfo(SafePath(authority, RelativePath)).Length + StorageRecordHeadroom
-                + JsonSerializer.SerializeToUtf8Bytes(claims ?? [], Json).LongLength * 4);
+                + JsonSerializer.SerializeToUtf8Bytes(new
+                {
+                    claims = claims ?? [],
+                    operation.Paths,
+                    operation.Accounting,
+                    operation.Initial
+                }, Json).LongLength * 4);
             var restoration = protectedRestoration;
             var availableBytes = RemainingStorage(allocation.Policy.MaximumBytes, snapshot.OwnedBytes, pending, restoration);
             var usable = recordHeadroom >= availableBytes ? 0 : availableBytes - recordHeadroom;
@@ -195,16 +226,20 @@ internal sealed partial class AgentWorkLedger
                 CheckRevision(current, Revision(snapshot.State));
                 var currentChange = ChangeFor(current, reference.ChangeId);
                 MatchStorageExecution(current, currentChange, reference, requireLive: true);
+                ValidateOperationOverlap(current, currentChange, reference, operation.Paths, operation.Accounting);
+                foreach (var claim in (claims ?? []).Where(item => item.MutatesExisting))
+                    ValidateStorageMutation(current, currentChange, reference, Path.GetFullPath(claim.Path));
                 foreach (var claim in claims ?? [])
                     if (RegisterStorageClaim(current, currentChange, reference, claim)) retainedProtection++;
                 currentChange.Storage!.Reservations.Add(id, new(reference, operationId, growth, recordHeadroom,
-                    (claims ?? []).Select(claim => Path.GetFullPath(claim.Path)).ToArray(), cleanup));
+                    (claims ?? []).Select(claim => Path.GetFullPath(claim.Path)).ToArray(), cleanup)
+                { OperationPaths = operation.Paths, AccountingPaths = operation.Accounting, InitialOperationBytes = operation.Initial });
                 result = StorageResult(snapshot, "reserved") with
                 { Storage = ViewStorage(snapshot, checked(pending + growth + recordHeadroom)) };
                 return (current, Result(current, currentChange, reference.TaskId, "storage-reserved", true));
             });
             if (mutation.ExitCode != 0 || result is null) return new(new(mutation.Status, true, null, mutation.Errors), null, 0);
-            return new(StorageProtectionResult(InspectStorage(authority, reference.ChangeId, reference.TaskId) with { Status = "reserved" }, retainedProtection), id, growth);
+            return OperationAdmission(StorageProtectionResult(InspectStorage(authority, reference.ChangeId, reference.TaskId) with { Status = "reserved" }, retainedProtection), id, growth, operation);
         }
         catch (Exception error) when (Recoverable(error)) { return new(StorageFailure(error), null, 0); }
     }
@@ -240,6 +275,12 @@ internal sealed partial class AgentWorkLedger
                 foreach (var path in required)
                 {
                     ValidateStorageClaim(current, change, new(path, storage.Claims.GetValueOrDefault(path)?.Scratch == true, Required: true));
+                    if (storage.Claims.GetValueOrDefault(path)?.Required != true)
+                    {
+                        try { ValidateRequiredPromotion(current, change, reference, path, reservation, reservationId); }
+                        catch (InvalidDataException error)
+                        { return (current, Result(current, change, reference.TaskId, "held", false, error.Message)); }
+                    }
                     if (storage.Claims.GetValueOrDefault(path) is { Required: true } prior && prior.OwnerTaskId != reference.OwnerTaskId)
                     {
                         try { ValidateSupersededClaim(current, change, reference, path, reservationId); }
@@ -322,9 +363,9 @@ internal sealed partial class AgentWorkLedger
         };
     }
 
-    private static void SettleReconciledNativeStorage(Change change, IReadOnlyList<Execution> tree)
+    private static void SettleReconciledNativeStorage(Change change, IReadOnlyList<Execution> tree, bool verifiedStopped = false)
     {
-        if (change.Storage is not { } storage || !tree.Any(item => item.ConservativeRecovery)
+        if (change.Storage is not { } storage || !verifiedStopped && !tree.Any(item => item.ConservativeRecovery)
             || tree.Any(item => !item.Stopped || !item.Finalized || item.RecoveryReason is not null)) return;
         var nativeReferences = tree.Where(item => item.Stage?.NativeOperation is not null).Select(item => item.Reference).ToHashSet();
         foreach (var pair in storage.Reservations.Where(pair => !pair.Value.Finalized && nativeReferences.Contains(pair.Value.Reference)).ToArray())
@@ -333,7 +374,7 @@ internal sealed partial class AgentWorkLedger
             // Unknown-interruption diagnostics remain necessary after the process
             // reservation is reconciled; releasing growth cannot make them eligible.
             foreach (var path in pair.Value.Paths)
-                if (storage.Claims.TryGetValue(path, out var claim)) storage.Claims[path] = claim with
+                if (storage.Claims.TryGetValue(path, out var claim) && !claim.Required) storage.Claims[path] = claim with
                 {
                     Required = true,
                     RequiredByExecutionId = pair.Value.Reference.ExecutionId

@@ -18,6 +18,8 @@ public sealed partial class IncrementalTestService
             // Existing native invocations use this lease. Verification never creates a cache or lock file.
             using var lease = File.Exists(leasePath) ? new FileStream(leasePath, FileMode.Open, FileAccess.Read, FileShare.None) : null;
             var state = State(input);
+            Require(StateSettlementErrors(input.Repository, state, Safe(input.Root, "latest-run.json")).Length == 0,
+                "Required native accounting remains unsettled; reconcile its original work reference before verification.");
             Require(!state.RecoveryRequired && state.ActiveExecutionUntilUtc is null,
                 "Native work or baseline recovery remains active.");
             var selection = Select(input, state, false);
@@ -57,6 +59,8 @@ public sealed partial class IncrementalTestService
                     "Read-only verification of explicit native rerun profile."), input, rerun);
                 Require(!result.RequiresBaseline, "The narrowed rerun still requires a fresh original-profile unit baseline.");
                 var rerunState = State(rerun);
+                Require(StateSettlementErrors(rerun.Repository, rerunState, Safe(rerun.Root, "latest-run.json")).Length == 0,
+                    "The narrowed native evidence still requires original work settlement.");
                 var rerunSelection = Select(rerun, rerunState, false);
                 foreach (var batch in rerunSelection.Batches)
                     VerifyKilledDefinitions(ReadRefinementReport(rerun, batch, rerunState.Batches[batch.Id].Mutation!));
@@ -134,7 +138,8 @@ public sealed partial class IncrementalTestService
                     mutationPath is null ? null : Relative(input.Repository, mutationPath), mutation?.ReportSha256,
                     mutationPath is null ? null : new FileInfo(mutationPath).Length, mutation is null ? null : HashObject(mutation),
                     counts is null ? null : Counts(counts.Killed, counts.Survived, counts.TimedOut, counts.NoCoverage, counts.Denominator),
-                    executions.ToArray()) { FullPostflightReceiptVerified = mutation is not null });
+                    executions.ToArray())
+                { FullPostflightReceiptVerified = mutation is not null });
             }
             var raw = input.Profile.MutationCommand is null ? null : Counts(measured.Values.Sum(item => item.Killed),
                 measured.Values.Sum(item => item.Survived), measured.Values.Sum(item => item.TimedOut),
@@ -157,15 +162,25 @@ public sealed partial class IncrementalTestService
                 Require(HashFile(ordered[index].Key) == inventory[index].Sha256, "An input changed during verification.");
             var receipt = new IncrementalEvidenceResult("verified", 0)
             {
-                ProfileId = input.Profile.Id, ProfilePath = Relative(input.Repository, input.ProfilePath), ProfileSha256 = input.ProfileHash,
-                GraphBuildId = selection.Snapshot.Graph!.Build.Id, RuntimeIdentifier = RuntimeInformation.RuntimeIdentifier,
+                ProfileId = input.Profile.Id,
+                ProfilePath = Relative(input.Repository, input.ProfilePath),
+                ProfileSha256 = input.ProfileHash,
+                GraphBuildId = selection.Snapshot.Graph!.Build.Id,
+                RuntimeIdentifier = RuntimeInformation.RuntimeIdentifier,
                 OsDescription = RuntimeInformation.OSDescription,
                 EnvironmentSha256 = HashObject(new { inherited = AmbientEnvironmentIdentity(input.Profile, false), declared = input.Profile.Environment }),
                 TestingProducerSha256 = HashFile(typeof(IncrementalTestService).Assembly.Location),
-                HelperProducerSha256 = HashFile(typeof(CisProcessJob).Assembly.Location), VerifiedUtc = DateTimeOffset.UtcNow,
-                ScopeComplete = true, Raw = raw, Effective = effective,
+                HelperProducerSha256 = HashFile(typeof(CisProcessJob).Assembly.Location),
+                VerifiedUtc = DateTimeOffset.UtcNow,
+                ScopeComplete = true,
+                Raw = raw,
+                Effective = effective,
                 ThresholdMet = effective is not null && effective.Score >= input.Profile.BreakThreshold && effective.TimedOut == 0 && effective.NoCoverage == 0,
-                Inputs = inventory, Closures = closures.Values.ToArray(), Batches = batches, Refinements = refinements, Credits = credits.Values.ToArray(),
+                Inputs = inventory,
+                Closures = closures.Values.ToArray(),
+                Batches = batches,
+                Refinements = refinements,
+                Credits = credits.Values.ToArray(),
                 Diagnostics = [input.Profile.MutationCommand is null ? "Current declared unit scope verified. Release qualification remains separate."
                     : "Current declared-scope evidence verified. Historical postflight XML is not retained; full-filter native postflight receipts were checked. Release qualification remains separate."],
             };

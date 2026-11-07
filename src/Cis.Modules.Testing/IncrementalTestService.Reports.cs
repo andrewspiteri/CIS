@@ -98,9 +98,12 @@ public sealed partial class IncrementalTestService
         if (File.Exists(report) && new FileInfo(report).Length <= input.Profile.MaxRunBytes)
         {
             var destination = Safe(input.Root, "reports/" + batch.Id + (mutation ? "-mutation.json" : "-unit.xml"));
+            using var reservation = MutationRunService.BeginEvidenceMutation(input.Work, input.OwnedStorage, [report, destination]);
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
             hash = HashFile(report);
             File.Move(report, destination, true);
+            var settled = MutationRunService.SettleNativeStorage(reservation, input.OwnedStorage, true, [destination]);
+            Require(settled?.Allowed != false, string.Join(" ", settled?.Errors ?? []));
             relative = Path.GetRelativePath(input.Root, destination).Replace('\\', '/');
         }
         return new(fingerprint, completed ? "completed" : "failed", completed, relative, hash, execution,

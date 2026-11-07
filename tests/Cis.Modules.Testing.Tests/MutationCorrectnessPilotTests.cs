@@ -7,6 +7,34 @@ namespace Cis.Modules.Testing.Tests;
 
 public sealed partial class MutationRunServiceTests
 {
+    [Fact]
+    public void MissingPilotAuthorityProvenanceRequestsARerunRatherThanSettlementReconciliation()
+    {
+        using var fixture = new Target();
+        fixture.Save(PilotProfile(fixture, true));
+        var authority = new IncrementalNativeWorkTests.UnitInvocationAuthority(fixture.Path, required: false);
+        var service = new MutationRunService(authority, authority);
+        var first = service.Run(new(fixture.Path, "profile.json", "canary"), TestContext.Current.CancellationToken);
+        var original = Assert.IsType<NativeCorrectnessPilotResult>(first.Pilot);
+        Assert.True(original.Ready, JsonSerializer.Serialize(first, Target.Json));
+        Assert.NotNull(original.WorkReference);
+        var launches = authority.Launched;
+        File.WriteAllText(fixture.Full(original.SummaryPath!),
+            JsonSerializer.Serialize(original with { AuthorityPath = null }, Target.Json));
+
+        var invalid = MutationRunService.InspectCorrectnessPilot(fixture.Path, "profile.json", workController: authority);
+
+        Assert.Equal("pilot-required", invalid.Status); Assert.False(invalid.Ready); Assert.False(invalid.NativeReady);
+        Assert.Equal(original.Observations.Select(item => (item.Role, item.ReportSha256)),
+            invalid.Observations.Select(item => (item.Role, item.ReportSha256))); Assert.True(invalid.Restored);
+        var repeated = service.Run(new(fixture.Path, "profile.json", "canary"), TestContext.Current.CancellationToken);
+        var repaired = Assert.IsType<NativeCorrectnessPilotResult>(repeated.Pilot);
+        Assert.True(repaired.Ready, JsonSerializer.Serialize(repeated, Target.Json));
+        Assert.Equal(5, repaired.Observations.Count); Assert.True(repaired.Restored);
+        Assert.NotEqual(original.WorkReference, repaired.WorkReference); Assert.True(authority.Launched > launches);
+        Assert.True(MutationRunService.InspectCorrectnessPilot(fixture.Path, "profile.json", workController: authority).Ready);
+    }
+
     // Controlled protocol faults validate admission. The maintained real MSTest /
     // Stryker fixture separately establishes genuine mutant activation and survival.
     [Theory]

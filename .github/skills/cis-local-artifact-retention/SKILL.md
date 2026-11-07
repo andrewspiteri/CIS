@@ -16,3 +16,5 @@ description: Inventory, preview, compact, retrieve, restore, and clean derived C
 Only configured immediate entries beneath `.cis/local/` are eligible. Canonical and user-managed paths are outside this authority.
 
 Count live output, archives/manifests, retrieval copies and exact owned scratch without overlapping paths twice. Keep current required evidence, active/uncertain output and accounting protected. Successful deletion frees measured storage, never time or attempts. A storage or ownership hold is not permission to delete unknown material. Archive management is not a delete family; ordinary archive restore does not spend native baseline-recovery time reserve.
+
+Check required/active ownership and supersession authority under existing leases before pruning or replacing prior report bytes; retain the bytes or return a targeted hold. Check the reservation's original operation baseline/domain/grant separately from total owned bytes. Another admitted operation's disjoint growth counts globally without spending this grant; shared writable native roots remain exclusive. Refreshing the same reservation grants no new allowance.

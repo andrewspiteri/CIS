@@ -30,6 +30,7 @@ public sealed partial class IncrementalTestService
         public CancellationToken Cancellation { get; init; }
         public MutationRunService.NativeStorageReservation? ActiveStorage { get; set; }
         public HashSet<string> PreviousRequiredReports { get; } = new(PathComparer);
+        public List<string> SettlementErrors { get; } = [];
     }
 
     private static Input Read(IncrementalTestOptions options, string? previousTestingProducer = null, string? previousHelperProducer = null,

@@ -5,6 +5,30 @@ namespace Cis.Modules.Testing.Tests;
 
 public sealed class IncrementalRevalidationTests
 {
+    [Fact]
+    public void RevalidationSettlementFailureHoldsItsLatestReceiptWithoutRepeatingNativeWork()
+    {
+        using var fixture = new IncrementalTestServiceTests.Fixture();
+        fixture.Save(fixture.Profile with { MutationCommand = null, MaxRetainedBytes = 32 * 1024 * 1024 });
+        Assert.Equal(0, fixture.Run("unit").ExitCode);
+        var reports = fixture.SavedState().Batches.Values.Select(batch => batch.Unit!.ReportSha256).ToArray();
+        var calls = fixture.Calls();
+        var authority = new IncrementalNativeWorkTests.UnitInvocationAuthority(fixture.Path)
+        { FailFinish = (operation, _) => operation == "incremental-revalidate" };
+        var service = new IncrementalTestService(fixture, authority, authority);
+        var options = new IncrementalTestOptions(fixture.Path, "profile.json", "unit");
+        var result = service.Revalidate(options, typeof(IncrementalTestService).Assembly.Location, "Reviewed unchanged native producer.");
+        Assert.Equal("settlement-required", result.Status); Assert.Equal(4, result.ExitCode);
+        Assert.Equal(2, result.ReusedUnitBatches); Assert.Equal(0, authority.Launched);
+        Assert.Equal("settlement-required", service.Plan(options).Status);
+        Assert.Equal(calls, fixture.Calls());
+        authority.Reconciled = true;
+        Assert.Equal(0, service.Plan(options).ExitCode);
+        Assert.All(service.Plan(options).Batches, batch => Assert.True(batch.UnitCurrent));
+        Assert.Equal(reports, fixture.SavedState().Batches.Values.Select(batch => batch.Unit!.ReportSha256).ToArray());
+        Assert.Equal(calls, fixture.Calls());
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

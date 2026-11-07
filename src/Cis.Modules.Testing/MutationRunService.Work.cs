@@ -10,7 +10,13 @@ public sealed partial class MutationRunService
         internal bool SafelyStopped { get; set; } = true;
         internal IReadOnlyList<string>? RequiredPaths { get; set; }
         internal IReadOnlyList<string>? SupersededRequiredPaths { get; set; }
-        public void Dispose() => Controller.Settle(AuthorityPath, Reference, Admission.ReservationId!, SafelyStopped, RequiredPaths, SupersededRequiredPaths);
+        internal bool SettlementAttempted { get; set; }
+        public void Dispose()
+        {
+            if (SettlementAttempted) return;
+            SettlementAttempted = true;
+            Controller.Settle(AuthorityPath, Reference, Admission.ReservationId!, SafelyStopped, RequiredPaths, SupersededRequiredPaths);
+        }
     }
 
     internal static NativeStorageReservation? BeginNativeStorage(string repository, string output, string storage,
@@ -22,7 +28,7 @@ public sealed partial class MutationRunService
         var growth = profile.MaxRetainedBytes - initial;
         Require(growth > 0, "The native retained-storage limit has no capacity for another attempt.");
         var admission = controller.Reserve(scope.AuthorityPath, scope.Reference, scope.Reference.ExecutionId,
-            growth, [new(output)], clampToRemaining: true);
+            growth, [new(output) { IncludeRepositoryWrites = true }], clampToRemaining: true);
         Require(admission.Allowed, string.Join(" ", admission.Result.Errors));
         return new(scope.AuthorityPath, scope.Reference, admission, initial, controller);
     }
@@ -48,6 +54,7 @@ public sealed partial class MutationRunService
         reservation.SafelyStopped = safelyStopped;
         reservation.RequiredPaths = requiredPaths;
         reservation.SupersededRequiredPaths = supersededRequiredPaths;
+        reservation.SettlementAttempted = true;
         return controller!.Settle(reservation.AuthorityPath, reservation.Reference,
             reservation.Admission.ReservationId!, safelyStopped, requiredPaths, supersededRequiredPaths);
     }
@@ -61,7 +68,7 @@ public sealed partial class MutationRunService
         var bytes = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(value, Json).LongLength;
         var admission = controller.Reserve(scope.AuthorityPath, scope.Reference,
             scope.Reference.ExecutionId + "/metadata/" + Guid.NewGuid().ToString("N"), bytes,
-            [new(path)]);
+            [new(path) { MutatesExisting = true }]);
         Require(admission.Allowed, string.Join(" ", admission.Result.Errors));
         var published = false;
         try { AtomicJson(path, value); published = true; }

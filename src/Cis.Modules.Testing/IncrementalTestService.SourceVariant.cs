@@ -51,8 +51,11 @@ public sealed partial class IncrementalTestService
             byte[] variantBytes = SourceBytes(variantText, originalBytes.AsSpan().StartsWith(new byte[] { 0xef, 0xbb, 0xbf }));
             string definitionHash = HashObject(new
             {
-                source = originalText, id = options.MutantId, mutatorName = definition.GetProperty("mutatorName").GetString(),
-                replacement, location = span
+                source = originalText,
+                id = options.MutantId,
+                mutatorName = definition.GetProperty("mutatorName").GetString(),
+                replacement,
+                location = span
             });
 
             var pins = new Dictionary<string, string>(PathComparer) { [currentSource] = HashFile(currentSource), [report] = options.ReportSha256 };
@@ -66,6 +69,8 @@ public sealed partial class IncrementalTestService
                 var leasePath = Safe(input.Repository, MutationRunService.LocalRoot + "/run.lock");
                 using var lease = File.Exists(leasePath) ? new FileStream(leasePath, FileMode.Open, FileAccess.Read, FileShare.None) : null;
                 var state = State(input);
+                Require(StateSettlementErrors(input.Repository, state, Safe(input.Root, "latest-run.json")).Length == 0,
+                    "A source-variant snapshot still requires its original native/accounting settlement.");
                 Require(!state.RecoveryRequired && state.ActiveExecutionUntilUtc is null, "A source-variant snapshot has unfinished native work or recovery.");
                 var selection = Select(input, state, false);
                 var batch = selection.Batches.Single();
@@ -144,11 +149,15 @@ public sealed partial class IncrementalTestService
             foreach (var pin in pins) { Require(HashFile(pin.Key) == pin.Value, "A source-variant artifact changed during verification."); }
             var result = new SourceVariantEvidenceResult("verified-source-variant", 0)
             {
-                OriginalReportSha256 = options.ReportSha256, DefinitionSha256 = definitionHash, OriginalStatus = "Survived",
-                NativeTestId = selectedId.ToString(), NativeTestMethod = method,
+                OriginalReportSha256 = options.ReportSha256,
+                DefinitionSha256 = definitionHash,
+                OriginalStatus = "Survived",
+                NativeTestId = selectedId.ToString(),
+                NativeTestMethod = method,
                 EnvironmentSha256 = HashObject(new { inherited = AmbientEnvironmentIdentity(inputs[0].Profile, false), declared = inputs[0].Profile.Environment }),
                 TestingProducerSha256 = HashFile(typeof(IncrementalTestService).Assembly.Location),
-                HelperProducerSha256 = HashFile(typeof(CisProcessJob).Assembly.Location), Phases = results,
+                HelperProducerSha256 = HashFile(typeof(CisProcessJob).Assembly.Location),
+                Phases = results,
                 Inputs = pins.OrderBy(pin => pin.Key, StringComparer.Ordinal).Select(pin => new MutationInputIdentity(pin.Key, pin.Value)).ToArray(),
                 Diagnostics = ["Exact source-variant native failure verified. Diagnostic only: raw native history, scores, scope and all other holds are unchanged."],
             };

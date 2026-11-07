@@ -9,6 +9,27 @@ namespace Cis.Modules.Testing.Tests;
 
 public sealed class IncrementalRefinementTests
 {
+    [Fact]
+    public void RefinementSettlementFailureHoldsItsOwnReceiptAndPreservesNativeCredits()
+    {
+        using var fixture = new Fixture();
+        var reports = fixture.Reports().ToDictionary(path => path, File.ReadAllBytes);
+        var authority = new IncrementalNativeWorkTests.UnitInvocationAuthority(fixture.Inner.Path)
+        { FailFinish = (operation, _) => operation == "incremental-refine" };
+        var result = new IncrementalTestService(fixture.Inner, authority, authority).Refine(new(fixture.Inner.Path,
+            "profile.json", "rerun.json", "Reviewed exact unchanged native rerun."));
+        Assert.Equal("settlement-required", result.Status); Assert.Equal(4, result.ExitCode);
+        Assert.True(result.ThresholdMet); Assert.False(result.Qualified); Assert.Single(result.Credits);
+        using var saved = JsonDocument.Parse(File.ReadAllBytes(fixture.Inner.Full(result.SidecarPath!)));
+        Assert.Equal("settlement-required", saved.RootElement.GetProperty("status").GetString());
+        Assert.Equal(4, saved.RootElement.GetProperty("exitCode").GetInt32());
+        Assert.False(CisNativeWorkSettlement.Complete(authority.InspectSettlement(fixture.Inner.Path, result.WorkReference!), result.WorkReference!));
+        authority.Reconciled = true;
+        Assert.True(CisNativeWorkSettlement.Complete(authority.InspectSettlement(fixture.Inner.Path, result.WorkReference!), result.WorkReference!));
+        foreach (var report in reports) Assert.Equal(report.Value, File.ReadAllBytes(report.Key));
+        Assert.Equal(0, authority.Launched); Assert.Empty(fixture.Inner.Calls());
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

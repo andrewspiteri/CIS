@@ -3,7 +3,7 @@ title: "cis test mutation run"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-11-06"
+last_reviewed: "2026-11-07"
 review_cadence: "on mutation runner contract change"
 cis:
   stable_id: change-impact-studio:manual:cis-test-mutation-run
@@ -74,6 +74,45 @@ current work revision and keep the same owner. An automatic execution summary
 does not award this assessment. Resume the existing profile after the assessment;
 no additional human acknowledgment is required.
 
+## Required settlement
+
+Native execution and final work settlement are separate observations. If required
+work or storage settlement fails, the command returns `settlement-required` with
+exit code `4`, and retained summary/latest results remain unqualified. Native
+report bytes, hashes, counts and threshold facts survive. `nativeOutcomeStatus`,
+`nativeOutcomeExitCode` and `nativeOutcomeQualified` describe the provisional
+native candidate; they do not waive settlement or establish readiness.
+
+The result-admission writes reserve their exact paths and bounded growth before
+`Finish`. Publication remains under the existing native output lease. Readiness
+consumers check the actual launch and its orchestration settlement reference in
+the original authority, including pending storage, so an interrupted publication
+cannot supply authoritative success. After legitimate accounting reconciliation,
+existing workflow reconciliation can reuse the unchanged report where its genuine
+workflow/run inputs and all other gates are available. It does not require native
+tests to run again solely to repair accounting.
+
+For a representative pilot, `nativeReady` retains the fully checked native-controls
+and restored-health candidate. `ready` additionally requires its exact current
+root, children and storage to have settled. The candidate flag cannot replace
+missing controls, a changed material basis or provenance. Read-only inspection can
+reuse that candidate after legitimate reconciliation, preserving original report
+bytes and without running the native phases again. Human and agent output show the
+native candidate and settlement-gated readiness separately.
+
+A settled child need not wait for every still-running ancestor. A successful
+settlement may also leave its owner held for the next operation's reflection or
+capacity decision. Those later holds do not invalidate already settled evidence;
+an actual settlement error or unresolved owned execution does.
+
+Governed monitoring checks the shared owned ceiling separately from the operation's
+own growth grant. The operation retains its original baseline for the target's
+declared output/build roots and exact scratch. Another admitted operation's disjoint
+growth counts globally without spending this grant. Existing exclusion remains
+for shared writable native roots. Accounting stays globally counted with reserved
+write headroom. Native JSON reports `peakOwnedBytes` for the shared footprint and
+`peakOperationBytes` for the attributed operation domain.
+
 ## Profile
 
 This example illustrates the contract; adapt its commands and input list to the
@@ -98,6 +137,12 @@ native configuration and retain their XML inputs. Ordinary non-adopted diagnosti
 without a claimed pilot retain their existing native command support.
 `environment` defaults to empty and supplies target-process variables without
 changing the CIS guard's environment. Values are pinned through the profile hash.
+Pilot, ordinary mutation, narrow canary and postflight commands use the same
+[session environment defaults](cis_test_incremental.md#selection-and-reuse): ignored
+session values are empty, except `PWD` is the working directory and `SHLVL` is `0`.
+Explicit profile overrides remain observable and material to compatibility. CIS
+computes identity from the original declared profile; validated `CIS_WORK_*`
+invocation authority remains separate and still reaches the native process.
 For each native command, CIS defaults `TEMP`, `TMP` and `TMPDIR` to a fresh, short
 owned directory. On Linux this uses the host temporary root, keeping Unix-domain
 socket paths independent of repository depth. Set the invoking process's `TMPDIR`

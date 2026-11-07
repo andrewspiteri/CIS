@@ -42,6 +42,10 @@ public sealed record MutationNativeExecution(string Status, int? ExitCode, long 
     public bool SafelyStopped { get; init; }
     public int OwnedProcessPeak { get; init; }
     public long PeakOwnedBytes { get; init; }
+    public long PeakOperationBytes { get; init; }
+    public CisAgentWorkReference? SettlementReference { get; init; }
+    public string? WorkAuthorityPath { get; init; }
+    public IReadOnlyList<string> SettlementErrors { get; init; } = [];
 }
 
 public sealed record MutationRunResult(string Status, int ExitCode, string Kind)
@@ -67,4 +71,7 @@ public sealed record MutationRunResult(string Status, int ExitCode, string Kind)
     public CisAgentWorkReference? WorkReference { get; init; }
     public string WorkCoverage { get; init; } = "unaccounted-non-adopted";
     public CisAgentWorkResult? WorkControl { get; init; }
+    public string? NativeOutcomeStatus { get; init; }
+    public int? NativeOutcomeExitCode { get; init; }
+    public bool? NativeOutcomeQualified { get; init; }
 }

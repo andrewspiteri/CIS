@@ -379,12 +379,13 @@ public sealed partial class TestingModule : ICisModule
         static string Value(string? value) => (value ?? "none").Replace(';', ',').Replace('\r', ' ').Replace('\n', ' ');
         if (agent)
         {
-            Console.WriteLine($"pilotStatus={Value(pilot.Status)};pilotReady={pilot.Ready.ToString().ToLowerInvariant()};controllerAssessed={pilot.ControllerAssessed.ToString().ToLowerInvariant()};pilotRestored={pilot.Restored.ToString().ToLowerInvariant()};pilotRecoveryRequired={pilot.RecoveryRequired.ToString().ToLowerInvariant()};pilotEvidenceReference={Value(pilot.EvidenceReference)}");
+            Console.WriteLine($"pilotStatus={Value(pilot.Status)};pilotReady={pilot.Ready.ToString().ToLowerInvariant()};controllerAssessed={pilot.ControllerAssessed.ToString().ToLowerInvariant()};pilotRestored={pilot.Restored.ToString().ToLowerInvariant()};pilotRecoveryRequired={pilot.RecoveryRequired.ToString().ToLowerInvariant()};pilotEvidenceReference={Value(pilot.EvidenceReference)};pilotNativeCandidate={pilot.NativeReady?.ToString().ToLowerInvariant() ?? "unknown"}");
             Console.WriteLine($"pilotNextAction={Value(pilot.NextAction)}");
         }
         else
         {
             Console.WriteLine($"Representative pilot: {pilot.Status}; controls ready: {pilot.Ready.ToString().ToLowerInvariant()}; controller assessed: {pilot.ControllerAssessed.ToString().ToLowerInvariant()}.");
+            Console.WriteLine($"Native controls/restored-health candidate: {pilot.NativeReady?.ToString().ToLowerInvariant() ?? "unknown"}; readiness also requires its original work and storage settlement.");
             Console.WriteLine($"Pilot baseline restored: {pilot.Restored.ToString().ToLowerInvariant()}; recovery required: {pilot.RecoveryRequired.ToString().ToLowerInvariant()}.");
             if (pilot.EvidenceReference is { } reference) Console.WriteLine("Pilot evidence: " + reference);
             Console.WriteLine("Pilot next action: " + pilot.NextAction);

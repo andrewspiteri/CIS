@@ -9,6 +9,45 @@ namespace Cis.Modules.Testing.Tests;
 
 public sealed partial class TestingServiceTests
 {
+    [Fact]
+    public void Reconcile_UnsettledWorkRetainsNativeFactsAndUsesReconciledLedgerWithoutRerunning()
+    {
+        using var repository = TestRepository.Create();
+        var assessment = RunAssessment(repository, "diagnostic");
+        var controller = new IncrementalNativeWorkTests.UnitInvocationAuthority(repository.Path, required: false)
+        { FailFinish = (_, _) => true };
+        var admitted = controller.Admit(new(repository.Path, "native/finalization-fault", "mutation-diagnostic", 120));
+        var scope = admitted.Scope!;
+        Assert.Equal(4, scope.Finish("native-finished", "Controlled finalization fault", []).ExitCode);
+        assessment["cisRun"]!["nativeExecution"] = JsonSerializer.SerializeToNode(new MutationNativeExecution("exited", 0, 1, 0, 0, false, null)
+        { WorkReference = scope.Reference, SettlementReference = scope.Reference, SafelyStopped = true });
+        repository.Write(".cis/local/results/stryker.json.assessment.json", assessment.ToJsonString());
+
+        var held = Assert.Single(Service(controller).Reconcile(repository.Path, "run").Manifest!.Suites);
+        Assert.Equal("failed", held.Status); Assert.True(held.Mutation!.ValidEvidence);
+        Assert.True(held.Mutation.ThresholdMet); Assert.False(held.Mutation.Qualified);
+        Assert.Contains(held.Diagnostics, message => message.Contains("settlement", StringComparison.Ordinal));
+        var report = File.ReadAllBytes(System.IO.Path.Combine(repository.Path, ".cis/local/results/stryker.json"));
+
+        controller.Reconciled = true;
+        var reconciled = Assert.Single(Service(controller).Reconcile(repository.Path, "run").Manifest!.Suites);
+        Assert.Equal("partial", reconciled.Status); Assert.True(reconciled.Mutation!.ValidEvidence);
+        Assert.True(reconciled.Mutation.ThresholdMet); Assert.False(reconciled.Mutation.Qualified);
+        Assert.Equal(report, File.ReadAllBytes(System.IO.Path.Combine(repository.Path, ".cis/local/results/stryker.json")));
+        Assert.Equal(0, controller.Launched);
+
+        var child = scope.AdmitChild("native/settled-child", "mutation-diagnostic", 30).Scope!;
+        child.Finish("native-finished", "Controlled child settlement", []);
+        var unrelated = controller.Admit(new(repository.Path, "native/unrelated-settled", "mutation-diagnostic", 30)).Scope!;
+        unrelated.Finish("native-finished", "Controlled unrelated settlement", []);
+        assessment["cisRun"]!["nativeExecution"] = JsonSerializer.SerializeToNode(new MutationNativeExecution("exited", 0, 1, 0, 0, false, null)
+        { WorkReference = child.Reference, SettlementReference = unrelated.Reference, SafelyStopped = true });
+        repository.Write(".cis/local/results/stryker.json.assessment.json", assessment.ToJsonString());
+        var mismatched = Assert.Single(Service(controller).Reconcile(repository.Path, "run").Manifest!.Suites);
+        Assert.Equal("failed", mismatched.Status);
+        Assert.Contains(mismatched.Diagnostics, message => message.Contains("actual retained orchestration parent", StringComparison.Ordinal));
+    }
+
     private static JsonObject RunAssessment(TestRepository repository, string kind = "qualification", params string[] outcomes)
     {
         repository.Write("src/example.cs", "return value > 0;");

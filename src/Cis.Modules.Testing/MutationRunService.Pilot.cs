@@ -124,6 +124,9 @@ public sealed partial class MutationRunService
         ICisNativeWorkController? workController = null)
     {
         var recoveryPending = false;
+        NativeCorrectnessPilotResult? retainedSnapshot = null;
+        var nativeVerified = false;
+        var settlementPending = false;
         try
         {
             Require(referencePath is not null, "Configure correctnessPilotProfile with the existing small native representative profile before broadening this governed runner path.");
@@ -135,12 +138,15 @@ public sealed partial class MutationRunService
                 "The representative native pilot has not completed. Run cis test mutation run --kind canary --profile " + referencePath + ".");
             var saved = JsonSerializer.Deserialize<NativeCorrectnessPilotResult>(File.ReadAllBytes(summary), Json)
                 ?? throw new InvalidDataException("The representative native pilot record is empty.");
+            retainedSnapshot = saved;
             recoveryPending = saved.RecoveryRequired;
             Require(saved.SchemaVersion == 1 && saved.Policy == "cis-native-correctness-pilot-v1" && saved.BasisSha256 == basis,
                 "The runner, adapter, fixture, native tools, configuration or interpretation basis changed; repeat its small native correctness pilot.");
             Require(!saved.RecoveryRequired, "Pilot baseline restoration remains unresolved; resume its canary route after reconciling owned processes.");
-            Require(saved.Status == "ready", "The native pilot did not finish result admission successfully; inspect its original failure before expansion.");
+            Require((saved.Status is "ready" or "settlement-required") && (saved.NativeReady ?? saved.Ready),
+                "The native pilot has no complete native candidate; inspect its original failure before expansion.");
             VerifyPilotObservations(repository, input.Profile, saved);
+            nativeVerified = true;
             if (admission?.Required == true)
             {
                 Require(workController is not null && saved.AuthorityPath is not null && saved.WorkReference is not null
@@ -150,10 +156,38 @@ public sealed partial class MutationRunService
                 {
                     Require(observation.Execution.WorkReference is not null, "Pilot native execution lacks its durable work association.");
                     var retained = workController.InspectExecution(saved.AuthorityPath, observation.Execution.WorkReference);
+                    var execution = retained.Reference == observation.Execution.WorkReference
+                        ? retained.Control?.Work?.Executions.SingleOrDefault(item => item.ExecutionId == observation.Execution.WorkReference.ExecutionId)
+                        : null;
+                    settlementPending = execution is { Stage.NativeOperation: not null, LaunchIntent: true, ProcessId: > 0, ProcessStartedAtUtc: not null }
+                        && (execution.CompletedAtUtc is null || execution.RecoveryReason is not null);
                     Require(retained.Errors.Count == 0 && retained.Status == "verified" && retained.Reference == observation.Execution.WorkReference
                         && retained.Control?.Work?.Executions.Any(execution => execution.ExecutionId == observation.Execution.WorkReference.ExecutionId
                             && execution.CompletedAtUtc is not null && execution.LaunchIntent && execution.ProcessId > 0 && execution.RecoveryReason is null) == true,
                         "Pilot native launch is missing, live or unresolved in its authoritative work ledger.");
+                }
+            }
+            if (saved.WorkReference is not null || saved.AuthorityPath is not null || saved.RecoveryOfExecutionId is not null
+                || saved.Observations.Any(item => item.Execution.WorkReference is not null
+                    || item.Execution.SettlementReference is not null || item.Execution.WorkAuthorityPath is not null)
+                || admission?.Required == true || CisNativeWorkEnvironment.RequiresController(repository, null))
+            {
+                Require(saved.WorkReference is not null && workController is not null && saved.AuthorityPath is not null,
+                    "Read the exact retained pilot settlement through its composed work authority; native observations do not settle accounting.");
+                foreach (var observation in saved.Observations.Where(item => item.Execution.SettlementErrors.Count != 0))
+                    Require(observation.Execution.WorkReference is not null,
+                        "The retained child settlement has no exact work reference; restore its original provenance before reuse.");
+                settlementPending = true;
+                var pilotWork = saved.WorkReference!;
+                var settlement = workController.InspectSettlement(saved.AuthorityPath, pilotWork);
+                Require(CisNativeWorkSettlement.Complete(settlement, pilotWork),
+                    "The pilot orchestration root, its native children or owned storage still requires settlement. Reconcile the exact retained execution before reusing these native observations.");
+                foreach (var observation in saved.Observations.Where(item => item.Execution.SettlementErrors.Count != 0))
+                {
+                    var childWork = observation.Execution.WorkReference!;
+                    var childSettlement = workController.InspectSettlement(saved.AuthorityPath, childWork);
+                    Require(CisNativeWorkSettlement.Complete(childSettlement, childWork),
+                        "A retained pilot child still requires accounting or storage settlement; reconcile it without rerunning native controls.");
                 }
             }
             var reference = "native-pilot:" + basis;
@@ -171,12 +205,22 @@ public sealed partial class MutationRunService
                 Status = requireControllerDecision && admission?.Required == true && !assessed
                 ? "controller-assessment-required" : "ready",
                 Ready = true,
+                NativeReady = true,
                 ControllerAssessed = assessed,
                 NextAction = action
             };
         }
         catch (Exception error) when (Expected(error) || error is System.Xml.XmlException)
         {
+            if (retainedSnapshot is not null)
+                return retainedSnapshot with
+                {
+                    Status = nativeVerified && settlementPending ? "settlement-required" : "pilot-required",
+                    Ready = false,
+                    NativeReady = nativeVerified && settlementPending,
+                    NextAction = error.Message,
+                    Diagnostics = retainedSnapshot.Diagnostics.Append(error.Message).Distinct(StringComparer.Ordinal).ToArray()
+                };
             return new("pilot-required", false, null, error.Message)
             { ProfilePath = referencePath, RecoveryRequired = recoveryPending, Diagnostics = [error.Message] };
         }
@@ -191,6 +235,7 @@ public sealed partial class MutationRunService
         var work = scope is null ? null : new CisNativeWorkAdmission(true, "admitted", "governed-native", scope.Reference, null, []);
         var reusable = InspectCorrectnessPilot(repository, relativeProfile, work, false, workController);
         if (reusable.Ready && !restorationOnly) return reusable with { Status = "reused" };
+        if (reusable is { NativeReady: true, Ready: false, Status: "settlement-required" } && !restorationOnly) return reusable;
         var pilot = profile.CorrectnessPilot ?? throw new InvalidDataException("The selected profile lacks correctness controls.");
         var watch = Stopwatch.StartNew();
         var started = DateTimeOffset.UtcNow;
@@ -236,10 +281,13 @@ public sealed partial class MutationRunService
         var recoveryRequired = true;
         var restorationPassed = false;
         var ready = false;
+        var nativeReady = false;
+        var pendingSettlement = false;
         long executeWall = 0;
         var preparation = watch.ElapsedMilliseconds;
         NativeCorrectnessPilotResult Snapshot(string status) => new(status, ready, basis,
             ready ? "Inspect the native pilot and record the authorized approach decision with evidence 'native-pilot:" + basis + "' before expansion."
+                : nativeReady ? "Retain the complete native controls and restored baseline. Reconcile the exact retained work/storage settlement, then inspect readiness without rerunning native commands."
                 : restorationPassed && !recoveryRequired ? "The native baseline is restored. Inspect missing or failed correctness observations and run the bounded canary before broadening."
                 : "Inspect the retained failure and resume this bounded canary only after its prerequisite or approach changes.")
         {
@@ -248,6 +296,7 @@ public sealed partial class MutationRunService
             WorkReference = scope?.Reference,
             AuthorityPath = scope?.AuthorityPath,
             Restored = restorationPassed,
+            NativeReady = nativeReady,
             RecoveryBasis = recoveryBasis,
             RecoveryOfExecutionId = restorationOnly ? recoveryOfExecutionId ?? retainedSnapshot?.RecoveryOfExecutionId ?? retainedSnapshot?.WorkReference?.ExecutionId : null,
             RecoveryRequired = recoveryRequired,
@@ -259,6 +308,7 @@ public sealed partial class MutationRunService
             Observations = observations.ToArray(),
             Diagnostics = diagnostics.ToArray(),
         };
+        string FinalStatus() => ready ? "ready" : nativeReady ? "settlement-required" : recoveryRequired ? "recovery-required" : "failed";
         void Save(string status)
         {
             var snapshot = Snapshot(status);
@@ -267,7 +317,8 @@ public sealed partial class MutationRunService
             if (scope is not null && ownedStorage is not null)
             {
                 reservation = ownedStorage.Reserve(scope.AuthorityPath, scope.Reference, "pilot-admission-" + Guid.NewGuid().ToString("N"), bytes * 3,
-                    [new(PilotSummaryPath(repository, profile), Required: true), new(Path.Combine(run, "summary.json"))]);
+                    [new(PilotSummaryPath(repository, profile), Required: true) { MutatesExisting = true },
+                        new(Path.Combine(run, "summary.json")) { MutatesExisting = true }]);
                 Require(reservation.Allowed, string.Join("; ", reservation.Result.Errors));
             }
             try
@@ -304,7 +355,6 @@ public sealed partial class MutationRunService
             var limits = profile with
             {
                 TimeoutSeconds = seconds,
-                Environment = IncrementalTestService.PilotNativeEnvironment(profile.Environment, Resolve(repository, profile.WorkingDirectory, true))
             };
             NativeStorageReservation? storageReservation = null;
             var enteredExecute = false;
@@ -312,6 +362,31 @@ public sealed partial class MutationRunService
             var phaseWatch = Stopwatch.StartNew();
             string? retained = null;
             var requiredEvidence = new List<string>();
+            var phaseSettlementErrors = new List<string>();
+            void RetainSettlementFailure(IReadOnlyList<string> errors)
+            {
+                pendingSettlement = true;
+                phaseSettlementErrors.AddRange(errors);
+                diagnostics.Add("Pilot " + role + " settlement requires reconciliation: " + string.Join(" ", errors));
+                for (var index = 0; index < observations.Count; index++)
+                    if (observations[index].OutputPath == Path.GetRelativePath(repository, output).Replace('\\', '/'))
+                        observations[index] = observations[index] with
+                        {
+                            Execution = observations[index].Execution with
+                            { SettlementErrors = observations[index].Execution.SettlementErrors.Concat(errors).Distinct(StringComparer.Ordinal).ToArray() }
+                        };
+            }
+            void MoveEvidence(string source, string destination)
+            {
+                using var mutation = BeginEvidenceMutation(child, ownedStorage, [source, destination], 0);
+                File.Move(source, destination, true);
+                try
+                {
+                    var settled = SettleNativeStorage(mutation, ownedStorage, true, [destination]);
+                    if (settled is { Allowed: false }) RetainSettlementFailure(settled.Errors);
+                }
+                catch (Exception error) when (Expected(error)) { RetainSettlementFailure([error.Message]); }
+            }
             try
             {
                 storageReservation = BeginNativeStorage(repository, output, storage, limits, child, ownedStorage);
@@ -327,7 +402,7 @@ public sealed partial class MutationRunService
                     Require(new FileInfo(source).Length is > 0 and <= 100L * 1024 * 1024, "Pilot native report exceeds its bound.");
                     var unitReport = role is "baseline" or "postflight" or "preflight-postflight";
                     retained = Resolve(root, "representative-" + role + (unitReport ? pilot.UnitResultFormat == "trx" ? ".trx" : ".xml" : ".json"));
-                    File.Move(source, retained, true);
+                    MoveEvidence(source, retained);
                     requiredEvidence.Add(retained);
                 }
                 var artifacts = new List<TestArtifact>();
@@ -338,11 +413,13 @@ public sealed partial class MutationRunService
                         if (!File.Exists(source)) continue;
                         Require(new FileInfo(source).Length <= 256 * 1024, "Pilot infrastructure diagnostics exceed the bounded current evidence limit.");
                         var destination = Resolve(root, "representative-infrastructure-" + name);
-                        File.Move(source, destination, true);
+                        MoveEvidence(source, destination);
                         requiredEvidence.Add(destination);
                         artifacts.Add(new("native-pilot-infrastructure", Path.GetRelativePath(repository, destination).Replace('\\', '/'), FileHash(destination), new FileInfo(destination).Length));
                     }
-                var observation = new NativePilotObservation(role, native,
+                var observedExecution = phaseSettlementErrors.Count == 0 ? native : native with
+                { SettlementErrors = native.SettlementErrors.Concat(phaseSettlementErrors).Distinct(StringComparer.Ordinal).ToArray() };
+                var observation = new NativePilotObservation(role, observedExecution,
                     retained is null ? null : Path.GetRelativePath(repository, retained).Replace('\\', '/'), retained is null ? null : FileHash(retained))
                 { Artifacts = artifacts, OutputPath = Path.GetRelativePath(repository, output).Replace('\\', '/') };
                 observations.Add(observation);
@@ -358,12 +435,22 @@ public sealed partial class MutationRunService
                     var settled = SettleNativeStorage(storageReservation, ownedStorage,
                         native?.SafelyStopped ?? storageReservation?.SafelyStopped ?? !enteredExecute,
                         requiredEvidence);
-                    Require(settled is null || settled.Allowed, string.Join("; ", settled?.Errors ?? []));
+                    if (settled is { Allowed: false }) RetainSettlementFailure(settled.Errors);
                 }
+                catch (Exception error) when (Expected(error)) { RetainSettlementFailure([error.Message]); }
                 finally
                 {
-                    child?.Finish(native?.Status ?? "failed", "Native correctness pilot " + role, requiredEvidence);
-                    child?.Dispose();
+                    try
+                    {
+                        if (child is not null)
+                        {
+                            var control = child.Finish(native?.Status ?? "failed", "Native correctness pilot " + role, requiredEvidence);
+                            var errors = SettlementErrors(control, child.Reference);
+                            if (errors.Length > 0) RetainSettlementFailure(errors);
+                        }
+                    }
+                    catch (Exception error) when (Expected(error)) { RetainSettlementFailure([error.Message]); }
+                    finally { child?.Dispose(); }
                 }
             }
         }
@@ -372,7 +459,10 @@ public sealed partial class MutationRunService
             if (restorationOnly)
             {
                 if (retainedSnapshot?.BasisSha256 == basis)
+                {
                     observations.AddRange(retainedSnapshot.Observations.Where(item => item.Role is "baseline" or "mutation" or "infrastructure"));
+                    pendingSettlement = observations.Any(item => item.Execution.SettlementErrors.Count != 0);
+                }
                 recoveryRequired = true; Save("restoring");
                 var restore = Phase("restoration", pilot.RestorationCommand, pilot.RecoveryTimeoutSeconds);
                 var postflight = Phase("postflight", pilot.BaselineCommand, pilot.RecoveryTimeoutSeconds, pilot.BaselineReportPath);
@@ -383,10 +473,11 @@ public sealed partial class MutationRunService
                 if (observations.Count == 5)
                 {
                     VerifyPilotObservations(repository, profile, Snapshot("assessing"));
-                    ready = true;
+                    nativeReady = true;
+                    ready = !pendingSettlement;
                 }
-                Save(ready ? "ready" : "restored");
-                return Snapshot(ready ? "ready" : "restored");
+                Save(nativeReady ? FinalStatus() : "restored");
+                return Snapshot(nativeReady ? FinalStatus() : "restored");
             }
             Save("running");
             // A prior interrupted phase is held by the same work ledger. Once ownership
@@ -424,13 +515,14 @@ public sealed partial class MutationRunService
             }
             Require(PilotBasis(repository, profile, profilePath) == basis, "Pilot material inputs changed during native execution.");
             VerifyPilotObservations(repository, profile, Snapshot("assessing"));
-            ready = true;
+            nativeReady = true;
+            ready = !pendingSettlement;
         }
         catch (Exception error) when (Expected(error) || error is OperationCanceledException or System.Xml.XmlException)
         { ready = false; diagnostics.Add(error.Message); }
-        try { Save(ready ? "ready" : recoveryRequired ? "recovery-required" : "failed"); }
+        try { Save(FinalStatus()); }
         catch (Exception error) when (Expected(error)) { ready = false; diagnostics.Add("Pilot result admission failed: " + error.Message); }
-        return Snapshot(ready ? "ready" : recoveryRequired ? "recovery-required" : "failed");
+        return Snapshot(FinalStatus());
     }
 
     private static bool PilotHealthy(MutationNativeExecution execution)

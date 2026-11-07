@@ -714,6 +714,17 @@ public sealed partial class MutationRunServiceTests
                     [switch]$NativeLogs, [switch]$FailBeforeReport, [switch]$OversizedLogs,
                     [string]$DeclaredOtherSource, [string]$DeclaredOtherStatus)
                 $ErrorActionPreference = 'Stop'
+                $environmentProbe = Join-Path $PSScriptRoot '.cis/environment-probe.json'
+                if ([IO.File]::Exists($environmentProbe)) {
+                    $values = @{}
+                    foreach ($name in ([IO.File]::ReadAllText($environmentProbe) | ConvertFrom-Json)) {
+                        $values[$name] = [Environment]::GetEnvironmentVariable($name)
+                    }
+                    $probe = @{ kind = 'mutation'; output = [IO.Path]::GetFileName($Output); values = $values }
+                    if ($Canary) { $probe.kind = 'canary' }
+                    [IO.File]::AppendAllText((Join-Path $PSScriptRoot '.cis/environment-launches.jsonl'),
+                        (($probe | ConvertTo-Json -Depth 4 -Compress) + [Environment]::NewLine))
+                }
                 $configurationIndex = [Array]::IndexOf($args, '--config-file')
                 if ($configurationIndex -ge 0 -and -not [IO.File]::Exists((Join-Path $PSScriptRoot $args[$configurationIndex + 1]))) {
                     [Console]::Error.WriteLine('The synthetic native configuration is missing.'); exit 7

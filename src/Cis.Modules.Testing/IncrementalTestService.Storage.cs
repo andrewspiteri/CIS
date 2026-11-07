@@ -6,6 +6,35 @@ namespace Cis.Modules.Testing;
 public sealed partial class IncrementalTestService
 {
     private static string Relative(string root, string path) => Path.GetRelativePath(root, path).Replace('\\', '/');
+
+    private static void PrepareReportMutations(Input input, IncrementalTestState state,
+        IEnumerable<IncrementalTestBatch> batches, IncrementalTestOptions options)
+    {
+        if (input.Work is null) return;
+        var selected = batches.ToArray();
+        var active = selected.Select(batch => batch.Id).ToHashSet(StringComparer.Ordinal);
+        var keep = state.Batches.Where(pair => active.Contains(pair.Key)).SelectMany(pair =>
+                new[] { pair.Value.Unit?.ReportPath, pair.Value.Mutation?.ReportPath })
+            .Where(path => !string.IsNullOrEmpty(path)).Select(path => Safe(input.Root, path!)).ToHashSet(PathComparer);
+        var reports = Safe(input.Root, "reports");
+        var retired = Directory.Exists(reports) ? CisPathSafety.EnumerateFiles(reports).Where(path => !keep.Contains(path)) : [];
+        var replacement = selected.Where(batch => !batch.UnitCurrent
+                || options.Layer != "unit" && input.Profile.MutationCommand is not null && !batch.MutationCurrent)
+            .Take(options.MaximumBatches).SelectMany(batch => new[]
+            {
+                !batch.UnitCurrent ? Safe(input.Root, "reports/" + batch.Id + "-unit.xml") : null,
+                options.Layer != "unit" && input.Profile.MutationCommand is not null
+                    && (!batch.MutationCurrent || !batch.UnitCurrent && state.Batches.GetValueOrDefault(batch.Id)?.Unit is not null)
+                    ? Safe(input.Root, "reports/" + batch.Id + "-mutation.json") : null
+            }).Where(path => path is not null).Select(path => path!);
+        foreach (var path in retired.Concat(replacement).Where(File.Exists).Distinct(PathComparer))
+        {
+            using var reservation = MutationRunService.BeginEvidenceMutation(input.Work, input.OwnedStorage, [path]);
+            var settled = MutationRunService.SettleNativeStorage(reservation, input.OwnedStorage, true);
+            Require(settled?.Allowed != false, string.Join(" ", settled?.Errors ?? []));
+        }
+    }
+
     private static void PruneRetired(Input input, IncrementalTestState state, IEnumerable<string> active)
     {
         var keep = active.ToHashSet(StringComparer.Ordinal);
@@ -15,7 +44,15 @@ public sealed partial class IncrementalTestService
         Require(!CisPathSafety.ContainsReparsePointInTree(reports), "Linked result storage cannot be pruned.");
         var referenced = state.Batches.Values.SelectMany(batch => new[] { batch.Unit?.ReportPath, batch.Mutation?.ReportPath })
             .Where(path => !string.IsNullOrEmpty(path)).Select(path => Safe(input.Root, path!)).ToHashSet(PathComparer);
-        foreach (var file in CisPathSafety.EnumerateFiles(reports)) if (!referenced.Contains(file)) File.Delete(file);
+        foreach (var file in CisPathSafety.EnumerateFiles(reports))
+        {
+            if (referenced.Contains(file)) continue;
+            using var reservation = MutationRunService.BeginEvidenceMutation(input.Work, input.OwnedStorage, [file]);
+            File.Delete(file);
+            var settled = MutationRunService.SettleNativeStorage(reservation, input.OwnedStorage, true,
+                supersededRequiredPaths: [file]);
+            Require(settled?.Allowed != false, string.Join(" ", settled?.Errors ?? []));
+        }
     }
     private static void Save(Input input, IncrementalTestState state) => Write(input, input.StatePath, state);
     private static void SaveLatest(Input input, IncrementalTestResult result) => Write(input, Safe(input.Root, "latest-run.json"), result);

@@ -319,7 +319,8 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
                     || NativeSubtree(change, original.Reference.ExecutionId).Any(item => !item.Stopped || item.RecoveryReason is not null))
                     throw new InvalidDataException("Restoration requires the exact stopped native execution, unchanged recovery recipe and accounting owner; a new run or caller flag grants no reserve.");
                 hold = change.Executions.Values.FirstOrDefault(item => !item.Finalized && item.Reference.OwnerTaskId == owner.Id
-                    && item.RecoveryReason is not null)?.RecoveryReason ?? owner.Hold ?? NativeCancellationHold(change, owner);
+                    && item.RecoveryReason is not null)?.RecoveryReason
+                    ?? (owner.HoldKind == "repeated-blocker" ? null : owner.Hold) ?? NativeCancellationHold(change, owner);
                 if (parent is null && change.Executions.Values.Any(item => !item.Finalized && item.Reference.OwnerTaskId == owner.Id))
                     hold ??= "An owned execution remains active; preserve its reservation before starting separate restoration.";
             }
@@ -584,7 +585,9 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
                         || execution.Reference.AuthorityRepositoryId != authority.RepositoryId || execution.Reference.ChangeId != identity.ChangeId
                         || execution.Reference.TaskId != identity.TaskId || execution.Reference.OwnerTaskId != owner.Id)
                         throw new InvalidDataException("Reconciliation requires the exact execution ID belonging to this retained task, owner and authority.");
-                    if (execution.Finalized) return (state, Result(state, change, identity.TaskId, "unchanged", false));
+                    if (execution.Finalized && (execution.Stage?.NativeOperation is null
+                        || !PendingNativeStorage(change, execution.Reference.ExecutionId)))
+                        return (state, Result(state, change, identity.TaskId, "unchanged", false));
                     if (execution.Stage?.NativeOperation is not null)
                         return (state, ReconcileNativeCore(state, change, owner, execution, request, actor, reason, verifiedNativeTree));
                     if (execution.LaunchIntent || execution.ProcessId is not null)

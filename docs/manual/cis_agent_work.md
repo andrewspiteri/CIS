@@ -3,7 +3,7 @@ title: "cis agent work"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-11-06"
+last_reviewed: "2026-11-07"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-agent-work
@@ -255,6 +255,11 @@ Owned totals include declared physical paths, known CIS agent/management data an
 
 When native restoration is required, resume its retained profile. `--recovery-of <execution-id>` performs only the original pinned recovery command and healthy postflight, including when an interrupted controller lost its ordinary result record. The exact owner, original attempt and recovery recipe remain bound. Safely stopped recovery can spend the existing protected restoration reserve; it cannot clear live/uncertain process ownership, change its command or run a new campaign. Missing reports remain missing. Ordinary archive retrieval/restoration is a new bounded operation and does not acquire native recovery authority.
 
+An exact, otherwise authorized restoration may proceed through a repeated-blocker
+exploration hold. The hold and blocker history remain in place for later diagnostic
+work; recovery retains the original attempt, consumption and reserve. Process
+uncertainty, cancellation, other owner holds, permissions and hard limits still apply.
+
 For an owned native cancellation, use `agent work disposition` with `kind: "cancel-native"`, the exact `executionId`, current revision, actor and reason. CIS targets only verified recorded identities. Unknown processes, the cancellation caller's own ancestry and other hosts are not targeted. Partial cleanup returns a hold; cancelling a driver alone does not prove every native child stopped. Inspect retained native recovery evidence and use the existing exact stopped-execution reconciliation route before capacity is released. Read-only diagnosis and cancellation remain available when normal expansion is held.
 
 For supported Windows native work, `kind: "reconcile"` verifies the original
@@ -266,6 +271,13 @@ conservatively and releases only pending work/storage reservations, preserving
 interrupted diagnostics and the original restoration obligation. The unchanged
 `--recovery-of` route can then use the remaining protected time and storage reserve;
 reconciliation grants no new allowance or attempt.
+
+If native execution finished safely but a storage settlement failed, use that same
+`reconcile` disposition with the original execution ID and current revision. CIS
+verifies the stopped subtree and settles its pending storage reservations while
+protecting their claimed paths. It does not charge finalized execution time again
+or run the native command again. Missing process proof or unresolved children
+remain held; reconciliation cannot waive provenance or native correctness checks.
 
 ## Output and exit codes
 

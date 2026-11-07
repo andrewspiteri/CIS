@@ -8,6 +8,7 @@ internal sealed partial class AgentWorkLedger
         CisAgentWorkDispositionRequest request, string actor, string reason, IReadOnlyList<CisAgentWorkExecution>? verified)
     {
         var tree = NativeSubtree(change, root.Reference.ExecutionId).ToArray();
+        var previouslyFinalized = tree.All(item => item.Finalized);
         if (verified is null || verified.Count != tree.Length || verified.Count is < 1 or > 4096
             || verified.Select(item => item.ExecutionId).Distinct(StringComparer.Ordinal).Count() != verified.Count
             || request.Evidence is not { Count: > 0 and <= 40 } || request.Evidence.Any(evidence => !BoundedText(evidence)))
@@ -37,9 +38,15 @@ internal sealed partial class AgentWorkLedger
             if (!execution.Stopped)
                 SettleCore(state, change, execution, execution.NativeRestorationRequired ? "RecoveryRequired" : "Interrupted", true,
                     reason, request.Evidence, conservativeRecovery: true);
+        if (tree.Any(item => !item.Stopped || !item.Finalized || item.RecoveryReason is not null))
+            return Result(state, change, root.Reference.TaskId, "held", false,
+                "Native work or its owned children still require stopped-process settlement before releasing storage reservations.");
+        SettleReconciledNativeStorage(change, tree, verifiedStopped: true);
         owner.Checkpoints.Add(new(root.Reference.LogicalAttemptId, actor.Trim(), Time(Tick()),
             new("Native execution tree reconciled", request.Evidence, owner.Hypothesis ?? "Retain the original native scope and recovery recipe.",
-                "Conservatively charged the original bound after exact stopped owners and actual named-job closure; native restoration remains separate.",
+                previouslyFinalized
+                    ? "Time and attempts remain unchanged; pending storage was settled from the exact already-stopped native receipts and retained evidence stays protected."
+                    : "Conservatively charged the original bound after exact stopped owners and actual named-job closure; native restoration remains separate.",
                 "Inspect retained diagnostics and restore only through the original recipe before further native work."),
             owner.Consumed, Reserved(change, owner.Id))
         { Origin = "reconciliation" });
@@ -55,5 +62,11 @@ internal sealed partial class AgentWorkLedger
             }
             return depth;
         }
+    }
+
+    private static bool PendingNativeStorage(Change change, string executionId)
+    {
+        var references = NativeSubtree(change, executionId).Select(item => item.Reference).ToHashSet();
+        return change.Storage?.Reservations.Values.Any(item => !item.Finalized && references.Contains(item.Reference)) == true;
     }
 }

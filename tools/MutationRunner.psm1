@@ -1,7 +1,20 @@
 Set-StrictMode -Version Latest
 
+function Test-MutationAccountingPath {
+    param([string]$Path, [string[]]$AccountingPaths = @())
+    $comparison = if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+    foreach ($accounting in $AccountingPaths) {
+        if (-not [IO.Path]::IsPathFullyQualified($accounting)) { throw 'Accounting paths must be absolute.' }
+        $root = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($accounting))
+        if ([string]::Equals($Path, $root, $comparison) -or
+            $Path.StartsWith($root + [IO.Path]::DirectorySeparatorChar, $comparison) -or
+            $Path.StartsWith($root + '.tmp-', $comparison)) { return $true }
+    }
+    return $false
+}
+
 function Get-MutationTreeBytes {
-    param([string]$Path)
+    param([string]$Path, [string[]]$AccountingPaths = @())
     try {
         $rootAttributes = [IO.File]::GetAttributes($Path)
         if (-not ($rootAttributes -band [IO.FileAttributes]::Directory)) { throw 'Mutation storage is no longer a directory.' }
@@ -25,6 +38,7 @@ function Get-MutationTreeBytes {
                 throw "Mutation storage crosses a symbolic link: $($directory.FullName)"
             }
             foreach ($entry in $directory.EnumerateFileSystemInfos()) {
+                if (Test-MutationAccountingPath $entry.FullName $AccountingPaths) { continue }
                 try {
                     $attributes = [IO.File]::GetAttributes($entry.FullName)
                     if ($attributes -band [IO.FileAttributes]::ReparsePoint) {
@@ -94,7 +108,7 @@ function Get-MutationRetainedBytes {
 }
 
 function Get-MutationOwnedBytes {
-    param([string[]]$Paths)
+    param([string[]]$Paths, [string[]]$AccountingPaths = @())
     $comparison = if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
     $roots = [Collections.Generic.List[string]]::new()
     foreach ($candidate in @($Paths | Sort-Object Length)) {
@@ -105,10 +119,11 @@ function Get-MutationOwnedBytes {
     }
     [long]$total = 0
     foreach ($path in $roots) {
+        if (Test-MutationAccountingPath $path $AccountingPaths) { continue }
         try {
             $attributes = [IO.File]::GetAttributes($path)
             if ($attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Owned storage crosses a symbolic link.' }
-            [long]$bytes = if ($attributes -band [IO.FileAttributes]::Directory) { Get-MutationTreeBytes $path } else { [IO.FileInfo]::new($path).Length }
+            [long]$bytes = if ($attributes -band [IO.FileAttributes]::Directory) { Get-MutationTreeBytes $path $AccountingPaths } else { [IO.FileInfo]::new($path).Length }
             if ($bytes -gt [long]::MaxValue - $total) { throw 'Owned storage exceeds the supported byte range.' }
             $total += $bytes
         }
@@ -132,7 +147,10 @@ function Invoke-BoundedMutationProcess {
         [string]$ScratchRoot,
         [string]$CancellationPath,
         [string[]]$OwnedPaths = @(),
-        [long]$MaximumOwnedBytes = [long]::MaxValue
+        [long]$MaximumOwnedBytes = [long]::MaxValue,
+        [string[]]$OperationPaths = @(),
+        [string[]]$AccountingPaths = @(),
+        [long]$MaximumOperationBytes = [long]::MaxValue
     )
     # Polling limits are a circuit breaker, not an OS filesystem quota. A writer can
     # overshoot between samples; retain observed bytes and never call a stop a pass.
@@ -151,6 +169,7 @@ function Invoke-BoundedMutationProcess {
     [long]$peakRun = 0
     [long]$peakRetained = 0
     [long]$peakOwned = 0
+    [long]$peakOperation = 0
     $exitCode = $null
     $job = $null
     $sessionId = 0
@@ -182,23 +201,25 @@ function Invoke-BoundedMutationProcess {
         $peakRun = Get-MutationRunBytes $RunRoot $validatedScratchRoot
         $peakRetained = Get-MutationRetainedBytes $StorageRoot $validatedScratchRoot
         if ($OwnedPaths.Count -gt 0) { $peakOwned = Get-MutationOwnedBytes $OwnedPaths }
+        if ($OperationPaths.Count -gt 0) { $peakOperation = Get-MutationOwnedBytes $OperationPaths $AccountingPaths }
         $existingParent = [IO.Path]::GetFullPath($RunRoot)
         while (-not [IO.Directory]::Exists($existingParent)) { $existingParent = [IO.Path]::GetDirectoryName($existingParent) }
         $drive = [IO.DriveInfo]::new($existingParent)
         $scratchDrive = if ($null -ne $validatedScratchRoot) { [IO.DriveInfo]::new($validatedScratchRoot) } else { $drive }
-        if ($peakRun -ge $MaximumRunBytes -or $peakRetained -ge $MaximumRetainedBytes -or $peakOwned -ge $MaximumOwnedBytes) {
+        if ($peakRun -ge $MaximumRunBytes -or $peakRetained -ge $MaximumRetainedBytes -or
+            $peakOwned -gt $MaximumOwnedBytes -or $peakOperation -gt $MaximumOperationBytes) {
             $status = 'storage-limit'
         }
         elseif ($drive.AvailableFreeSpace -lt $MinimumFreeBytes -or $scratchDrive.AvailableFreeSpace -lt $MinimumFreeBytes) { $status = 'disk-space' }
         if ($status -ne 'exited') {
             return [pscustomobject]@{ status = $status; exitCode = $null; durationMilliseconds = $watch.ElapsedMilliseconds
                 peakRunBytes = $peakRun; peakRetainedBytes = $peakRetained; outputTruncated = $false; error = $null
-                safelyStopped = $true; ownedProcessPeak = 0; peakOwnedBytes = $peakOwned }
+                safelyStopped = $true; ownedProcessPeak = 0; peakOwnedBytes = $peakOwned; peakOperationBytes = $peakOperation }
         }
         if ($CancellationPath -and [IO.File]::Exists($CancellationPath)) {
             return [pscustomobject]@{ status = 'cancelled'; exitCode = $null; durationMilliseconds = $watch.ElapsedMilliseconds
                 peakRunBytes = $peakRun; peakRetainedBytes = $peakRetained; outputTruncated = $false; error = $null
-                safelyStopped = $true; ownedProcessPeak = 0; peakOwnedBytes = $peakOwned }
+                safelyStopped = $true; ownedProcessPeak = 0; peakOwnedBytes = $peakOwned; peakOperationBytes = $peakOperation }
         }
         [IO.Directory]::CreateDirectory($RunRoot) | Out-Null
         $library = Join-Path $PSScriptRoot '../src/Cis.Abstractions/bin/Release/net10.0/Cis.Abstractions.dll'
@@ -268,7 +289,9 @@ function Invoke-BoundedMutationProcess {
                 $peakRun = [Math]::Max($peakRun, (Get-MutationRunBytes $RunRoot $validatedScratchRoot))
                 $peakRetained = [Math]::Max($peakRetained, (Get-MutationRetainedBytes $StorageRoot $validatedScratchRoot))
                 if ($OwnedPaths.Count -gt 0) { $peakOwned = [Math]::Max($peakOwned, (Get-MutationOwnedBytes $OwnedPaths)) }
-                if ($peakRun -ge $MaximumRunBytes -or $peakRetained -ge $MaximumRetainedBytes -or $peakOwned -ge $MaximumOwnedBytes) { $status = 'storage-limit'; break }
+                if ($OperationPaths.Count -gt 0) { $peakOperation = [Math]::Max($peakOperation, (Get-MutationOwnedBytes $OperationPaths $AccountingPaths)) }
+                if ($peakRun -ge $MaximumRunBytes -or $peakRetained -ge $MaximumRetainedBytes -or
+                    $peakOwned -gt $MaximumOwnedBytes -or $peakOperation -gt $MaximumOperationBytes) { $status = 'storage-limit'; break }
                 if ($drive.AvailableFreeSpace -lt $MinimumFreeBytes -or $scratchDrive.AvailableFreeSpace -lt $MinimumFreeBytes) { $status = 'disk-space'; break }
                 $nextStorageCheck = $watch.ElapsedMilliseconds + 1000
             }
@@ -323,11 +346,13 @@ function Invoke-BoundedMutationProcess {
     $peakRun = [Math]::Max($peakRun, (Get-MutationRunBytes $RunRoot $validatedScratchRoot))
     $peakRetained = [Math]::Max($peakRetained, (Get-MutationRetainedBytes $StorageRoot $validatedScratchRoot))
     if ($OwnedPaths.Count -gt 0) { $peakOwned = [Math]::Max($peakOwned, (Get-MutationOwnedBytes $OwnedPaths)) }
-    if ($status -eq 'exited' -and ($peakRun -ge $MaximumRunBytes -or $peakRetained -ge $MaximumRetainedBytes -or $peakOwned -ge $MaximumOwnedBytes)) { $status = 'storage-limit' }
+    if ($OperationPaths.Count -gt 0) { $peakOperation = [Math]::Max($peakOperation, (Get-MutationOwnedBytes $OperationPaths $AccountingPaths)) }
+    if ($status -eq 'exited' -and ($peakRun -ge $MaximumRunBytes -or $peakRetained -ge $MaximumRetainedBytes -or
+        $peakOwned -gt $MaximumOwnedBytes -or $peakOperation -gt $MaximumOperationBytes)) { $status = 'storage-limit' }
     return [pscustomobject]@{ status = $status; exitCode = $exitCode; durationMilliseconds = $watch.ElapsedMilliseconds
         peakRunBytes = $peakRun; peakRetainedBytes = $peakRetained
         outputTruncated = @($streams | Where-Object { $_.truncated }).Count -gt 0; error = $problem
-        safelyStopped = $safelyStopped; ownedProcessPeak = $ownedProcessPeak; peakOwnedBytes = $peakOwned }
+        safelyStopped = $safelyStopped; ownedProcessPeak = $ownedProcessPeak; peakOwnedBytes = $peakOwned; peakOperationBytes = $peakOperation }
 }
 
 Export-ModuleMember -Function Get-MutationTreeBytes, Invoke-BoundedMutationProcess

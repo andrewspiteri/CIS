@@ -67,11 +67,23 @@ public sealed partial class TestingService
             current = false;
             diagnostics.Add("A later mutation attempt superseded this report; its counts remain historical.");
         }
-        var completedAttempt = RunText(latestRun, "status") is "qualified" or "canary-passed" or "diagnostic-completed"
-            && latestRun.TryGetProperty("exitCode", out var latestExit) && latestExit.ValueKind == JsonValueKind.Number
+        var settled = NativeRunSettlementCurrent(repository, run, diagnostics);
+        var outcomeStatus = settled && latestRun.TryGetProperty("nativeOutcomeStatus", out var candidateStatus) && candidateStatus.ValueKind == JsonValueKind.String
+            ? candidateStatus.GetString() : RunText(latestRun, "status");
+        var latestExit = settled && latestRun.TryGetProperty("nativeOutcomeExitCode", out var nativeOutcomeExit) && nativeOutcomeExit.ValueKind == JsonValueKind.Number
+            ? nativeOutcomeExit : latestRun.GetProperty("exitCode");
+        var completedAttempt = outcomeStatus is "qualified" or "canary-passed" or "diagnostic-completed"
+            && latestExit.ValueKind == JsonValueKind.Number
             && latestExit.TryGetInt32(out var latestExitCode) && latestExitCode == 0;
-        var healthy = executionStatus == "exited" && normalExit && sameAttempt && completedAttempt;
-        if (!partial) declaredQualified &= RunBoolean(latestRun, "qualified");
+        var healthy = executionStatus == "exited" && normalExit && sameAttempt && completedAttempt && settled;
+        if (!partial)
+        {
+            if (settled && run.TryGetProperty("nativeOutcomeQualified", out var candidate) && candidate.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                declaredQualified = candidate.GetBoolean();
+            var latestQualified = settled && latestRun.TryGetProperty("nativeOutcomeQualified", out var latestCandidate)
+                && latestCandidate.ValueKind is JsonValueKind.True or JsonValueKind.False ? latestCandidate.GetBoolean() : RunBoolean(latestRun, "qualified");
+            declaredQualified &= latestQualified;
+        }
         if (RunBoolean(run, "healthCheckConfigured"))
         {
             if (!run.TryGetProperty("healthCheckExecution", out var health) || health.ValueKind != JsonValueKind.Object)
@@ -104,6 +116,52 @@ public sealed partial class TestingService
             } : null,
             Diagnostics = diagnostics,
         };
+    }
+
+    private bool NativeRunSettlementCurrent(string repository, JsonElement run, ICollection<string> diagnostics)
+    {
+        try
+        {
+            var authority = _workspaceRegistry?.Resolve(repository).Workspace?.AuthorityRepository?.RepositoryPath ?? repository;
+            var references = new HashSet<CisAgentWorkReference>();
+            var observations = new List<MutationNativeExecution>();
+            foreach (var property in new[] { "nativeExecution", "healthCheckExecution" })
+                if (run.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.Object)
+                {
+                    var native = value.Deserialize<MutationNativeExecution>(JsonOptions)!;
+                    observations.Add(native);
+                    if (native.WorkReference is { } child) references.Add(child);
+                    if (native.SettlementReference is { } parent) references.Add(parent);
+                }
+            if (references.Count == 0)
+                // Legacy partial observations remain partial; the existing qualification
+                // provenance gate independently requires governed launch evidence.
+                return true;
+            foreach (var native in observations)
+                if (native.WorkReference is { ParentExecutionId: { } parent } child)
+                {
+                    var orchestration = native.SettlementReference
+                        ?? references.FirstOrDefault(reference => reference.ExecutionId == parent);
+                    if (orchestration is null || orchestration.ExecutionId != parent
+                        || orchestration.AdoptionId != child.AdoptionId || orchestration.AuthorityRepositoryId != child.AuthorityRepositoryId
+                        || orchestration.ChangeId != child.ChangeId || orchestration.OwnerTaskId != child.OwnerTaskId
+                        || orchestration.LogicalAttemptId != child.LogicalAttemptId)
+                        throw new InvalidDataException("The native settlement reference must name its actual retained orchestration parent; another settled execution cannot replace it.");
+                }
+            foreach (var reference in references)
+            {
+                var control = _nativeWork?.InspectSettlement(authority, reference);
+                if (control is null || !CisNativeWorkSettlement.Complete(control, reference))
+                    throw new InvalidDataException("Reconcile native execution '" + reference.ExecutionId
+                        + "' through its original authority; its required settlement remains unresolved.");
+            }
+            return true;
+        }
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException or ArgumentException)
+        {
+            diagnostics.Add("Native observations remain valid independently of required accounting settlement: " + error.Message);
+            return false;
+        }
     }
 
     private bool QualificationPilotCurrent(string repository, JsonElement run, HashSet<string> pinnedPaths,

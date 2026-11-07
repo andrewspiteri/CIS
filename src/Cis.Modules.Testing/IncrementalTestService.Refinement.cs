@@ -16,13 +16,10 @@ public sealed partial class IncrementalTestService
     {
         CisNativeWorkAdmission? admission = null;
         ICisNativeWorkScope? work = null;
-        IncrementalRefinementResult Complete(IncrementalRefinementResult result) => result with
-        {
-            WorkReference = admission?.Reference,
-            WorkCoverage = admission?.Coverage ?? "unaccounted-non-adopted",
-            WorkControl = work?.Finish("native-finished", "Incremental refinement metadata: " + result.Status,
-                result.SidecarPath is { } sidecar ? [sidecar] : []) ?? admission?.Control
-        };
+        Input? original = null;
+        IncrementalRefinementResult Complete(IncrementalRefinementResult result) => FinishRefinementResult(original,
+            result with { WorkReference = admission?.Reference, WorkCoverage = admission?.Coverage ?? "unaccounted-non-adopted" },
+            work, admission?.Control);
         try
         {
             Require(!string.IsNullOrWhiteSpace(options.Reason) && options.Reason.Length <= 2048 && !options.Reason.Contains('\0'),
@@ -32,7 +29,7 @@ public sealed partial class IncrementalTestService
             admission = AdmitMetadata(originalOptions, "incremental-refine");
             if (!admission.Allowed) return Complete(new("held", 4) { Diagnostics = admission.Errors });
             work = admission.Scope;
-            var original = MetadataInput(originalOptions, work);
+            original = MetadataInput(originalOptions, work);
             var rerun = Read(rerunOptions);
             Directory.CreateDirectory(Path.GetDirectoryName(Safe(original.Repository, MutationRunService.LocalRoot + "/run.lock"))!);
             using var lease = new FileStream(Safe(original.Repository, MutationRunService.LocalRoot + "/run.lock"),
@@ -62,6 +59,9 @@ public sealed partial class IncrementalTestService
         var rerunOptions = new IncrementalTestOptions(rerun.Repository, Relative(rerun.Repository, rerun.ProfilePath));
         var state = State(original);
         var rerunState = State(rerun);
+        Require(StateSettlementErrors(original.Repository, state, Safe(original.Root, "latest-run.json")).Length == 0
+                && StateSettlementErrors(rerun.Repository, rerunState, Safe(rerun.Root, "latest-run.json")).Length == 0,
+            "Required source/rerun settlement must be reconciled before refinement metadata can attest its evidence.");
         Require(!state.RecoveryRequired && state.ActiveExecutionUntilUtc is null
             && !rerunState.RecoveryRequired && rerunState.ActiveExecutionUntilUtc is null,
             "Both profiles must finish native work and healthy recovery before refinement.");

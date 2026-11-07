@@ -1438,7 +1438,7 @@ managed_artifacts:
   path: .github/instructions/cis-agent-execution.instructions.md
   definition: guidance.instruction.agent-execution
   template_version: 1
-  applied_hash: sha256:22257faf27d256ca1a4021d2901023a8c0409fb728b9656a296b4b8bf967e57f
+  applied_hash: sha256:2f1ad3ef7e542c558048930220171ed2588cb2e0749266d24d8583d45d821bc5
   ownership: managed
 - id: guidance.instruction.ai-model-qualification
   path: .github/instructions/cis-ai-model-qualification.instructions.md
@@ -1528,7 +1528,7 @@ managed_artifacts:
   path: .github/instructions/cis-local-artifact-retention.instructions.md
   definition: guidance.instruction.local-artifact-retention
   template_version: 1
-  applied_hash: sha256:f5b054fc4e64ee31d1854e0b3a867f298fa1a73f2717cce2f7a1360c9a8928c6
+  applied_hash: sha256:ea4903e7cac04cfe0e21b4ab4a8ac4cac2abfbeec2aedca81c9c8cc6d77062a0
   ownership: human
 - id: guidance.instruction.mcp-adapter
   path: .github/instructions/cis-mcp-adapter.instructions.md
@@ -1846,13 +1846,13 @@ managed_artifacts:
   path: .github/instructions/cis-modules-testing-csharp.instructions.md
   definition: guidance.instruction.csharp
   template_version: 1
-  applied_hash: sha256:d0673e933cf8ab6ff75c53fb310f57b0f581277f0893d9feec2b281a89194110
+  applied_hash: sha256:eaa7a99db7852b8d12d0239edb3f86346e77babce037c9e0a6501aa73e62aa1d
   ownership: managed
 - id: guidance.instruction.csharp.cis-modules-testing-tests
   path: .github/instructions/cis-modules-testing-tests-csharp.instructions.md
   definition: guidance.instruction.csharp
   template_version: 1
-  applied_hash: sha256:791544613e94eca7d0bbcd4cbbc71b73c76301b1a11be7e69c1a169df8d0769a
+  applied_hash: sha256:8be2cd15ca4b5d02f672a3bfa4cf10120ef960d6d8cbbd25c8696b5fd17ac2f3
   ownership: managed
 - id: guidance.instruction.csharp.cis-modules-tracker
   path: .github/instructions/cis-modules-tracker-csharp.instructions.md
@@ -2128,7 +2128,7 @@ managed_artifacts:
   path: .github/skills/cis-add-mutation-tests/SKILL.md
   definition: guidance.skill.add-mutation-tests
   template_version: 1
-  applied_hash: sha256:471a0725c1eb64e26a69f3ba87a5776dbaef76e088f9a8bdad23a412924ab21f
+  applied_hash: sha256:f516f0b729e74c7fc1002482d36d2aee25361ed8b22f875fb509604773ffbdeb
   ownership: managed
 - id: guidance.skill.add-unit-tests
   path: .github/skills/cis-add-unit-tests/SKILL.md
@@ -2140,7 +2140,7 @@ managed_artifacts:
   path: .github/skills/cis-agent-execution/SKILL.md
   definition: guidance.skill.agent-execution
   template_version: 1
-  applied_hash: sha256:685a38a3abf5a6ef16b8d489b49bbf112059e06d26661486b67f6b666789d745
+  applied_hash: sha256:6d18fd0ceba5f45e3f21e5f9f56d853b87a5b52c86469b02bce5597942502064
   ownership: human
 - id: guidance.skill.ai-model-qualification
   path: .github/skills/cis-ai-model-qualification/SKILL.md
@@ -2224,7 +2224,7 @@ managed_artifacts:
   path: .github/skills/cis-dotnet-test/SKILL.md
   definition: guidance.skill.dotnet-test
   template_version: 1
-  applied_hash: sha256:596e6d3ced054be128a6fbc064137b729e9de0e5d20fe4060ebc5f39bdd8d864
+  applied_hash: sha256:b635610cb0265fe6a26e6e4c1c0a13d6bf7fe663013d0d8cd0ddccf1d18c9989
   ownership: human
 - id: guidance.skill.external-tracker-sync
   path: .github/skills/cis-external-tracker-sync/SKILL.md
@@ -2296,7 +2296,7 @@ managed_artifacts:
   path: .github/skills/cis-local-artifact-retention/SKILL.md
   definition: guidance.skill.local-artifact-retention
   template_version: 1
-  applied_hash: sha256:90eb359f6a20e87457c408a331045161e43c3fe929a533cc8cf41b22486a10d7
+  applied_hash: sha256:ce286749b9dc596d33c2a20dfbe9f06217815f0181f54e2f5e3c43998be115f3
   ownership: human
 - id: guidance.skill.maintain-contracts
   path: .github/skills/cis-maintain-contracts/SKILL.md
@@ -2398,7 +2398,7 @@ managed_artifacts:
   path: .github/skills/cis-verification/SKILL.md
   definition: guidance.skill.verification
   template_version: 1
-  applied_hash: sha256:9579950a832638846b9f3596ad79874d6979bd633dc362e2716fc862e67edc57
+  applied_hash: sha256:7d75898c043ed17d6a0ced5d01f8acaa6d7236c7b2a8b93e3c0b0e947616ec44
   ownership: human
 - id: guidance.skill.write-adr
   path: .github/skills/cis-write-adr/SKILL.md
@@ -2536,7 +2536,7 @@ managed_artifacts:
   path: docs/references/local-artifact-retention.md
   definition: reference.local-artifact-retention
   template_version: 1
-  applied_hash: sha256:ecdfa9ecbcdbcabb17c83120ea042a0186dab99302cc79c2d4d9180ab774e459
+  applied_hash: sha256:6e294b3ecb888bb633f215681fb0503203a415013469aba8067acf5bc126d05c
   ownership: human
 - id: reference.module-ownership-map.reference
   path: docs/references/module-ownership-map.md

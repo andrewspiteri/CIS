@@ -72,6 +72,10 @@ that the native mutation runner and fixtures can execute the selected scope.
    infrastructure, restoration or cleanup hold. Incremental receipts and partial
    diagnostics always remain unqualified. Native assertion-message changes or an
    alternative legitimate detecting test do not erase a native kill.
+   Required Finish/settlement failure preserves these native facts but holds
+   returned and retained overall outcomes until legitimate reconciliation.
+   A next-operation hold after successful settlement, or a settled child's
+   active ancestor, does not invalidate that settled evidence.
 7. After focused improvements and a healthy runner, execute the full required scope
    for the final gate with its unchanged threshold. A canary, partial run or timeout
    cannot satisfy that gate.
@@ -104,6 +108,10 @@ not a completed measurement. If restoration is unresolved, resume only the origi
 pinned recipe under its retained work reference; `--recovery-of` requests bounded
 restoration and healthy postflight, not another canary or campaign. Restored health
 cannot manufacture missing correctness observations.
+Exact verified original restoration may pass a repeated-blocker exploration hold
+within its existing recipe/reserve/attempt; preserve that hold and history for
+subsequent exploration. Normalize ignored session values at all actual native
+launches while preserving declared overrides and the original material inputs.
 
 ## Guardrails
 

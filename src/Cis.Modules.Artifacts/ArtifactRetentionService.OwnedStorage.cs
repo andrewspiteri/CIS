@@ -8,7 +8,8 @@ public sealed partial class ArtifactRetentionService
 {
     private readonly AsyncLocal<ArtifactWork?> _artifactWork = new();
     private sealed record ArtifactWork(ICisNativeWorkScope Scope, CisNativeWorkOptions Association,
-        string ReservationId, string RepositoryPath, Stopwatch Monitor, long? MaximumOwnedBytes = null);
+        string ReservationId, string RepositoryPath, Stopwatch Monitor, string? OperationId = null,
+        long MaximumGrowthBytes = 0, bool Cleanup = false);
 
     public ArtifactOperationResult Compact(string repositoryPath, string family, bool confirmed, CisNativeWorkOptions? association = null)
         => GovernedOperation(repositoryPath, "compact", association, confirmed,
@@ -68,8 +69,10 @@ public sealed partial class ArtifactRetentionService
                 ?? throw new InvalidDataException("The admitted artifact growth has no readable owned-storage inventory; unknown usage is not zero.");
             if (admittedStorage.OwnedBytes < 0 || admittedStorage.MaximumBytes <= 0 || reserved.MaximumGrowthBytes < 0)
                 throw new InvalidDataException("The admitted artifact storage bounds are invalid; no expansion was started.");
-            var maximumOwned = Math.Min(admittedStorage.MaximumBytes, checked(admittedStorage.OwnedBytes + reserved.MaximumGrowthBytes));
-            _artifactWork.Value = new(scope, boundAssociation, reserved.ReservationId!, repositoryPath, Stopwatch.StartNew(), maximumOwned);
+            if (reserved.Operation is null)
+                throw new InvalidDataException("The artifact operation has no attributed storage domain; unknown usage is not zero.");
+            _artifactWork.Value = new(scope, boundAssociation, reserved.ReservationId!, repositoryPath, Stopwatch.StartNew(),
+                operation, reserved.MaximumGrowthBytes, operation is "clean" or "compact" or "restore");
             CheckArtifactWork(force: true);
             Directory.CreateDirectory(management);
             // One existing native output lease also excludes retention while Testing writes.
@@ -229,11 +232,17 @@ public sealed partial class ArtifactRetentionService
         // when the operation completed inside this interval.
         if (!force && active.Monitor.ElapsedMilliseconds < 1000) return;
         active.Monitor.Restart();
-        var current = OwnedStorageController!.Inspect(active.RepositoryPath, active.Association);
-        if (!current.Allowed || current.Storage is not { } storage || active.MaximumOwnedBytes is not { } maximumOwned
-            || storage.OwnedBytes < 0 || storage.MaximumBytes <= 0)
-            throw new InvalidDataException("Owned artifact inventory or its admitted growth bound is unreadable; unknown usage is not zero. " + string.Join(" ", current.Errors));
-        if (storage.OwnedBytes > Math.Min(storage.MaximumBytes, maximumOwned))
-            throw new InvalidDataException("Owned artifact growth exceeded this operation's admitted growth or the current global ceiling; other pending work and restoration capacity remain reserved.");
+        // Refresh the SAME immutable reservation. Another admitted operation's
+        // disjoint writes count globally, but never spend this operation's grant.
+        var current = OwnedStorageController!.Reserve(active.Scope.AuthorityPath, active.Scope.Reference,
+            active.OperationId!, active.MaximumGrowthBytes, cleanup: active.Cleanup, actor: active.Scope.Actor);
+        if (!current.Allowed || current.ReservationId != active.ReservationId || current.Result.Storage is not { } storage
+            || current.Operation is not { } operation || storage.OwnedBytes < 0 || storage.MaximumBytes <= 0
+            || operation.InitialBytes < 0 || operation.CurrentBytes < 0 || operation.MaximumGrowthBytes < 0)
+            throw new InvalidDataException("Owned artifact inventory or its admitted growth domain is unreadable; unknown usage is not zero. " + string.Join(" ", current.Result.Errors));
+        if (storage.OwnedBytes > storage.MaximumBytes)
+            throw new InvalidDataException("The global owned artifact ceiling was exceeded; all known owned copies remain counted.");
+        if (operation.CurrentBytes > checked(operation.InitialBytes + operation.MaximumGrowthBytes))
+            throw new InvalidDataException("Owned artifact growth exceeded this operation's admitted growth; other operations' grants and restoration capacity remain reserved.");
     }
 }

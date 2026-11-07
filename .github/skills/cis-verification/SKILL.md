@@ -55,6 +55,10 @@ Gather affected components, contracts, risks, acceptance criteria, available too
    Reuse compatible native reports while material inputs match; preserve historical
    cost, required scope and independent recovery holds. Valid evidence and a met
    threshold can coexist with `qualified: false` under a readiness hold.
+   Required Finish/settlement failure preserves native facts but holds returned and
+   retained overall outcomes until legitimate reconciliation. A next-operation hold
+   after successful settlement, or a settled child's active ancestor, does not
+   invalidate that settled evidence.
 7. After evidence stabilizes, run `cis verify diff`. Confirm the snapshot names every
    planned repository, includes tracked and untracked changes, and is non-empty.
    Then run `cis verify validate`.

@@ -5,6 +5,70 @@ namespace Cis.Modules.Agent.Tests;
 public sealed partial class AgentWorkLedgerTests
 {
     [Fact]
+    public void NativeWork_ExactRestorationPreservesTheRepeatedBlockerExplorationHoldAndOriginalAttempt()
+    {
+        using var f = new Fixture(); var identity = f.Identity("WORK-A");
+        var allocation = new CisAgentWorkAllocationRequest(300, 4, 60, [new(identity.TaskId, 240, 3, 60)],
+            "approved native allocation", "unchanged restoration storage reference", AcknowledgeHistoricalUnknown: true)
+        { Controllers = ["Controller"] };
+        Assert.Equal(0, f.Ledger.Allocate(f.Context, identity.ChangeId, allocation, [identity], "Controller", "Preserve exploration history while restoring the original native baseline.").ExitCode);
+        var stage = new CisAgentWorkStage("native-testing", "fixture-profile", "mutation", f.Context.RepositoryId)
+        { NativeOperation = "mutation-run", NativeRecoveryBasis = "sha256:retained-restoration-recipe" };
+        CisAgentWorkReference? original = null;
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var run = f.Ledger.Admit(f.Context, identity, "native/blocked-attempt-" + attempt, 60, 180,
+                stage: attempt == 0 ? null : stage, controller: "Controller");
+            Assert.True(run.Admitted, string.Join("; ", run.Result.Errors));
+            Assert.Equal(0, f.Ledger.MarkLaunchIntent(f.Context, run.Reference!).ExitCode);
+            f.Time = f.Time.AddSeconds(attempt + 2);
+            var stopped = f.Ledger.Settle(f.Context, run.Reference!, attempt == 0 ? "failed" : "RecoveryRequired", true);
+            Assert.Equal(0, stopped.ExitCode);
+            var checkpoint = new CisAgentWorkCheckpoint("The native exploration remains blocked.", ["fixture:blocked-attempt-" + attempt],
+                "Inspect the bounded failure.", "Stop unchanged exploration.", "Restore the original baseline before any later approach decision.")
+            { BlockerKey = "same-native-blocker", CloseAttempt = true, MaterialNewInformation = false };
+            Assert.Equal(0, f.Ledger.Progress(f.Context, identity, new(checkpoint, stopped.Work!.Revision), "Controller").ExitCode);
+            original = run.Reference;
+        }
+        var before = f.Ledger.Read(f.Context, identity.ChangeId, identity.TaskId).Work!;
+        Assert.Equal(2, before.RepeatedBlockerCount); Assert.Equal(2, before.Task!.UsedAttempts);
+        Assert.Equal(5_000, before.Task.ConsumedMilliseconds);
+        Assert.Contains("Two consecutive logical attempts", before.HoldReason!, StringComparison.Ordinal);
+        Assert.True(before.Executions.Single(item => item.ExecutionId == original!.ExecutionId).NativeRestorationRequired);
+        Assert.False(f.Ledger.Admit(f.Context, identity, "native/unchanged-exploration", 30, 180,
+            stage: stage, controller: "Controller").Admitted);
+        var recoveryStage = stage with { Name = "native-restoration", NativeOperation = "mutation-recovery" };
+        var recovery = f.Ledger.Admit(f.Context, identity, "native/exact-restoration", 60, 180,
+            stage: recoveryStage, controller: "Controller", restorationOfExecutionId: original!.ExecutionId);
+        Assert.True(recovery.Admitted, string.Join("; ", recovery.Result.Errors));
+        Assert.Equal(original.LogicalAttemptId, recovery.Reference!.LogicalAttemptId);
+        Assert.Equal(2, recovery.Result.Work!.Task!.UsedAttempts);
+        var child = f.Ledger.Admit(f.Context, identity, "native/restored-postflight", 10, 180, recovery.Reference.ExecutionId,
+            stage: recoveryStage, controller: "Controller", nativeChildContinuation: true);
+        Assert.True(child.Admitted, string.Join("; ", child.Result.Errors));
+        Assert.Equal(original.LogicalAttemptId, child.Reference!.LogicalAttemptId);
+        Assert.Equal(0, f.Ledger.MarkLaunchIntent(f.Context, child.Reference).ExitCode);
+        f.Time = f.Time.AddSeconds(5);
+        Assert.Equal(0, f.Ledger.Settle(f.Context, child.Reference, "native-finished", true).ExitCode);
+        var restored = f.Ledger.Settle(f.Context, recovery.Reference, "Restored", true);
+        Assert.Equal(0, restored.ExitCode);
+        Assert.Equal(10_000, restored.Work!.Task!.ConsumedMilliseconds);
+        Assert.Equal(55_000, restored.Work.Task.RestorationMilliseconds);
+        Assert.Equal(before.Task.AllocatedMilliseconds, restored.Work.Task.AllocatedMilliseconds);
+        Assert.Equal(before.Task.UsedAttempts, restored.Work.Task.UsedAttempts);
+        Assert.Equal(before.StorageCeilingReference, restored.Work.StorageCeilingReference);
+        Assert.Equal(2, restored.Work.RepeatedBlockerCount);
+        Assert.Equal(2, restored.Work.Checkpoints.Count(item => item.Checkpoint.CloseAttempt
+            && item.Checkpoint.BlockerKey == "same-native-blocker"));
+        Assert.Contains("Two consecutive logical attempts", restored.Work.HoldReason!, StringComparison.Ordinal);
+        Assert.All(restored.Work.Executions, item => { Assert.True(item.Finalized); Assert.False(item.NativeRestorationRequired); });
+        Assert.Equal(original, f.Ledger.NativeExecution(f.Context, original.ExecutionId)!.Value.Reference);
+        var held = f.Ledger.Admit(f.Context, identity, "native/still-held-exploration", 30, 180, stage: stage, controller: "Controller");
+        Assert.False(held.Admitted); Assert.Equal(restored.Work.HoldReason, held.Result.Work!.HoldReason);
+        Assert.Equal(10_000, held.Result.Work.Task!.ConsumedMilliseconds);
+    }
+
+    [Fact]
     public void NativeWork_VerifiedPartialCancellationClearsStoppedRootUncertaintyWithoutClearingItsRecipe()
     {
         using var f = new Fixture(); var identity = f.Identity("WORK-A");

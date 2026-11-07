@@ -38,6 +38,8 @@ public sealed record NativeCorrectnessPilotResult(string Status, bool Ready, str
     public string? SummaryPath { get; init; }
     public string? EvidenceReference => BasisSha256 is null ? null : "native-pilot:" + BasisSha256;
     public bool ControllerAssessed { get; init; }
+    /// <summary>Complete native controls and restored health before required work settlement; never readiness authority by itself.</summary>
+    public bool? NativeReady { get; init; }
     public bool RecoveryRequired { get; init; }
     public bool Restored { get; init; }
     public string? RecoveryBasis { get; init; }

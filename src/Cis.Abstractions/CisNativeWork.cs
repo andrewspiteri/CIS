@@ -38,6 +38,30 @@ public interface ICisNativeWorkController
     CisNativeWorkAdmission Inspect(string repositoryPath, CisNativeWorkOptions? association = null);
     CisNativeWorkAdmission InspectExecution(string authorityPath, CisAgentWorkReference reference);
     CisNativeWorkAdmission Admit(CisNativeWorkRequest request);
+    CisAgentWorkResult InspectSettlement(string authorityPath, CisAgentWorkReference reference)
+        => InspectExecution(authorityPath, reference).Control
+            ?? new("held", null, ["The exact native settlement cannot be read from its authority."], false);
+}
+
+/// <summary>Settlement of this execution and its descendants, independent of a later owner hold.</summary>
+public static class CisNativeWorkSettlement
+{
+    public static bool Complete(CisAgentWorkResult result, CisAgentWorkReference reference)
+    {
+        if (result.Errors.Count != 0 || result.Status is not ("settled" or "unchanged")) return false;
+        if (result.Work is null) return true; // A composed authority supplies the durable view; protocol fixtures may omit it.
+        var executions = result.Work.Executions;
+        var ids = new HashSet<string>(StringComparer.Ordinal) { reference.ExecutionId };
+        for (var count = -1; count != ids.Count;)
+        {
+            count = ids.Count;
+            foreach (var item in executions)
+                if (item.ParentExecutionId is { } parent && ids.Contains(parent)) ids.Add(item.ExecutionId);
+        }
+        return executions.Any(item => item.ExecutionId == reference.ExecutionId)
+            && executions.Where(item => ids.Contains(item.ExecutionId)).All(item => item.CompletedAtUtc is not null
+                && item.RecoveryReason is null && item.Status != "waiting-for-owned-children");
+    }
 }
 
 public interface ICisNativeWorkScope : IDisposable

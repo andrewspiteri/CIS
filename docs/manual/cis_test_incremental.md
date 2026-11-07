@@ -3,7 +3,7 @@ title: "cis test incremental"
 type: command-reference
 status: Draft
 owner: "Andrew Spiteri"
-last_reviewed: "2026-11-06"
+last_reviewed: "2026-11-07"
 review_cadence: on incremental execution contract change
 cis:
   stable_id: change-impact-studio:manual:cis-test-incremental
@@ -15,6 +15,28 @@ Run pending unit tests and mutation work in bounded file batches. CIS saves each
 completed result immediately and reuses it while its relevant inputs still match.
 An interrupted file batch repeats that file; earlier completed files remain saved.
 This command provides development feedback. It does not replace release qualification.
+
+## Required settlement
+
+The command retains valid native reports before final accounting. An actual
+child/root `Finish` failure or unresolved storage settlement returns
+`settlement-required` with exit code `4`; the retained latest outcome and downstream
+verification also stay held. Counts and threshold observations remain available.
+Read-only planning/verification check the original work reference rather than
+treating saved native success as proof that accounting finished. Reconcile that
+exact execution through its original authority; a later run reuses still-current
+reports instead of executing them again solely for bookkeeping.
+
+The same settlement rule applies to governed `revalidate` and `refine` metadata
+receipts. Their successful native/derived observations remain distinct from the
+receipt's overall status. A failed metadata `Finish` does not publish a completed
+receipt or clear an unsettled source/rerun. Source-variant verification also checks
+the retained phase settlements before reporting its partial verified evidence.
+
+A successfully settled child remains valid while its ancestor is running. A
+next-operation reflection or capacity hold after successful settlement does not
+invalidate completed evidence. Process uncertainty, required restoration, ownership
+and capacity checks remain independent.
 
 ## Native work authority and representative readiness
 
@@ -326,8 +348,14 @@ cache reuse cannot relabel them as complete production qualification.
 
 State lives under `.cis/local/testing/incremental/<id>/`. It contains one current
 unit report and one current mutation report per source batch, compact state and
-the latest invocation summary. Replaced reports and reports for retired batches
-are removed. Native work trees are deleted; failed invocations and completed
+the latest invocation summary. Eligible replaced reports and reports for retired
+batches are removed only after the existing owned-storage authority permits the
+destructive change. Required evidence from another owner, active output and
+unresolved recovery evidence retain their original bytes when that authority is
+missing; a forced run or narrower profile cannot override that protection. Use
+the existing authorized owner or delegated supersession controller to replace
+protected evidence. Compatible reuse and ordinary unprotected cache updates remain
+available. Native work trees are deleted; failed invocations and completed
 mutation reports containing timeouts retain at most the last 128 KiB of each
 standard-output/error log. Successful recovery and postflight captures are
 transient and do not overwrite those retained tails. Saved current reports are

@@ -17,6 +17,12 @@ currentness, cleanup and publication assertions when adapting tests. A diagnosti
 that is always unqualified alone cannot prove a hold downgraded an otherwise
 qualifying result; retain native validity/threshold facts in that scenario.
 
+Exercise preserved bytes before authorized supersession, required settlement
+failure versus a subsequent admission hold, disjoint operation growth versus
+individual/global ceilings, and consistent actual-launch environment handling.
+Keep original restoration through an exploration hold within its existing recipe,
+reserve and attempt, preserving the hold for further exploration.
+
 Use the small real MSTest/Stryker fixture for baseline, detected mutation,
 survivor/control, rejected infrastructure, restored health and the actual claimed
 child route. Keep ordinary native discovery/tests and applicable Visual Studio Run

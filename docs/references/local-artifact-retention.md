@@ -3,7 +3,7 @@ title: "Change Impact Studio Local Artifact Retention"
 type: local-artifact-retention
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-10-26"
+last_reviewed: "2026-11-07"
 review_cadence: "on evidence, storage, privacy, or recovery-policy change"
 cis:
   stable_id: change-impact-studio:reference:local-artifact-retention
@@ -60,6 +60,20 @@ Governed native work also has an owner-wide ceiling in the existing `cis agent w
 `cis artifacts inventory` and `plan` accept `--change`, `--task`, `--parent-execution`, `--authority` and `--actor`. They remain read-only and show missing or unreadable ownership as unknown, with a next action. Mutating operations inherit a governed parent or use that explicit association. They reserve the same owner's finite time and storage before creating new output. Existing `--yes` confirmation remains necessary for compact, clean and restore; it is not a new human approval when an authorized controller already has cleanup delegation.
 
 Owner output distinguishes actual regular-file bytes, protected bytes, full pending growth reservations, remaining capacity and the restoration reserve. Overlapping paths count once; physically separate copies count separately even when hashes match. ZIPs are already included in management bytes and are not added twice. Exact CIS-owned native scratch is included while registered, including trusted guard extraction. Pending reservations conservatively retain their full allowance until safely settled, even after some bytes are written. A separate bounded allowance for atomic accounting writes is reserved from the same ceiling. Measurement covers declared paths and bounded monitoring, not arbitrary machine files, filesystem allocation metadata or instantaneous writes.
+
+The shared ceiling and each operation's growth grant are checked separately. A
+reservation retains its original baseline and the writable paths whose growth it
+covers. Native work includes the target repository's declared output and build
+roots plus its exact scratch; retention includes its management output and any
+claimed restore destinations. Another admitted operation's writes in disjoint
+owned roots still count toward the shared ceiling, but do not spend this
+operation's grant. Operations sharing a writable native root retain the existing
+exclusion; disjoint owned targets can proceed independently. Authority and
+provider accounting directories remain globally counted and protected, with their
+reserved write headroom, rather than being attributed to a native test's output
+growth. A sampled retention check refreshes the same reservation without granting
+another allowance. None of these measurements grants supersession or deletion
+authority.
 
 Active, uncertain and current required native evidence and durable accounting remain protected. Successful authorized deletion reconciles surviving bytes but never resets time or attempts. Protected evidence that prevents fitting the ceiling holds expansion: inspect the reported usage and plan, perform only delegated eligible cleanup, or return to the original allocation authority. The existing management area is not a configurable delete family; this checkpoint does not add an archive-pruning permission. Ordinary archive retrieval and restoration still need their finite operation allowance; they do not acquire the special time reserve for genuine native baseline recovery.
 

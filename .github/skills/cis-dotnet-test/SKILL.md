@@ -35,6 +35,9 @@ mutation expansion. Link its `native-pilot:<basis>` evidence. Configure
 `correctnessPilotProfile` on the target mutation/incremental mutation profile and retain the
 separate per-run positive-kill canary. Synthetic protocol fixtures are fault tests,
 not evidence of actual mutant activation. Follow the two native command manuals.
+Normalize ignored session values consistently at actual pilot, ordinary,
+canary and postflight launches, preserving declared overrides, validated
+CIS_WORK authority and identity from the original declared inputs.
 
 ## Completion evidence
 
@@ -46,6 +49,10 @@ Keep owner/attempt coordinates out of material test identity; reuse compatible
 reports and reviewed producer revalidation while preserving historical cost and
 independent recovery holds. Inspect total owned/protected/reserved storage before
 expansion; local output caps do not authorize an independent storage allowance.
+Check each original operation growth grant separately from the shared owned
+ceiling. Required Finish/settlement failure holds returned and retained overall
+outcomes until legitimate reconciliation; a next-operation hold after successful
+settlement or an active ancestor alone does not invalidate settled evidence.
 
 ## Guardrails
 

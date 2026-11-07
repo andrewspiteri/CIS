@@ -84,7 +84,7 @@ public sealed partial class AgentService
                     .SingleOrDefault(item => item.ExecutionId == request.ExecutionId);
                 verifiedPreparationOwner = execution?.PreparationOwner;
                 preparationStopped = PreparationOwnerStopped(verifiedPreparationOwner);
-                if (execution is { Stage.NativeOperation: not null, Finalized: false })
+                if (execution is { Stage.NativeOperation: not null })
                 {
                     var retained = _workLedger.NativeExecution(context, request.ExecutionId);
                     if (retained is null) return WorkFailure(["The retained native execution disappeared; restore its original accounting."]);

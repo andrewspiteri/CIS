@@ -22,7 +22,9 @@ Directory.CreateDirectory(".cis");
 if (File.Exists(".cis/environment-probe.json"))
 {
     var names = JsonSerializer.Deserialize<string[]>(File.ReadAllText(".cis/environment-probe.json"))!;
-    File.WriteAllText(".cis/environment-observed.json", JsonSerializer.Serialize(names.ToDictionary(name => name, Environment.GetEnvironmentVariable)));
+    var values = names.ToDictionary(name => name, Environment.GetEnvironmentVariable);
+    File.WriteAllText(".cis/environment-observed.json", JsonSerializer.Serialize(values));
+    File.AppendAllText(".cis/environment-launches.jsonl", JsonSerializer.Serialize(new { kind = mode, output = Path.GetFileName(output), values }) + "\n");
 }
 var overrideFile = Path.Combine(".cis", "fault-" + Path.GetFileName(source));
 if (mode is "unit" or "mutation" && File.Exists(overrideFile))
@@ -68,7 +70,10 @@ if (mode is "mutation" or "survivor" or "pending" or "wrong-source" or "empty" o
     }
     var mutant = new
     {
-        id = "0", mutatorName = "Boolean", replacement = "false", status = mode == "survivor" ? "Survived" : mode == "pending" ? "Pending" : mode == "reported-timeout" ? "Timeout" : "Killed",
+        id = "0",
+        mutatorName = "Boolean",
+        replacement = "false",
+        status = mode == "survivor" ? "Survived" : mode == "pending" ? "Pending" : mode == "reported-timeout" ? "Timeout" : "Killed",
         location = new { start = new { line = 1, column = 1 }, end = new { line = 1, column = 2 } },
         killedBy = mode is "survivor" or "reported-timeout" ? Array.Empty<string>() : new[] { "native-case" },
     };

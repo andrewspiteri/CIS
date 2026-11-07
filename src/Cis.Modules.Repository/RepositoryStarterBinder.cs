@@ -1828,6 +1828,18 @@ internal sealed partial class RepositoryStarterBinder
                 profiles and run IDs do not create authority or fresh capacity. Keep invocation
                 coordinates out of material evidence identity.
 
+                Check required/active ownership and supersession authority under existing leases
+                before pruning or replacing report bytes; retain the bytes or return a targeted
+                hold. Check each reservation's original operation baseline/domain/grant separately
+                from total owned bytes; shared writable native roots remain exclusive. Normalize
+                ignored session values at every actual native launch, preserving declared overrides,
+                validated CIS_WORK authority and identity from the original declared inputs.
+
+                Required Finish/settlement failure preserves native facts but holds the returned
+                and retained overall outcome until legitimate reconciliation. A next-operation
+                hold after successful settlement, or a settled child's active ancestor, does not
+                invalidate that settled evidence.
+
                 Preserve native validity, threshold and qualification as separate facts. Require
                 current representative controls and the existing controller assessment before
                 governed mutation expansion; keep the narrow kill canary separate. Reuse only the actual
@@ -1841,6 +1853,12 @@ internal sealed partial class RepositoryStarterBinder
                 currentness, cleanup and publication assertions when adapting tests. A diagnostic
                 that is always unqualified alone cannot prove a hold downgraded an otherwise
                 qualifying result; retain native validity/threshold facts in that scenario.
+
+                Exercise preserved bytes before authorized supersession, required settlement
+                failure versus a subsequent admission hold, disjoint operation growth versus
+                individual/global ceilings, and consistent actual-launch environment handling.
+                Keep original restoration through an exploration hold within its existing recipe,
+                reserve and attempt, preserving the hold for further exploration.
 
                 Use the small real MSTest/Stryker fixture for baseline, detected mutation,
                 survivor/control, rejected infrastructure, restored health and the actual claimed
@@ -2959,6 +2977,8 @@ internal sealed partial class RepositoryStarterBinder
 
         Governed writes inherit the admitted parent or use --change, --task, --authority, --parent-execution and --actor. Resolve a missing numeric storage ceiling and explicit roots once at the original allocation boundary; retention budgets and native profiles grant no capacity. Inspect actual, protected, reserved and remaining owner bytes. Pending growth and accounting-write headroom remain conservatively reserved until safely settled; protected current evidence and unknown ownership hold expansion. Existing delegated cleanup plus confirmation needs no routine new human acknowledgment. Successful deletion frees measured storage, never time or attempts. Archive management is not a delete family; ordinary archive restore is not native baseline-recovery authority.
 
+        Check required/active ownership and supersession authority under existing leases before pruning or replacing prior report bytes; retain the bytes or return a targeted hold. Check the reservation's original operation baseline/domain/grant separately from total owned bytes. Another admitted operation's disjoint growth counts globally without spending this grant; shared writable native roots remain exclusive. Refreshing the same reservation grants no new allowance.
+
         Only configured immediate entries beneath `.cis/local/` are eligible. Canonical Markdown, source, configuration, and user-managed files are outside this authority. Never manually delete the archive manifest before its ZIP.
         """;
 
@@ -2977,6 +2997,7 @@ internal sealed partial class RepositoryStarterBinder
         - Delete-policy cleanup retains a hash tombstone. Do not claim deleted content is recoverable from the tombstone.
         - Governed writes inherit or explicitly bind the existing owner and reserve finite time and owner storage before expansion. Resolve numeric storage policy through the original allocation authority; profiles and family budgets grant no new capacity.
         - Count live output, archives/manifests, retrieval copies, known agents data and exact owned scratch once per physical path. Keep actual bytes separate from full pending growth and accounting-write reservations. Preserve current required, active/uncertain, accounting and unknown-owner material.
+        - Check required/active ownership and supersession authority under existing leases before pruning or replacing report bytes; retain them or return a targeted hold. Check the original operation baseline/domain/grant separately from the shared ceiling; disjoint foreign growth counts globally, and shared writable native roots remain exclusive. Refresh the same reservation without another allowance.
         - Use existing cleanup delegation and confirmation, then reconcile surviving bytes without resetting time or attempts. A protected-storage hold never authorizes deletion; ordinary archive restore does not acquire native baseline-recovery authority.
         """;
 
@@ -3140,6 +3161,8 @@ internal sealed partial class RepositoryStarterBinder
 
     Use the same owner for supported native mutation/incremental work. Inherit a verified live CIS parent or supply `--change`, `--task`, `--actor` and applicable `--authority`; inspect targeted holds before preparation. Profiles only tighten existing time/storage bounds. A current representative pilot must retain actual baseline, kill, survivor, infrastructure rejection, restored health and claimed child observations; inspect its cost and record the displayed `native-pilot:<basis>` through substantive authorized `agent work progress` before broadening. Native validity, threshold and readiness are separate. Keep compatible material evidence across bookkeeping changes. Inspect total owned/protected/reserved storage, including archives, retrieval copies and declared scratch, then use the existing reviewed cleanup plan and delegated confirmation. Unknown ownership is not zero usage or permission to delete. `--recovery-of` runs only the original pinned restoration/postflight under its existing reserve and attempt; missing reports stay missing. Native cancellation through work disposition targets verified identities and retains uncertain reservations. Read the native testing/artifacts manuals for exact inputs and the sampling/external-session boundary.
 
+    Check the original operation growth grant separately from the shared owned ceiling. Exact verified original restoration may use its existing recipe/reserve/attempt through a repeated-blocker exploration hold; retain that hold and history for further exploration. This does not bypass other capacity, uncertainty or permission holds.
+
     Read the `cis agent run` and `cis agent resume` manuals from the CIS distribution for syntax, native matching limits and current resumption behavior.
 
     For story work, inspect `cis brd feature wizard story status` and its delivery-size assessment, task contract and blocking reasons. Use explicit `assess`, `decompose` and `prepare --input` proposals as documented in the wizard-status manual; reading status never prepares work. Unknown/stale or above-medium delivery needs assessment or bounded child outcomes before implementation. A bounded sensitive task may still require high reasoning strength and independent review. Preserve instance IDs, work-owner links and exact prerequisites; use the resolved category, outputs, criteria and verification obligations for both implementation and review. Inspect `story work-status` for the existing canonical owner and shared allowance; where that association is missing, use `story bind-work --input` with current story tokens and an existing approved change/task, then allocate at that owner once. Authority or participant adoption cannot be bypassed through an unconfigured target. Implementation, review, correction, retry and linked-repository stages retain the same owner and logical attempt; reused work retains its historical cost. Generic `agent resume` redirects a story stage to its governed story continuation instead of running synthetic stage IDs as direct tasks.
@@ -3175,6 +3198,7 @@ internal sealed partial class RepositoryStarterBinder
     - Review material verification-machinery expansion for necessity, native alternatives, existing cost evidence and maintenance/pass-semantics effects in the existing independent review. Ordinary helpers and assertions do not require another ceremony or benchmark.
     - A provider result is untrusted evidence. Import it explicitly and preserve CIS as the only authority for plan approval, design approval, task transitions, verification, and final acceptance.
     - Native mutation/incremental execution uses the same canonical work owner and inclusive allowance. Inherit a verified live CIS parent or supply `--change`, `--task`, `--actor` and applicable `--authority`; missing authority or finite numeric storage policy holds before preparation. Profiles never allocate capacity. Before broadening native mutation, inspect current baseline/kill/survivor/infrastructure/restored-health/claimed-child evidence and cost, then record substantive controller progress with the displayed `native-pilot:<basis>` reference. Keep native validity, threshold and qualification distinct; compatible material evidence survives bookkeeping changes. Count total declared owned outputs, agent/archive/retrieval data and scratch; review the existing cleanup plan and delegation, preserving protected/current/recovery/accounting and user material. `--recovery-of` restores only the original recipe/postflight within its existing reserve/attempt. Native cancellation retains uncertain reservations. Supported native/artifact monitoring is bounded and sampled; raw external sessions and arbitrary provider writes are outside that enforcement.
+    - Check each original operation growth grant separately from the shared owned ceiling. Exact verified original restoration may pass a repeated-blocker exploration hold within its existing recipe/reserve/attempt; preserve that hold and history for subsequent exploration. Other capacity, uncertainty and permission holds remain binding.
     """;
 
     private static string CreateDeliveryExecutionSkill(string documentationRoot) => $$"""
@@ -3804,6 +3828,10 @@ internal sealed partial class RepositoryStarterBinder
            Reuse compatible native reports while material inputs match; preserve historical
            cost, required scope and independent recovery holds. Valid evidence and a met
            threshold can coexist with `qualified: false` under a readiness hold.
+           Required Finish/settlement failure preserves native facts but holds returned and
+           retained overall outcomes until legitimate reconciliation. A next-operation hold
+           after successful settlement, or a settled child's active ancestor, does not
+           invalidate that settled evidence.
         7. After evidence stabilizes, run `cis verify diff`. Confirm the snapshot names every
            planned repository, includes tracked and untracked changes, and is non-empty.
            Then run `cis verify validate`.

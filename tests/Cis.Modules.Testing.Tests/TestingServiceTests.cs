@@ -256,7 +256,7 @@ public sealed partial class TestingServiceTests
         });
     }
 
-    private static TestingService Service()
+    private static TestingService Service(ICisNativeWorkController? nativeWork = null)
     {
         var resolver = new CisRepositoryContextResolver();
         var adapters = new ICisTestResultAdapter[]
@@ -264,7 +264,7 @@ public sealed partial class TestingServiceTests
             new JUnitTestResultAdapter(), new CucumberJUnitTestResultAdapter(), new VitestJsonResultAdapter(),
             new PlaywrightJsonResultAdapter(), new TrxTestResultAdapter(), new StrykerJsonResultAdapter(),
         };
-        return new TestingService(resolver, new WorkflowService(resolver), adapters);
+        return new TestingService(resolver, new WorkflowService(resolver), adapters, nativeWork: nativeWork);
     }
 
     private static TestSuiteProfile Suite(string id, string layer, string format, string result)

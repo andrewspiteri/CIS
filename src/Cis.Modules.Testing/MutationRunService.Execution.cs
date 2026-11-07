@@ -23,12 +23,15 @@ public sealed partial class MutationRunService
         MutationNativeExecution? execution = null;
         var launched = false;
         IReadOnlyList<string> ownedPaths = storageReservation?.Admission.Result.Storage?.OwnedPaths ?? [];
-        // The owner union includes build outputs outside the run subtree. Bound
-        // its growth to this operation's actual grant, preserving restoration
-        // and other reservations even while the global physical ceiling fits.
+        var operation = storageReservation?.Admission.Operation;
+        // Other admitted roots may legitimately grow while this operation runs.
+        // The whole owned inventory has one global ceiling; only this operation's
+        // attributed output/build/scratch domain spends its individual grant.
         var ownedMaximum = storageReservation?.Admission.Result.Storage is { } owned
-            ? Math.Min(owned.MaximumBytes, checked(owned.OwnedBytes + storageReservation.Admission.MaximumGrowthBytes))
+            ? owned.MaximumBytes
             : long.MaxValue;
+        long OperationMaximum() => operation is null ? long.MaxValue
+            : checked(operation.InitialBytes + operation.MaximumGrowthBytes);
         var arguments = command.Select(value => value.Replace("{output}", output, StringComparison.Ordinal)).ToArray();
         var segment = Convert.ToBase64String(Guid.NewGuid().ToByteArray()).TrimEnd('=').Replace('+', '-').Replace('/', '_');
         var nativeTemporaryRoot = OperatingSystem.IsLinux() ? Path.GetTempPath() : storage;
@@ -45,6 +48,8 @@ public sealed partial class MutationRunService
                     [new(temporary, Scratch: true)], clampToRemaining: true);
                 Require(claim.Allowed, string.Join(" ", claim.Result.Errors));
                 ownedPaths = claim.Result.Storage?.OwnedPaths ?? ownedPaths;
+                operation = claim.Operation ?? throw new InvalidDataException(
+                    "The admitted native storage operation has no attributed growth domain; unknown usage is not zero.");
                 foreach (var configured in profile.Environment.Where(item => new[] { "TEMP", "TMP", "TMPDIR" }
                     .Contains(item.Key, StringComparer.OrdinalIgnoreCase)))
                 {
@@ -54,7 +59,8 @@ public sealed partial class MutationRunService
                         "Governed native temporary override " + configured.Key
                         + " must name an unlinked path inside its declared owned storage; retain the explicit override or resolve its storage authority before launch.");
                 }
-                var environmentEstimate = new Dictionary<string, string>(profile.Environment);
+                var environmentEstimate = IncrementalTestService.PilotNativeEnvironment(profile.Environment,
+                    Resolve(repository, profile.WorkingDirectory, true));
                 foreach (var name in new[] { "TEMP", "TMP", "TMPDIR" }) environmentEstimate.TryAdd(name, nativeTemporary);
                 if (scope is not null)
                 {
@@ -79,9 +85,12 @@ public sealed partial class MutationRunService
                         ?? throw new InvalidOperationException("Installed mutation guard resource is missing: " + name);
                     preparationBytes = checked(preparationBytes + resource.Length);
                 }
-                Require(checked(TreeBytes(storage) - storageReservation.InitialNativeBytes + preparationBytes)
-                    <= storageReservation.Admission.MaximumGrowthBytes,
+                Require(operation.CurrentBytes <= OperationMaximum()
+                    && preparationBytes <= OperationMaximum() - operation.CurrentBytes,
                     "Owned storage cannot fit the bounded trusted guard/request preparation; native work has not started.");
+                Require(claim.Result.Storage is { } currentOwned && currentOwned.OwnedBytes <= ownedMaximum
+                    && preparationBytes <= ownedMaximum - currentOwned.OwnedBytes,
+                    "The global owned storage ceiling cannot fit trusted native preparation; native work has not started.");
             }
             Directory.CreateDirectory(temporary);
             var tools = Path.Combine(temporary, "tools");
@@ -125,13 +134,15 @@ public sealed partial class MutationRunService
                     [new(nativeTemporary, Scratch: true)], clampToRemaining: true);
                 Require(claim.Allowed, string.Join(" ", claim.Result.Errors));
                 ownedPaths = claim.Result.Storage?.OwnedPaths ?? ownedPaths;
+                operation = claim.Operation ?? throw new InvalidDataException(
+                    "The admitted native storage operation lost its attributed growth domain.");
             }
             if (scratchMarker is not null)
                 AtomicJson(scratchMarker, new NativeScratch(nativeTemporary, DateTimeOffset.UtcNow.AddSeconds(profile.TimeoutSeconds + 45)));
             Directory.CreateDirectory(nativeTemporary);
             ownsNativeTemporary = true;
-            var environment = new Dictionary<string, string>(profile.Environment,
-                OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+            var environment = IncrementalTestService.PilotNativeEnvironment(profile.Environment,
+                Resolve(repository, profile.WorkingDirectory, true));
             foreach (var name in new[] { "TEMP", "TMP", "TMPDIR" })
             {
                 environment.TryAdd(name, nativeTemporary);
@@ -156,6 +167,9 @@ public sealed partial class MutationRunService
                 cancellationPath,
                 ownedPaths,
                 maximumOwnedBytes = ownedMaximum,
+                operationPaths = operation?.Paths ?? [],
+                accountingPaths = operation?.AccountingPaths ?? [],
+                maximumOperationBytes = OperationMaximum(),
                 timeoutSeconds = nativeSeconds,
                 maximumRunBytes = profile.MaxRunBytes,
                 maximumRetainedBytes = profile.MaxRetainedBytes,
@@ -186,6 +200,9 @@ public sealed partial class MutationRunService
                     CancellationPath = [string]$request.cancellationPath
                     OwnedPaths = [string[]]$request.ownedPaths
                     MaximumOwnedBytes = [long]$request.maximumOwnedBytes
+                    OperationPaths = [string[]]$request.operationPaths
+                    AccountingPaths = [string[]]$request.accountingPaths
+                    MaximumOperationBytes = [long]$request.maximumOperationBytes
                     MaximumRunBytes = [long]$request.maximumRunBytes; MaximumRetainedBytes = [long]$request.maximumRetainedBytes
                     MinimumFreeBytes = [long]$request.minimumFreeBytes
                     Environment = $request.environment

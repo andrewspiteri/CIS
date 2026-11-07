@@ -84,6 +84,22 @@ public sealed partial class AgentService : ICisNativeWorkController
         catch (Exception error) when (WorkException(error)) { return NativeHold([error.Message]); }
     }
 
+    public CisAgentWorkResult InspectSettlement(string authorityPath, CisAgentWorkReference reference)
+    {
+        try
+        {
+            var authority = Resolve(authorityPath, out var errors);
+            if (authority is null) return new("held", null, errors, false);
+            var retained = _workLedger.NativeExecution(authority, reference.ExecutionId);
+            if (retained is null || retained.Value.Reference != reference || reference.AuthorityRepositoryId != authority.RepositoryId)
+                return new("held", null, ["The settlement reference does not match its exact retained authority/owner/attempt."], false);
+            var result = _workLedger.Read(authority, reference.ChangeId, reference.TaskId) with { Status = "unchanged", Applied = false };
+            return CisNativeWorkSettlement.Complete(result, reference) && _workLedger.NativeStorageSettled(authority, reference) ? result
+                : result with { Status = "held", Errors = ["The exact native execution or one of its owned children still requires settlement/reconciliation."] };
+        }
+        catch (Exception error) when (WorkException(error)) { return new("held", null, [error.Message], false); }
+    }
+
     private CisNativeWorkAdmission AdmitNativeBound(NativeWorkBinding binding, CisNativeWorkRequest request, bool internalChild = false)
     {
         try
@@ -236,7 +252,7 @@ public sealed partial class AgentService : ICisNativeWorkController
         private readonly DateTimeOffset started = service._workLedger.NativeExecution(binding.Authority, reference.ExecutionId) is { } retained
             && DateTimeOffset.TryParse(retained.Execution.StartedAtUtc, out var recorded) ? recorded
                 : throw new InvalidDataException("The admitted native start time could not be recovered; retain its reservation.");
-        private bool launched, safelyReturned, uncertain, settled;
+        private bool launched, safelyReturned, uncertain, settled, finishAttempted;
         private int? processId;
         private string? processStarted;
         public string AuthorityPath => binding.Authority.RepositoryPath;
@@ -282,14 +298,15 @@ public sealed partial class AgentService : ICisNativeWorkController
         }
         public CisAgentWorkResult Finish(string status, string? summary, IReadOnlyList<string>? evidence)
         {
+            finishAttempted = true;
             var stopped = !uncertain && (!launched || safelyReturned && (processId is null || OwnedProcessStopped(processId.Value, processStarted)));
             var result = service._workLedger.Settle(binding.Authority, reference, status, stopped, summary, evidence);
-            settled = result.Applied || result.ExitCode == 0;
+            settled = CisNativeWorkSettlement.Complete(result, reference);
             return result;
         }
         public void Dispose()
         {
-            if (settled) return;
+            if (settled || finishAttempted) return;
             if (!launched || safelyReturned) Finish(launched ? "interrupted" : "preparation-ended", "Native cost retained at the stopped controller boundary.", []);
             else MarkUncertain("Native launch intent has no complete driver/child cleanup proof; reconcile its owned execution before releasing capacity.");
         }

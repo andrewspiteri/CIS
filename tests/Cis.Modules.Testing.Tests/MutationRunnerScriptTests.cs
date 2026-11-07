@@ -45,7 +45,7 @@ public sealed class MutationRunnerScriptTests
     }
 
     [Fact]
-    public void OwnedSiblingBuildGrowthUsesTheAdmittedUnionBoundBeforeTheGlobalCeiling()
+    public void OwnedSiblingBuildGrowthUsesItsOperationGrantBeforeTheGlobalCeiling()
     {
         using var fixture = new RunnerFixture();
         var nativeStorage = Path.Combine(fixture.Root, "native-storage");
@@ -57,14 +57,56 @@ public sealed class MutationRunnerScriptTests
         var output = Path.Combine(build, "payload.bin").Replace("'", "''");
 
         var result = fixture.Run($"[IO.File]::WriteAllBytes('{output}', [byte[]]::new(32768)); Start-Sleep -Seconds 30",
-            $"-MaximumRunBytes 1048576 -MaximumRetainedBytes 1048576 -OwnedPaths @('{fixture.Root.Replace("'", "''")}') -MaximumOwnedBytes {admittedGrowth}",
+            $"-MaximumRunBytes 1048576 -MaximumRetainedBytes 1048576 -OwnedPaths @('{fixture.Root.Replace("'", "''")}') -MaximumOwnedBytes {globalCeiling} -OperationPaths @('{build.Replace("'", "''")}') -MaximumOperationBytes {admittedGrowth}",
             nativeStorage);
 
         Assert.Equal("storage-limit", result.GetProperty("status").GetString());
         Assert.InRange(result.GetProperty("peakOwnedBytes").GetInt64(), 32768, globalCeiling - 1);
+        Assert.True(result.GetProperty("peakOperationBytes").GetInt64() >= 32768);
         Assert.True(result.GetProperty("peakRunBytes").GetInt64() < admittedGrowth);
         Assert.True(result.GetProperty("peakRetainedBytes").GetInt64() < admittedGrowth);
         Assert.InRange(result.GetProperty("durationMilliseconds").GetInt64(), 0, 8_000);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AnotherDisjointOperationsGrowthDoesNotSpendThisOperationsGrant(bool beforeLaunch)
+    {
+        using var fixture = new RunnerFixture();
+        var first = Path.Combine(fixture.Root, "first");
+        var second = Path.Combine(fixture.Root, "second");
+        Directory.CreateDirectory(first); Directory.CreateDirectory(second);
+        var foreign = Path.Combine(second, "payload.bin").Replace("'", "''");
+        var own = Path.Combine(first, "payload.bin").Replace("'", "''");
+        if (beforeLaunch) File.WriteAllBytes(Path.Combine(second, "payload.bin"), new byte[32768]);
+        var otherWrite = beforeLaunch ? "" : $"[IO.File]::WriteAllBytes('{foreign}', [byte[]]::new(32768));";
+
+        var result = fixture.Run(otherWrite + $"[IO.File]::WriteAllBytes('{own}', [byte[]]::new(1024)); Write-Output healthy",
+            $"-MaximumRunBytes 1048576 -MaximumRetainedBytes 1048576 -OwnedPaths @('{fixture.Root.Replace("'", "''")}') -MaximumOwnedBytes 1048576 -OperationPaths @('{first.Replace("'", "''")}') -MaximumOperationBytes 16384");
+
+        Assert.Equal("exited", result.GetProperty("status").GetString());
+        Assert.Equal(0, result.GetProperty("exitCode").GetInt32());
+        Assert.True(result.GetProperty("safelyStopped").GetBoolean());
+        Assert.True(result.GetProperty("peakOwnedBytes").GetInt64() > 16384);
+        Assert.Equal(1024, result.GetProperty("peakOperationBytes").GetInt64());
+        Assert.Equal(32768, new FileInfo(Path.Combine(second, "payload.bin")).Length);
+    }
+
+    [Fact]
+    public void ActualSharedOwnedCeilingStillStopsAnOperationWithNoIndividualGrowth()
+    {
+        using var fixture = new RunnerFixture();
+        var own = Path.Combine(fixture.Root, "first"); Directory.CreateDirectory(own);
+        File.WriteAllBytes(Path.Combine(fixture.Root, "foreign.bin"), new byte[32768]);
+        var marker = Path.Combine(own, "started.txt");
+        var result = fixture.Run($"[IO.File]::WriteAllText('{marker.Replace("'", "''")}', 'started')",
+            $"-MaximumRunBytes 1048576 -MaximumRetainedBytes 1048576 -OwnedPaths @('{fixture.Root.Replace("'", "''")}') -MaximumOwnedBytes 16384 -OperationPaths @('{own.Replace("'", "''")}') -MaximumOperationBytes 8192");
+
+        Assert.Equal("storage-limit", result.GetProperty("status").GetString());
+        Assert.False(File.Exists(marker));
+        Assert.True(result.GetProperty("peakOwnedBytes").GetInt64() >= 32768);
+        Assert.Equal(0, result.GetProperty("peakOperationBytes").GetInt64());
     }
 
     [Fact]

@@ -58,15 +58,13 @@ public sealed partial class MutationRunService
                 WorkControl = admission.Control
             };
         using var work = admission.Scope;
-        MutationRunResult Complete(MutationRunResult result) => result with
+        MutationRunResult Complete(MutationRunResult result) => FinishResult(repository, result with
         {
             WorkReference = admission.Reference,
             WorkCoverage = admission.Coverage,
-            WorkControl = work?.Finish(result.Pilot?.RecoveryRequired == true
+        }, work, _ownedStorage, result.Pilot?.RecoveryRequired == true
                     || pilotContext is not null && result.Pilot?.Restored != true ? "RecoveryRequired"
-                    : recoveryOf is not null && result.Pilot?.Restored == true ? "Restored" : "native-finished", "Native mutation " + result.Kind + ": " + result.Status,
-                result.SummaryPath is { } summary ? [summary] : []) ?? admission.Control
-        };
+                    : recoveryOf is not null && result.Pilot?.Restored == true ? "Restored" : "native-finished");
         try
         {
             Require(restorationOnly || !admission.Required || options.Kind != "canary" || input.Profile.CanaryCommand is { Length: > 0 },
@@ -99,6 +97,13 @@ public sealed partial class MutationRunService
             var identity = Identity(repository, input.Profile, input.Path);
             Require(identity.Inputs.Single(item => string.Equals(Resolve(repository, item.Path), input.Path, CisPathSafety.PlatformComparison)).Sha256 == input.Hash,
                 "Mutation profile changed before execution.");
+            if (options.Kind == "canary" && input.Profile.CorrectnessPilot is not null)
+            {
+                var pendingPilot = InspectCorrectnessPilot(repository, options.ProfilePath, admission, workController: _nativeWork);
+                if (pendingPilot is { NativeReady: true, Ready: false, Status: "settlement-required" })
+                    return Complete(new("settlement-required", 4, options.Kind)
+                    { ProfileId = input.Profile.Id, Pilot = pendingPilot, Diagnostics = pendingPilot.Diagnostics.Append(pendingPilot.NextAction).ToArray() });
+            }
             MutationRunResult? canary = null;
             if (options.Kind == "qualification")
             {
@@ -113,7 +118,8 @@ public sealed partial class MutationRunService
             {
                 pilot = RunCorrectnessPilot(repository, input.Profile, input.Path, work, cancellationToken, _ownedStorage, _nativeWork);
                 result = result with { Pilot = pilot };
-                if (!pilot.Ready) result = FailedResult(result, pilot.NextAction);
+                if (!pilot.Ready) result = pilot is { NativeReady: true, Status: "settlement-required" }
+                    ? SettlementHeld(result, [pilot.NextAction]) : FailedResult(result, pilot.NextAction);
             }
             else if (options.Kind == "canary" && input.Profile.CorrectnessPilot is not null)
             {
@@ -214,7 +220,8 @@ public sealed partial class MutationRunService
         {
             enteredNative = true;
             execution = Execute(repository, output, storage, profile, kind == "canary" ? profile.CanaryCommand ?? profile.Command : profile.Command,
-                work, cancellationToken, ownedStorage, storageReservation);
+                work, cancellationToken, ownedStorage, storageReservation) with
+            { SettlementReference = parent?.Reference ?? work?.Reference, WorkAuthorityPath = work?.AuthorityPath };
             Require(execution.SafelyStopped,
                 "Owned native work has not been proven stopped; its output and reservation remain held before report admission or cleanup.");
             if (execution.Error is not null) diagnostics.Add(execution.Error);
@@ -238,7 +245,11 @@ public sealed partial class MutationRunService
                     healthWork, cancellationToken, ownedStorage, storageReservation);
                 Require(healthCheck.SafelyStopped,
                     "Owned postflight work has not been proven stopped; its output and reservation remain held before publication or cleanup.");
-                healthWork?.Finish("native-finished", "Mutation postflight completed: " + healthCheck.Status, []);
+                if (healthWork is not null)
+                {
+                    var control = healthWork.Finish("native-finished", "Mutation postflight completed: " + healthCheck.Status, []);
+                    healthCheck = healthCheck with { SettlementErrors = SettlementErrors(control, healthWork.Reference) };
+                }
             }
             // Recheck after the optional hook as it is also target-owned execution.
             if (unchanged)
@@ -289,7 +300,7 @@ public sealed partial class MutationRunService
             {
                 var latest = Resolve(repository, LocalRoot + "/" + profile.Id + "/latest-result.json");
                 Publish(retainedReport, latest, assessment, repository, profile.Id, runId, kind, false,
-                    identity with { Unchanged = unchanged }, scopeMatched, execution, profile.HealthCheckCommand is not null, healthCheck, profile.CorrectnessPilotProfile, Path.GetRelativePath(repository, profilePath).Replace('\\', '/'));
+                    identity with { Unchanged = unchanged }, scopeMatched, execution, profile.HealthCheckCommand is not null, healthCheck, profile.CorrectnessPilotProfile, Path.GetRelativePath(repository, profilePath).Replace('\\', '/'), work, ownedStorage);
                 publishedReport = latest;
                 if (successful) Prune(output, successful: true);
             }
@@ -344,7 +355,7 @@ public sealed partial class MutationRunService
             StartedUtc = started,
             FinishedUtc = DateTimeOffset.UtcNow,
             Diagnostics = diagnostics.Concat(assessment?.Diagnostics ?? []).ToArray(),
-            WorkReference = work?.Reference,
+            WorkReference = parent?.Reference ?? work?.Reference,
             WorkCoverage = work is null ? "unaccounted-non-adopted" : "governed-native",
         };
         var summaryBytes = JsonSerializer.SerializeToUtf8Bytes(result, Json).LongLength;
@@ -370,7 +381,7 @@ public sealed partial class MutationRunService
                 if (kind == "qualification")
                 {
                     Publish(publishedReport, qualification, assessment, repository, profile.Id, runId, kind, true,
-                        identity with { Unchanged = unchanged }, scopeMatched, execution, profile.HealthCheckCommand is not null, healthCheck, profile.CorrectnessPilotProfile, Path.GetRelativePath(repository, profilePath).Replace('\\', '/'));
+                        identity with { Unchanged = unchanged }, scopeMatched, execution, profile.HealthCheckCommand is not null, healthCheck, profile.CorrectnessPilotProfile, Path.GetRelativePath(repository, profilePath).Replace('\\', '/'), work, ownedStorage);
                     publishedQualification = true;
                 }
                 AtomicJson(publishedReport + ".assessment.json", finalSidecar);
@@ -387,6 +398,7 @@ public sealed partial class MutationRunService
                         identity with { Unchanged = unchanged }, scopeMatched, execution, profile.HealthCheckCommand is not null, healthCheck, profile.CorrectnessPilotProfile, Path.GetRelativePath(repository, profilePath).Replace('\\', '/')));
             }
         }
+        if (healthCheck?.SettlementErrors is { Count: > 0 } healthErrors) result = SettlementHeld(result, healthErrors);
         AtomicJson(Resolve(output, "summary.json"), result);
         var stableEvidence = new[] { "latest-result.json", "latest-result.json.assessment.json", "last-qualification.json", "last-qualification.json.assessment.json" }
             .Select(name => Resolve(repository, LocalRoot + "/" + profile.Id + "/" + name)).Where(File.Exists);
@@ -394,17 +406,15 @@ public sealed partial class MutationRunService
             stableEvidence.Append(Resolve(output, "summary.json")).ToArray());
         if (storageResult is { Allowed: false })
         {
-            result = FailedResult(result, string.Join(" ", storageResult.Errors));
+            result = SettlementHeld(result, storageResult.Errors);
             AtomicJson(Resolve(output, "summary.json"), result);
         }
         WriteLatest(repository, result, work, ownedStorage, supersededSummary: storageResult?.Allowed == false ? null : previousSummary);
-        return result with
+        return FinishResult(repository, result with
         {
             WorkReference = work?.Reference,
             WorkCoverage = work is null ? "unaccounted-non-adopted" : "governed-native",
-            WorkControl = work?.Finish("native-finished", "Native mutation result admitted: " + result.Status,
-                availableReport is null ? [relativeRoot + "/summary.json"] : [Path.GetRelativePath(repository, availableReport).Replace('\\', '/')])
-        };
+        }, work, ownedStorage, "native-finished");
     }
 
     private static MutationRunResult BlockedByCanary(string repository, MutationRunProfile profile, string profileHash,
@@ -449,6 +459,7 @@ public sealed partial class MutationRunService
         }
         else
         {
+            using var mutation = BeginEvidenceMutation(scope, ownedStorage, [path]);
             // The attempt already holds this growth; a second reservation would
             // double-charge its full pending allowance before native launch.
             var bytes = JsonSerializer.SerializeToUtf8Bytes(state, Json).LongLength;
@@ -494,6 +505,9 @@ public sealed partial class MutationRunService
         result.FinishedUtc,
         result.WorkReference,
         result.WorkCoverage,
+        result.NativeOutcomeStatus,
+        result.NativeOutcomeExitCode,
+        result.NativeOutcomeQualified,
     };
 
     private static MutationRunResult FailedResult(MutationRunResult result, string diagnostic) => result with
@@ -590,8 +604,10 @@ public sealed partial class MutationRunService
 
     private static void Publish(string source, string destination, TestSuiteExecution assessment, string repository,
         string profileId, string runId, string kind, bool successful, MutationSourceIdentity identity, bool matched, MutationNativeExecution execution,
-        bool healthConfigured, MutationNativeExecution? healthCheck, string? correctnessPilotProfile = null, string? profilePath = null)
+        bool healthConfigured, MutationNativeExecution? healthCheck, string? correctnessPilotProfile = null, string? profilePath = null,
+        ICisNativeWorkScope? scope = null, ICisOwnedStorageController? ownedStorage = null)
     {
+        using var mutation = BeginEvidenceMutation(scope, ownedStorage, [source, destination, destination + ".assessment.json"]);
         Require(FileHash(source) == assessment.Mutation?.ReportSha256, "Published native report failed hash verification.");
         if (Path.GetFileName(destination) == "latest-result.json") File.Move(source, destination, overwrite: true);
         else if (!File.Exists(destination) || FileHash(destination) != assessment.Mutation?.ReportSha256)

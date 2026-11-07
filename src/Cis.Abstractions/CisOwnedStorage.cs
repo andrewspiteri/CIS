@@ -16,7 +16,20 @@ public sealed record CisOwnedStoragePolicy(long MaximumBytes, IReadOnlyList<CisO
 }
 
 /// <summary>Exact additional native output/scratch ownership; scratch never names a whole temporary directory.</summary>
-public sealed record CisOwnedStoragePath(string Path, bool Scratch = false, bool Required = false);
+public sealed record CisOwnedStoragePath(string Path, bool Scratch = false, bool Required = false)
+{
+    /// <summary>Require authority to change existing protected bytes before the caller writes or removes them.</summary>
+    public bool MutatesExisting { get; init; }
+    /// <summary>Include the admitted native target's declared writable roots in this operation's measured domain.</summary>
+    public bool IncludeRepositoryWrites { get; init; }
+}
+
+/// <summary>One immutable growth grant, distinct from the shared owned-storage inventory.</summary>
+public sealed record CisOwnedStorageOperation(IReadOnlyList<string> Paths, long InitialBytes,
+    long CurrentBytes, long MaximumGrowthBytes)
+{
+    public IReadOnlyList<string> AccountingPaths { get; init; } = [];
+}
 
 public sealed record CisOwnedStorageView(string AuthorityRepositoryId, string ChangeId, string OwnerTaskId,
     string CeilingReference, long MaximumBytes, long OwnedBytes, long ProtectedBytes, long ReservedBytes,
@@ -45,6 +58,7 @@ public sealed record CisOwnedStorageResult(string Status, bool Required, CisOwne
 public sealed record CisOwnedStorageAdmission(CisOwnedStorageResult Result, string? ReservationId, long MaximumGrowthBytes)
 {
     public bool Allowed => Result.Allowed && (ReservationId is not null || !Result.Required);
+    public CisOwnedStorageOperation? Operation { get; init; }
 }
 
 /// <summary>Storage reservations share the existing canonical work ledger and its transaction lock.</summary>

@@ -8,7 +8,7 @@ public sealed partial class AgentModule
 {
     private static Command Work(AgentService service)
     {
-        var group = new Command("work", "Allocate and inspect durable task/story work, record progress, and resolve a bounded continuation.");
+        var group = new Command("work", "Allocate, amend and inspect durable task/story work, record progress, and resolve a bounded continuation.");
         var allocate = new Command("allocate", "Establish or update an authorized change and task allocation without resetting consumption.");
         var allocationChange = new Argument<string>("change-id");
         var allocationInput = Required("--input"); var allocationActor = Required("--actor"); var allocationReason = Required("--reason");
@@ -23,6 +23,21 @@ public sealed partial class AgentModule
                 result.GetValue(allocationInput)!, result.GetValue(allocationActor)!, result.GetValue(allocationReason)!), format);
         });
         group.Subcommands.Add(allocate);
+
+        var amendTime = new Command("amend-time", "Amend an existing task's absolute time ceiling by an explicit original-authority decision.");
+        var amendmentChange = new Argument<string>("change-id"); var amendmentTask = new Argument<string>("task-id");
+        var amendmentInput = Required("--input"); var amendmentActor = Required("--actor"); var amendmentReason = Required("--reason");
+        var amendmentRepo = Repo(); var amendmentFormat = Format();
+        amendTime.Arguments.Add(amendmentChange); amendTime.Arguments.Add(amendmentTask);
+        foreach (var option in new Option[] { amendmentInput, amendmentActor, amendmentReason, amendmentRepo, amendmentFormat }) amendTime.Options.Add(option);
+        amendTime.SetAction(result =>
+        {
+            var format = result.GetValue(amendmentFormat)!;
+            if (!WorkFormatSupported(format)) return 2;
+            return RenderWork(service.AmendWorkTaskTime(result.GetValue(amendmentRepo)!, result.GetValue(amendmentChange)!, result.GetValue(amendmentTask)!,
+                result.GetValue(amendmentInput)!, result.GetValue(amendmentActor)!, result.GetValue(amendmentReason)!), format);
+        });
+        group.Subcommands.Add(amendTime);
 
         var status = new Command("status", "Read current work ownership, capacity, history, and holds without changing accounting.");
         var statusChange = new Argument<string>("change-id"); var statusTask = new Option<string?>("--task");
@@ -103,6 +118,8 @@ public sealed partial class AgentModule
                 Console.WriteLine($"correctionRound={Safe(round.Id)};relationship={Safe(round.RelationshipId)};number={round.Number};status={Safe(round.Status)};maximumSeconds={round.MaximumSeconds};repositories={string.Join(',', round.Stages.Select(stage => Safe(stage.RepositoryId)))};disposition={Safe(round.DispositionReference)}");
             foreach (var finding in work.RequiredCorrectionFindingReferences) Console.WriteLine("requiredCorrectionFinding=" + Safe(finding));
             Console.WriteLine($"workAuthority={Safe(work.DecisionReference)};storageOwner={Safe(work.StorageOwner)};storageCeiling={Safe(work.StorageCeilingReference)}");
+            foreach (var amendment in work.TaskTimeAmendments.TakeLast(5))
+                Console.WriteLine($"taskTimeAmendment={Safe(amendment.Reference)};task={Safe(amendment.TaskId)};owner={Safe(amendment.OwnerTaskId)};previousAllocatedMilliseconds={amendment.PreviousAllocatedMilliseconds};allocatedMilliseconds={amendment.AllocatedMilliseconds};actor={Safe(amendment.Actor)};decisionReference={Safe(amendment.DecisionReference)};recordedAt={Safe(amendment.RecordedAtUtc)};previousRevision={Safe(amendment.PreviousRevision)};revision={Safe(amendment.Revision)};reason={Safe(amendment.Reason)}");
             foreach (var execution in work.Executions.TakeLast(5))
                 Console.WriteLine($"workExecution={Safe(execution.ExecutionId)};status={Safe(execution.Status)};activeMilliseconds={execution.ActiveMilliseconds};elapsedMilliseconds={execution.ElapsedMilliseconds};reservedMilliseconds={execution.ReservedMilliseconds};parent={Safe(execution.ParentExecutionId)};recovery={Safe(execution.RecoveryReason)}");
             if (work.Checkpoints.LastOrDefault() is { } checkpoint)
@@ -120,6 +137,8 @@ public sealed partial class AgentModule
             if (work.HoldReason is not null) Console.WriteLine($"Hold: {work.HoldReason}");
             Console.WriteLine($"Next action: {work.NextAction}");
             Console.WriteLine($"Allocation decision: {work.DecisionReference}; storage owner: {work.StorageOwner}; storage ceiling: {work.StorageCeilingReference}.");
+            foreach (var amendment in work.TaskTimeAmendments.TakeLast(5))
+                Console.WriteLine($"Task time amendment {amendment.Reference}: {amendment.TaskId}/{amendment.OwnerTaskId}, {amendment.PreviousAllocatedMilliseconds} -> {amendment.AllocatedMilliseconds} ms; authority={amendment.Actor}; decision={amendment.DecisionReference}; revision={amendment.Revision}. Reason: {amendment.Reason}");
             foreach (var execution in work.Executions.TakeLast(5))
                 Console.WriteLine($"Execution {execution.ExecutionId}: {execution.Status}; active={execution.ActiveMilliseconds} ms; elapsed={execution.ElapsedMilliseconds} ms; reserved={execution.ReservedMilliseconds} ms; recovery={execution.RecoveryReason ?? "none"}.");
             if (work.Checkpoints.LastOrDefault() is { } checkpoint)

@@ -27,6 +27,13 @@ public sealed record CisAgentWorkAllocationRequest(long ChangeSeconds, int Chang
     public CisOwnedStoragePolicy? Storage { get; init; }
 }
 
+/// <summary>An explicit original-authority decision replacing an existing task time ceiling.</summary>
+public sealed record CisAgentWorkTaskTimeAmendmentRequest(long Seconds, string DecisionReference, string ExpectedRevision);
+
+public sealed record CisAgentWorkTaskTimeAmendment(string Reference, string AuthorityRepositoryId,
+    string ChangeId, string TaskId, string OwnerTaskId, long PreviousAllocatedMilliseconds, long AllocatedMilliseconds,
+    string Actor, string Reason, string DecisionReference, string RecordedAtUtc, string PreviousRevision, string Revision);
+
 /// <summary>Controller reflection. Numeric consumption is always measured by CIS.</summary>
 public sealed record CisAgentWorkCheckpoint(string Outcome, IReadOnlyList<string> Evidence,
     string Approach, string Decision, string NextAction)
@@ -152,6 +159,7 @@ public sealed record CisAgentWorkView(string AuthorityRepositoryId, string Chang
     string StorageCeilingReference, IReadOnlyList<CisAgentWorkExecution> Executions,
     IReadOnlyList<CisAgentWorkCheckpointRecord> Checkpoints)
 {
+    public IReadOnlyList<CisAgentWorkTaskTimeAmendment> TaskTimeAmendments { get; init; } = [];
     public IReadOnlyList<string> AcceptedOutcomeReferences { get; init; } = [];
     public string? Hypothesis { get; init; }
     public string? ExpectedResult { get; init; }

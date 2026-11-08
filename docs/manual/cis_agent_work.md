@@ -3,7 +3,7 @@ title: "cis agent work"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-11-07"
+last_reviewed: "2026-11-08"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-agent-work
@@ -43,12 +43,13 @@ The two automatic correction rounds are durable under the story relationship. A 
 
 ```text
 cis agent work allocate <change-id> --input <allocation.json> --actor <identity> --reason <rationale>
+cis agent work amend-time <change-id> <owner-task-id> --input <amendment.json> --actor <original-authority> --reason <rationale>
 cis agent work status <change-id> [--task <task-id>]
 cis agent work progress <change-id> <task-id> --input <checkpoint.json> --actor <identity>
 cis agent work disposition <change-id> <task-id> --input <disposition.json> --actor <identity> --reason <rationale>
 ```
 
-All four commands accept `--repo <authority-path>` and `--format <human|json|agent>`. `status` is read-only. The other operations check current authority and the input revision before changing work state. Request files contain UTF-8 JSON; use the current `work.revision` from status for an update rather than modifying internal accounting files.
+These commands accept `--repo <authority-path>` and `--format <human|json|agent>`. `status` is read-only. The other operations check current authority and the input revision before changing work state. Request files contain UTF-8 JSON; use the current `work.revision` from status for an update rather than modifying internal accounting files.
 
 ### Allocate
 
@@ -112,6 +113,42 @@ Provider permissions, explicit command rules, plan eligibility, isolation, and c
 A nested stage inside an admitted story or correction window may use the parent's remaining whole seconds, including fewer than 30. CIS rounds down and keeps the child within both the parent deadline and any correction cap; preparation stays charged. Less than one usable second holds before provider launch. This does not change the 30-second minimum for a new root request, adopted ceilings or restoration reserves.
 
 Recovery uncertainty holds conflicting work for the affected accounting owner. Other independent owners may proceed when their own authority and holds permit it and the remaining shared change capacity still fits. The uncertain reservation continues to count against that shared allowance.
+
+### Amend an existing task's time ceiling
+
+Use `amend-time` only for an explicit new decision from the original allocation
+authority. Delegated controller access alone is insufficient. Supply the existing
+accounting owner, a fresh revision from `status`, the absolute replacement ceiling
+in seconds, the new decision reference and a reason. The operation raises task
+time only; ordinary `allocate` continues to preserve fixed limits.
+
+This synthetic request illustrates the input shape and grants no authority:
+
+```json
+{
+  "seconds": 450,
+  "decisionReference": "decision:approved-task-time-amendment-example",
+  "expectedRevision": "<current-work-revision>"
+}
+```
+
+```text
+cis agent work amend-time CIS-0042 WORK-120 --input amendment.json --actor "Original allocation authority" --reason "Apply the explicit task-time decision" --repo <authority-path> --format json
+```
+
+An authorized amendment may raise the prior task allocation pool. It does not
+increase the containing-change ceiling: admission and settlement still enforce
+both task and change capacity, including their protected restoration reserves.
+It preserves consumption, reservations, attempts, bindings, storage policy,
+fixed/redistribution flags, independent holds and historical decisions. It does
+not admit work or start another logical attempt. Repeating a request cannot add
+the same increase again.
+
+The result exposes the effective task ceiling, ordinary remaining capacity,
+current revision and task-time amendment history. The original allocation decision
+remains intact; each amendment records its original authority, reason, new decision
+reference, prior/new ceiling and revision provenance. Recheck status and all other
+execution gates before running the next bounded action.
 
 ### Record progress
 

@@ -75,6 +75,7 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
         public Dictionary<string, string> Bindings { get; set; } = new(StringComparer.Ordinal);
         public Dictionary<string, Execution> Executions { get; set; } = new(StringComparer.Ordinal);
         public List<AllocationAudit> AllocationHistory { get; set; } = [];
+        public List<CisAgentWorkTaskTimeAmendment> TaskTimeAmendments { get; set; } = [];
         public Dictionary<string, HistoricalCharge> HistoricalRuns { get; set; } = new(StringComparer.Ordinal);
         public StorageAllocation? Storage { get; set; }
     }
@@ -1300,6 +1301,7 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
                     throw new InvalidDataException("A task accounting owner is corrupt; restore its recorded consumption and allocation.");
             if (change.Bindings.Values.Any(owner => !change.Owners.ContainsKey(owner)))
                 throw new InvalidDataException("A task accounting binding has lost its immutable owner.");
+            ValidateTaskTimeAmendments(state, change);
             foreach (var (executionId, execution) in change.Executions)
             {
                 if (execution is null || execution.Reference is null || execution.Reference.ExecutionId != executionId || execution.Reference.AdoptionId != state.AdoptionId
@@ -1353,6 +1355,7 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
             owner?.OpenAttempt, owner?.RepeatedBlockers ?? 0, change.DecisionReference, state.AuthorityId, change.StorageReference,
             executions, owner?.Checkpoints ?? change.Owners.Values.SelectMany(item => item.Checkpoints).ToList())
         {
+            TaskTimeAmendments = change.TaskTimeAmendments.Where(item => owner is null || item.OwnerTaskId == owner.Id).ToArray(),
             AcceptedOutcomeReferences = owner?.Outcomes ?? [],
             Hypothesis = owner?.Hypothesis,
             ExpectedResult = owner?.ExpectedResult,

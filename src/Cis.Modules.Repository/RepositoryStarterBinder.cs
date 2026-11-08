@@ -2881,7 +2881,7 @@ internal sealed partial class RepositoryStarterBinder
         1. Run `cis feedback summary --format agent` for aggregate outcomes, duration, output estimates, and possible savings; add `--since` when historical totals would obscure the current workflow.
         2. Run `cis feedback opportunities --format agent`. It defaults to the latest 24 hours and evaluates per-invocation output, recent unresolved non-success, and duplicate query bursts.
         3. Use `cis feedback usage --limit 20 --format agent` only when recent per-invocation evidence is needed.
-        4. Distinguish execution failures from invalid requests, governed blocks, cancellations, and Repository Doctor finding-bearing results. Run Doctor only when repository state or prerequisites may be involved; do not treat Doctor finding issues as a failed Doctor execution.
+        4. Distinguish execution failures from invalid requests, governed blocks, cancellations, and Repository Doctor finding-bearing results. Run Doctor only when repository state or prerequisites may be involved; do not treat Doctor finding issues as a failed Doctor execution. Repeated product-test failures require diagnosis or a changed hypothesis; advisory usage telemetry cannot create a task failure.
         5. Use `cis workspace snapshot --summary --format json`, `cis definition status --summary --format json`, and `cis api diff --summary --format agent` when full payloads are unnecessary. Retain coverage limits and blockers.
         6. Prefer compact structured projections and shared in-flight reads for repeated machine queries. Retain full evidence only when the workflow actually consumes it.
         7. Treat estimates as directional evidence. Report the basis and confidence; never turn an unestimated command into a savings claim.
@@ -3062,7 +3062,7 @@ internal sealed partial class RepositoryStarterBinder
            and repeated archives are not default completion evidence. Preserve stronger
            repository requirements and never silently discard protected evidence.
         5. Run `cis agent evidence validate --evidence <path> --changed-file <path> --strict --format agent`.
-        6. Replace placeholders and resolve every warning before readiness is claimed.
+        6. Replace placeholders. Resolve required validator diagnostics, including warnings that block the declared mode or adopted gate, before readiness is claimed. Record required/optional review disposition and its basis separately from severity. Optional review advice alone does not block readiness or require correction.
 
         ## Guardrails
 
@@ -3255,7 +3255,7 @@ internal sealed partial class RepositoryStarterBinder
         - Use `cis feedback summary` and `cis feedback opportunities`; do not parse or edit the ledger directly in normal workflows.
         - Token savings are estimates. Preserve the recorded basis and confidence, and report zero when no defensible counterfactual exists.
         - Command output and option values must not be persisted. Never add secrets, prompts, source content, or credentials to the ledger schema.
-        - After repeated failures, inspect recent evidence and run `cis repo doctor` before retrying blindly.
+        - After repeated failures, inspect recent evidence. Run `cis repo doctor` only when repository state or prerequisites may be involved. Repeated product-test failures require diagnosis or a changed hypothesis; advisory usage telemetry cannot create a task failure.
         """;
 
     private static string CreateChangeDossierSkill() => """
@@ -4157,9 +4157,9 @@ internal sealed partial class RepositoryStarterBinder
         2. Check every acceptance criterion against direct evidence.
         3. Confirm required specifications and references changed with behavior.
         4. Verify deterministic checks and independent assurance requirements.
-        5. Rebuild the affected graph, preview CIS dependency and all-standard/skill reconciliation, preserve customizations and apply authorized updates. Refresh affected evidence after changes; check context freshness before the next task.
-        6. Inventory required gates independently of configured commands. Failed, missing, stale and skipped block completion; justify inapplicability separately. Check current scoped requirement-to-task-to-source-to-test-to-review traceability and unresolved findings.
-        7. Reuse the assigned independent reviewer for final source, callers/contracts, operational consequences, context omissions and closing evidence. Expand inaccurate summaries to source; a fresh graph alone is insufficient.
+        5. Retain current applicable graph, CIS dependency, standards, skill, review and verification assessments when their material basis is unchanged. Refresh only affected or unresolved portions, preserve human customizations and adopted alternatives, and apply authorized updates. Rebuild an affected stale graph or preview relevant reconciliation where needed; an unrelated edit or bookkeeping update alone does not require repeating unaffected checks.
+        6. Inventory required gates independently of configured commands. Failed, missing, stale and skipped applicable required gates block completion; justify inapplicability separately. Check scoped requirement-to-task-to-source-to-test-to-review traceability and resolve required findings. Record an honest disposition for optional advice without a compulsory correction loop.
+        7. Use the assigned independent reviewer for final source, callers/contracts, operational effects, context omissions and closing evidence. Retain compatible review evidence; repeat review for materially changed scope or an unmet applicable review gate. Expand misleading summaries to source. A fresh graph does not establish sufficient context by itself.
         8. When engineering defaults are adopted, use `cis plan task completion-context` to prepare the missing-state receipt. For multiple declared targets, request each template with `--target <repository-id>` and save it at its returned authority-relative `receiptPath`; completion checks every target. Native implementation/review records stay at their original authority run paths; other gate evidence belongs to the target. Retain current authority and participant context before the existing completion transition. Report the verified verdict and exact remaining work.
 
         ## Output Expectations

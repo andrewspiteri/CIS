@@ -8,7 +8,7 @@ description: Review automatic local CIS tool-usage evidence, possible token savi
 1. Run `cis feedback summary --format agent` for aggregate outcomes, duration, output estimates, and possible savings; add `--since` when historical totals would obscure the current workflow.
 2. Run `cis feedback opportunities --format agent`. It defaults to the latest 24 hours and evaluates per-invocation output, recent unresolved non-success, and duplicate query bursts.
 3. Use `cis feedback usage --limit 20 --format agent` only when recent per-invocation evidence is needed.
-4. Distinguish execution failures from invalid requests, governed blocks, cancellations, and Repository Doctor finding-bearing results. Run Doctor only when repository state or prerequisites may be involved; do not treat Doctor finding issues as a failed Doctor execution.
+4. Distinguish execution failures from invalid requests, governed blocks, cancellations, and Repository Doctor finding-bearing results. Run Doctor only when repository state or prerequisites may be involved; do not treat Doctor finding issues as a failed Doctor execution. Repeated product-test failures require diagnosis or a changed hypothesis; advisory usage telemetry cannot create a task failure.
 5. Use `cis workspace snapshot --summary --format json`, `cis definition status --summary --format json`, and `cis api diff --summary --format agent` when full payloads are unnecessary. Retain coverage limits and blockers.
 6. Prefer compact structured projections and shared in-flight reads for repeated machine queries. Retain full evidence only when the workflow actually consumes it.
 7. Treat estimates as directional evidence. Report the basis and confidence; never turn an unestimated command into a savings claim.

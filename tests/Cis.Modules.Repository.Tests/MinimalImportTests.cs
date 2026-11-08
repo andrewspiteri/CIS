@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Cis.Abstractions;
 
 namespace Cis.Modules.Repository.Tests;
 
@@ -36,6 +37,17 @@ public sealed class MinimalImportTests
         Assert.StartsWith(original, File.ReadAllText(Path.Combine(repo.Path, "AGENTS.md")), StringComparison.Ordinal);
         Assert.True(new CisRepositoryContextResolver().Resolve(repo.Path).IsSuccess);
         Assert.True(new WorkspaceRegistry(new CisRepositoryContextResolver()).Resolve(repo.Path).IsSuccess);
+        var context = new CisRepositoryContextResolver().Resolve(repo.Path).Context!;
+        Assert.Null(CisEngineeringPolicy.Read(repo.Path));
+        Assert.False(new EngineeringAssessmentService().Assess(context, "backend").Adopted);
+        Assert.Null(CisExecutionIdentity.CaptureIfAdopted(context));
+        Assert.False(File.Exists(Path.Combine(repo.Path, EngineeringAssessmentService.PolicyPath)));
+        Assert.False(File.Exists(Path.Combine(repo.Path, CisAgentWorkPaths.Ledger)));
+        Assert.False(File.Exists(Path.Combine(repo.Path, CisAgentWorkPaths.Adoption)));
+        Assert.False(File.Exists(Path.Combine(repo.Path, ".github/instructions/cis-engineering-assurance.instructions.md")));
+        Assert.False(Directory.Exists(Path.Combine(repo.Path, ".github/skills/cis-agent-execution")));
+        var emitted = File.ReadAllText(Path.Combine(repo.Path, ".github/instructions/cis-import.instructions.md"));
+        Assert.Contains("Existing project policy takes precedence", emitted, StringComparison.Ordinal);
         Assert.True(File.Exists(Path.Combine(repo.Path, ".cis/local/import/report.json")));
         var repeated = importer.Import(request);
         Assert.Empty(repeated.FileMerges);
@@ -121,8 +133,13 @@ public sealed class MinimalImportTests
         var proposal = Assert.Single(plan.FileMerges);
         var content = proposal.ProposedContent.Replace("## CIS integration", "## CIS tools", StringComparison.Ordinal);
         edits.Write("edits.json", JsonSerializer.Serialize(new[] { new { proposal.RepositoryPath, proposal.RelativePath, content } }));
-        var result = importer.Import(request with { DryRun = false, Confirmed = true, MergeReviewHash = plan.MergeReviewHash,
-            MergeEditsPath = Path.Combine(edits.Path, "edits.json") });
+        var result = importer.Import(request with
+        {
+            DryRun = false,
+            Confirmed = true,
+            MergeReviewHash = plan.MergeReviewHash,
+            MergeEditsPath = Path.Combine(edits.Path, "edits.json")
+        });
         Assert.True(result.Applied, string.Join("\n", result.Errors.Concat(result.Collisions)));
         Assert.Equal(content, File.ReadAllText(Path.Combine(repo.Path, "AGENTS.md")));
         var repeated = importer.Import(request);
@@ -159,8 +176,11 @@ public sealed class MinimalImportTests
         var store = new StarterManifestStore();
         var manifestPath = Path.Combine(repo.Path, ".cis/starter-manifest.yml");
         var manifest = store.Read(manifestPath).Manifest!;
-        File.WriteAllText(manifestPath, store.Write(manifest with { ManagedArtifacts = [.. manifest.ManagedArtifacts,
-            new("testing", profile, "testing", 1, "sha256:test")] }));
+        File.WriteAllText(manifestPath, store.Write(manifest with
+        {
+            ManagedArtifacts = [.. manifest.ManagedArtifacts,
+            new("testing", profile, "testing", 1, "sha256:test")]
+        }));
         Assert.Equal(missing, RepositoryDoctor.DescribeDeferredCapability(context, missing));
         Assert.Equal(missing with { Code = "OTHER-ERROR" }, RepositoryDoctor.DescribeDeferredCapability(context, missing with { Code = "OTHER-ERROR" }));
     }

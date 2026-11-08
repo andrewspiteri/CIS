@@ -927,7 +927,16 @@ public sealed partial class AgentExecutionTests
         using var repository = AgentRepository.Create();
         AdoptWorkControl(repository);
         var clock = new WorkControlClock();
-        var provider = new FakeProvider(duringExecution: _ => clock.Advance(10));
+        var unproductiveHypothesis = true;
+        var inner = new FakeProvider(duringExecution: _ => clock.Advance(10));
+        var provider = new WorkCallbackProvider(inner, completing: result => unproductiveHypothesis ? result with
+        {
+            Status = CisAgentRunStates.Failed,
+            ExitCode = 1,
+            Summary = "The existing traversal cannot supply this contract.",
+            FailureKind = "same-interface-mismatch",
+            Diagnostics = ["same-interface-mismatch: the existing traversal cannot supply this contract."]
+        } : result);
         var service = WorkController(provider, clock);
         using var application = new CisHostBuilder().AddModule(new RepositoryModule()).AddModule(new AgentModule())
             .AddModule(new WorkControlFixtureModule(service, provider)).Build();
@@ -941,8 +950,10 @@ public sealed partial class AgentExecutionTests
         for (var index = 0; index < 2; index++)
         {
             var executed = InvokeWorkRun(application, repository);
-            Assert.Equal(0, executed.ExitCode);
+            Assert.NotEqual(0, executed.ExitCode);
             using var runJson = JsonDocument.Parse(executed.Output);
+            Assert.Equal(CisAgentRunStates.Failed, runJson.RootElement.GetProperty("run").GetProperty("manifest").GetProperty("status").GetString());
+            Assert.Contains("same-interface-mismatch", executed.Output, StringComparison.Ordinal);
             var runId = runJson.RootElement.GetProperty("run").GetProperty("manifest").GetProperty("runId").GetString()!;
             var current = service.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!;
             var checkpoint = new CisAgentWorkCheckpoint("The same interface mismatch still blocks this hypothesis.", ["run:" + runId],
@@ -963,9 +974,12 @@ public sealed partial class AgentExecutionTests
                 .Count(record => record.GetProperty("actor").GetString() == WorkActor
                     && record.GetProperty("checkpoint").GetProperty("closeAttempt").GetBoolean()));
         }
-        var held = InvokeWorkRun(application, repository);
+        var reloaded = WorkController(provider, clock);
+        using var retryApplication = new CisHostBuilder().AddModule(new RepositoryModule()).AddModule(new AgentModule())
+            .AddModule(new WorkControlFixtureModule(reloaded, provider)).Build();
+        var held = InvokeWorkRun(retryApplication, repository);
         Assert.NotEqual(0, held.ExitCode);
-        Assert.Equal(2, provider.ExecuteCalls);
+        Assert.Equal(2, inner.ExecuteCalls);
         using (var json = JsonDocument.Parse(held.Output))
         {
             var work = json.RootElement.GetProperty("work");
@@ -974,34 +988,48 @@ public sealed partial class AgentExecutionTests
             Assert.False(string.IsNullOrWhiteSpace(work.GetProperty("nextAction").GetString()));
         }
 
-        var before = service.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!;
+        var before = reloaded.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!;
         Assert.Equal(2, before.RepeatedBlockerCount);
+        Assert.Equal(20_000, before.Task!.ConsumedMilliseconds);
+        Assert.Equal(2, before.Task.UsedAttempts);
+        Assert.Equal(2, before.Executions.Count);
+        Assert.All(before.Executions, execution => Assert.True(execution.Finalized));
         var unchanged = WriteWorkInput(repository, "continue.json", new CisAgentWorkDispositionRequest("continue", before.Revision));
-        var repeat = InvokeWorkCommand(application, "agent", "work", "disposition", "CIS-0001", "WORK-090", "--input", unchanged,
+        var repeat = InvokeWorkCommand(retryApplication, "agent", "work", "disposition", "CIS-0001", "WORK-090", "--input", unchanged,
             "--actor", WorkActor, "--reason", "Continue.", "--repo", repository.Path, "--format", "json");
         Assert.True(repeat.ExitCode is 0 or 4, repeat.Output);
-        var currentView = service.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!;
+        var currentView = reloaded.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!;
         Assert.NotNull(currentView.HoldReason);
-        Assert.NotEqual(0, InvokeWorkRun(application, repository).ExitCode);
-        Assert.Equal(2, provider.ExecuteCalls);
+        Assert.NotEqual(0, InvokeWorkRun(retryApplication, repository).ExitCode);
+        Assert.Equal(2, inner.ExecuteCalls);
         var simpler = WriteWorkInput(repository, "simplify.json", new CisAgentWorkDispositionRequest("simplify", currentView.Revision)
         {
             Hypothesis = "Use the existing descriptor map instead of expanding traversal.",
             Evidence = before.Checkpoints.SelectMany(checkpoint => checkpoint.Checkpoint.Evidence).ToArray(),
             NextAction = "Implement one bounded descriptor lookup under the original task.",
         });
-        var disposition = InvokeWorkCommand(application, "agent", "work", "disposition", "CIS-0001", "WORK-090", "--input", simpler,
+        var disposition = InvokeWorkCommand(retryApplication, "agent", "work", "disposition", "CIS-0001", "WORK-090", "--input", simpler,
             "--actor", WorkActor, "--reason", "Use a simpler approach within the original accepted scope.",
             "--repo", repository.Path, "--format", "json");
         Assert.Equal(0, disposition.ExitCode);
         Assert.Equal(before.Task!.ConsumedMilliseconds,
-            service.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!.Task!.ConsumedMilliseconds);
-        Assert.Equal(0, InvokeWorkRun(application, repository).ExitCode);
-        Assert.Equal(3, provider.ExecuteCalls);
-        Assert.Equal(30_000, service.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!.Task!.ConsumedMilliseconds);
+            reloaded.WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!.Task!.ConsumedMilliseconds);
+        unproductiveHypothesis = false;
+        Assert.Equal(0, InvokeWorkRun(retryApplication, repository).ExitCode);
+        Assert.Equal(3, inner.ExecuteCalls);
+        var continued = WorkController(provider, clock).WorkStatus(repository.Path, "CIS-0001", "WORK-090").Work!;
+        Assert.Equal(30_000, continued.Task!.ConsumedMilliseconds);
+        Assert.Equal(before.Task.UsedAttempts + 1, continued.Task.UsedAttempts);
+        Assert.Equal(before.Executions.Count + 1, continued.Executions.Count);
+        Assert.All(before.Executions, prior => Assert.Contains(continued.Executions,
+            execution => execution.ExecutionId == prior.ExecutionId && execution.ActiveMilliseconds == prior.ActiveMilliseconds && execution.Finalized));
+        Assert.All(before.Checkpoints, prior => Assert.Contains(continued.Checkpoints,
+            checkpoint => JsonSerializer.Serialize(checkpoint, JsonOptions) == JsonSerializer.Serialize(prior, JsonOptions)));
+        Assert.Equal(before.Task.RestorationMilliseconds, continued.Task.RestorationMilliseconds);
+        Assert.Equal(0, continued.Task.ReservedMilliseconds);
         foreach (var format in new[] { "human", "agent" })
         {
-            var projected = InvokeWorkCommand(application, "agent", "work", "status", "CIS-0001", "--task", "WORK-090",
+            var projected = InvokeWorkCommand(retryApplication, "agent", "work", "status", "CIS-0001", "--task", "WORK-090",
                 "--repo", repository.Path, "--format", format);
             Assert.Equal(0, projected.ExitCode);
             Assert.Contains("WORK-090", projected.Output, StringComparison.Ordinal);
@@ -1100,7 +1128,8 @@ public sealed partial class AgentExecutionTests
     }
 
     private sealed class WorkCallbackProvider(FakeProvider inner, Action? diagnosing = null,
-        Action<CisAgentExecutionRequest, Action<CisAgentProviderEvent>, CancellationToken>? executing = null) : ICisAgentProvider
+        Action<CisAgentExecutionRequest, Action<CisAgentProviderEvent>, CancellationToken>? executing = null,
+        Func<CisAgentProviderExecutionResult, CisAgentProviderExecutionResult>? completing = null) : ICisAgentProvider
     {
         public CisAgentProviderDescriptor Descriptor => inner.Descriptor;
         public CisAgentProviderDiagnosis Diagnose(string repositoryPath)
@@ -1112,7 +1141,8 @@ public sealed partial class AgentExecutionTests
             CancellationToken cancellationToken)
         {
             executing?.Invoke(request, onEvent, cancellationToken);
-            return inner.Execute(request, onEvent, cancellationToken);
+            var result = inner.Execute(request, onEvent, cancellationToken);
+            return completing?.Invoke(result) ?? result;
         }
     }
 

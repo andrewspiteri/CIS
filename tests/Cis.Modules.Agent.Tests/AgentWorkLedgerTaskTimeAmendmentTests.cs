@@ -136,6 +136,7 @@ public sealed partial class AgentWorkLedgerTests
     [Fact]
     public void WorkLedger_TaskTimeAmendmentPersistenceFailureLeavesTheOriginalCeilingAndHistoryThenRetriesOnce()
     {
+        if (!OperatingSystem.IsWindows()) return; // FileShare.Read prevents replacement only under Windows sharing semantics.
         using var f = new Fixture(); var identity = f.Identity("WORK-A");
         AllocateTaskTimeFixture(f, identity);
         var before = f.Ledger.Read(f.Context, identity.ChangeId, identity.TaskId).Work!;

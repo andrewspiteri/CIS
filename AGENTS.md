@@ -60,7 +60,7 @@
 - CIS tool usage is recorded automatically under `.cis/local/feedback/` when an invocation can be associated with an initialized repository or workspace.
 - Use `cis feedback summary` and `cis feedback opportunities`; treat the ledger as disposable local evidence.
 - Preserve the recorded basis and confidence for possible token savings. Unestimated commands must remain zero-savings claims.
-- If the same repository-aware command repeatedly fails, inspect recent usage and run `cis repo doctor` before retrying.
+- If the same repository-aware command repeatedly fails, inspect recent usage. Run `cis repo doctor` only when repository state or prerequisites may be involved. Repeated product-test failures require diagnosis or a changed hypothesis; advisory usage telemetry cannot create a task failure.
 
 ## Extension task providers
 

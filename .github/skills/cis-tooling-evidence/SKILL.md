@@ -25,7 +25,7 @@ Keep exact evidence useful and small enough to review, without overstating what 
    and repeated archives are not default completion evidence. Preserve stronger
    repository requirements and never silently discard protected evidence.
 5. Run `cis agent evidence validate --evidence <path> --changed-file <path> --strict --format agent`.
-6. Replace placeholders and resolve every warning before readiness is claimed.
+6. Replace placeholders. Resolve required validator diagnostics, including warnings that block the declared mode or adopted gate, before readiness is claimed. Record required/optional review disposition and its basis separately from severity. Optional review advice alone does not block readiness or require correction.
 
 ## Guardrails
 

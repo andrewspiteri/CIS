@@ -56,7 +56,8 @@ public sealed partial class DeliveryWorkflowTests
                 ApprovalGate = "none",
                 Targets = ["first", "second"],
                 RequiredOutputs = ["app.txt"],
-                VerificationObligations = [new("V1", work.Task.AcceptanceCriteria, "Verify the exact accepted cross-repository criterion", "review", ["Current independent review of both app.txt outputs"])]
+                VerificationObligations = [new("V1", work.Task.AcceptanceCriteria, "Verify the exact accepted cross-repository criterion", "review", ["Current independent review of both app.txt outputs"]),
+                    new("V2", [work.Task.AcceptanceCriteria[0]], "Confirm the required output against the same accepted criterion", "review", ["The same independent review of both app.txt outputs"])]
             }
         };
         var selection = agent.SelectModels(work);
@@ -64,6 +65,28 @@ public sealed partial class DeliveryWorkflowTests
         var executed = agent.Execute(work, selection, true, () => true, TestContext.Current.CancellationToken, null);
         Assert.True(executed.Applied, string.Join("; ", executed.Errors));
         Assert.Equal(4, provider.Calls);
+        Assert.Equal(2, provider.Requests.Count(request => request.Mode == "implement"));
+        Assert.Equal(2, provider.Requests.Count(request => request.Mode == "review"));
+        Assert.All(provider.Requests, request =>
+        {
+            using var contract = JsonDocument.Parse(request.Prompt.Split("<approved-story-task>")[1].Split("</approved-story-task>")[0]);
+            var task = contract.RootElement.GetProperty("task");
+            Assert.Equal("documentation", task.GetProperty("category").GetString());
+            Assert.Equal("medium", task.GetProperty("complexity").GetString());
+            Assert.Equal("synthetic/story/T1", task.GetProperty("instanceKey").GetString());
+            Assert.Equal("WORK-001", task.GetProperty("workOwnerTaskId").GetString());
+            Assert.Equal("app.txt", Assert.Single(task.GetProperty("requiredOutputs").EnumerateArray()).GetString());
+            Assert.Equal(work.Task.AcceptanceCriteria, task.GetProperty("acceptanceCriteria").EnumerateArray().Select(value => value.GetString()));
+            Assert.Equal(2, task.GetProperty("verificationObligations").GetArrayLength());
+            Assert.Equal("CIS-0001", request.Environment["CIS_WORK_CHANGE"]);
+            Assert.Equal("WORK-001", request.Environment["CIS_WORK_TASK"]);
+            Assert.False(request.ApproveWithinCeiling);
+            if (request.Mode == "review")
+            {
+                Assert.True(request.TaskReview);
+                Assert.Contains("Optional advice must not create compulsory corrections or questions", request.Prompt);
+            }
+        });
         Assert.All(executed.StructuredFindings!, finding => { Assert.Equal("minor", finding.Severity); Assert.Equal("optional", finding.Disposition); Assert.False(finding.RequiresDecision); });
         Assert.Empty(work.ReviewResponses);
         var control = agent.WorkStatus(first.Path, "CIS-0001", "WORK-001").Work!;
@@ -117,6 +140,23 @@ public sealed partial class DeliveryWorkflowTests
         }
         var completed = completion.Assess(work, false);
         Assert.All(completed, context => { Assert.Equal("required", context.AdoptionStatus); Assert.Empty(context.Errors); });
+        var firstReceiptPath = Path.Combine(first.Path, prepared[0].ReceiptPath);
+        var firstReceiptBytes = File.ReadAllBytes(firstReceiptPath);
+        var firstReceipt = JsonSerializer.Deserialize<EngineeringCompletionReceipt>(firstReceiptBytes, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        File.WriteAllText(firstReceiptPath, EngineeringCompletionReview.Serialize(firstReceipt with
+        { Gates = firstReceipt.Gates.Where(gate => gate.Id != "review").ToArray() }));
+        Assert.Contains(completion.Assess(work, false)[0].Errors, error => error.Contains("review", StringComparison.OrdinalIgnoreCase)
+            && error.Contains("missing", StringComparison.OrdinalIgnoreCase));
+        File.WriteAllBytes(firstReceiptPath, firstReceiptBytes);
+        first.Write(".cis/local/story-fixture/progress.json", JsonSerializer.Serialize(new CisAgentWorkProgressRequest(
+            new("Both scoped participant outputs and the independent optional-only review are current.", executed.Runs.Select(run => "agent-run:" + run.RunId).ToArray(),
+                "Retain the accepted documentation contract and reuse its current review for both verification obligations.",
+                "Accept the bounded result without a correction for optional future label advice.", "Complete the existing task assessment.")
+            { CloseAttempt = false }, control.Revision),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        var progress = agent.RecordWorkProgress(first.Path, "CIS-0001", "WORK-001", ".cis/local/story-fixture/progress.json", "Fixture controller");
+        Assert.True(progress.Applied, string.Join("; ", progress.Errors));
+        Assert.All(completion.Assess(work, false), context => Assert.Empty(context.Errors));
         Assert.Equal(4, provider.Calls);
         Assert.Equal(control.Task.ConsumedMilliseconds, agent.WorkStatus(first.Path, "CIS-0001", "WORK-001").Work!.Task!.ConsumedMilliseconds);
 
@@ -141,11 +181,12 @@ public sealed partial class DeliveryWorkflowTests
     private sealed class StoryCompletionProvider(Action elapsed) : ICisAgentProvider
     {
         public int Calls { get; private set; }
+        public List<CisAgentExecutionRequest> Requests { get; } = [];
         public CisAgentProviderDescriptor Descriptor => new("codex", "Synthetic story provider", "test", true, ["exec-json"], ["implement", "review"], ["read-only", "workspace-write"], false, false, "Protocol fixture only");
         public CisAgentProviderDiagnosis Diagnose(string repositoryPath) => new("codex", "ready", true, null, "test", true, [], []);
         public CisAgentProviderExecutionResult Execute(CisAgentExecutionRequest request, Action<CisAgentProviderEvent> onEvent, CancellationToken cancellationToken)
         {
-            Calls++; elapsed();
+            Calls++; Requests.Add(request); elapsed();
             if (request.Mode == "implement") File.WriteAllText(Path.Combine(request.WorkingDirectory, "app.txt"), "implemented");
             else Assert.Equal("implemented", File.ReadAllText(Path.Combine(request.WorkingDirectory, "app.txt")));
             var response = new

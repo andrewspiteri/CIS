@@ -5,6 +5,8 @@ using Cis.Modules.Docs;
 using Cis.Modules.Graph;
 using Cis.Modules.Plan;
 using Cis.Modules.Change;
+using Cis.Modules.Agent;
+using Cis.Modules.Definition;
 using Cis.Modules.Repository;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -52,6 +54,98 @@ public sealed partial class FeatureIntakeTests
                 documentation ? "artifact" : "native", [documentation ? "Current reviewed docs/privacy-interface.md" : "Focused native privacy test result"])
                 { SharedGateIds = documentation ? [] : ["unit"], BasisReferences = ["Accepted privacy requirements and shared constraints"] }]
         };
+    }
+
+    [Fact]
+    public void StoryPlanning_HeadlessAcceptedInputsFeedTheSameGovernedTaskIntoActualAgentExecution()
+    {
+        using var f = new Fixture();
+        File.WriteAllText(f.Request.SourcePath, "---\nstatus: Active\n---\n"
+            + PrivacyStory.Replace("### Privacy evidence", "### Versioned document contract", StringComparison.Ordinal)
+            + "\n## Public defaults\nThe acknowledgement remains opt-in.\n");
+        var technicalSource = Path.Combine(f.Root, "accepted-technical-intent.md");
+        File.WriteAllText(technicalSource, ImportedTechnicalDirection);
+        var resolver = new CisRepositoryContextResolver();
+        // The existing fixture supplies the accepted product baseline. Selection, source
+        // inheritance, planning and execution below are real headless domain operations.
+        var documents = new DefinitionWizardService(f.Registry, resolver, new DocumentationCatalogMerger(), new RepositoryInitializer(),
+            null!, null!, null!, null!, null!, null!, null!, null!);
+        Assert.True(documents.Documents(f.Authority, "business", sourcePath: f.Request.SourcePath).Applied);
+        Assert.True(documents.Documents(f.Authority, "technical", sourcePath: technicalSource).Applied);
+        var businessBytes = File.ReadAllBytes(f.Request.SourcePath); var technicalBytes = File.ReadAllBytes(technicalSource);
+        CreateIntake(f);
+        var dossier = Path.Combine(f.Authority, "docs/cis/changes/CIS-0001"); Directory.CreateDirectory(Path.Combine(dossier, "agent-tasks"));
+        File.WriteAllText(Path.Combine(dossier, "proposal.md"), "---\nchange_id: CIS-0001\ntitle: Preserve the privacy contract\noutcome: Retain the accepted version and timestamp contract.\nstatus: Approved\nbaseline_kind: graph\nbaseline: synthetic\ngraph_build_id: synthetic\n---\n");
+        File.WriteAllText(Path.Combine(dossier, "plan.md"), "---\nstatus: Approved\n---\n| WORK-BOUND | documentation | medium | | | Preserve the privacy contract | PRV-001, PRV-002 | | | Retain accepted privacy. | Review the scoped contract report. | Approved | core.documentation.contracts | 1.0 | none | | |\n");
+        File.WriteAllText(Path.Combine(dossier, "agent-tasks/WORK-BOUND.md"), "---\ntask_status: Ready\n---\n# Preserve the privacy contract\nRetain the accepted version and timestamp behavior.\n");
+        File.WriteAllText(Path.Combine(dossier, "impact.md"), "---\nstatus: Accepted\n---\n| Finding | Status |\n|---|---|\n| IMPACT-PRIVACY | accepted |\n");
+        File.WriteAllText(Path.Combine(f.Authority, CisEngineeringPolicy.RelativePath), """{"schemaVersion":1,"requireTaskCompletion":true,"additionalGates":[]}""");
+        var reader = new PlanningService(new ChangeDossierStore(resolver), null!, null!, resolver, workspaceRegistry: f.Registry);
+        var ticks = DateTimeOffset.UtcNow.UtcTicks;
+        var provider = new LegacyRetryProvider { FailImplementation = false, FailReview = false, DuringExecution = () => ticks += TimeSpan.TicksPerSecond };
+        var agent = new AgentService(resolver, [provider], textGeneration: new LegacyRetryModels(), clock: () => new(ticks, TimeSpan.Zero),
+            workspaceRegistry: f.Registry, taskContracts: reader);
+        var service = new FeatureIntakeService(f.Registry, f.Importer, new DocumentationCatalogMerger(), [f.Baseline], storyExecutor: agent, taskContracts: reader);
+        using var app = new CisHostBuilder().AddModule(new RepositoryModule()).AddModule(new WorkspaceModule()).AddModule(new DocsModule())
+            .AddModule(new GraphModule()).AddModule(new BrdModule()).AddModule(new StoryPlanningFixtureModule(service)).Build();
+        void Command<T>(string operation, T input)
+        {
+            var path = Path.Combine(f.Root, "connected-" + operation + ".json");
+            File.WriteAllText(path, JsonSerializer.Serialize(input, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+            Assert.Equal(0, app.Invoke(["brd", "feature", "wizard", "story", operation, "--workspace", f.Authority, "--input", path, "--format", "json"]));
+        }
+        var technical = service.Wizard(f.Authority, "referrals").Pages.Single(page => page.Id == "technical");
+        Assert.True(technical.Complete, JsonSerializer.Serialize(technical));
+        Assert.Equal(3, technical.Fields.Count(field => field.Inherited));
+        Assert.All(technical.Fields, field => { Assert.False(field.Required); Assert.Null(field.Answer); });
+        var id = service.Navigation(f.Authority).Features.Single().Stories.Single().Id;
+        var read = service.Story(f.Authority, "referrals", id, false);
+        Command("assess", new CisFeatureStoryAssessmentRequest("referrals", id, read.PlanningBasisHash!, read.PlanningRevision, "Fixture controller", FixtureSize("medium")));
+        read = service.Story(f.Authority, "referrals", id, false);
+        var task = FixtureContract("T1", [1, 2], documentation: true) with
+        {
+            RequiredOutputs = ["task-report.md"],
+            Validation = "Review task-report.md against the accepted version and timestamp contract.",
+            VerificationObligations = [new("privacy-contract", ["The privacy interface reference states the exact accepted version and timestamp contract."],
+                "Demonstrate the accepted privacy reference contract.", "review", ["Current independent review of task-report.md"])]
+        };
+        Command("prepare", new CisFeatureStoryPrepareRequest("referrals", id, read.InputHash!, read.Revision!, "Fixture controller", [task]));
+        var prepared = service.Story(f.Authority, "referrals", id, false);
+        var approved = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "approve", prepared.PlanHash!, prepared.Revision!, "Fixture reviewer", "Accept the exact bounded synthetic contract.");
+        Assert.Empty(approved.Errors);
+        Command("bind-work", new CisStoryWorkBindingRequest("referrals", id, "T1", approved.PlanHash!, approved.Revision!, "CIS-0001", "WORK-BOUND", "Fixture controller", "Use the existing approved canonical owner."));
+        var allocation = new CisAgentWorkAllocationRequest(180, 3, 5, [new("WORK-BOUND", 180, 3, 5)],
+            "fixture:accepted-input-connected-task", "fixture:bounded-existing-local-storage", AcknowledgeHistoricalUnknown: true)
+        {
+            Controllers = ["Fixture controller"],
+            Storage = new(32 * 1024 * 1024, [new(f.Authority, ".cis/local")]) { RestorationBytes = 1024 * 1024 }
+        };
+        var allocationPath = Path.Combine(f.Root, "connected-allocation.json");
+        File.WriteAllText(allocationPath, JsonSerializer.Serialize(allocation, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        Assert.True(agent.AllocateWork(f.Authority, "CIS-0001", allocationPath, "Fixture controller", "Bound this synthetic governed demonstration once.").Applied);
+        var current = service.Story(f.Authority, "referrals", id, false);
+        Assert.Equal("medium", current.DeliverySize!.Size); Assert.True(current.TaskProgress[0].CanExecute);
+        var selected = service.ExecuteStoryTask(f.Authority, "referrals", id, "T1", cancellation: TestContext.Current.CancellationToken);
+        Assert.Empty(selected.Errors);
+        var executed = service.ExecuteStoryTask(f.Authority, "referrals", id, "T1", true, selected.PlanHash!, selected.Revision!, selected.ExecutionPlan!.Hash,
+            "Fixture controller", allowRemote: true, cancellation: TestContext.Current.CancellationToken);
+        Assert.Empty(executed.Errors); Assert.True(executed.TaskProgress[0].Execution!.Applied);
+        Assert.Equal(new[] { "implement", "review" }, provider.Requests.Select(request => request.Mode));
+        foreach (var request in provider.Requests)
+        {
+            using var prompt = JsonDocument.Parse(request.Prompt.Split("<approved-story-task>")[1].Split("</approved-story-task>")[0]);
+            var emitted = prompt.RootElement.GetProperty("task").Deserialize<CisFeatureStoryTask>(new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            Assert.Equal(JsonSerializer.Serialize(current.Tasks[0], new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+                JsonSerializer.Serialize(emitted, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+            Assert.Contains(".NET 10", prompt.RootElement.GetProperty("direction").GetString());
+            Assert.Contains("acknowledgement remains opt-in", prompt.RootElement.GetProperty("constraints").GetString());
+            Assert.Equal("WORK-BOUND", request.Environment[CisNativeWorkEnvironment.Task]); Assert.False(request.ApproveWithinCeiling);
+        }
+        var control = agent.WorkStatus(f.Authority, "CIS-0001", "WORK-BOUND").Work!;
+        Assert.Equal(2_000, control.Task!.ConsumedMilliseconds); Assert.Equal(1, control.Task.UsedAttempts);
+        Assert.Equal(0, control.Task.ReservedMilliseconds); Assert.All(control.Executions, execution => Assert.True(execution.Finalized));
+        Assert.Empty(control.Corrections); Assert.Empty(executed.TaskProgress[0].ReviewFeedback!);
+        Assert.Equal(businessBytes, File.ReadAllBytes(f.Request.SourcePath)); Assert.Equal(technicalBytes, File.ReadAllBytes(technicalSource));
     }
 
     [Fact]

@@ -1480,7 +1480,7 @@ managed_artifacts:
   path: .github/instructions/cis-engineering-assurance.instructions.md
   definition: guidance.instruction.engineering-assurance
   template_version: 2
-  applied_hash: sha256:f69ab223472b9d8fec039f956ce9fa3be434fa4dede47375250b0f55951d8696
+  applied_hash: sha256:1405a50b473136214a33a6d0538b69e7e6a309c0db9c198482b6dddecbcc2ca3
   ownership: human
 - id: guidance.instruction.external-tracker
   path: .github/instructions/cis-external-tracker.instructions.md
@@ -1498,7 +1498,7 @@ managed_artifacts:
   path: .github/instructions/cis-feedback-loop.instructions.md
   definition: guidance.instruction.feedback-loop
   template_version: 1
-  applied_hash: sha256:d95d55ccdc77deb7e3bbf8b5d2b5b6ffbc554d9b96e16d9a6d528934f1ebcac7
+  applied_hash: sha256:11572c954f8f762a8a25fa62fc20c3dd14378b15694b6878ea8e5aa6a2eaa1a3
   ownership: managed
 - id: guidance.instruction.csharp.cis-host
   path: .github/instructions/cis-host-csharp.instructions.md
@@ -2242,7 +2242,7 @@ managed_artifacts:
   path: .github/skills/cis-feedback-loop/SKILL.md
   definition: guidance.skill.feedback-loop
   template_version: 1
-  applied_hash: sha256:a034c845187dd86640f297e0296b1a9784d500cccc5367d2034b3555d72e2355
+  applied_hash: sha256:b63218e88bc3d9979471ba037d2397edde68f94377193a276f98f616f8e56100
   ownership: managed
 - id: guidance.skill.file-index
   path: .github/skills/cis-file-index/SKILL.md
@@ -2380,7 +2380,7 @@ managed_artifacts:
   path: .github/skills/cis-tooling-evidence/SKILL.md
   definition: guidance.skill.tooling-evidence
   template_version: 1
-  applied_hash: sha256:785dfa66ac65ac534af965bed9474a120ed25aade88f29ddc4d6c516da3906de
+  applied_hash: sha256:4782fe145a39bf6d1237fbc1a78aab42187f6240363ae213bdb1f222eb1c5c96
   ownership: human
 - id: guidance.skill.ux-writing
   path: .github/skills/cis-ux-writing/SKILL.md
@@ -2392,7 +2392,7 @@ managed_artifacts:
   path: .github/skills/cis-validate-completion/SKILL.md
   definition: guidance.skill.validate-completion
   template_version: 1
-  applied_hash: sha256:77967e4da3716ac2b81c1d373d797e183e07d47ed26cf4658269da0a5fb3fdc1
+  applied_hash: sha256:def4e84dc4eb88ca1b545fc1a52887bd99209ddb2d4e557af3d11b2c64d15e36
   ownership: human
 - id: guidance.skill.verification
   path: .github/skills/cis-verification/SKILL.md
@@ -2410,7 +2410,7 @@ managed_artifacts:
   path: AGENTS.md
   definition: guidance.host.agents
   template_version: 2
-  applied_hash: sha256:ee022c0dac4ddedddcd0d80970dca8418ae27cd91b91f285fd24a66f349cdc0b
+  applied_hash: sha256:9f6655909343739d8c0352837c150bf78bdbb7c2e8e9e69c3e7186432c5984eb
   ownership: human
 - id: guidance.host.claude
   path: CLAUDE.md
@@ -2590,7 +2590,7 @@ managed_artifacts:
   path: docs/references/standards-conformance-matrix.md
   definition: reference.standards-conformance-matrix
   template_version: 2
-  applied_hash: sha256:5f16e2fc5962381fa03972ba344e3e397777f5e83ec78ba1d6ef9fa5e5a84418
+  applied_hash: sha256:7965b32cb3ab61b29e967c01a9670ae7590881c5e0a210cd60deb03763575e94
   ownership: human
 - id: reference.task-type-capability-selections
   path: docs/references/task-type-capability-selections.md
@@ -2800,7 +2800,7 @@ managed_artifacts:
   path: docs/standards/iteration-completion-standard.md
   definition: standard.default.iteration-completion
   template_version: 1
-  applied_hash: sha256:31c03dafe839c40b68ab6a19172050d2704989d16b32bafb45e1b58b32d4bc63
+  applied_hash: sha256:1a3aae2de97ed13a2d35aa9f5b4a67fe5f40852186169deb26f5bb2ea508adba
   ownership: human
 - id: standard.default.observability
   path: docs/standards/observability-standard.md
@@ -2824,7 +2824,7 @@ managed_artifacts:
   path: docs/standards/testing-standard.md
   definition: standard.default.testing
   template_version: 1
-  applied_hash: sha256:56ddbdb1419d3da2d7c19edcdc0d1a723ee0ccd26daba45ba285352f4e93afea
+  applied_hash: sha256:eca924efb5c782d02fd26b21ab754479088b618295f121d9084858f789aea777
   ownership: human
 - id: template.adr
   path: docs/templates/adr-template.md

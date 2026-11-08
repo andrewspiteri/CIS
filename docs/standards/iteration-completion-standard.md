@@ -6,7 +6,7 @@ targets:
   - repository-governance
   - verification
 owner: Repository maintainer
-last_reviewed: 2026-08-15
+last_reviewed: 2026-11-08
 review_cadence: on change
 source_of_truth: This file
 provenance:
@@ -40,7 +40,7 @@ Applies to: repository-governance, verification.
 
 ## Rules
 
-- **ITERATION-001** Every completed task MUST have current graph, CIS dependency, all-standard and skill alignment assessment that preserves human-owned customizations and adopted alternatives.
+- **ITERATION-001** Every completed task MUST have current applicable graph, CIS dependency, standards and skill alignment assessment that preserves human-owned customizations and adopted alternatives. A compatible assessment MAY be reused when its material basis is unchanged; only affected or unresolved portions require refresh according to the testing cadence.
 - **ITERATION-002** The required gate inventory MUST be derived independently of configured successful commands; every applicable required gate MUST pass before completion.
 - **ITERATION-003** Failed, missing, stale, skipped and justified inapplicable states MUST remain distinct; inapplicability MUST NOT be counted as a pass.
 - **ITERATION-004** Completion MUST connect current scoped requirements, tasks, source, verification and review dispositions; later phases MUST remain visible without granting operational activation.
@@ -49,7 +49,7 @@ Applies to: repository-governance, verification.
 
 ## Verification
 
-- `ITERATION-001`: Inspect reconciliation preview, final graph identity and task closing evidence.
+- `ITERATION-001`: Inspect the current or reused assessment, its material basis, any affected reconciliation preview and graph identity, and task closing evidence. Confirm that unrelated edits or bookkeeping do not require repeating unaffected checks.
 - `ITERATION-002`: Deliberately omit a required gate and verify that completion fails.
 - `ITERATION-003`: Exercise each gate state with scoped evidence and verify transition behavior.
 - `ITERATION-004`: Review exact scoped requirement IDs and unresolved decisions/findings.

@@ -25,7 +25,7 @@ internal static class DefaultStandardRegistry
         }
         builder
             .AppendLine("owner: Repository maintainer")
-            .AppendLine("last_reviewed: 2026-08-15")
+            .AppendLine($"last_reviewed: {(definition.Slug is "testing" or "iteration-completion" ? "2026-11-08" : "2026-08-15")}")
             .AppendLine("review_cadence: on change")
             .AppendLine("source_of_truth: This file")
             .AppendLine("provenance:")
@@ -173,6 +173,8 @@ internal static class DefaultStandardRegistry
                 | Architecture or standards enforcement | Architecture test, deterministic evaluator, or explicit manual conformance mapping |
                 | Documentation-only change | Documentation and policy compliance checks; code tests only when executable behavior changes |
 
+                Acceptance-to-verification mapping may be many-to-many: one meaningful native test can support several criteria, and one criterion may need several tests or layers. Keep small internal edits as checklist steps within a coherent outcome rather than creating a separate task, test family or approval for every assertion.
+
                 ## Test authoring and execution
 
                 Choose the verification cadence before running commands. A task should state its
@@ -191,6 +193,13 @@ internal static class DefaultStandardRegistry
                 execution on a named platform and release qualification as separate statuses.
                 Changing relevant source, tests or configuration invalidates affected evidence;
                 documentation changes require production tests only when they change executable inputs.
+                Current assessment does not mean a newly executed check. Retain compatible graph,
+                dependency, standards, skill, review and verification assessments when their material
+                basis is unchanged; refresh only affected or unresolved portions. An unrelated graph
+                rebuild, document edit, new execution ID or accounting update does not by itself
+                invalidate unaffected evidence. Unknown impact needs the smallest defensible
+                conservative check or an explicit unresolved status. Adopted required gates and
+                thresholds still apply at their proper boundary.
 
                 - Prefer focused tests with one primary reason to fail, clear arrange/act/assert structure, deterministic data, and observable contract or invariant assertions.
                 - Treat AI-generated tests as candidates. Reject tautological tests, excessive mocks, presence-only interaction checks, and snapshot updates with no explained behavioral change.

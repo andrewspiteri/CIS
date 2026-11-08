@@ -298,11 +298,13 @@ public sealed partial class FeatureIntakeTests
         public List<CisAgentExecutionRequest> Requests { get; } = [];
         public bool FailImplementation { get; set; } = true;
         public bool FailReview { get; set; }
+        public Action? DuringExecution { get; init; }
         public CisAgentProviderDescriptor Descriptor => new("codex", "Fixture coding agent", "test", true, ["exec-json"], ["implement", "review"], ["read-only", "workspace-write"], false, false, "Test only");
         public CisAgentProviderDiagnosis Diagnose(string repositoryPath) => new("codex", "ready", true, null, "test", true, [], []);
         public CisAgentProviderExecutionResult Execute(CisAgentExecutionRequest request, Action<CisAgentProviderEvent> onEvent, CancellationToken cancellationToken)
         {
             Requests.Add(request);
+            DuringExecution?.Invoke();
             if (request.Mode == "implement" && FailImplementation)
                 return new(CisAgentRunStates.Failed, 1, null, "Provider unavailable before implementation or review.", [], [], [], null, null, null, null, ["Provider unavailable"]);
             if (request.Mode == "review" && FailReview)

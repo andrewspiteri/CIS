@@ -316,7 +316,8 @@ public sealed partial class FeatureIntakeTests
                 changedFiles = request.Mode == "implement" ? new[] { "task-report.md" } : [],
                 validations = new[] { "Checked the accepted archive ownership contract." },
                 evidence = new[] { "task-report.md" },
-                review = request.Mode == "review" ? new AgentBrdReview("ready", ["Checked the accepted scope."], []) : null
+                review = request.Mode == "review" ? new AgentBrdReview("ready", ["Checked the accepted scope."], [])
+                { NecessityAssessment = new(Decision: "The bounded report retains the accepted responsibilities.") { Applicable = false } } : null
             }), [], [], [], null, null, null, null, []);
         }
     }

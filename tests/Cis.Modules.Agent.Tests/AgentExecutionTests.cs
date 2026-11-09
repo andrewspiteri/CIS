@@ -1300,6 +1300,8 @@ public sealed partial class AgentExecutionTests
         var first = service.Run(repository.Path, "CIS-0001", "WORK-090", "fake", CisAgentRunModes.Review,
             CisAgentPermissions.ReadOnly, null, null, 60, false, "Andrew Spiteri", TestContext.Current.CancellationToken);
 
+        Assert.Contains("canonical code-quality standard", provider.LastRequest!.Prompt, StringComparison.Ordinal);
+        Assert.Contains("later explicit user decision", provider.LastRequest.Prompt, StringComparison.Ordinal);
         var resumed = service.Resume(repository.Path, first.Run!.Manifest.RunId, "Review once more.", "Assurer", "Independent review", false,
             TestContext.Current.CancellationToken);
 
@@ -1313,6 +1315,8 @@ public sealed partial class AgentExecutionTests
         Assert.Contains("Implement the bounded behavior.", provider.LastRequest!.Prompt, StringComparison.Ordinal);
         Assert.Contains("Review once more.", provider.LastRequest.Prompt, StringComparison.Ordinal);
         Assert.Contains("do not invoke repository index", provider.LastRequest.Prompt, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("excluded responsibilities", provider.LastRequest.Prompt, StringComparison.Ordinal);
+        Assert.Contains("simplify immediately through the existing task/reflection route", provider.LastRequest.Prompt, StringComparison.Ordinal);
     }
 
     [Fact(DisplayName = "TC-AGENT-013-001 deterministic orphan recovery")]
@@ -2039,7 +2043,13 @@ The owner evaluates one customer using authorized BI evidence and relevant relat
                 changedFiles = writeFile ? new List<string> { "generated.txt" } : draftedFiles,
                 validations = new[] { "fake-validation" },
                 evidence = new[] { "fake-evidence" },
-                review = request.TaskReview ? (object)new { recommendation = "ready", strengths = new[] { "Scoped fixture review." }, findings = Array.Empty<object>() } : reviewBrd ? new
+                review = request.TaskReview ? (object)new
+                {
+                    recommendation = "ready",
+                    strengths = new[] { "Scoped fixture review." },
+                    findings = Array.Empty<object>(),
+                    necessityAssessment = new CisReviewNecessityAssessment(Decision: "The scoped direct change adds no material responsibilities.") { Applicable = false }
+                } : reviewBrd ? new
                 {
                     recommendation = "revise",
                     strengths = new[] { "The intended user outcome is stated." },

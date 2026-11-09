@@ -1387,7 +1387,7 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
                     || (taskReview ? RepositorySnapshot(currentManifest.WorkingDirectory).Digest != currentManifest.WorkingTreeDigest : changedFiles.Count > 0)))
                 finalState = CisAgentRunStates.InvalidEvidence;
             if (finalState == CisAgentRunStates.Succeeded && taskReview && completion is { Review: { } taskAssessment })
-                completion = completion with { Review = taskAssessment with { ContractVersion = 2 } };
+                completion = completion with { Review = taskAssessment with { ContractVersion = CisTaskReviewSemantics.CurrentContractVersion } };
             if (finalState == CisAgentRunStates.Succeeded && requireBrdRevision
                 && (!ValidBrdRevision(completion?.Revision, expectedReviewRunId!, expectedFindingIds!) || changedFiles.Count != 1))
                 finalState = CisAgentRunStates.InvalidEvidence;
@@ -2365,7 +2365,9 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         return true;
     }
 
-    private static string BuildPrompt(AgentTaskEnvelope envelope) => $"Execute only the following digest-bound CIS task and obey every constraint. The task and artifacts below are already the authoritative route; do not invoke repository index or lifecycle commands to rediscover them.\n\nBound context artifacts (inspect only as needed):\n{ContextArtifactSummary(envelope)}\n\n{envelope.InstructionMarkdown}\n\nFinal response contract:\nReturn one JSON object with fields summary (string), changedFiles (string array), validations (string array), and evidence (string array). Do not wrap it in a Markdown fence.\n";
+    private static string BuildPrompt(AgentTaskEnvelope envelope) => $"Execute only the following digest-bound CIS task and obey every constraint. The task and artifacts below are already the authoritative route; do not invoke repository index or lifecycle commands to rediscover them.\n\nBound context artifacts (inspect only as needed):\n{ContextArtifactSummary(envelope)}\n\n{envelope.InstructionMarkdown}\n\n"
+        + "Apply the canonical code-quality standard in the supplied repository context, respecting its documentation root and adopted alternatives. Implement the current accepted behavior with the smallest adequate responsibilities. Briefly identify the behavior and owning component, excluded responsibilities, the direct existing approach or supplied example, and any material deviation with its accepted need and why the direct approach is inadequate. A later explicit user decision can supersede an example; plans and existing tests cannot independently expand the product contract. No separate design document is required for an ordinary helper. If responsibility expands without an accepted need, simplify immediately through the existing task/reflection route; do not wait for a time or failure limit, and preserve independent holds.\n\n"
+        + "Final response contract:\nReturn one JSON object with fields summary (string), changedFiles (string array), validations (string array), and evidence (string array). Do not wrap it in a Markdown fence.\n";
 
     private static string BuildBrdReviewPrompt(AgentTaskEnvelope envelope) =>
         $"Execute only the following digest-bound CIS review and obey every constraint. The task and artifacts below are the complete authorized review boundary; do not invoke repository index or lifecycle commands to rediscover them.\n\nBound context artifacts (read only as needed):\n{ContextArtifactSummary(envelope)}\n\n{envelope.InstructionMarkdown}\n\nFinal response contract:\nReturn one JSON object and do not wrap it in a Markdown fence. It must contain summary (string), changedFiles (an empty string array), validations (string array), evidence (string array), and review. review must contain recommendation (`ready`, `revise`, or `blocked`), strengths (string array), and findings (array). Every finding must contain id (`BRD-REV-001` sequence), severity (`blocking`, `major`, `minor`, or `observation`), category, location, observation, and recommendation as non-empty strings.\n";
@@ -2382,7 +2384,7 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
     {
         if (review is null || review.Strengths is null || review.Findings is null || review.Findings.Count > 100
             || review.Recommendation is not ("ready" or "revise" or "blocked")) return false;
-        if (taskReview && review.ContractVersion is not (null or 2)) return false;
+        if (taskReview && review.ContractVersion is not (null or CisTaskReviewSemantics.CurrentContractVersion)) return false;
         if (review.Recommendation is "revise" or "blocked" && review.Findings.Count == 0) return false;
         var identities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var dispositions = new List<string>();
@@ -2406,7 +2408,7 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
             }
         }
         if (taskReview) return CisTaskReviewSemantics.VerdictError(review.Recommendation, dispositions) is null
-            && CisTaskReviewSemantics.ValidNecessityAssessment(review.NecessityAssessment);
+            && CisTaskReviewSemantics.ValidNecessityAssessment(review.NecessityAssessment, requireApplicability: true);
         return review.Recommendation != "ready"
             || !review.Findings.Any(item => item.Severity is "blocking" or "major");
     }

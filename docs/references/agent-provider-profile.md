@@ -3,7 +3,7 @@ title: "Agent Provider Profile"
 type: agent-provider-profile
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-11-06"
+last_reviewed: "2026-11-09"
 review_cadence: "on provider, permission, isolation, or retention-policy change"
 cis:
   stable_id: change-impact-studio:reference:agent-provider-profile
@@ -40,7 +40,7 @@ After an interrupted or failed story execution, retry can reuse successful retai
 
 Story execution reviews every linked repository before deciding the round's outcome. Reviewers receive the combined candidate diffs, recorded checks and available work-cost context. Findings state required/optional disposition independently of severity and name their task, policy, decision or invariant basis. Consistent optional advice permits continuation without corrections or mandatory answers; required defects, including minor ones, prevent readiness. Contradictory verdicts are invalid evidence. Required correctable findings use up to two automatic correction rounds retained across governed invocations under the same relationship, each followed by fresh independent review. A relevant authorized disposition can permit one bounded next correction within remaining capacity, preserving prior rounds and work. A genuine required decision, evidence or permission hold remains visible. Human completion is a separate later gate and is never fabricated by either model.
 
-When the actual diff materially expands verification machinery, the existing reviewer records its necessary invariant, adopted native alternative, existing measured/estimated/unknown cost, maintenance/pass-semantics effect and duplication avoided. Ordinary helpers and assertions do not require another reviewer, benchmark or planning artifact.
+Apply the canonical code-quality standard's proportionate implementation policy. The existing reviewer explicitly concludes whether the actual diff materially expands product responsibilities or verification machinery. Applicable reasoning states the accepted obligation, simpler existing alternative, measured/estimated/unknown cost, maintenance/verification effect and continue, simplify or remove decision. Ordinary helpers need only a concise not-applicable conclusion, without another reviewer, benchmark or planning artifact. Unsupported responsibilities can be corrected by removal or a narrower promise.
 
 The task screen refreshes while a run is active and when reopened. It shows the latest work summaries, each round's checks and findings, and whether candidate files were applied. If feature scope or the product baseline changes, the saved plan and its execution history remain visible for inspection, with execution and completion disabled until a current plan is reviewed.
 

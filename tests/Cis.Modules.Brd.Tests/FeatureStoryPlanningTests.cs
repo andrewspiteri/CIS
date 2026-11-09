@@ -192,6 +192,8 @@ public sealed partial class FeatureIntakeTests
             "Fixture controller", FixtureSize("high")));
         var assessed = service.Story(f.Authority, "referrals", parent, false);
         Assert.Empty(assessed.Errors); Assert.All(assessed.TaskProgress, task => Assert.False(task.CanExecute));
+        Assert.Contains("remove unsupported mechanisms or narrow unsupported promises", assessed.DeliverySizeReason, StringComparison.Ordinal);
+        Assert.Contains("then decompose the remaining accepted above-medium scope", assessed.DeliverySizeReason, StringComparison.Ordinal);
         var request = service.Requests(f.Authority).Single();
         var parentRecord = Path.Combine(Path.GetDirectoryName(Path.Combine(f.Authority, request.RequestPath))!, "story-tasks", parent + ".json");
         var parentHistory = File.ReadAllBytes(parentRecord);

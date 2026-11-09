@@ -81,6 +81,8 @@ public sealed partial class AgentExecutionTests
             Assert.Contains("Preserve unrelated behavior", request.Prompt);
             Assert.Contains("An independent review of app.txt", request.Prompt);
             Assert.Contains("WORK-090", request.Prompt);
+            Assert.Contains("canonical code-quality standard", request.Prompt);
+            Assert.Contains("excluded responsibilities", request.Prompt);
         }
         };
         var service = new AgentService(new CisRepositoryContextResolver(), [provider], textGeneration: new StoryExecutionModels());
@@ -481,6 +483,7 @@ public sealed partial class AgentExecutionTests
         public int? FailReviewNumber { get; init; }
         public string? ReviewKind { get; init; }
         public CisReviewNecessityAssessment? NecessityAssessment { get; init; }
+            = new(Decision: "The direct task change adds no material responsibility or verification machinery.") { Applicable = false };
         public Action? DuringExecution { get; init; }
         public int DiagnoseCalls { get; private set; }
         public int? FailImplementationNumber { get; init; }
@@ -516,6 +519,15 @@ public sealed partial class AgentExecutionTests
                 reviewFindings.Add(new("TASK-REV-001", ReviewKind is "minor-required" or "mixed" ? "minor" : "major",
                     "acceptance", "app.txt", "Criterion not met.", "Correct the behavior.")
                 { Disposition = ReviewKind == "bad-disposition" ? "perhaps" : "required", BasisReferences = ["Accepted task completion criterion"] });
+            if (ReviewKind == "scope-expansion" && needsChanges)
+                reviewFindings[0] = reviewFindings[0] with
+                {
+                    Category = "scope",
+                    Location = "ProviderRegistry.cs",
+                    Observation = "A provider registry and lifecycle add responsibilities excluded by the accepted value-only contract.",
+                    Recommendation = "Remove ProviderRegistry.cs and retain the direct value behavior.",
+                    BasisReferences = ["Accepted value-only contract and adopted code-quality standard"]
+                };
             if (ReviewKind is "optional" or "mixed" or "revise-optional")
                 reviewFindings.Add(new("TASK-REV-002", "minor", "maintainability", "app.txt", "Optional future polish.", "Consider a future cleanup.")
                 { Disposition = "optional", BasisReferences = ["Optional preference outside this task's acceptance obligations"] });
@@ -528,7 +540,10 @@ public sealed partial class AgentExecutionTests
                 review = request.Mode == "review" ? new AgentBrdReview(
                     ReviewKind == "ready-required" ? "ready" : ReviewKind == "revise-optional" ? "revise" : Blocked ? "blocked" : needsChanges ? "revise" : "ready",
                     ["Scoped change."], reviewFindings)
-                { NecessityAssessment = NecessityAssessment } : null
+                {
+                    NecessityAssessment = ReviewKind == "scope-expansion" && !needsChanges
+                    ? new(Decision: "The corrected direct change adds no material responsibilities.") { Applicable = false } : NecessityAssessment
+                } : null
             };
             return new(CisAgentRunStates.Succeeded, 0, null, JsonSerializer.Serialize(completion), [], [], [], null, null, null, null, []);
         }

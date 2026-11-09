@@ -942,9 +942,13 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
             || !HasTaskMetadata(document, "imported_negative_criteria")) return null;
         var outputs = TaskMetadata<string[]>(document, "imported_required_outputs");
         var negative = TaskMetadata<string[]>(document, "imported_negative_criteria");
+        var hasVerification = HasTaskMetadata(document, "imported_verification_obligations");
+        var verification = hasVerification ? TaskMetadata<CisTaskVerificationObligation[]>(document, "imported_verification_obligations") : null;
         if (outputs is null || negative is null)
             throw new InvalidDataException("Imported task lists are unresolved; restore the affected document's exact generated baseline before re-import.");
-        return new(outputs, negative);
+        if (hasVerification && verification is null)
+            throw new InvalidDataException("Imported verification baseline is unresolved; restore the affected document's exact generated baseline before re-import.");
+        return new(outputs, negative) { VerificationObligations = verification };
     }
 
     private static string? CanonicalTaskStatus(string value) => value.Trim().ToLowerInvariant() switch
@@ -2270,6 +2274,10 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
         foreach (var key in new[] { "imported_required_outputs", "imported_negative_criteria" })
             if (!HasTaskMetadata(existing, key))
                 additions.Append(key).Append(": ").Append(JsonSerializer.Serialize(TaskMetadata<string[]>(generated, key))).Append(existing.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n");
+        if (!HasTaskMetadata(existing, "imported_verification_obligations"))
+            additions.Append("imported_verification_obligations: ")
+                .Append(JsonSerializer.Serialize(TaskMetadata<CisTaskVerificationObligation[]>(generated, "imported_verification_obligations")))
+                .Append(existing.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n");
         return additions.Length > 0 && WriteIfChanged(path, existing.Insert(closing[1].Index, additions.ToString()));
     }
 

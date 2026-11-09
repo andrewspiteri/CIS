@@ -7,6 +7,46 @@ namespace Cis.Modules.Artifacts.Tests;
 public sealed partial class ArtifactRetentionTests
 {
     [Fact]
+    public void VerifiedTransientTransferCleanupKeepsRequiredResultsAndDoesNotBecomeExecutionInput()
+    {
+        using var repository = Fixture.Create();
+        repository.Write("src/ValueStore.cs", "public sealed class ValueStore { public int Value { get; set; } }");
+        repository.Write("fixtures/release-input.txt", "An explicitly retained fixture input.");
+        var context = new CisRepositoryContextResolver().Resolve(repository.Path).Context!;
+        var inputs = CisExecutionIdentity.CaptureInputs(context);
+        Assert.Contains(inputs, input => input.Path == "fixtures/release-input.txt");
+        repository.Write(".cis/local/cache/verified-transfer/transfer.zip", new string('b', 128_000));
+        repository.Write(".cis/local/cache/verified-transfer/staging/ValueStore.cs", "temporary unchanged source copy");
+        repository.Write(".cis/local/cache/current/native.trx", "required native result");
+        repository.Write("user-output/keep.txt", "Unrelated user-managed data.");
+        var userInputs = CisExecutionIdentity.CaptureInputs(context);
+        Assert.DoesNotContain(userInputs, input => input.Path.StartsWith(".cis/local/", StringComparison.Ordinal));
+        Assert.All(inputs, input => Assert.Contains(input, userInputs));
+        var old = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        foreach (var path in new[] { ".cis/local/cache/verified-transfer/transfer.zip",
+            ".cis/local/cache/verified-transfer/staging/ValueStore.cs", ".cis/local/cache/current/native.trx" })
+            repository.Age(path, old);
+        var authority = new ArtifactAuthority(repository.Path)
+        { Protected = [Path.Combine(repository.Path, ".cis/local/cache/current")] };
+        var service = repository.Service(authority, authority);
+        var plan = service.Plan(repository.Path, "cache");
+        Assert.Empty(plan.Errors);
+        Assert.True(Assert.Single(plan.Entries, item => item.Path.EndsWith("/verified-transfer", StringComparison.Ordinal)).Candidate);
+        Assert.False(Assert.Single(plan.Entries, item => item.Path.EndsWith("/current", StringComparison.Ordinal)).Candidate);
+
+        var cleaned = service.Clean(repository.Path, "cache", true);
+
+        Assert.Equal(0, cleaned.ExitCode);
+        Assert.False(Directory.Exists(Path.Combine(repository.Path, ".cis/local/cache/verified-transfer")));
+        Assert.Equal("required native result", File.ReadAllText(Path.Combine(repository.Path, ".cis/local/cache/current/native.trx")));
+        Assert.Equal("Unrelated user-managed data.", File.ReadAllText(Path.Combine(repository.Path, "user-output/keep.txt")));
+        Assert.Equal(userInputs.Select(input => (input.Path, input.Digest)),
+            CisExecutionIdentity.CaptureInputs(context).Select(input => (input.Path, input.Digest)));
+        Assert.Equal(1, authority.Settlements);
+        Assert.Equal(1, authority.Finishes);
+    }
+
+    [Fact]
     public void DisjointReservedGrowthDoesNotRejectThisOperationsPermittedCompaction()
     {
         using var repository = Fixture.Create();

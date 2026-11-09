@@ -6,13 +6,15 @@ namespace Cis.Modules.Repository.Tests;
 
 public sealed class EngineeringAdoptionTests
 {
-    [Fact]
-    public void FreshGovernedRepositoryEmitsCurrentAssuranceAndHeadlessWorkRoutes()
+    [Theory]
+    [InlineData("docs")]
+    [InlineData("handbook")]
+    public void FreshGovernedRepositoryEmitsCurrentAssuranceAndHeadlessWorkRoutes(string documentationRoot)
     {
         using var repo = new Fixture();
         var initializer = new RepositoryInitializer();
 
-        var initialized = initializer.Initialize(new(repo.Path, "docs", false, true, DeclaredStack: "csharp"));
+        var initialized = initializer.Initialize(new(repo.Path, documentationRoot, false, true, DeclaredStack: "csharp"));
 
         Assert.Equal(0, initialized.ExitCode);
         var context = Assert.IsType<CisRepositoryContext>(new CisRepositoryContextResolver().Resolve(repo.Path).Context);
@@ -20,7 +22,7 @@ public sealed class EngineeringAdoptionTests
         Assert.True(assessment.Adopted);
         Assert.Empty(assessment.Diagnostics);
         Assert.Contains(assessment.RequiredGates, gate => gate.Id == "review" && !gate.AllowsInapplicability);
-        AssertCurrentOperatingGuidance(repo);
+        AssertCurrentOperatingGuidance(repo, documentationRoot);
         Assert.Contains("AGENTS.md", repo.Read("CLAUDE.md"), StringComparison.Ordinal);
         Assert.Contains("cis agent work progress",
             repo.Read(".github/instructions/cis-agent-execution.instructions.md"), StringComparison.Ordinal);
@@ -29,7 +31,7 @@ public sealed class EngineeringAdoptionTests
             Assert.Contains(route, work, StringComparison.Ordinal);
         Assert.False(File.Exists(System.IO.Path.Combine(repo.Path, CisAgentWorkPaths.Ledger)));
         Assert.False(File.Exists(System.IO.Path.Combine(repo.Path, CisAgentWorkPaths.Adoption)));
-        Assert.Equal("unchanged", initializer.Initialize(new(repo.Path, "docs", false, true)).Status);
+        Assert.Equal("unchanged", initializer.Initialize(new(repo.Path, documentationRoot, false, true)).Status);
     }
 
     [Fact]
@@ -275,7 +277,7 @@ public sealed class EngineeringAdoptionTests
         Assert.DoesNotContain("--logger trx", RepositoryTestingStarter.Create(repo.Path, "docs", classification).Workflow, StringComparison.Ordinal);
     }
 
-    private static void AssertCurrentOperatingGuidance(Fixture repo)
+    private static void AssertCurrentOperatingGuidance(Fixture repo, string documentationRoot = "docs")
     {
         static string Words(string text) => string.Join(" ", text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
         var agents = repo.Read("AGENTS.md");
@@ -288,6 +290,23 @@ public sealed class EngineeringAdoptionTests
         Assert.Contains("refresh only affected or unresolved portions", assurance, StringComparison.Ordinal);
         Assert.DoesNotContain("At each task end rebuild the graph", assurance, StringComparison.Ordinal);
         Assert.Contains("optional advice does not create a compulsory correction", assurance, StringComparison.Ordinal);
+        Assert.Contains($"{documentationRoot}/standards/code-quality-standard.md", assurance, StringComparison.Ordinal);
+        Assert.Contains("Removing an unjustified mechanism or narrowing its unsupported promise is a valid correction", assurance, StringComparison.Ordinal);
+        var quality = Words(repo.Read($"{documentationRoot}/standards/code-quality-standard.md"));
+        Assert.Contains("## Proportionate implementation policy", quality, StringComparison.Ordinal);
+        Assert.Contains("QUALITY-006", quality, StringComparison.Ordinal);
+        Assert.Contains("an agent-generated plan or existing test cannot independently expand the product contract", quality, StringComparison.Ordinal);
+        var execution = Words(repo.Read(".github/skills/cis-agent-execution/SKILL.md"));
+        Assert.Contains($"{documentationRoot}/standards/code-quality-standard.md", execution, StringComparison.Ordinal);
+        Assert.Contains("Ordinary helpers need only concise not-applicable reasoning", execution, StringComparison.Ordinal);
+        Assert.Contains("reviewer explicitly concludes whether the actual diff materially expands product responsibilities or verification machinery",
+            Words(repo.Read($"{documentationRoot}/references/agent-provider-profile.md")), StringComparison.Ordinal);
+        var planning = Words(repo.Read(".github/skills/cis-bounded-planning/SKILL.md"));
+        Assert.Contains("Challenge an unnecessary framework as a whole", planning, StringComparison.Ordinal);
+        Assert.Contains("their existence does not independently require another task output or automation campaign", planning, StringComparison.Ordinal);
+        var retention = Words(repo.Read(".github/skills/cis-local-artifact-retention/SKILL.md"));
+        Assert.Contains("through existing authorized cleanup", retention, StringComparison.Ordinal);
+        Assert.Contains("External shell/remote output outside the supported route is not controlled by the storage ceiling", retention, StringComparison.Ordinal);
         var tooling = Words(repo.Read(".github/skills/cis-tooling-evidence/SKILL.md"));
         Assert.Contains("Resolve required validator diagnostics, including warnings that block the declared mode or adopted gate", tooling, StringComparison.Ordinal);
         Assert.Contains("Optional review advice alone does not block readiness or require correction", tooling, StringComparison.Ordinal);
@@ -297,9 +316,9 @@ public sealed class EngineeringAdoptionTests
         Assert.Contains("Run `cis repo doctor` only when repository state or prerequisites may be involved",
             Words(repo.Read(".github/instructions/cis-feedback-loop.instructions.md")), StringComparison.Ordinal);
         Assert.Contains("one meaningful native test can support several criteria",
-            Words(repo.Read("docs/standards/testing-standard.md")), StringComparison.Ordinal);
+            Words(repo.Read($"{documentationRoot}/standards/testing-standard.md")), StringComparison.Ordinal);
         Assert.Contains("A compatible assessment MAY be reused when its material basis is unchanged",
-            Words(repo.Read("docs/standards/iteration-completion-standard.md")), StringComparison.Ordinal);
+            Words(repo.Read($"{documentationRoot}/standards/iteration-completion-standard.md")), StringComparison.Ordinal);
     }
 
     private sealed class Fixture : IDisposable

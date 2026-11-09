@@ -3,7 +3,7 @@ title: "Engineering Defaults and Native Harness"
 type: reference
 status: Active
 owner: "Repository maintainers"
-last_reviewed: "2026-10-05"
+last_reviewed: "2026-11-09"
 review_cadence: "on stack, capability, tool or policy change"
 cis:
   stable_id: change-impact-studio:reference:engineering-defaults
@@ -16,6 +16,12 @@ cis:
 Prefer an established native harness equivalent in assurance depth to PARR. CIS coordinates evidence;
 it is not a test runner. Preserve working project choices and stronger standards. An empty repository
 has no test framework until one is selected and installed. Reassess when source appears.
+
+Apply the proportionate implementation policy in `change-impact-studio:standard:code-quality` when
+applicable. Accepted behavior, ownership, exclusions and explicit later decisions determine scope;
+standards constrain that scope rather than authorizing new capabilities. Review the whole design
+before decomposing it. The assurance inventory below is an applicability inventory, not a command
+to build every listed mechanism or repeat release qualification for every implementation story.
 
 | Language | Starting choice when none is adopted | Review before adoption |
 | --- | --- | --- |

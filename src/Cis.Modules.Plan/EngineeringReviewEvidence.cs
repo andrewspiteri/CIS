@@ -45,10 +45,23 @@ internal static class EngineeringReviewEvidence
                 || !root.TryGetProperty("review", out var review) || Text(review, "recommendation") != "ready"
                 || !review.TryGetProperty("findings", out var findings) || findings.ValueKind != JsonValueKind.Array) continue;
             var strict = false;
+            var necessityRequired = false;
             if (review.TryGetProperty("contractVersion", out var version))
             {
-                if (version.ValueKind != JsonValueKind.Number || !version.TryGetInt32(out var number) || number != 2) continue;
+                if (version.ValueKind != JsonValueKind.Number || !version.TryGetInt32(out var number)
+                    || number is not (2 or CisTaskReviewSemantics.CurrentContractVersion)) continue;
                 strict = true;
+                necessityRequired = number >= 3;
+            }
+            if (necessityRequired)
+            {
+                if (!review.TryGetProperty("necessityAssessment", out var necessity) || necessity.ValueKind != JsonValueKind.Object) continue;
+                try
+                {
+                    if (!CisTaskReviewSemantics.ValidNecessityAssessment(necessity.Deserialize<CisReviewNecessityAssessment>(
+                        new JsonSerializerOptions(JsonSerializerDefaults.Web)), requireApplicability: true)) continue;
+                }
+                catch (JsonException) { continue; }
             }
             var dispositions = new List<string>();
             var valid = true;

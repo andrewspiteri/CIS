@@ -21,7 +21,7 @@ public sealed partial class AgentService
     private static string TaskReviewInstructions() => """
 
         Include a review object in the final JSON: recommendation (ready, revise or blocked), strengths
-        (string array), findings (array), and optional necessityAssessment. Each finding requires id
+        (string array), findings (array), and necessityAssessment. Each finding requires id
         (TASK-REV-001, sequential), severity (blocking, major, minor or observation), disposition
         (required or optional), category, location, observation, recommendation, and basisReferences
         (a nonempty string array naming the accepted task/criterion, applicable adopted policy,
@@ -39,16 +39,27 @@ public sealed partial class AgentService
         omit it or use false for other findings. This flag cannot grant approval or waive a reserved gate.
         Missing or stale required evidence remains a hold; human task completion is a separate gate.
 
-        If the actual diff adds or materially expands verification machinery (a runner, comparator,
-        receiver, classifier, fixture mechanism or acceptance predicate), include necessityAssessment:
+        Examine the actual changed source and meaningful callers before judging necessity; organization,
+        field presence, file counts and passing tests do not establish a sound or necessary design.
+        In necessityAssessment explicitly conclude whether the actual diff materially adds product
+        responsibilities, architecture or verification machinery (for example a lifecycle, provider
+        hierarchy, registry, persistence, discovery, concurrency coordinator, extension point, runner,
+        comparator, receiver, classifier, fixture mechanism or acceptance predicate).
+        For ordinary direct changes or helper extraction with no such expansion, return applicable:false
+        and one concise decision explaining that conclusion. No elaborate necessity document is needed.
+        For material expansion, return applicable:true and the existing reasoning fields:
         invariant (the concrete necessary defect/obligation), nativeAlternative (what adopted native
-        tooling already proves and the smallest capable alternative), costEvidence (existing measured
-        runtime or explicitly labelled estimate/unknown), maintenanceAndPassSemantics (maintenance
+        tooling or direct existing implementation already proves and the smallest capable alternative),
+        costEvidence (existing measured runtime/verification cost or explicitly labelled estimate/unknown), maintenanceAndPassSemantics (maintenance
         burden and any change to pass meaning), duplicationAvoided (which duplicate/repeated work is
-        removed or avoided), and decision (why to continue, simplify or stop this approach).
+        removed or avoided), and decision (why to continue, simplify or remove this approach).
+        An unsupported responsibility or unjustified mechanism contrary to the accepted boundary and
+        adopted code-quality policy is a required correctable finding even when tests pass. A genuine
+        necessary security/concurrency invariant remains required; hypothetical improvements and style
+        preferences remain optional. General standards do not authorize inventing a capability.
         Use the existing diff and cost/evidence account. Do not add benchmarks, instrumentation,
         provider calls or a separate review ceremony just to populate the assessment. Ordinary helpers
-        and test assertions do not require this payload. Assess only task-relevant standards and gates;
+        and test assertions need only the concise not-applicable conclusion. Assess only task-relevant standards and gates;
         do not manufacture an unrelated whole-repository tooling or compliance campaign.
         """;
 }

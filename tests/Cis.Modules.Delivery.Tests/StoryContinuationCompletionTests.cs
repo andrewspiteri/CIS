@@ -197,7 +197,8 @@ public sealed partial class DeliveryWorkflowTests
                 evidence = new[] { "app.txt" },
                 review = request.Mode == "review" ? new AgentBrdReview("ready", ["The accepted criterion is satisfied."],
                     [new("TASK-REV-001", "minor", "maintainability", "app.txt", "A future label could be shorter.", "Consider it in a separately authorized cleanup.")
-                    { Disposition = "optional", BasisReferences = ["Optional preference beyond the accepted criterion"] }]) : null
+                    { Disposition = "optional", BasisReferences = ["Optional preference beyond the accepted criterion"] }])
+                { NecessityAssessment = new(Decision: "The direct task change retains the accepted responsibilities.") { Applicable = false } } : null
             };
             return new(CisAgentRunStates.Succeeded, 0, "session-" + request.RunId, JsonSerializer.Serialize(response), [], [], [], null, null, null, null, []);
         }

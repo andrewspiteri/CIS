@@ -25,7 +25,7 @@ internal static class DefaultStandardRegistry
         }
         builder
             .AppendLine("owner: Repository maintainer")
-            .AppendLine($"last_reviewed: {(definition.Slug is "testing" or "iteration-completion" ? "2026-11-08" : "2026-08-15")}")
+            .AppendLine($"last_reviewed: {(definition.Slug == "code-quality" ? "2026-11-09" : definition.Slug is "testing" or "iteration-completion" ? "2026-11-08" : "2026-08-15")}")
             .AppendLine("review_cadence: on change")
             .AppendLine("source_of_truth: This file")
             .AppendLine("provenance:")

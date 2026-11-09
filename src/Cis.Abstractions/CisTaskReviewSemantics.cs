@@ -3,6 +3,8 @@ namespace Cis.Abstractions;
 /// <summary>Required work is distinct from severity; historical task findings retain their original meaning.</summary>
 public static class CisTaskReviewSemantics
 {
+    public const int CurrentContractVersion = 3;
+
     public static bool TryDisposition(string severity, string? disposition, bool requireExplicit, out string effective)
     {
         effective = "invalid";
@@ -29,12 +31,23 @@ public static class CisTaskReviewSemantics
         => references is { Count: > 0 and <= 32 } && references.All(value => !string.IsNullOrWhiteSpace(value)
             && value.Length <= 2000 && !value.Contains('\0'));
 
-    public static bool ValidNecessityAssessment(CisReviewNecessityAssessment? assessment)
-        => assessment is null || new[] { assessment.Invariant, assessment.NativeAlternative, assessment.CostEvidence,
-            assessment.MaintenanceAndPassSemantics, assessment.DuplicationAvoided, assessment.Decision }
-            .All(value => !string.IsNullOrWhiteSpace(value) && value.Length <= 4000 && !value.Contains('\0'));
+    public static bool ValidNecessityAssessment(CisReviewNecessityAssessment? assessment, bool requireApplicability = false)
+    {
+        if (assessment is null) return !requireApplicability;
+        if (requireApplicability && assessment.Applicable is null) return false;
+        static bool Text(string? value) => !string.IsNullOrWhiteSpace(value) && value.Length <= 4000 && !value.Contains('\0');
+        if (!Text(assessment.Decision)) return false;
+        var reasoning = new[] { assessment.Invariant, assessment.NativeAlternative, assessment.CostEvidence,
+            assessment.MaintenanceAndPassSemantics, assessment.DuplicationAvoided };
+        if (assessment.Applicable == false) return reasoning.All(value => value is null || value.Length <= 4000 && !value.Contains('\0'));
+        return reasoning.All(Text);
+    }
 }
 
-/// <summary>Optional judgment recorded by the existing reviewer when verification machinery materially expands.</summary>
-public sealed record CisReviewNecessityAssessment(string Invariant, string NativeAlternative, string CostEvidence,
-    string MaintenanceAndPassSemantics, string DuplicationAvoided, string Decision);
+/// <summary>The existing reviewer's scoped necessity judgment; absent applicability retains historical meaning.</summary>
+public sealed record CisReviewNecessityAssessment(string Invariant = "", string NativeAlternative = "", string CostEvidence = "",
+    string MaintenanceAndPassSemantics = "", string DuplicationAvoided = "", string Decision = "")
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public bool? Applicable { get; init; }
+}

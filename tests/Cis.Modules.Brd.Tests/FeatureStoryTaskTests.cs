@@ -352,6 +352,7 @@ public sealed partial class FeatureIntakeTests
         var id = service.Navigation(f.Authority).Features.Single().Stories.Single().Id;
         var before = service.Story(f.Authority, "referrals", id, false);
         Assert.Empty(before.Errors); Assert.Equal("missing", before.Status);
+        Assert.Contains("Challenge the whole design", before.DeliverySizeReason, StringComparison.Ordinal);
         Assert.NotEmpty(before.Definition); Assert.Equal(2, before.Story!.Requirements.Count);
         Assert.Empty(before.Tasks); Assert.Equal(0, generation.Calls);
         Assert.NotEmpty(service.Story(f.Authority, "referrals", id, true, "old-hash").Errors);
@@ -370,6 +371,10 @@ public sealed partial class FeatureIntakeTests
         Assert.Contains("capture gaps and spool capacity", generation.Request.Prompt);
         Assert.Contains(".NET 10", generation.Request.Prompt);
         Assert.Contains(wizard.SourceBrds.Single().Hash, generation.Request.Prompt);
+        Assert.Contains("challenge the whole design before decomposing it", generation.Request.Prompt, StringComparison.Ordinal);
+        Assert.Contains("Explicit later user decisions may supersede an example", generation.Request.Prompt, StringComparison.Ordinal);
+        Assert.Contains("Remove unnecessary mechanisms or narrow unsupported promises", generation.Request.Prompt, StringComparison.Ordinal);
+        Assert.Contains("Ordinary helpers need no separate justification document or human checkpoint", generation.Request.Prompt, StringComparison.Ordinal);
         var reopened = DeliveryService(f, generation).Story(f.Authority, "referrals", id, false);
         Assert.True(reopened.Cached); Assert.Equal(1, generation.Calls);
         Assert.Equal(prepared.Tasks[1].Title, reopened.Tasks[1].Title);

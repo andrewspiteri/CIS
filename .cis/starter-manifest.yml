@@ -1438,7 +1438,7 @@ managed_artifacts:
   path: .github/instructions/cis-agent-execution.instructions.md
   definition: guidance.instruction.agent-execution
   template_version: 1
-  applied_hash: sha256:2b3199696ff9954bcd37a7cee6c566d6b9185a7e3d3d8576bcdb54d55ab0b64d
+  applied_hash: sha256:02ba7501962f1e91f5fe4fba8dfcfde35b71f0049a801796bd3086f85b1198db
   ownership: managed
 - id: guidance.instruction.ai-model-qualification
   path: .github/instructions/cis-ai-model-qualification.instructions.md
@@ -1480,7 +1480,7 @@ managed_artifacts:
   path: .github/instructions/cis-engineering-assurance.instructions.md
   definition: guidance.instruction.engineering-assurance
   template_version: 2
-  applied_hash: sha256:1405a50b473136214a33a6d0538b69e7e6a309c0db9c198482b6dddecbcc2ca3
+  applied_hash: sha256:1ad008d14f8dc79cd71fdad1d5fe19bbc8f9f3900f7ed81591e610562a97eafa
   ownership: human
 - id: guidance.instruction.external-tracker
   path: .github/instructions/cis-external-tracker.instructions.md
@@ -1528,7 +1528,7 @@ managed_artifacts:
   path: .github/instructions/cis-local-artifact-retention.instructions.md
   definition: guidance.instruction.local-artifact-retention
   template_version: 1
-  applied_hash: sha256:ea4903e7cac04cfe0e21b4ab4a8ac4cac2abfbeec2aedca81c9c8cc6d77062a0
+  applied_hash: sha256:bf128cf2f99e5109a113c06a5ccb9556444543f2415c3700230d3c5e729c598f
   ownership: human
 - id: guidance.instruction.mcp-adapter
   path: .github/instructions/cis-mcp-adapter.instructions.md
@@ -2140,7 +2140,7 @@ managed_artifacts:
   path: .github/skills/cis-agent-execution/SKILL.md
   definition: guidance.skill.agent-execution
   template_version: 1
-  applied_hash: sha256:7d9b2ca4f74b896d589f7ad25b53ad2f9fe61a67a0cb85318a96d5a4983a2c74
+  applied_hash: sha256:763a1427db55ec4e0927272eb0b64ebb7b5a82640f28a42395150e332be8142e
   ownership: human
 - id: guidance.skill.ai-model-qualification
   path: .github/skills/cis-ai-model-qualification/SKILL.md
@@ -2158,7 +2158,7 @@ managed_artifacts:
   path: .github/skills/cis-bounded-planning/SKILL.md
   definition: guidance.skill.bounded-planning
   template_version: 1
-  applied_hash: sha256:39f3f3e4ed9e330f7c98db7278f1bb2fcee64da1424455749fa55c341e906afd
+  applied_hash: sha256:f799e7ce98a86470f4428f45122b5008a21db1866c4b34015769e10ea1e0688a
   ownership: managed
 - id: guidance.skill.change-dossier
   path: .github/skills/cis-change-dossier/SKILL.md
@@ -2296,7 +2296,7 @@ managed_artifacts:
   path: .github/skills/cis-local-artifact-retention/SKILL.md
   definition: guidance.skill.local-artifact-retention
   template_version: 1
-  applied_hash: sha256:ce286749b9dc596d33c2a20dfbe9f06217815f0181f54e2f5e3c43998be115f3
+  applied_hash: sha256:d1c2a383f67585a4c66dac3905d64667f44f8e32ac17ee135f2c895e56413032
   ownership: human
 - id: guidance.skill.maintain-contracts
   path: .github/skills/cis-maintain-contracts/SKILL.md
@@ -2392,7 +2392,7 @@ managed_artifacts:
   path: .github/skills/cis-validate-completion/SKILL.md
   definition: guidance.skill.validate-completion
   template_version: 1
-  applied_hash: sha256:def4e84dc4eb88ca1b545fc1a52887bd99209ddb2d4e557af3d11b2c64d15e36
+  applied_hash: sha256:519847acc565c90e5839cbec310ba09825a58ab3e31f08a5e99d6261bc08295b
   ownership: human
 - id: guidance.skill.verification
   path: .github/skills/cis-verification/SKILL.md
@@ -2428,7 +2428,7 @@ managed_artifacts:
   path: docs/references/agent-provider-profile.md
   definition: reference.agent-provider-profile
   template_version: 1
-  applied_hash: sha256:4793d1ffc595ead47a9c17d2c69dbae2eaa11e30fc12fec26d5b75d3326f0ff2
+  applied_hash: sha256:8d6564b4f3cf07a72617403774e4f89a527459860fc0de3f106231582bb62078
   ownership: human
 - id: reference.ai-evaluation-index-card
   path: docs/references/ai-evaluation-datasets/index-card.md
@@ -2494,7 +2494,7 @@ managed_artifacts:
   path: docs/references/engineering-defaults.md
   definition: reference.engineering-defaults
   template_version: 1
-  applied_hash: sha256:8df056a5994b8c7f1100a3a00899eef81241f284f767713dcc15dbb48b14a93a
+  applied_hash: sha256:d01f41425a66ca128d74532cbb09d3320c116134218d6eccf247fbd80a37a64c
   ownership: human
 - id: reference.event-dictionary.reference
   path: docs/references/event-dictionary.md
@@ -2536,7 +2536,7 @@ managed_artifacts:
   path: docs/references/local-artifact-retention.md
   definition: reference.local-artifact-retention
   template_version: 1
-  applied_hash: sha256:6e294b3ecb888bb633f215681fb0503203a415013469aba8067acf5bc126d05c
+  applied_hash: sha256:bc44d7bee5c7469cf7d02a551c98a06b692050a7dbae4a7e6ec122947123833b
   ownership: human
 - id: reference.module-ownership-map.reference
   path: docs/references/module-ownership-map.md
@@ -2590,7 +2590,7 @@ managed_artifacts:
   path: docs/references/standards-conformance-matrix.md
   definition: reference.standards-conformance-matrix
   template_version: 2
-  applied_hash: sha256:7965b32cb3ab61b29e967c01a9670ae7590881c5e0a210cd60deb03763575e94
+  applied_hash: sha256:f1649839f6f3651b71bba05933190fbc836c0fc077c62a1f30c23ed5dda8a521
   ownership: human
 - id: reference.task-type-capability-selections
   path: docs/references/task-type-capability-selections.md
@@ -2776,7 +2776,7 @@ managed_artifacts:
   path: docs/standards/code-quality-standard.md
   definition: standard.default.code-quality
   template_version: 1
-  applied_hash: sha256:15383a06da54939bf24d49c347914a63aa69d838919249ee312fba74ac7ac98f
+  applied_hash: sha256:d80ed4bd1ab687c3b7b63348520d42e242e856fa823dad5f9061af3d8286ca25
   ownership: managed
 - id: standard.documentation-governance
   path: docs/standards/documentation-governance-standard.md

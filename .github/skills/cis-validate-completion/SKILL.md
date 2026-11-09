@@ -19,7 +19,7 @@ Gather the request, plan, acceptance criteria, changed files, documentation delt
 
 ## Workflow
 
-1. Confirm the intended output exists and matches scope.
+1. Confirm the intended output exists and matches accepted behavior, ownership and exclusions under the canonical code-quality standard. Inspect actual source/callers and the existing review's necessity conclusion; passing tests do not justify unsupported responsibilities. Ordinary helpers need no extra document or human checkpoint.
 2. Check every acceptance criterion against direct evidence.
 3. Confirm required specifications and references changed with behavior.
 4. Verify deterministic checks and independent assurance requirements.

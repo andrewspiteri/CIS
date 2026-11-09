@@ -296,6 +296,8 @@ public sealed partial class AgentExecutionTests
             var correction = provider.Requests.Single(request => request.Prompt.Contains("<review-findings>"));
             var required = correction.Prompt.Split("<review-findings>")[1].Split("</review-findings>")[0];
             Assert.Contains("Criterion not met", required); Assert.DoesNotContain("Optional future polish", required);
+            Assert.Contains("remove an unsupported mechanism", correction.Prompt);
+            Assert.Contains("canonical code-quality standard", correction.Prompt);
         }
         Assert.All(provider.Requests.Where(request => request.Mode == "review"), request =>
         {
@@ -490,9 +492,7 @@ public sealed partial class AgentExecutionTests
     {
         using var repository = AgentRepository.Create(git: true);
         repository.Write("app.txt", "original"); repository.CommitAll("necessity review baseline");
-        var assessment = new CisReviewNecessityAssessment("Retain the existing exact comparison invariant", "Use the existing native assertion helper",
-            "Unknown: no separate runtime measurement was required", "Preserve the existing pass meaning with one maintained helper",
-            "Avoid a second comparator and repeated full-suite invocation", "Continue this bounded native helper change");
+        var assessment = new CisReviewNecessityAssessment(Decision: "The existing native assertion helper adds no material responsibilities.") { Applicable = false };
         var provider = new StoryExecutionProvider
         {
             NecessityAssessment = assessment,
@@ -519,6 +519,58 @@ public sealed partial class AgentExecutionTests
         var review = service.Show(repository.Path, result.Runs.Single(run => run.Stage == "Review").RunId).Run!.Result!.Review!;
         Assert.Equal(assessment, review.NecessityAssessment);
         Assert.Contains("agent-fixture/tests/comparison-helper.cs", result.ChangedFiles);
+    }
+
+    [Fact]
+    public void StoryRequiredScopeFindingCanRemoveUnsupportedMechanismThroughExistingCorrection()
+    {
+        using var repository = AgentRepository.Create(git: true);
+        repository.Write("app.txt", "original"); repository.CommitAll("value responsibility baseline");
+        var provider = new StoryExecutionProvider
+        {
+            ReviewFailures = 1,
+            ReviewKind = "scope-expansion",
+            NecessityAssessment = new("The accepted owner only stores a value.", "Keep the direct value field and access.",
+                "Unknown runtime; the registry adds maintained paths.", "Lifecycle tests would protect an unsupported responsibility.",
+                "Avoid duplicate registration and direct-value paths.", "Remove the unsupported provider registry.")
+            { Applicable = true },
+            InspectRequest = request =>
+            {
+                var mechanism = Path.Combine(request.WorkingDirectory, "ProviderRegistry.cs");
+                if (request.Mode == "implement")
+                {
+                    if (request.Prompt.Contains("<review-findings>", StringComparison.Ordinal))
+                    {
+                        Assert.Contains("Remove ProviderRegistry.cs", request.Prompt);
+                        Assert.Contains("remove an unsupported mechanism", request.Prompt);
+                        File.Delete(mechanism);
+                    }
+                    else File.WriteAllText(mechanism, "sealed class ProviderRegistry { public void Start() { } }\n");
+                }
+                else if (File.Exists(mechanism))
+                {
+                    Assert.Contains("ProviderRegistry.cs", request.Prompt);
+                    Assert.Contains("diff --git", request.Prompt);
+                    Assert.Contains("meaningful callers", request.Prompt);
+                    Assert.Contains("required correctable finding even when tests pass", request.Prompt);
+                }
+            }
+        };
+        var service = new AgentService(new CisRepositoryContextResolver(), [provider], textGeneration: new StoryExecutionModels());
+        var work = StoryWork(repository.Path);
+        work = work with { Task = work.Task with { NegativeCriteria = ["No provider registry, persistence or lifecycle; retain direct value behavior."] } };
+        var result = service.Execute(work, service.SelectModels(work), true, () => true, TestContext.Current.CancellationToken, null);
+        Assert.True(result.Applied, string.Join("; ", result.Errors));
+        Assert.Equal(4, provider.Requests.Count);
+        Assert.False(File.Exists(Path.Combine(repository.Path, "ProviderRegistry.cs")));
+        Assert.Single(service.InspectWork(work).Control!.Work!.Corrections);
+        var reviews = result.Runs.Where(run => run.Stage == "Review").Select(run => service.Show(repository.Path, run.RunId).Run!.Result!.Review!).ToArray();
+        Assert.Equal("required", Assert.Single(reviews[0].Findings).Disposition);
+        Assert.True(reviews[0].NecessityAssessment!.Applicable);
+        Assert.Equal("revise", reviews[0].Recommendation);
+        Assert.Equal("ready", reviews[1].Recommendation);
+        Assert.False(reviews[1].NecessityAssessment!.Applicable);
+        Assert.DoesNotContain(reviews.SelectMany(review => review.Findings), finding => finding.RequiresDecision == true);
     }
 
     [Fact]

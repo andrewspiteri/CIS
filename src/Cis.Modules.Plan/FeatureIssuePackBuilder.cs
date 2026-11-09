@@ -49,12 +49,13 @@ internal static partial class FeatureIssuePackBuilder
                 .ToArray();
             return new(null, errors, resolution.Conflicts);
         }
+        var generatedObligations = new Dictionary<string, IReadOnlyList<Cis.Abstractions.CisTaskVerificationObligation>>(StringComparer.Ordinal);
         var items = BuildItems(spec, accepted, resolution.Definitions, existingItems, existingSourceHash,
-            defaultObligations, readImportedLists, out var instanceErrors);
+            defaultObligations, readImportedLists, generatedObligations, out var instanceErrors);
         if (instanceErrors.Count > 0) return new(null, instanceErrors, []);
         var documents = items.ToDictionary(
             item => item.TaskPath!,
-            item => RenderTask(spec, source, item, items, accepted),
+            item => RenderTask(spec, source, item, items, accepted, generatedObligations[item.Id]),
             StringComparer.OrdinalIgnoreCase);
         var manualTests = BuildManualTestCases(changeId, spec, source, automationReferences);
         return new(new FeatureIssuePack(source, items, documents, spec.Title,
@@ -69,6 +70,7 @@ internal static partial class FeatureIssuePackBuilder
         string? existingSourceHash,
         Func<PlanWorkItem, IReadOnlyList<Cis.Abstractions.CisTaskVerificationObligation>>? defaultObligations,
         Func<PlanWorkItem, ImportedTaskLists?>? readImportedLists,
+        IDictionary<string, IReadOnlyList<Cis.Abstractions.CisTaskVerificationObligation>> generatedObligations,
         out IReadOnlyList<string> errors)
     {
         var allRequirements = spec.Requirements.Select(item => item.Id).ToArray();
@@ -207,6 +209,8 @@ internal static partial class FeatureIssuePackBuilder
             }
             if (!spec.Frontend && definition.Category == "verification")
                 validation = validation.Replace("browser journeys, ", string.Empty, StringComparison.OrdinalIgnoreCase);
+            if (definition.Key == "core.verification" && RequiresTestCatalogue(spec))
+                validation += " Maintain required catalogue TC-* traceability into recognized automated tests.";
             var item = new PlanWorkItem(
                 id,
                 definition.Category,
@@ -233,11 +237,34 @@ internal static partial class FeatureIssuePackBuilder
                 StoryId = instance.StoryId,
                 InstanceKey = keyByIdentity[identity],
                 WorkOwnerTaskId = existing?.WorkOwnerTaskId,
-                VerificationObligations = existing is not null && existing.AcceptanceCriteria == acceptance && existing.Validation == validation ? existing.VerificationObligations :
-                    [],
             };
-            if (existing is null || existing.AcceptanceCriteria != acceptance || existing.Validation != validation)
-                item = item with { VerificationObligations = defaultObligations?.Invoke(item) ?? DefaultVerificationObligations(item, []) };
+            var generated = defaultObligations?.Invoke(item) ?? DefaultVerificationObligations(item, []);
+            generatedObligations[id] = generated;
+            var priorGenerated = priorLists?.VerificationObligations;
+            if (existing is not null && priorGenerated is null)
+            {
+                var reconstructed = defaultObligations?.Invoke(existing) ?? DefaultVerificationObligations(existing, []);
+                if (reconstructed.All(expected => existing.VerificationObligations.Any(prior => SameObligation(prior, expected))))
+                    priorGenerated = reconstructed;
+            }
+            if (existing is not null && priorGenerated is null && existing.VerificationObligations.Count > 0
+                && generated.Any(current => !existing.VerificationObligations.Any(prior => SameObligation(prior, current))))
+            {
+                problems.Add($"Task {id} has no retained generated verification baseline for the changed contract or policy. Preserve its authored obligations and review/replan this affected task before re-import; the previous evidence route or gates cannot be guessed.");
+            }
+            var authored = existing?.VerificationObligations.Where(obligation =>
+                !(priorGenerated ?? generated).Any(prior => SameObligation(obligation, prior))).ToArray() ?? [];
+            if (existing is not null && existing.AcceptanceCriteria != acceptance && authored.Any(obligation =>
+                obligation.Criteria.Contains(existing.AcceptanceCriteria, StringComparer.Ordinal)))
+                problems.Add($"Task {id} has an authored verification obligation citing a replaced acceptance criterion. Preserve that obligation and reconcile its accepted criterion before re-import.");
+            var authoredIds = authored.Select(obligation => obligation.Id).ToHashSet(StringComparer.Ordinal);
+            var removedIds = priorGenerated?.Where(prior => !existing!.VerificationObligations.Any(obligation => obligation.Id == prior.Id))
+                .Select(prior => prior.Id).ToHashSet(StringComparer.Ordinal) ?? [];
+            item = item with
+            {
+                VerificationObligations = generated.Where(obligation => !authoredIds.Contains(obligation.Id) && !removedIds.Contains(obligation.Id))
+                    .Concat(authored).ToArray(),
+            };
             items.Add(item);
         }
 
@@ -261,8 +288,18 @@ internal static partial class FeatureIssuePackBuilder
             : ["Do not expand scope beyond accepted impacts and the imported feature specification."];
         if (spec.PublicEndpoints && PublicEndpointPolicyCategory(category))
             negative = negative.Concat(PublicEndpointNegativeCriteria).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        return new(RequiredOutputs(category).Select(output => storyId is null ? output : $"{storyId}: {output}").ToArray(), negative);
+        var outputs = RequiredOutputs(category);
+        if (category == "verification" && !RequiresTestCatalogue(spec))
+            outputs = outputs.Where(output => !output.StartsWith("test-cases.", StringComparison.Ordinal)).ToArray();
+        return new(outputs.Select(output => storyId is null ? output : $"{storyId}: {output}").ToArray(), negative);
     }
+
+    private static bool RequiresTestCatalogue(FeatureSpec spec)
+        => spec.Data || spec.Lifecycle || spec.Integration || spec.Requirements.Any(requirement =>
+            requirement.Frontend || requirement.HasContract
+            || MatchesCategory(requirement, "security", [])
+            || ContainsAny(PositiveCapabilityText($"{requirement.Text} {requirement.AcceptanceCriteria}"),
+                "manual case", "manual test", "test catalogue", "test catalog"));
 
     private static IReadOnlyList<string> ReconcileImportedList(IReadOnlyList<string>? existing,
         IReadOnlyList<string>? priorGenerated, IReadOnlyList<string> generated)
@@ -317,6 +354,14 @@ internal static partial class FeatureIssuePackBuilder
         { BasisReferences = task.RequirementIds, SharedGateIds = native ? nativeGates : [] }];
     }
 
+    private static bool SameObligation(Cis.Abstractions.CisTaskVerificationObligation left,
+        Cis.Abstractions.CisTaskVerificationObligation right)
+        => left.Id == right.Id && left.Description == right.Description && left.EvidenceRoute == right.EvidenceRoute
+            && left.Criteria.SequenceEqual(right.Criteria, StringComparer.Ordinal)
+            && left.EvidenceExpectations.SequenceEqual(right.EvidenceExpectations, StringComparer.Ordinal)
+            && left.BasisReferences.SequenceEqual(right.BasisReferences, StringComparer.Ordinal)
+            && left.SharedGateIds.SequenceEqual(right.SharedGateIds, StringComparer.Ordinal);
+
     private static bool IsApplicable(Cis.Abstractions.CisTaskTypeDefinition definition, FeatureSpec spec)
     {
         if (definition.CreationPolicy.Equals("always", StringComparison.OrdinalIgnoreCase)) return true;
@@ -328,13 +373,15 @@ internal static partial class FeatureIssuePackBuilder
         if (definition.Category == "backend") return spec.Backend;
         if (definition.Category == "integration") return spec.Integration;
         if (definition.Category == "lifecycle") return spec.Lifecycle;
+        if (definition.Category == "security")
+            return spec.Requirements.Any(requirement => MatchesCategory(requirement, definition.Category, definition.TriggerTerms));
         if (definition.Category == "infrastructure" && ExplicitNoInfrastructureChange(spec)) return false;
         if (definition.Category is "infrastructure" or "observability")
             return spec.Requirements.Any(requirement => MatchesCategory(
                 requirement, definition.Category, definition.TriggerTerms));
         if (definition.Category is "data-backfill" or "rollout")
         {
-            var requirementSignals = string.Join(' ', spec.Requirements.Select(requirement =>
+            var requirementSignals = string.Join(' ', spec.Requirements.Select(PositiveRequirement).Select(requirement =>
                 $"{requirement.Surface} {requirement.Text} {requirement.AcceptanceCriteria}"));
             return definition.TriggerTerms.Any(term =>
                 requirementSignals.Contains(term, StringComparison.OrdinalIgnoreCase));
@@ -367,7 +414,7 @@ internal static partial class FeatureIssuePackBuilder
 
     private static bool ExplicitNoInfrastructureChange(FeatureSpec spec)
     {
-        var text = Regex.Replace(spec.SignalText, @"\s+", " ",
+        var text = Regex.Replace(SectionText(spec.Sections, "non-goal", "out of scope", "exclusion", "infrastructure"), @"\s+", " ",
             RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
         return ContainsAny(text,
             "no infrastructure change",
@@ -504,7 +551,8 @@ internal static partial class FeatureIssuePackBuilder
         PlanSource source,
         PlanWorkItem item,
         IReadOnlyList<PlanWorkItem> allItems,
-        IReadOnlyList<ImpactFinding> accepted)
+        IReadOnlyList<ImpactFinding> accepted,
+        IReadOnlyList<Cis.Abstractions.CisTaskVerificationObligation> generatedObligations)
     {
         var builder = new StringBuilder();
         builder.AppendLine("---");
@@ -534,6 +582,7 @@ internal static partial class FeatureIssuePackBuilder
         var importedLists = GeneratedLists(spec, item.Category, item.StoryId);
         builder.AppendLine($"imported_required_outputs: {JsonSerializer.Serialize(importedLists.RequiredOutputs)}");
         builder.AppendLine($"imported_negative_criteria: {JsonSerializer.Serialize(importedLists.NegativeCriteria)}");
+        builder.AppendLine($"imported_verification_obligations: {JsonSerializer.Serialize(generatedObligations)}");
         builder.AppendLine("authority: human-approved-plan");
         builder.AppendLine("---");
         builder.AppendLine();
@@ -567,12 +616,12 @@ internal static partial class FeatureIssuePackBuilder
             builder.AppendLine();
             builder.AppendLine("## Structured test-obligation matrix");
             builder.AppendLine();
-            builder.AppendLine("| Layer / gate | Applicability | Selection evidence | Required completion |");
+            builder.AppendLine("| Obligation | Evidence route | Accepted basis and criteria | Required evidence |");
             builder.AppendLine("|---|---|---|---|");
-            foreach (var obligation in TestObligations(spec))
-                builder.AppendLine($"| {obligation.Layer} | {obligation.Applicable} | {MarkdownCell(obligation.Evidence)} | {obligation.Completion} |");
+            foreach (var obligation in item.VerificationObligations)
+                builder.AppendLine($"| {MarkdownCell(obligation.Id)} | {MarkdownCell(obligation.EvidenceRoute)} | {MarkdownCell(string.Join("; ", obligation.BasisReferences.Concat(obligation.Criteria)))} | {MarkdownCell(obligation.Description)}; {MarkdownCell(string.Join("; ", obligation.EvidenceExpectations))}{(obligation.SharedGateIds.Count == 0 ? "" : "; shared gates: " + MarkdownCell(string.Join(", ", obligation.SharedGateIds)))} |");
             builder.AppendLine();
-            builder.AppendLine("Every applicable row must pass before task completion. Failed, missing, stale and skipped evidence block completion. Record justified inapplicability separately; it is not a pass. An exception needs the governing authority and cannot be silently inferred from an unavailable check.");
+            builder.AppendLine("These rows are the persisted task verification obligations, not an additional keyword-selected gate set. Applicable adopted completion policy remains binding at its declared task, feature or release boundary. Failed, missing, stale and skipped required evidence block completion; justified inapplicability is not a pass. A release obligation does not itself require a new release campaign for each story.");
         }
 
         builder.AppendLine();
@@ -641,7 +690,7 @@ internal static partial class FeatureIssuePackBuilder
         builder.AppendLine();
         builder.AppendLine("## Targeted validation");
         builder.AppendLine();
-        foreach (var check in ValidationChecks(item.Category, spec.Frontend))
+        foreach (var check in ValidationChecks(item.Category))
         {
             builder.AppendLine($"- [ ] {check}");
         }
@@ -885,6 +934,7 @@ internal static partial class FeatureIssuePackBuilder
         var sectionLines = classificationScopedFrontend || item.StoryId is not null
             ? []
             : spec.Sections
+                .Where(section => IsBehaviorSection(section.Key))
                 .Where(section => keywords.Any(keyword => ContainsTerm(section.Key, keyword)))
                 .SelectMany(section => ExtractScopeLines(section.Value));
         var lines = sectionLines
@@ -936,7 +986,7 @@ internal static partial class FeatureIssuePackBuilder
                 && line is not "```text" and not "```http" and not "```")
             .Select(line => line.TrimStart('-', '*', ' '));
 
-    private static IReadOnlyList<string> ValidationChecks(string category, bool frontend) => category switch
+    private static IReadOnlyList<string> ValidationChecks(string category) => category switch
     {
         "documentation" => ["Strict documentation and front-matter validation pass.", "Affected contract/reference drift checks pass."],
         "data" => ["Model and repository invariants are tested.", "Persistence constraints, concurrency, audit, and retention behavior are tested."],
@@ -955,33 +1005,9 @@ internal static partial class FeatureIssuePackBuilder
         "observability" => ["Telemetry, redaction, alert, dashboard, runbook, and failure-detection evidence is recorded."],
         "rollout" => ["Activation, compatibility, rollback, communication, and post-release criteria are tested."],
         "assurance" => ["Independent findings, disposition, rework, and residual risk are recorded."],
-        "verification" when frontend => ["Focused and affected automated suites pass.", "Browser regression uses repository page objects.", "Coverage and skipped or unrun checks are recorded."],
-        "verification" => ["Focused and affected automated suites pass.", "Coverage and skipped or unrun checks are recorded."],
+        "verification" => [],
         _ => ["Final repository completion and planned-versus-actual checks are recorded."],
     };
-
-    private static IReadOnlyList<TestObligation> TestObligations(FeatureSpec spec)
-    {
-        var signal = spec.SignalText;
-        var security = spec.PublicEndpoints || ContainsAny(signal, "auth", "permission", "security", "owner", "member", "session", "token", "non-disclosure");
-        var integration = spec.Api || spec.Backend || spec.Data || spec.Integration || ContainsAny(signal, "sqlite", "database", "container", "provider");
-        var operational = ContainsAny(signal, "infrastructure", "compose", "terraform", "deployment", "recovery", "backup", "restore", "operational", "observability");
-        var mutation = spec.Api || spec.Backend || spec.Data || security;
-        return
-        [
-            new("unit", "required", "All functional requirements and deterministic decisions", "Reconciled passed execution plus coverage evidence"),
-            new("architecture", spec.Api || spec.Backend || spec.Frontend || security ? "required" : "not-applicable", "Affected component and security boundaries", "Compiler-backed boundary execution"),
-            new("component", spec.Api || spec.Backend ? "required" : "not-applicable", "Transport, middleware, serialization, and local component behavior", "Reconciled passed execution"),
-            new("integration", integration ? "required" : "not-applicable", "Persistence, API, provider, or cross-component boundary", "Real dependency or approved ephemeral-provider execution"),
-            new("business", "required", "Actor-visible requirements and state transitions", "Cucumber/Gherkin or equivalent passed execution"),
-            new("frontend-component", spec.Frontend ? "required" : "not-applicable", $"Frontend types: {string.Join(", ", spec.FrontendTypes.DefaultIfEmpty("none"))}", "Component and accessibility execution"),
-            new("browser", spec.Frontend ? "required" : "not-applicable", "Critical composed frontend journeys", "Zero-retry passed execution with failure artifacts configured"),
-            new("security", security ? "required" : "not-applicable", "Authorization, ownership, identity, cache, and non-disclosure signals", "Negative-principal and boundary execution"),
-            new("operational", operational ? "required" : "not-applicable", "Topology, recovery, deployment, or observability signals", "Named smoke, recovery, or operations execution"),
-            new("coverage", "required", "New or materially changed production code", "At least 95% line coverage or governed narrow exclusions"),
-            new("mutation", mutation ? "required" : "not-applicable", "High-risk lifecycle, security, API, data, actor, or concurrency logic", "No undisposed new survivors and active baseline met"),
-        ];
-    }
 
     private static FeatureParseResult Parse(string repositoryPath, string requestedPath)
     {
@@ -1034,26 +1060,26 @@ internal static partial class FeatureIssuePackBuilder
         var targets = frontMatter.Lists.GetValueOrDefault("targets") ?? [];
         var stack = frontMatter.Lists.GetValueOrDefault("stack") ?? [];
         var references = frontMatter.Lists.GetValueOrDefault("references") ?? [];
-        var all = content.ToLowerInvariant();
         var targetRoles = ReadTargetRoles(repository, targets);
-        var requirementSignal = string.Join(' ', requirements.Select(requirement =>
+        var positiveRequirements = requirements.Select(PositiveRequirement).ToArray();
+        var requirementSignal = string.Join(' ', positiveRequirements.Select(requirement =>
             $"{requirement.Surface} {requirement.Text} {requirement.AcceptanceCriteria}")).ToLowerInvariant();
         var explicitNoFrontendChange = ExplicitNoFrontendChange(sections);
-        var frontendSignal = !explicitNoFrontendChange && (requirements.Any(requirement => Surface(requirement.Surface, "frontend", "full-stack", "mobile", "native"))
+        var frontendSignal = !explicitNoFrontendChange && (positiveRequirements.Any(requirement => Surface(requirement.Surface, "frontend", "full-stack", "mobile", "native"))
             || targetRoles.Values.SelectMany(value => value).Any(IsFrontendRole));
-        var backend = requirements.Any(requirement => Surface(requirement.Surface, "backend", "full-stack", "api", "data"))
+        var backend = positiveRequirements.Any(requirement => Surface(requirement.Surface, "backend", "full-stack", "api", "data"))
             || targetRoles.Values.SelectMany(value => value).Any(IsBackendRole);
-        var data = requirements.Any(IsPositiveDataRequirement);
-        if (data && !requirements.Any(requirement => Surface(requirement.Surface, "data"))
+        var data = positiveRequirements.Any(IsPositiveDataRequirement);
+        if (data && !positiveRequirements.Any(requirement => Surface(requirement.Surface, "data"))
             && ExplicitNoDataChange(sections))
             data = false;
-        var schemaMigration = requirements.Any(ContainsSchemaMigrationSignal);
-        var api = requirements.Any(requirement => Surface(requirement.Surface, "api", "contract", "full-stack")
+        var schemaMigration = positiveRequirements.Any(ContainsSchemaMigrationSignal);
+        var api = positiveRequirements.Any(requirement => Surface(requirement.Surface, "api", "contract", "full-stack")
             || ContainsApiRequirementSignal(requirement));
-        var integration = requirements.Any(requirement => !Surface(requirement.Surface, "frontend")
+        var integration = positiveRequirements.Any(requirement => !Surface(requirement.Surface, "frontend")
             && ContainsIntegrationSignal($" {requirement.Text} {requirement.AcceptanceCriteria}".ToLowerInvariant()));
-        var search = ContainsAny(all, "search", "projection", "retrieval", "indexing", "document type");
-        var lifecycle = requirements.Any(requirement => !Surface(requirement.Surface, "frontend", "mobile", "native")
+        var search = ContainsAny(requirementSignal, "search", "projection", "retrieval", "indexing", "document type");
+        var lifecycle = positiveRequirements.Any(requirement => !Surface(requirement.Surface, "frontend", "mobile", "native")
                 && ContainsLifecycleRequirementSignal(requirement))
             || HasActiveLifecycleSection(sections);
         var classified = requirements
@@ -1068,11 +1094,10 @@ internal static partial class FeatureIssuePackBuilder
             .OrderBy(FrontendTypeOrder)
             .ToArray();
         var publicEndpoints = requirements.Any(IsPublicEndpointRequirement)
-            || ContainsAny(requirementSignal, "public application endpoint", "public endpoint", "public api",
-                "unauthenticated endpoint", "without requiring authentication", "without authentication");
+            || ContainsAny(requirementSignal, "public application endpoint", "public endpoint", "public api", "unauthenticated endpoint");
         var exclusions = ParseListSection(sections, "non-goal", "out of scope", "exclusion");
         var hash = "sha256:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content))).ToLowerInvariant();
-        return new(new FeatureSpec(title, type!, relative, hash, all, classified, targets, stack, references, sections,
+        return new(new FeatureSpec(title, type!, relative, hash, requirementSignal, classified, targets, stack, references, sections,
             exclusions, frontend, backend, data, schemaMigration, api, integration, search, lifecycle, frontendTypes,
             publicEndpoints, targetRoles), []);
     }
@@ -1081,8 +1106,32 @@ internal static partial class FeatureIssuePackBuilder
     {
         errors = [];
         var lines = Normalize(content).Split('\n');
+        var headings = new List<(int Level, string Text)>();
+        var inFrontMatter = lines.Length > 0 && lines[0].Trim() == "---";
+        var inCode = false;
         for (var index = 0; index < lines.Length; index++)
         {
+            var line = lines[index].Trim();
+            if (inFrontMatter)
+            {
+                if (index > 0 && line == "---") inFrontMatter = false;
+                continue;
+            }
+            if (line.StartsWith("```", StringComparison.Ordinal) || line.StartsWith("~~~", StringComparison.Ordinal))
+            {
+                inCode = !inCode;
+                continue;
+            }
+            if (inCode) continue;
+            var heading = Regex.Match(line, @"^(?<level>#{1,6})\s+(?<text>.+)$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+            if (heading.Success)
+            {
+                var level = heading.Groups["level"].Length;
+                headings.RemoveAll(existing => existing.Level >= level);
+                headings.Add((level, heading.Groups["text"].Value));
+                continue;
+            }
+            if (headings.Any(heading => heading.Level > 1 && !IsBehaviorSection(heading.Text))) continue;
             var headers = SplitRow(lines[index]);
             var idAt = Find(headers, "ID");
             var requirementAt = Find(headers, "Requirement");
@@ -1132,7 +1181,8 @@ internal static partial class FeatureIssuePackBuilder
 
     private static IEnumerable<FeatureRequirement> ParseNarrativeRequirements(IReadOnlyDictionary<string, string> sections)
     {
-        var goals = sections.FirstOrDefault(section => section.Key.Contains("goal", StringComparison.OrdinalIgnoreCase));
+        var goals = sections.FirstOrDefault(section => IsBehaviorSection(section.Key)
+            && section.Key.Contains("goal", StringComparison.OrdinalIgnoreCase));
         if (string.IsNullOrWhiteSpace(goals.Value)) yield break;
         var ordinal = 0;
         foreach (var line in Normalize(goals.Value).Split('\n'))
@@ -1152,21 +1202,22 @@ internal static partial class FeatureIssuePackBuilder
         string title,
         IReadOnlyList<string> targets)
     {
-        var frontend = Surface(requirement.Surface, "frontend", "full-stack", "mobile", "native")
-            || IsFrontendTarget(requirement.Surface ?? string.Empty)
-            || ContainsFrontendSignal(requirement.Text);
-        var backend = Surface(requirement.Surface, "backend", "full-stack", "api", "data")
-            || (!frontend && ContainsAny(requirement.Text.ToLowerInvariant(), "model", "api", "persist", "service", "event", "permission", "search", "audit"))
+        var positive = PositiveRequirement(requirement);
+        var frontend = Surface(positive.Surface, "frontend", "full-stack", "mobile", "native")
+            || IsFrontendTarget(positive.Surface ?? string.Empty)
+            || ContainsFrontendSignal(positive.Text);
+        var backend = Surface(positive.Surface, "backend", "full-stack", "api", "data")
+            || (!frontend && ContainsAny(positive.Text.ToLowerInvariant(), "model", "api", "persist", "service", "event", "permission", "search", "audit"))
             || (!frontend && featureBackend);
         if (!frontend && !backend)
         {
-            frontend = featureFrontend && ContainsAnyTerm(requirement.Text.ToLowerInvariant(), "display", "show", "action", "navigate");
+            frontend = featureFrontend && ContainsAnyTerm(positive.Text.ToLowerInvariant(), "display", "show", "action", "navigate");
         }
-        var contract = Surface(requirement.Surface, "api", "contract", "full-stack")
-            || ContainsApiRequirementSignal(requirement);
+        var contract = Surface(positive.Surface, "api", "contract", "full-stack")
+            || ContainsApiRequirementSignal(positive);
         var score = (frontend && backend ? 2 : 0)
             + (requirement.Text.Length > 180 ? 1 : 0)
-            + (ContainsAny(requirement.Text.ToLowerInvariant(), "integration", "migration", "security", "permission", "search", "workflow") ? 2 : 0);
+            + (ContainsAny(positive.Text.ToLowerInvariant(), "integration", "migration", "security", "permission", "search", "workflow") ? 2 : 0);
         var frontendType = frontend
             ? requirement.FrontendType ?? InferFrontendType($"{title} {requirement.Surface} {requirement.Text} {string.Join(' ', targets)}")
             : null;
@@ -1190,12 +1241,16 @@ internal static partial class FeatureIssuePackBuilder
 
     private static bool IsPublicEndpointRequirement(FeatureRequirement requirement)
     {
-        var text = $" {requirement.Text} {requirement.AcceptanceCriteria}".ToLowerInvariant();
+        var accepted = AcceptedRequirement(requirement);
+        var text = $" {accepted.Text} {accepted.AcceptanceCriteria}".ToLowerInvariant();
         var explicitEndpoint = Regex.IsMatch(text,
             @"(?i)\b(?:endpoints?|apis?|route\s+handlers?|http)\b|\b(?:get|post|put|patch|delete)\s+/",
             RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-        return requirement.FrontendType == "public"
-            && (Surface(requirement.Surface, "backend", "api", "contract", "full-stack") || explicitEndpoint);
+        if (requirement.FrontendType == "public"
+            && (Surface(accepted.Surface, "backend", "api", "contract", "full-stack") || explicitEndpoint)) return true;
+        return Regex.IsMatch(text,
+            @"\b(?:endpoints?|apis?|route\s+handlers?)\b\s+(?:(?:(?:does\s+not|doesn't|need\s+not)\s+require\s+authentication)|(?:(?:shall|must|will)\s+)?(?:(?:be|is|are)\s+(?:available|accessible|served|provided)\s+)?without\s+(?:requiring\s+)?authentication)\b",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
     }
 
     private static string? NormalizeFrontendType(string? value)
@@ -1262,6 +1317,8 @@ internal static partial class FeatureIssuePackBuilder
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         string? heading = null;
+        var excludedNestedLevel = 0;
+        var inCode = false;
         var body = new StringBuilder();
         void Flush()
         {
@@ -1270,13 +1327,29 @@ internal static partial class FeatureIssuePackBuilder
         }
         foreach (var line in Normalize(content).Split('\n'))
         {
+            if (line.TrimStart().StartsWith("```", StringComparison.Ordinal) || line.TrimStart().StartsWith("~~~", StringComparison.Ordinal))
+            {
+                inCode = !inCode;
+                continue;
+            }
+            if (inCode) continue;
             if (line.StartsWith("## ", StringComparison.Ordinal))
             {
                 Flush();
                 heading = line[3..].Trim();
+                excludedNestedLevel = 0;
             }
             else if (heading is not null)
             {
+                var nested = Regex.Match(line, @"^(?<level>#{3,6})\s+(?<text>.+)$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+                if (nested.Success)
+                {
+                    var level = nested.Groups["level"].Length;
+                    if (level <= excludedNestedLevel) excludedNestedLevel = 0;
+                    if (IsBehaviorSection(heading) && !IsBehaviorSection(nested.Groups["text"].Value))
+                        excludedNestedLevel = excludedNestedLevel == 0 ? level : excludedNestedLevel;
+                }
+                if (excludedNestedLevel > 0) continue;
                 body.AppendLine(line);
             }
         }
@@ -1306,12 +1379,14 @@ internal static partial class FeatureIssuePackBuilder
 
     private static bool MatchesCategory(FeatureRequirement requirement, string category, IReadOnlyList<string> fallbackKeywords)
     {
+        requirement = category == "security" ? AcceptedRequirement(requirement) : PositiveRequirement(requirement);
         var text = $" {requirement.Text} {requirement.AcceptanceCriteria}".ToLowerInvariant();
         return category switch
         {
             "wireframe" or "design" or "frontend" => requirement.Frontend,
-            "security" => Surface(requirement.Surface, "security") || ContainsAny(text,
-                "auth", "session", "identity", "cookie", "secret", "permission", "cors", "csrf", "origin", "redirect", "sensitive", "exposure", "trust"),
+            "security" => Surface(requirement.Surface, "security") || Regex.IsMatch(text,
+                @"\b(?:auth|(?:un)?(?:authenticat|authoriz|authoris)\w*|sessions?|identity|cookies?|secrets?|permissions?|cors|csrf|origin|redirects?|sensitive|exposure|trust)\b|\bonly\s+(?:the\s+)?(?:owner|member|actor|user)\b",
+                RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)),
             "data" => IsPositiveDataRequirement(requirement),
             "database-migration" => ContainsSchemaMigrationSignal(requirement),
             "data-backfill" => ContainsAny(text, "backfill", "existing data", "reindex", "reconcile data", "transform records"),
@@ -1329,6 +1404,48 @@ internal static partial class FeatureIssuePackBuilder
             _ => fallbackKeywords.Any(keyword => text.Contains(keyword, StringComparison.OrdinalIgnoreCase)
                 || (requirement.Surface?.Contains(keyword, StringComparison.OrdinalIgnoreCase) ?? false)),
         };
+    }
+
+    private static bool IsBehaviorSection(string heading)
+        => !Regex.IsMatch(heading, @"\b(?:non[- ]?goals?|out[- ]of[- ]scope|exclusions?|examples?|references?)\b",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+
+    private static FeatureRequirement PositiveRequirement(FeatureRequirement requirement)
+    {
+        var text = PositiveCapabilityText(requirement.Text);
+        var acceptance = PositiveCapabilityText(requirement.AcceptanceCriteria);
+        return requirement with
+        {
+            Text = text,
+            AcceptanceCriteria = acceptance,
+            Surface = text.Length == 0 ? null : requirement.Surface,
+        };
+    }
+
+    private static FeatureRequirement AcceptedRequirement(FeatureRequirement requirement)
+    {
+        var text = AcceptedBehaviorText(requirement.Text);
+        var acceptance = AcceptedBehaviorText(requirement.AcceptanceCriteria);
+        return requirement with { Text = text, AcceptanceCriteria = acceptance, Surface = text.Length == 0 ? null : requirement.Surface };
+    }
+
+    // Conditional access qualifiers remain intact for security and endpoint
+    // requirements. Only capability creation uses the narrower exclusion view.
+    private static string PositiveCapabilityText(string text)
+        => Regex.Replace(AcceptedBehaviorText(text), @"\b(?:without|excluding|except\s+for)\b[^;]*", string.Empty,
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)).Trim();
+
+    private static string AcceptedBehaviorText(string text)
+    {
+        const string absentPredicate = @"(?:(?:the|this)\s+(?:component|feature|change|implementation)\s+)?(?:do(?:es)?\s+not|will\s+not|doesn't|don't|won't)\s+(?:include|implement|provide|introduce|require|manage|perform|support|create|use|add)\b";
+        var clauses = Regex.Split(text,
+            @"[.;\r\n]+|\b(?:but|however|whereas)\b|\b(?:and|while)\s+(?=(?:no\b|" + absentPredicate + "))",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        return string.Join("; ", clauses.Select(clause => clause.Trim().TrimStart('-', '*', ' '))
+            .Where(clause => clause.Length > 0 && !Regex.IsMatch(clause,
+                @"^(?:not\s+applicable\b|n/?a\b|none\b|exclude(?:s|d)?\b|omit(?:s|ted)?\b|" + absentPredicate
+                + @")|^no\b.+\b(?:required|needed|included|supported|introduced|implemented|created|added)\s*$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))));
     }
 
     private static bool ContainsApiSignal(string text)
@@ -1423,6 +1540,7 @@ internal static partial class FeatureIssuePackBuilder
 
     private static bool HasActiveLifecycleSection(IReadOnlyDictionary<string, string> sections)
         => sections
+            .Where(section => IsBehaviorSection(section.Key))
             .Where(section => section.Key.Contains("lifecycle", StringComparison.OrdinalIgnoreCase)
                 || section.Key.Contains("carry-forward", StringComparison.OrdinalIgnoreCase)
                 || section.Key.Contains("conversion", StringComparison.OrdinalIgnoreCase))
@@ -1430,7 +1548,8 @@ internal static partial class FeatureIssuePackBuilder
                 .Where(line => !ContainsAny(line.ToLowerInvariant(),
                     "design", "wireframe", "renderer", "png", "manifest", "re-import", "regeneration",
                     "approval evidence", "test-case", "test case", "automation mapping"))
-                .Aggregate(new StringBuilder(), (builder, line) => builder.AppendLine(line)).ToString().Trim())
+                .Aggregate(new StringBuilder(), (builder, line) => builder.AppendLine(line)).ToString())
+            .Select(value => PositiveCapabilityText(value))
             .Any(value => value.Length > 0
                 && !Regex.IsMatch(value, @"^(?:not applicable|n/?a|none)\b",
                     RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
@@ -1580,7 +1699,6 @@ internal static partial class FeatureIssuePackBuilder
         string? FrontendType,
         string? StoryId);
     private sealed record TaskInstance(Cis.Abstractions.CisTaskTypeDefinition Definition, string? FrontendType, string? StoryId);
-    private sealed record TestObligation(string Layer, string Applicable, string Evidence, string Completion);
     private sealed record FeatureParseResult(FeatureSpec? Spec, IReadOnlyList<string> Errors);
     private sealed record ManualTestCase(
         string Id,
@@ -1613,4 +1731,7 @@ internal sealed record FeatureIssuePackBuildResult(
     IReadOnlyList<string> Errors,
     IReadOnlyList<TaskTypeCapabilityConflict> Conflicts);
 
-internal sealed record ImportedTaskLists(IReadOnlyList<string> RequiredOutputs, IReadOnlyList<string> NegativeCriteria);
+internal sealed record ImportedTaskLists(IReadOnlyList<string> RequiredOutputs, IReadOnlyList<string> NegativeCriteria)
+{
+    public IReadOnlyList<Cis.Abstractions.CisTaskVerificationObligation>? VerificationObligations { get; init; }
+}

@@ -3,7 +3,7 @@ title: "Change Impact Studio Local Artifact Retention"
 type: local-artifact-retention
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-11-07"
+last_reviewed: "2026-11-09"
 review_cadence: "on evidence, storage, privacy, or recovery-policy change"
 cis:
   stable_id: change-impact-studio:reference:local-artifact-retention
@@ -78,3 +78,5 @@ authority.
 Active, uncertain and current required native evidence and durable accounting remain protected. Successful authorized deletion reconciles surviving bytes but never resets time or attempts. Protected evidence that prevents fitting the ceiling holds expansion: inspect the reported usage and plan, perform only delegated eligible cleanup, or return to the original allocation authority. The existing management area is not a configurable delete family; this checkpoint does not add an archive-pruning permission. Ordinary archive retrieval and restoration still need their finite operation allowance; they do not acquire the special time reserve for genuine native baseline recovery.
 
 Archive restoration rechecks the original destinations against the current owned roots and protected evidence before claiming or writing those paths. An old archive does not grant path ownership. Testing destinations also use the existing native output lease, including when the archive's original family differs from the current profile.
+
+Before substantial supported verification output, associate its declared locations and cleanup point with the existing task owner and reserve growth through the existing native/artifact route. Reuse compatible prepared inputs and normal caches instead of another unchanged campaign copy. Keep isolation where mutation or integration actually requires it; after restoration, collection or verified transfer, retire disposable owned workspaces, transfer bundles and staging copies when no current operation needs them. Retain required native reports, exact input identity and bounded failure diagnostics or a necessary reproducer. Exclude generated evidence from subsequent source/input enumeration unless a fixture or release input has a narrow explicit reason. Inventory and existing delegated cleanup decide eligibility; this guidance grants no new deletion authority and no control over arbitrary external shell or remote output.

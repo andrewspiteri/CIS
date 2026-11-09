@@ -6,6 +6,7 @@ using Cis.Modules.Agent;
 using Cis.Modules.Plan;
 using Cis.Modules.Repository;
 using Cis.Providers.Agent.Claude;
+using Cis.Providers.Agent.Codex;
 
 namespace Cis.Modules.Agent.Tests;
 
@@ -47,10 +48,10 @@ public sealed partial class AgentExecutionTests
             return;
         }
         var review = reviewed.Run.Result!.Review!;
-        Assert.Equal(2, review.ContractVersion);
+        Assert.Equal(CisTaskReviewSemantics.CurrentContractVersion, review.ContractVersion);
         Assert.Equal(disposition, Assert.Single(review.Findings).Disposition);
         Assert.Equal(requiresDecision, Assert.Single(review.Findings).RequiresDecision);
-        Assert.Equal(canComplete, review.NecessityAssessment is not null);
+        Assert.Equal(canComplete, review.NecessityAssessment!.Applicable);
         var manifest = reviewed.Run.Manifest;
         var graph = new CisGraphMetadataReadResult("ready", 0, null, "fresh", new("graph-1", "fixture", null, true, "complete"), null, [], []);
         var policy = Path.Combine(repository.Path, ".cis/engineering-defaults.json");
@@ -86,6 +87,41 @@ public sealed partial class AgentExecutionTests
         }
     }
 
+    [Theory]
+    [InlineData("missing", false, null)]
+    [InlineData("unclassified", false, null)]
+    [InlineData("incomplete", false, null)]
+    [InlineData("ordinary", true, null)]
+    [InlineData("missing", false, "exec-json")]
+    [InlineData("ordinary", true, "exec-json")]
+    [InlineData("expanded", true, "exec-json")]
+    [InlineData("missing", false, "app-server")]
+    [InlineData("ordinary", true, "app-server")]
+    [InlineData("expanded", true, "app-server")]
+    public void TaskReviewContract_NewReviewRequiresExplicitApplicableReasoningOrConciseOrdinaryConclusion(string assessmentKind, bool valid, string? codexTransport)
+    {
+        using var repository = AgentRepository.Create(git: true);
+        repository.AddEligibleChange();
+        repository.Write(".cis/engineering-defaults.json", """{"schemaVersion":1,"requireTaskCompletion":true,"additionalGates":[]}""");
+        repository.CommitAll("Synthetic explicit necessity fixture");
+        var provider = new TaskContractReviewProvider("ready", "optional", false, null) { AssessmentKind = assessmentKind, CodexTransport = codexTransport };
+        var service = new AgentService(new CisRepositoryContextResolver(), [provider], clock: Clock,
+            taskContracts: new MutableTaskContract { Digest = "sha256:ordinary-helper-contract" });
+        AllocateWorkFixture(repository, service);
+        var result = service.Run(repository.Path, "CIS-0001", "WORK-090", "fake", CisAgentRunModes.Review,
+            CisAgentPermissions.ReadOnly, null, "fake-json", 60, false, "Fixture reviewer", TestContext.Current.CancellationToken);
+        Assert.Equal(valid ? CisAgentRunStates.Succeeded : CisAgentRunStates.InvalidEvidence, result.Run!.Manifest.Status);
+        Assert.Equal(1, provider.Calls);
+        Assert.Contains("applicable:false", provider.Request!.Prompt);
+        Assert.Contains("product", provider.Request.Prompt);
+        if (!valid) return;
+        Assert.Equal(assessmentKind == "expanded", result.Run.Result!.Review!.NecessityAssessment!.Applicable);
+        Assert.Equal(CisTaskReviewSemantics.CurrentContractVersion, result.Run.Result.Review.ContractVersion);
+        if (assessmentKind == "ordinary")
+            Assert.Equal("Ordinary helper extraction retains the accepted responsibility.", result.Run.Result.Review.NecessityAssessment.Decision);
+        Assert.DoesNotContain(result.Run.Result.Review.Findings, finding => finding.RequiresDecision == true);
+    }
+
     [Fact]
     public void TaskReviewContract_ClaudeSchemaIsExplicitAndKeepsBrdAndOrdinaryReviewCompatible()
     {
@@ -103,8 +139,11 @@ public sealed partial class AgentExecutionTests
         Assert.Contains(finding.GetProperty("required").EnumerateArray(), value => value.GetString() == "basisReferences");
         Assert.Equal("boolean", finding.GetProperty("properties").GetProperty("requiresDecision").GetProperty("type").GetString());
         Assert.DoesNotContain(finding.GetProperty("required").EnumerateArray(), value => value.GetString() == "requiresDecision");
-        Assert.True(task.GetProperty("properties").TryGetProperty("necessityAssessment", out _));
-        Assert.DoesNotContain(task.GetProperty("required").EnumerateArray(), value => value.GetString() == "necessityAssessment");
+        var necessity = task.GetProperty("properties").GetProperty("necessityAssessment");
+        Assert.Contains(task.GetProperty("required").EnumerateArray(), value => value.GetString() == "necessityAssessment");
+        Assert.Contains(necessity.GetProperty("required").EnumerateArray(), value => value.GetString() == "applicable");
+        Assert.Contains(necessity.GetProperty("required").EnumerateArray(), value => value.GetString() == "decision");
+        Assert.Equal(2, necessity.GetProperty("anyOf").GetArrayLength());
         var brdFinding = Schema(false).GetProperty("properties").GetProperty("review").GetProperty("properties").GetProperty("findings").GetProperty("items");
         Assert.DoesNotContain(brdFinding.GetProperty("required").EnumerateArray(), value => value.GetString() == "disposition");
         Assert.False(brdFinding.GetProperty("properties").TryGetProperty("requiresDecision", out _));
@@ -119,6 +158,8 @@ public sealed partial class AgentExecutionTests
 
     private sealed class TaskContractReviewProvider(string verdict, string? disposition, bool necessity, bool? requiresDecision) : ICisAgentProvider
     {
+        public string AssessmentKind { get; init; } = "default";
+        public string? CodexTransport { get; init; }
         public int Calls { get; private set; }
         public CisAgentExecutionRequest? Request { get; private set; }
         public CisAgentProviderDescriptor Descriptor { get; } = new("fake", "Task review fixture", "test", true, ["fake-json"],
@@ -146,10 +187,15 @@ public sealed partial class AgentExecutionTests
                 finding["recommendation"] = "Resolve that existing human decision without inventing a product default.";
             }
             var review = new Dictionary<string, object?> { ["recommendation"] = verdict, ["strengths"] = new[] { "Bounded task scope." }, ["findings"] = new[] { finding } };
-            if (necessity) review["necessityAssessment"] = new CisReviewNecessityAssessment("Preserve the concrete acceptance invariant.",
+            CisReviewNecessityAssessment assessment = necessity || AssessmentKind == "expanded" ? new CisReviewNecessityAssessment("Preserve the concrete acceptance invariant.",
                 "Existing native assertions suffice; prefer the smallest adapter.", "Runtime is unknown; no benchmark was added.",
                 "Keep one maintained adapter without changing pass semantics.", "Avoid a second comparator and duplicate verification.",
-                "Simplify within the accepted scope using existing native evidence.");
+                "Simplify within the accepted scope using existing native evidence.")
+            { Applicable = true }
+                : new(Decision: "Ordinary helper extraction retains the accepted responsibility.") { Applicable = false };
+            if (AssessmentKind == "unclassified") assessment = assessment with { Applicable = null };
+            if (AssessmentKind == "incomplete") assessment = assessment with { Applicable = true };
+            if (AssessmentKind != "missing") review["necessityAssessment"] = assessment;
             var json = JsonSerializer.Serialize(new
             {
                 summary = "Independent task review completed.",
@@ -159,6 +205,27 @@ public sealed partial class AgentExecutionTests
                 review
             },
                 new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            if (CodexTransport is not null)
+            {
+                // Decode the actual Codex final-message protocol before the common host validates it.
+                // This controlled response proves transport/admission, not model design judgment.
+                string? session = "review-session";
+                var decoded = string.Empty;
+                long? input = null, output = null;
+                if (CodexTransport == "exec-json")
+                {
+                    var line = JsonSerializer.Serialize(new { type = "item.completed", item = new { type = "agent_message", text = json } });
+                    CodexAgentProvider.ParseJsonEvent(line, ref session, ref decoded, ref input, ref output);
+                }
+                else
+                {
+                    var line = JsonSerializer.Serialize(new { method = "item/completed", @params = new { threadId = session, turnId = "review-turn", item = new { type = "agentMessage", text = json } } });
+                    using var message = JsonDocument.Parse(line);
+                    CodexAgentProvider.ParseAppServerEvent(message.RootElement, line, session, "review-turn", ref decoded, ref input, ref output);
+                }
+                Assert.Equal(json, decoded);
+                json = decoded;
+            }
             return new(CisAgentRunStates.Succeeded, 0, "review-session", json, [], [], [], null, null, null, null, []);
         }
     }

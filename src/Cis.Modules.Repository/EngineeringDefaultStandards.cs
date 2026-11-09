@@ -13,7 +13,8 @@ internal static class EngineeringDefaultStandards
                 new("QUALITY-003", "Applicable native analyzers, lint and formatting checks MUST execute with declared scope and enforced severity; installation alone MUST NOT count as a passing gate.", "Run real checks and demonstrate a seeded violation; preserve stronger adopted policy."),
                 new("QUALITY-004", "Architecture tests MUST enforce an owned boundary and detect a violating fixture; zero matched targets MUST NOT pass silently.", "Inspect native architecture tests, selected scope and negative results."),
                 new("QUALITY-005", "Independent logic review MUST use a separate identified review run, source-backed context and a selectable provider; unresolved blocking findings MUST prevent completion.", "Inspect provider-neutral run/result evidence, relevant callers and finding dispositions."),
-            ], SourceRepository: "ChangeImpactStudio"),
+                new("QUALITY-006", "Implementation and review MUST preserve accepted responsibility boundaries and apply the proportionate implementation policy. Unsupported responsibilities MUST be corrected by simplifying or removing the mechanism; an agent-generated plan or passing tests MUST NOT independently expand the product contract.", "Inspect accepted requirements, the supplied example and superseding decisions alongside changed source and meaningful callers. Record necessity applicability and any required correction; ordinary helpers need only a concise not-applicable conclusion."),
+            ], Guidance: ProportionateImplementationPolicy, SourceRepository: "ChangeImpactStudio"),
         new("agent-interface", "Application CLI and Skills Standard",
             "Make supported application workflows usable by agents through ordinary trusted application boundaries.",
             ["backend", "frontend", "tooling"], [], ["docs/specs/agent-interface-defaults-plan.md"], HasCode,
@@ -34,6 +35,47 @@ internal static class EngineeringDefaultStandards
                 new("ITERATION-006", "Local evidence hashes MUST NOT be treated as authenticated attestations. The assigned reviewer MUST inspect native execution provenance, implementation authorship and material evidence omissions.", "Verify the retained implementation result and separate reviewer session; reject hand-written passing manifests as execution proof."),
             ], SourceRepository: "ChangeImpactStudio"),
     ];
+
+    private const string ProportionateImplementationPolicy = """
+        ## Proportionate implementation policy
+
+        Implement the current accepted behavior with the smallest adequate set of responsibilities.
+
+        Preserve the ownership boundaries and exclusions in the accepted requirements and supplied example.
+        A later explicit user decision can supersede the example; an agent-generated plan or existing test
+        cannot independently expand the product contract.
+
+        Start with direct data structures, ordinary control flow, concrete existing code and the adopted
+        platform/test tools. Introduce a lifecycle, provider hierarchy, registry, persistence layer,
+        discovery mechanism, concurrency coordinator, public extension point or general framework only
+        for a specific present requirement or necessary invariant. Explain briefly why the simpler
+        existing approach is insufficient.
+
+        General engineering standards constrain applicable behavior; they do not authorize inventing a
+        capability so that the standard has something to govern.
+
+        Challenge the overall design before dividing it into smaller stories. Decomposing an unnecessary
+        framework into medium-sized tasks does not make it necessary.
+
+        When implementation acquires responsibilities beyond the accepted boundary, reconsider and
+        simplify immediately through the existing task/reflection route. Do not wait for a time limit,
+        repeated failure or resource exhaustion. Routine in-scope simplification should continue
+        autonomously; only a real unresolved product decision uses the existing human-decision route.
+
+        Tests protect behavior, invariants and real regressions. Tests of an invented mechanism do not
+        turn that mechanism into a requirement. Prefer independent expected values and meaningful
+        assertions in the native framework over another maintained behavioral verifier.
+
+        Retain the evidence needed for an actual current claim or diagnosis. Temporary workspaces,
+        intermediate builds and transfer bundles have an owned cleanup point; they are not permanent
+        evidence by default.
+
+        Apply this proportionately. Ordinary helper extraction, an existing interface used for a real
+        substitution, or required concurrency/security logic does not need a new ceremony. There is no
+        global file, class, line, test-count or code-to-test ratio limit. Human readability means a reader
+        can follow behavior and ownership with reasonable navigation; neither one type per operation
+        nor one enormous file establishes it.
+        """;
 
     private static bool HasCode(RepositoryClassification classification)
         => classification.DeclaredStack == "csharp" || classification.Components.Any(component => component.Languages.Any(language => language is "csharp" or "typescript" or "javascript" or "python" or "swift" or "kotlin" or "gdscript"));

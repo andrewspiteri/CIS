@@ -386,6 +386,71 @@ public sealed partial class EngineeringCompletionTests
         }
     }
 
+    [Theory]
+    [InlineData(2, "missing", true)]
+    [InlineData(3, "missing", false)]
+    [InlineData(3, "unclassified", false)]
+    [InlineData(3, "incomplete", false)]
+    [InlineData(3, "ordinary", true)]
+    [InlineData(3, "expanded", true)]
+    [InlineData(3, "unsupported", false)]
+    public void TaskReviewNecessityHonorsContractVersionAndRequiredScopeFindingsDespitePassingNativeTests(int version, string kind, bool accepted)
+    {
+        using var fixture = new Fixture();
+        var receipt = fixture.Receipt(EngineeringGateState.Passed);
+        Assert.Empty(fixture.Review(receipt)); // Controlled native report fixture passes before the independent scope review.
+        var review = new Dictionary<string, object?>
+        {
+            ["contractVersion"] = version,
+            ["recommendation"] = kind == "unsupported" ? "revise" : "ready",
+            ["findings"] = kind == "unsupported" ? new[] { new
+            {
+                severity = "minor", disposition = "required", category = "scope", location = "ValueStore.cs",
+                observation = "An unrequested provider lifecycle expands the accepted value-only responsibility.",
+                recommendation = "Remove the lifecycle and retain direct value access.",
+                basisReferences = new[] { "Accepted value-only responsibility and adopted code-quality standard" }
+            } } : Array.Empty<object>()
+        };
+        CisReviewNecessityAssessment assessment = kind is "expanded" or "unsupported"
+            ? new("Retain direct value access under the accepted owner.", "A concrete field already satisfies the accepted behavior.",
+                "Unknown runtime; the provider hierarchy adds maintained paths and verification.",
+                "Extra lifecycle ownership adds maintenance without improving the accepted pass criteria.",
+                "Avoid duplicate provider and direct-value pathways.", kind == "unsupported" ? "Remove the unsupported lifecycle." : "Continue the explicitly accepted extension.")
+            { Applicable = true }
+            : new(Decision: "The ordinary helper retains the accepted responsibility.") { Applicable = false };
+        if (kind == "unclassified") assessment = assessment with { Applicable = null };
+        if (kind == "incomplete") assessment = assessment with { Applicable = true };
+        if (kind != "missing") review["necessityAssessment"] = assessment;
+        fixture.WriteJson("necessity-review-result.json", new { schemaVersion = 2, envelopeId = "necessity-envelope", status = CisAgentRunStates.Succeeded, review });
+        var result = fixture.Artifact("necessity-review-result.json");
+        fixture.WriteJson("necessity-review-run.json", new
+        {
+            schemaVersion = 1,
+            runId = receipt.ReviewerRunId,
+            startedAtUtc = "2000-01-02T00:00:00Z",
+            inputDigest = receipt.InputDigest,
+            status = CisAgentRunStates.Succeeded,
+            mode = "review",
+            permission = "read-only",
+            taskId = receipt.TaskId,
+            provider = "synthetic-scope-review",
+            envelopeId = "necessity-envelope",
+            resultDigest = result.Sha256,
+            taskContractDigest = receipt.TaskDigest
+        });
+        var original = File.ReadAllBytes(Path.Combine(fixture.Root, result.Path));
+        receipt = receipt with { Gates = [receipt.Gates[0], new("review", EngineeringGateState.Passed, "Independent review inspected the accepted source responsibility.", [fixture.Artifact("necessity-review-run.json"), result])] };
+        var receiptPath = Path.Combine(fixture.Root, "receipt.json");
+        File.WriteAllText(receiptPath, EngineeringCompletionReview.Serialize(receipt));
+        var errors = EngineeringCompletionReview.Review(fixture.Root, receiptPath, "CIS-0001", fixture.Task, Path.Combine(fixture.Root, "policy.json"),
+            new("ready", 0, null, "fresh", new("graph-1", "example", null, true, "complete"), null, [], []),
+            new(1, true, [new("unit", "Changed behavior", false), new("review", "Independent scoped source review", false)], []), receipt.InputDigest, "docs");
+        Assert.Equal(accepted, errors.Count == 0);
+        if (!accepted) Assert.Contains(errors, error => error.Contains("review result", StringComparison.Ordinal));
+        Assert.Equal(original, File.ReadAllBytes(Path.Combine(fixture.Root, result.Path))); // Historical evidence is read, never upgraded in place.
+        Assert.Equal(EngineeringGateState.Passed, receipt.Gates[0].State);
+    }
+
     [Fact]
     public void ExecutionIdentityDetectsUncommittedAndNewInputsButIgnoresDisposableEvidence()
     {

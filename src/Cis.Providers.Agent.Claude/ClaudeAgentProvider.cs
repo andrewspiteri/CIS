@@ -29,16 +29,18 @@ public sealed class ClaudeAgentProvider : ICisAgentProvider, ICisAgentProviderAu
         finding["properties"]!["basisReferences"] = JsonNode.Parse("""{"type":"array","minItems":1,"maxItems":32,"items":{"type":"string","minLength":1,"maxLength":2000}}""");
         finding["properties"]!["requiresDecision"] = new JsonObject { ["type"] = "boolean" };
         var necessity = new JsonObject { ["type"] = "object", ["additionalProperties"] = false };
-        var required = new JsonArray();
+        var required = new JsonArray("applicable", "decision");
         var properties = new JsonObject();
         foreach (var name in new[] { "invariant", "nativeAlternative", "costEvidence", "maintenanceAndPassSemantics", "duplicationAvoided", "decision" })
         {
-            required.Add(name);
             properties[name] = new JsonObject { ["type"] = "string", ["minLength"] = 1, ["maxLength"] = 4000 };
         }
+        properties["applicable"] = new JsonObject { ["type"] = "boolean" };
         necessity["required"] = required;
         necessity["properties"] = properties;
+        necessity["anyOf"] = JsonNode.Parse("""[{"properties":{"applicable":{"enum":[false]}}},{"properties":{"applicable":{"enum":[true]}},"required":["invariant","nativeAlternative","costEvidence","maintenanceAndPassSemantics","duplicationAvoided"]}]""");
         review["properties"]!["necessityAssessment"] = necessity;
+        review["required"]!.AsArray().Add("necessityAssessment");
         return schema.ToJsonString();
     }
     private readonly string _executable;

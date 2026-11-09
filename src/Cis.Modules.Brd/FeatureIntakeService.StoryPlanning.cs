@@ -72,9 +72,9 @@ public sealed partial class FeatureIntakeService
         var coverageChanged = !draft.Story.Acceptance.SequenceEqual(CurrentStoryAcceptance(input, draft), StringComparer.Ordinal);
         var current = assessment is not null && assessment.BasisHash == basis && !coverageChanged;
         var reason = coverageChanged ? "Accepted parent requirements changed. Refresh the parent's explicit decomposition coverage before reassessing this child; its old clauses and history remain retained."
-            : assessment is null ? "Record this story's delivery-size assessment before implementation. Planning and investigation remain available."
-            : !current ? "The story's material scope or prerequisites changed. Reassess its delivery size; retained decisions and work history remain available."
-            : assessment.Size is "high" ? "Decompose this above-medium delivery scope into coherent, assessed children before implementation."
+            : assessment is null ? "Challenge the whole design against accepted behavior, owner, exclusions and the direct approach or supplied example before recording delivery size. Explain any material deviation using existing assessment fields; ordinary helpers need no separate ceremony. Planning and investigation remain available."
+            : !current ? "The story's material scope or prerequisites changed. Challenge unnecessary responsibilities before reassessing delivery size; retained decisions and work history remain available."
+            : assessment.Size is "high" ? "Challenge the overall design first: remove unsupported mechanisms or narrow unsupported promises, then decompose the remaining accepted above-medium scope into coherent, assessed children. An agent-generated plan or tests cannot expand the product contract."
             : assessment.Size is "unknown" ? "Resolve the named delivery-size uncertainty before implementation."
             : "The retained delivery-size assessment is current. Model reasoning strength is selected separately.";
         return result with

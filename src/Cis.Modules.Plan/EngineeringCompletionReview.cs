@@ -217,7 +217,8 @@ public static class EngineeringCompletionReview
             if (index > 0 && line == "---") frontmatter = false;
             if ((frontmatter || index == 0) && line.StartsWith("task_status:", StringComparison.Ordinal)
                 || frontmatter && (line.StartsWith("imported_required_outputs:", StringComparison.Ordinal)
-                    || line.StartsWith("imported_negative_criteria:", StringComparison.Ordinal))) continue;
+                    || line.StartsWith("imported_negative_criteria:", StringComparison.Ordinal)
+                    || line.StartsWith("imported_verification_obligations:", StringComparison.Ordinal))) continue;
             if (line.StartsWith("## ", StringComparison.Ordinal)) completionSection = line == "## Completion evidence";
             if (completionSection && CisToolUsageSnapshot.IsTaskRow(line)) continue;
             retained.Add(line);

@@ -1432,8 +1432,19 @@ internal static partial class FeatureIssuePackBuilder
     // Conditional access qualifiers remain intact for security and endpoint
     // requirements. Only capability creation uses the narrower exclusion view.
     private static string PositiveCapabilityText(string text)
-        => Regex.Replace(AcceptedBehaviorText(text), @"\b(?:without|excluding|except\s+for)\b[^;]*", string.Empty,
-            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)).Trim();
+    {
+        // A fronted qualifier ends at its introducing comma; its main clause
+        // can be subject-led or imperative. Within a clause, keep noun lists
+        // and gerund continuations inside the exclusion. This is a local
+        // grammatical boundary, not general language classification.
+        var accepted = Regex.Replace(AcceptedBehaviorText(text),
+            @"(^|;\s*)(?:without|excluding|except\s+for)\b[^,;]*,\s*(?=\S)", "$1",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        const string action = @"(?!(?:and|or|but|the|an?|it|them|this|that|these|those)\b)(?![a-z]*ing\b)[a-z]+\s+(?:the|an?|it|them|this|these|those)\b";
+        return Regex.Replace(accepted,
+            @"\b(?:without|excluding|except\s+for)\b[^;]*?(?:(?:,\s*|\s+and\s+)(?=" + action + @")|(?=;|$))", " ",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)).Trim(' ', ';');
+    }
 
     private static string AcceptedBehaviorText(string text)
     {

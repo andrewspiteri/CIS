@@ -9,6 +9,83 @@ namespace Cis.Modules.Delivery.Tests;
 public sealed partial class DeliveryWorkflowTests
 {
     [Theory]
+    [InlineData("Without changing existing callers, persist the current record.")]
+    [InlineData("Persist the current record without changing existing callers.")]
+    [InlineData("Without changing existing callers, the service persists the current record.")]
+    public void PlanImportSpec_ProportionateQualifierPlacementPreservesBackendAndPersistence(string requirement)
+    {
+        using var repository = TemporaryRepository.Create();
+        var services = CreateServices();
+        var change = Assert.IsType<ChangeDossier>(services.Changes.Create(new ChangeCreateRequest(repository.Path,
+            "Compatible record update", "Keep the accepted update available.", [new ChangeRoot("orders-api", "component")])).Change);
+        foreach (var finding in services.Impacts.Analyse(new(repository.Path, change.Id, [], 1, 100, false)).Findings)
+            services.Impacts.Disposition(repository.Path, change.Id, finding.Id, "accepted", "Reviewed the compatible record behavior.");
+        DefineAcceptanceCriteria(services.Changes.DossierFile(change, "proposal.md"));
+        const string source = "docs/cis/specs/compatible-record.md";
+        repository.Write(source, $$"""
+            ---
+            title: Compatible record update
+            type: feature-specification
+            ---
+
+            ## Functional requirements
+
+            | ID | Surface | Requirement | Acceptance criteria |
+            | --- | --- | --- | --- |
+            | RECORD-001 | backend | {{requirement}} | A successful update remains available after restarting the application. |
+            """);
+
+        var result = services.Plans.ImportSpec(new(repository.Path, change.Id, source));
+
+        Assert.True(result.ExitCode == 0, string.Join("; ", result.Errors.Concat(result.Validation?.Errors ?? [])));
+        foreach (var category in new[] { "backend", "data" })
+        {
+            var task = Assert.Single(result.WorkItems, item => item.Category == category);
+            Assert.Equal(new[] { "RECORD-001" }, task.RequirementIds);
+            var context = File.ReadAllText(Path.Combine(Path.GetDirectoryName(services.Changes.DossierFile(change, "plan.md"))!, task.TaskPath!));
+            Assert.Contains(requirement, context, StringComparison.Ordinal);
+            Assert.Contains("changing existing callers", context, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void PlanImportSpec_ProportionateQualifierKeepsJoinedEndpointAndLoadingConstraint()
+    {
+        using var repository = TemporaryRepository.Create();
+        var services = CreateServices();
+        var change = Assert.IsType<ChangeDossier>(services.Changes.Create(new ChangeCreateRequest(repository.Path,
+            "Cached value access", "Make the loaded value available.", [new ChangeRoot("orders-api", "component")])).Change);
+        foreach (var finding in services.Impacts.Analyse(new(repository.Path, change.Id, [], 1, 100, false)).Findings)
+            services.Impacts.Disposition(repository.Path, change.Id, finding.Id, "accepted", "Reviewed the cached-value boundary.");
+        DefineAcceptanceCriteria(services.Changes.DossierFile(change, "proposal.md"));
+        const string source = "docs/cis/specs/cached-value-access.md";
+        const string requirement = "Load the cached value without network access and expose it through an HTTP endpoint.";
+        repository.Write(source, $$"""
+            ---
+            title: Cached value access
+            type: feature-specification
+            ---
+
+            ## Functional requirements
+
+            | ID | Surface | Requirement | Acceptance criteria |
+            | --- | --- | --- | --- |
+            | VALUE-001 | backend | {{requirement}} | The loaded value is available to the caller. |
+            """);
+
+        var result = services.Plans.ImportSpec(new(repository.Path, change.Id, source));
+
+        Assert.True(result.ExitCode == 0, string.Join("; ", result.Errors.Concat(result.Validation?.Errors ?? [])));
+        Assert.False(result.Source!.PublicEndpoints);
+        var contract = Assert.Single(result.WorkItems, item => item.Category == "contract");
+        Assert.Equal(new[] { "VALUE-001" }, contract.RequirementIds);
+        var context = File.ReadAllText(Path.Combine(Path.GetDirectoryName(services.Changes.DossierFile(change, "plan.md"))!, contract.TaskPath!));
+        Assert.Contains(requirement, context, StringComparison.Ordinal);
+        Assert.Contains("without network access", context, StringComparison.Ordinal);
+        Assert.DoesNotContain("PUBLIC-ENDPOINT-CACHE", contract.AcceptanceCriteria, StringComparison.Ordinal);
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public void PlanImportSpec_ProportionateScopeIgnoresMetadataExamplesAndAbsentCapabilities(bool explicitAbsence)
@@ -96,6 +173,7 @@ public sealed partial class DeliveryWorkflowTests
 
     [Theory]
     [InlineData("Authenticate authorized requests without persistence or background workers.")]
+    [InlineData("Authenticate authorized requests without querying the database and repository that stores them.")]
     [InlineData("Authenticate authorized requests, and the component does not implement persistence or background lifecycle.")]
     public void PlanImportSpec_ProportionateScopeKeepsAuthorizationAndConcurrencyBeforeAbsentCapabilities(string authentication)
     {

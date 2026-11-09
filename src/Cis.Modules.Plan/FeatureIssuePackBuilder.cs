@@ -1433,46 +1433,52 @@ internal static partial class FeatureIssuePackBuilder
     // requirements. Only capability creation uses the narrower exclusion view.
     private static string PositiveCapabilityText(string text)
     {
-        // Cue-located qualifiers stay excluded. If a fronted clause misses
-        // the cue, consume only explicit qualifier continuations and keep
-        // the whole remaining suffix. Unknown fragments stay positive;
-        // nominal forms and the -ing continuation cue are bounded heuristics.
+        // Resolve a leading qualifier over its whole clause before handling
+        // trailing qualifiers. A later action cue cannot discard an earlier
+        // action. Explicit coordination links compound exclusion items without
+        // requiring a catalogue of their nouns.
+        const string qualifier = @"(?:without|excluding|except\s+for)";
         const string action = @"(?!(?:and|or|but|the|an?|it|them|this|that|these|those)\b)(?![a-z]*ing\b)[a-z]+\s+(?:the|an?|it|them|this|these|those)\b";
         const string mainClause = @"(?:(?:(?:the|an?|this|that|these|those)\s+[a-z]+|it|they|we)\s+)?" + action;
         const string nominal = @"(?:[a-z]+|(?:the|an?|this|that|these|those)\s+[a-z]+(?:\s+[a-z]+)?)";
         const string coordinatedNominal = @"(?:and|or|nor)\s+" + nominal;
         const RegexOptions options = RegexOptions.IgnoreCase | RegexOptions.CultureInvariant;
         var timeout = TimeSpan.FromSeconds(1);
-        var accepted = AcceptedBehaviorText(text);
-        return Regex.Replace(accepted,
-            @"\b(?:without|excluding|except\s+for)\b[^;]*?(?:(?<boundary>,\s*|\s+and\s+)(?=" + mainClause + @")|(?=;|$))",
-            match =>
+        return string.Join("; ", AcceptedBehaviorText(text).Split(';').Select(clause =>
+        {
+            clause = clause.Trim();
+            if (Regex.IsMatch(clause, @"^" + qualifier + @"\b", options, timeout))
             {
-                var preceding = accepted[..match.Index];
-                var fronted = string.IsNullOrWhiteSpace(preceding[(preceding.LastIndexOf(';') + 1)..]);
-                if (fronted && !match.Groups["boundary"].Success)
+                var fragments = clause.Split(',');
+                var joined = Regex.Match(fragments[0], @"\s+and\s+(?=" + mainClause + @")", options, timeout);
+                if (joined.Success)
+                    clause = clause[(joined.Index + joined.Length)..];
+                else
                 {
-                    var fragments = match.Value.Split(',');
-                    var gerund = Regex.IsMatch(fragments[0], @"^(?:without|excluding|except\s+for)\s+[a-z]+ing\b", options, timeout);
+                    var gerund = Regex.IsMatch(fragments[0], @"^" + qualifier + @"\s+[a-z]+ing\b", options, timeout);
                     var firstPositive = 1;
                     // The final fragment is always retained, as in the original fallback.
                     for (; firstPositive < fragments.Length - 1; firstPositive++)
                     {
                         var fragment = fragments[firstPositive].Trim();
-                        var continuation = gerund
-                            ? @"^(?:(?:and|or|nor)\s+)?[a-z]+ing\b"
-                            : @"^(?:" + coordinatedNominal + @"|" + nominal + @"\s+" + coordinatedNominal + @")$";
-                        if (Regex.IsMatch(fragment, continuation, options, timeout)) continue;
-                        if (!gerund && Regex.IsMatch(fragment, @"^" + nominal + @"$", options, timeout)
-                            && firstPositive + 1 < fragments.Length
-                            && Regex.IsMatch(fragments[firstPositive + 1].Trim(), @"^" + coordinatedNominal + @"$", options, timeout)) continue;
+                        if (Regex.IsMatch(fragment, @"^(?:" + mainClause + @")|\b(?:and|or|nor)\s+(?=" + mainClause + @")", options, timeout)) break;
+                        if (gerund)
+                        {
+                            if (Regex.IsMatch(fragment, @"^(?:(?:and|or|nor)\s+)?[a-z]+ing\b", options, timeout)) continue;
+                        }
+                        else if (Regex.IsMatch(fragment, @"^(?:" + coordinatedNominal + @"|" + nominal + @"\s+" + coordinatedNominal + @")$", options, timeout)
+                            // A list closer must precede the final positive fragment.
+                            || (firstPositive + 1 < fragments.Length - 1
+                                && Regex.IsMatch(fragments[firstPositive + 1].Trim(), @"^" + coordinatedNominal + @"$", options, timeout))) continue;
                         break;
                     }
-                    return string.Join(',', fragments.Skip(firstPositive));
+                    clause = string.Join(',', fragments.Skip(firstPositive));
                 }
-                return " ";
-            },
-            options, timeout).Trim(' ', ';');
+            }
+            return Regex.Replace(clause,
+                @"\b" + qualifier + @"\b.*?(?:(?:,\s*|\s+and\s+)(?=" + mainClause + @")|$)", " ",
+                options, timeout).Trim();
+        }).Where(clause => clause.Length > 0));
     }
 
     private static string AcceptedBehaviorText(string text)

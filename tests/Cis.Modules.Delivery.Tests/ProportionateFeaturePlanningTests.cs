@@ -12,6 +12,9 @@ public sealed partial class DeliveryWorkflowTests
     [InlineData("Without network access, persistence or an integration provider, keep the current value.")]
     [InlineData("Keep the current value without network access, persistence or an integration provider.")]
     [InlineData("Without network access, persistence or an integration provider, keep current values.")]
+    [InlineData("Without network access, an integration provider, or a background worker, keep the current value.")]
+    [InlineData("Without network access, an integration provider, or a background worker, keep current values.")]
+    [InlineData("Without network access, the call succeeds or fails.")]
     public void PlanImportSpec_ProportionateExclusionListPlacementsKeepOnlyBackendBehavior(string requirement)
     {
         using var repository = TemporaryRepository.Create();
@@ -51,6 +54,8 @@ public sealed partial class DeliveryWorkflowTests
     [InlineData("Without changing existing callers, persist the current record.")]
     [InlineData("Persist the current record without changing existing callers.")]
     [InlineData("Without changing existing callers, the service persists the current record.")]
+    [InlineData("Without changing existing callers, persist each record, then return success.")]
+    [InlineData("Persist each record, then return success without changing existing callers.")]
     public void PlanImportSpec_ProportionateQualifierPlacementPreservesBackendAndPersistence(string requirement)
     {
         using var repository = TemporaryRepository.Create();
@@ -85,6 +90,8 @@ public sealed partial class DeliveryWorkflowTests
             Assert.Contains(requirement, context, StringComparison.Ordinal);
             Assert.Contains("changing existing callers", context, StringComparison.Ordinal);
         }
+        Assert.Equal(new[] { "assurance", "backend", "coordination", "data", "delivery", "documentation", "verification" },
+            result.WorkItems.Select(item => item.Category).Order(StringComparer.Ordinal));
     }
 
     [Fact]

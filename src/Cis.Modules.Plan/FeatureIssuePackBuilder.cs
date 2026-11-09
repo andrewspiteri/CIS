@@ -1433,27 +1433,46 @@ internal static partial class FeatureIssuePackBuilder
     // requirements. Only capability creation uses the narrower exclusion view.
     private static string PositiveCapabilityText(string text)
     {
-        // Commas can separate excluded items. End a qualifier only before a
-        // candidate main clause, using the same cue for fronted and trailing
-        // qualifiers. If the cue misses a fronted main clause, retain the text
-        // after its last comma. This is not general language classification.
+        // Cue-located qualifiers stay excluded. If a fronted clause misses
+        // the cue, consume only explicit qualifier continuations and keep
+        // the whole remaining suffix. Unknown fragments stay positive;
+        // nominal forms and the -ing continuation cue are bounded heuristics.
         const string action = @"(?!(?:and|or|but|the|an?|it|them|this|that|these|those)\b)(?![a-z]*ing\b)[a-z]+\s+(?:the|an?|it|them|this|these|those)\b";
         const string mainClause = @"(?:(?:(?:the|an?|this|that|these|those)\s+[a-z]+|it|they|we)\s+)?" + action;
+        const string nominal = @"(?:[a-z]+|(?:the|an?|this|that|these|those)\s+[a-z]+(?:\s+[a-z]+)?)";
+        const string coordinatedNominal = @"(?:and|or|nor)\s+" + nominal;
+        const RegexOptions options = RegexOptions.IgnoreCase | RegexOptions.CultureInvariant;
+        var timeout = TimeSpan.FromSeconds(1);
         var accepted = AcceptedBehaviorText(text);
         return Regex.Replace(accepted,
             @"\b(?:without|excluding|except\s+for)\b[^;]*?(?:(?<boundary>,\s*|\s+and\s+)(?=" + mainClause + @")|(?=;|$))",
             match =>
             {
-                if (!match.Groups["boundary"].Success)
+                var preceding = accepted[..match.Index];
+                var fronted = string.IsNullOrWhiteSpace(preceding[(preceding.LastIndexOf(';') + 1)..]);
+                if (fronted && !match.Groups["boundary"].Success)
                 {
-                    var preceding = accepted[..match.Index];
-                    var fronted = string.IsNullOrWhiteSpace(preceding[(preceding.LastIndexOf(';') + 1)..]);
-                    var comma = match.Value.LastIndexOf(',');
-                    if (fronted && comma >= 0) return match.Value[(comma + 1)..];
+                    var fragments = match.Value.Split(',');
+                    var gerund = Regex.IsMatch(fragments[0], @"^(?:without|excluding|except\s+for)\s+[a-z]+ing\b", options, timeout);
+                    var firstPositive = 1;
+                    // The final fragment is always retained, as in the original fallback.
+                    for (; firstPositive < fragments.Length - 1; firstPositive++)
+                    {
+                        var fragment = fragments[firstPositive].Trim();
+                        var continuation = gerund
+                            ? @"^(?:(?:and|or|nor)\s+)?[a-z]+ing\b"
+                            : @"^(?:" + coordinatedNominal + @"|" + nominal + @"\s+" + coordinatedNominal + @")$";
+                        if (Regex.IsMatch(fragment, continuation, options, timeout)) continue;
+                        if (!gerund && Regex.IsMatch(fragment, @"^" + nominal + @"$", options, timeout)
+                            && firstPositive + 1 < fragments.Length
+                            && Regex.IsMatch(fragments[firstPositive + 1].Trim(), @"^" + coordinatedNominal + @"$", options, timeout)) continue;
+                        break;
+                    }
+                    return string.Join(',', fragments.Skip(firstPositive));
                 }
                 return " ";
             },
-            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)).Trim(' ', ';');
+            options, timeout).Trim(' ', ';');
     }
 
     private static string AcceptedBehaviorText(string text)

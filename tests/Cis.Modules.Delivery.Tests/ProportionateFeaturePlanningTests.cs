@@ -21,6 +21,8 @@ public sealed partial class DeliveryWorkflowTests
     [InlineData("Without network access, stored record data, or a background worker, keep the current value.")]
     [InlineData("Without network or file access, external integration, or persistence, keep the current value.")]
     [InlineData("Without network access, writes to the database, or a background worker, keep the current value.")]
+    [InlineData("Without network access, write access to the database, or a background worker, keep the current value.")]
+    [InlineData("Without network access, the value stored each night, external integration, or persistence, keep current values.")]
     public void PlanImportSpec_ProportionateExclusionListPlacementsKeepOnlyBackendBehavior(string requirement)
     {
         using var repository = TemporaryRepository.Create();
@@ -67,6 +69,11 @@ public sealed partial class DeliveryWorkflowTests
     [InlineData("Without network access or changing existing callers, persist each record, and the timestamp.")]
     [InlineData("Without network access or changing existing callers, persist each record, and the timestamp, then return success.")]
     [InlineData("Without network access, persist each record, and the timestamp, then return success without changing existing callers.")]
+    [InlineData("Without network access or changing existing callers, the service persists each record, its timestamp, and the result, then returns success.")]
+    [InlineData("Without network access or changing existing callers, persist each record to the repository, its timestamp, and the result, then return success.")]
+    [InlineData("Without network access or changing existing callers, persist each value to the database, and the timestamp, then return success.")]
+    [InlineData("Without network access or changing existing callers, persist user-owned record metadata to the repository, and the timestamp, then return success.")]
+    [InlineData("Without network access or changing existing callers, persist all of the values to the database, and the timestamp, then return success.")]
     public void PlanImportSpec_ProportionateQualifierPlacementPreservesBackendAndPersistence(string requirement)
     {
         using var repository = TemporaryRepository.Create();

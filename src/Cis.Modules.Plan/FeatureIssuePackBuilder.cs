@@ -1462,13 +1462,8 @@ internal static partial class FeatureIssuePackBuilder
                     for (var candidate = 1; !closed && candidate < fragments.Length - 1; candidate++)
                     {
                         var fragment = fragments[candidate].Trim();
-                        var dataAction = MatchDataAction(Regex.Replace(fragment, @"^(?:and|or|nor)\s+", "", options, timeout));
-                        // Only a verb-led base form establishes a command boundary;
-                        // participles and plural-noun forms can describe excluded data.
                         if (Regex.IsMatch(fragment, @"^(?:" + mainClause + @")|\b(?:and|or|nor)\s+(?=" + mainClause + @")", options, timeout)
-                            || (dataAction.Success && dataAction.Groups["action"].Index == 0
-                                && !dataAction.Groups["action"].Value.EndsWith("ed", StringComparison.OrdinalIgnoreCase)
-                                && !dataAction.Groups["action"].Value.EndsWith("s", StringComparison.OrdinalIgnoreCase))) break;
+                            || StartsDataClause(Regex.Replace(fragment, @"^(?:and|or|nor)\s+", "", options, timeout))) break;
                         if (gerund)
                         {
                             if (!Regex.IsMatch(fragment, @"^(?:(?:and|or|nor)\s+)?[a-z]+ing\b", options, timeout)) break;
@@ -1553,13 +1548,52 @@ internal static partial class FeatureIssuePackBuilder
         if (Surface(requirement.Surface, "frontend")
             && !ContainsAny(text, "database", "repository", "persist", "stored", "storage"))
             return false;
-        return MatchDataAction(text).Success;
+        return Regex.IsMatch(text,
+            @"(?i)\b" + DataActions + @"\b[^.]{0,100}\b" + DataEntities + @"\b|\b" + DataEntities + @"\b[^.]{0,100}\b" + DataActions + @"\b",
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
     }
 
-    private static Match MatchDataAction(string text)
-        => Regex.Match(text,
-            @"(?i)\b(?<action>persist|persists|persisted|store|stores|stored|write|writes|lookup|resolve|resolves)\b[^.]{0,100}\b(?:actor|session|record|model|database|repository|hash)\b|\b(?:actor|session|record|model|database|repository|hash)\b[^.]{0,100}\b(?<action>persist|persists|persisted|store|stores|stored|write|writes|lookup|resolve|resolves)\b",
-            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+    private const string DataActions = @"(?:persist|persists|persisted|store|stores|stored|write|writes|lookup|resolve|resolves)";
+    private const string DataEntities = @"(?:actor|session|record|model|database|repository|hash)";
+
+    private static bool StartsDataClause(string text)
+    {
+        const RegexOptions options = RegexOptions.IgnoreCase | RegexOptions.CultureInvariant;
+        var timeout = TimeSpan.FromSeconds(1);
+        // Boundary evidence needs grammatical roles, not just a data-related
+        // word pair. A marked noun phrase is an object even when the data
+        // entity is its destination; a bare data entity must be direct.
+        const string relations = @"(?:to|from|for|of|with|in|on|at|by|into|onto|through|via|and|or|nor)";
+        const string objectSpecifier = @"(?:the|an?|this|that|these|those|each|every|any|some|all|both|either|neither|my|your|his|her|its|our|their|several|many|few|enough|\d+|[\p{L}\p{N}_-]+['’]s)";
+        foreach (Match operation in Regex.Matches(text, @"\b" + DataActions + @"\b", options, timeout))
+        {
+            var past = operation.Value.EndsWith("ed", StringComparison.OrdinalIgnoreCase);
+            var thirdPerson = operation.Value.EndsWith("s", StringComparison.OrdinalIgnoreCase);
+            if (operation.Index == 0)
+            {
+                if (past || thirdPerson) continue;
+            }
+            else
+            {
+                var subject = Regex.Match(text[..operation.Index],
+                    @"^(?:(?<determiner>the|an?|this|that|these|those)\s+(?<noun>[a-z]+)|(?<pronoun>it|they|we))\s+$", options, timeout);
+                if (!subject.Success) continue;
+                var plural = Regex.IsMatch(subject.Groups["pronoun"].Value, @"^(?:they|we)$", options, timeout)
+                    || Regex.IsMatch(subject.Groups["determiner"].Value, @"^(?:these|those)$", options, timeout)
+                    || (subject.Groups["noun"].Value.EndsWith("s", StringComparison.OrdinalIgnoreCase)
+                        && !subject.Groups["noun"].Value.EndsWith("ss", StringComparison.OrdinalIgnoreCase));
+                if (!past && (plural ? thirdPerson : !thirdPerson)) continue;
+            }
+            var predicate = text[(operation.Index + operation.Length)..];
+            if (!past && Regex.IsMatch(predicate, @"^\s+" + objectSpecifier + @"\s+\S", options, timeout)) return true;
+            var directObject = Regex.Match(predicate,
+                @"^(?<modifiers>[^,;:.]{0,100}?)\b" + DataEntities + @"\b", options, timeout);
+            var modifiers = Regex.Replace(directObject.Groups["modifiers"].Value, @"[`*~]", "", options, timeout);
+            if (directObject.Success && Regex.IsMatch(modifiers, @"^\s", options, timeout)
+                && !Regex.IsMatch(modifiers, @"(?:^|\s)" + relations + @"(?=\s|$)", options, timeout)) return true;
+        }
+        return false;
+    }
 
     private static bool ContainsSchemaMigrationSignal(FeatureRequirement requirement)
     {

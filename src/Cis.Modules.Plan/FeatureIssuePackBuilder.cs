@@ -1433,16 +1433,26 @@ internal static partial class FeatureIssuePackBuilder
     // requirements. Only capability creation uses the narrower exclusion view.
     private static string PositiveCapabilityText(string text)
     {
-        // A fronted qualifier ends at its introducing comma; its main clause
-        // can be subject-led or imperative. Within a clause, keep noun lists
-        // and gerund continuations inside the exclusion. This is a local
-        // grammatical boundary, not general language classification.
-        var accepted = Regex.Replace(AcceptedBehaviorText(text),
-            @"(^|;\s*)(?:without|excluding|except\s+for)\b[^,;]*,\s*(?=\S)", "$1",
-            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        // Commas can separate excluded items. End a qualifier only before a
+        // candidate main clause, using the same cue for fronted and trailing
+        // qualifiers. If the cue misses a fronted main clause, retain the text
+        // after its last comma. This is not general language classification.
         const string action = @"(?!(?:and|or|but|the|an?|it|them|this|that|these|those)\b)(?![a-z]*ing\b)[a-z]+\s+(?:the|an?|it|them|this|these|those)\b";
+        const string mainClause = @"(?:(?:(?:the|an?|this|that|these|those)\s+[a-z]+|it|they|we)\s+)?" + action;
+        var accepted = AcceptedBehaviorText(text);
         return Regex.Replace(accepted,
-            @"\b(?:without|excluding|except\s+for)\b[^;]*?(?:(?:,\s*|\s+and\s+)(?=" + action + @")|(?=;|$))", " ",
+            @"\b(?:without|excluding|except\s+for)\b[^;]*?(?:(?<boundary>,\s*|\s+and\s+)(?=" + mainClause + @")|(?=;|$))",
+            match =>
+            {
+                if (!match.Groups["boundary"].Success)
+                {
+                    var preceding = accepted[..match.Index];
+                    var fronted = string.IsNullOrWhiteSpace(preceding[(preceding.LastIndexOf(';') + 1)..]);
+                    var comma = match.Value.LastIndexOf(',');
+                    if (fronted && comma >= 0) return match.Value[(comma + 1)..];
+                }
+                return " ";
+            },
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)).Trim(' ', ';');
     }
 

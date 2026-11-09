@@ -9,6 +9,45 @@ namespace Cis.Modules.Delivery.Tests;
 public sealed partial class DeliveryWorkflowTests
 {
     [Theory]
+    [InlineData("Without network access, persistence or an integration provider, keep the current value.")]
+    [InlineData("Keep the current value without network access, persistence or an integration provider.")]
+    [InlineData("Without network access, persistence or an integration provider, keep current values.")]
+    public void PlanImportSpec_ProportionateExclusionListPlacementsKeepOnlyBackendBehavior(string requirement)
+    {
+        using var repository = TemporaryRepository.Create();
+        var services = CreateServices();
+        var change = Assert.IsType<ChangeDossier>(services.Changes.Create(new ChangeCreateRequest(repository.Path,
+            "Bounded local value", "Keep the current value within the component.", [new ChangeRoot("orders-api", "component")])).Change);
+        foreach (var finding in services.Impacts.Analyse(new(repository.Path, change.Id, [], 1, 100, false)).Findings)
+            services.Impacts.Disposition(repository.Path, change.Id, finding.Id, "accepted", "Reviewed the bounded value behavior and exclusions.");
+        DefineAcceptanceCriteria(services.Changes.DossierFile(change, "proposal.md"));
+        const string source = "docs/cis/specs/local-value.md";
+        repository.Write(source, $$"""
+            ---
+            title: Bounded local value
+            type: feature-specification
+            ---
+
+            ## Functional requirements
+
+            | ID | Surface | Requirement | Acceptance criteria |
+            | --- | --- | --- | --- |
+            | VALUE-001 | backend | {{requirement}} | Replacing a value returns its previous value. |
+            """);
+
+        var result = services.Plans.ImportSpec(new(repository.Path, change.Id, source));
+
+        Assert.True(result.ExitCode == 0, string.Join("; ", result.Errors.Concat(result.Validation?.Errors ?? [])));
+        Assert.DoesNotContain(result.WorkItems, item => item.Category == "integration");
+        Assert.Equal(new[] { "assurance", "backend", "coordination", "delivery", "documentation", "verification" },
+            result.WorkItems.Select(item => item.Category).Order(StringComparer.Ordinal));
+        var backend = Assert.Single(result.WorkItems, item => item.Category == "backend");
+        Assert.Equal(new[] { "VALUE-001" }, backend.RequirementIds);
+        var context = File.ReadAllText(Path.Combine(Path.GetDirectoryName(services.Changes.DossierFile(change, "plan.md"))!, backend.TaskPath!));
+        Assert.Contains(requirement, context, StringComparison.Ordinal);
+    }
+
+    [Theory]
     [InlineData("Without changing existing callers, persist the current record.")]
     [InlineData("Persist the current record without changing existing callers.")]
     [InlineData("Without changing existing callers, the service persists the current record.")]

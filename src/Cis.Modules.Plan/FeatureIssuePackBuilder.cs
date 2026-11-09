@@ -1433,10 +1433,9 @@ internal static partial class FeatureIssuePackBuilder
     // requirements. Only capability creation uses the narrower exclusion view.
     private static string PositiveCapabilityText(string text)
     {
-        // Resolve a leading qualifier over its whole clause before handling
-        // trailing qualifiers. A later action cue cannot discard an earlier
-        // action. Explicit coordination links compound exclusion items without
-        // requiring a catalogue of their nouns.
+        // Resolve one complete leading exclusion group, then retain the whole
+        // positive suffix. A later coordinated item cannot reopen that group
+        // or override evidence of an earlier requested action.
         const string qualifier = @"(?:without|excluding|except\s+for)";
         const string action = @"(?!(?:and|or|but|the|an?|it|them|this|that|these|those)\b)(?![a-z]*ing\b)[a-z]+\s+(?:the|an?|it|them|this|these|those)\b";
         const string mainClause = @"(?:(?:(?:the|an?|this|that|these|those)\s+[a-z]+|it|they|we)\s+)?" + action;
@@ -1457,20 +1456,30 @@ internal static partial class FeatureIssuePackBuilder
                 {
                     var gerund = Regex.IsMatch(fragments[0], @"^" + qualifier + @"\s+[a-z]+ing\b", options, timeout);
                     var firstPositive = 1;
-                    // The final fragment is always retained, as in the original fallback.
-                    for (; firstPositive < fragments.Length - 1; firstPositive++)
+                    var closed = false;
+                    // Search the complete list before consuming its intermediate
+                    // items. Its closer must precede the retained positive suffix.
+                    for (var candidate = 1; !closed && candidate < fragments.Length - 1; candidate++)
                     {
-                        var fragment = fragments[firstPositive].Trim();
-                        if (Regex.IsMatch(fragment, @"^(?:" + mainClause + @")|\b(?:and|or|nor)\s+(?=" + mainClause + @")", options, timeout)) break;
+                        var fragment = fragments[candidate].Trim();
+                        var dataAction = MatchDataAction(Regex.Replace(fragment, @"^(?:and|or|nor)\s+", "", options, timeout));
+                        // Only a verb-led base form establishes a command boundary;
+                        // participles and plural-noun forms can describe excluded data.
+                        if (Regex.IsMatch(fragment, @"^(?:" + mainClause + @")|\b(?:and|or|nor)\s+(?=" + mainClause + @")", options, timeout)
+                            || (dataAction.Success && dataAction.Groups["action"].Index == 0
+                                && !dataAction.Groups["action"].Value.EndsWith("ed", StringComparison.OrdinalIgnoreCase)
+                                && !dataAction.Groups["action"].Value.EndsWith("s", StringComparison.OrdinalIgnoreCase))) break;
                         if (gerund)
                         {
-                            if (Regex.IsMatch(fragment, @"^(?:(?:and|or|nor)\s+)?[a-z]+ing\b", options, timeout)) continue;
+                            if (!Regex.IsMatch(fragment, @"^(?:(?:and|or|nor)\s+)?[a-z]+ing\b", options, timeout)) break;
+                            firstPositive = candidate + 1;
+                            closed = Regex.IsMatch(fragment, @"^(?:and|or|nor)\s+", options, timeout);
                         }
-                        else if (Regex.IsMatch(fragment, @"^(?:" + coordinatedNominal + @"|" + nominal + @"\s+" + coordinatedNominal + @")$", options, timeout)
-                            // A list closer must precede the final positive fragment.
-                            || (firstPositive + 1 < fragments.Length - 1
-                                && Regex.IsMatch(fragments[firstPositive + 1].Trim(), @"^" + coordinatedNominal + @"$", options, timeout))) continue;
-                        break;
+                        else if (Regex.IsMatch(fragment, @"^(?:" + coordinatedNominal + @"|" + nominal + @"\s+" + coordinatedNominal + @")$", options, timeout))
+                        {
+                            firstPositive = candidate + 1;
+                            closed = true;
+                        }
                     }
                     clause = string.Join(',', fragments.Skip(firstPositive));
                 }
@@ -1544,10 +1553,13 @@ internal static partial class FeatureIssuePackBuilder
         if (Surface(requirement.Surface, "frontend")
             && !ContainsAny(text, "database", "repository", "persist", "stored", "storage"))
             return false;
-        return Regex.IsMatch(text,
-            @"(?i)\b(?:persist|persists|persisted|store|stores|stored|write|writes|lookup|resolve|resolves)\b[^.]{0,100}\b(?:actor|session|record|model|database|repository|hash)\b|\b(?:actor|session|record|model|database|repository|hash)\b[^.]{0,100}\b(?:persist|persists|persisted|store|stores|stored|write|writes|lookup|resolve|resolves)\b",
-            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        return MatchDataAction(text).Success;
     }
+
+    private static Match MatchDataAction(string text)
+        => Regex.Match(text,
+            @"(?i)\b(?<action>persist|persists|persisted|store|stores|stored|write|writes|lookup|resolve|resolves)\b[^.]{0,100}\b(?:actor|session|record|model|database|repository|hash)\b|\b(?:actor|session|record|model|database|repository|hash)\b[^.]{0,100}\b(?<action>persist|persists|persisted|store|stores|stored|write|writes|lookup|resolve|resolves)\b",
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
 
     private static bool ContainsSchemaMigrationSignal(FeatureRequirement requirement)
     {

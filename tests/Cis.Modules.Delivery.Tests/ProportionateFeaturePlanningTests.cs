@@ -17,6 +17,10 @@ public sealed partial class DeliveryWorkflowTests
     [InlineData("Without network access, the call succeeds or fails.")]
     [InlineData("Without network access, external integration, or persistence, keep current values.")]
     [InlineData("Keep current values without network access, external integration, or persistence.")]
+    [InlineData("Without network access, external integration, persistence, or a background worker, keep the current value.")]
+    [InlineData("Without network access, stored record data, or a background worker, keep the current value.")]
+    [InlineData("Without network or file access, external integration, or persistence, keep the current value.")]
+    [InlineData("Without network access, writes to the database, or a background worker, keep the current value.")]
     public void PlanImportSpec_ProportionateExclusionListPlacementsKeepOnlyBackendBehavior(string requirement)
     {
         using var repository = TemporaryRepository.Create();
@@ -61,6 +65,8 @@ public sealed partial class DeliveryWorkflowTests
     [InlineData("Without changing existing callers, persist each record and return the result.")]
     [InlineData("Persist each record and return the result without changing existing callers.")]
     [InlineData("Without network access or changing existing callers, persist each record, and the timestamp.")]
+    [InlineData("Without network access or changing existing callers, persist each record, and the timestamp, then return success.")]
+    [InlineData("Without network access, persist each record, and the timestamp, then return success without changing existing callers.")]
     public void PlanImportSpec_ProportionateQualifierPlacementPreservesBackendAndPersistence(string requirement)
     {
         using var repository = TemporaryRepository.Create();

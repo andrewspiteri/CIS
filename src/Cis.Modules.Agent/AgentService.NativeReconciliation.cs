@@ -35,7 +35,7 @@ public sealed partial class AgentService
             catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException
                 or InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException or ArgumentException)
             {
-                diagnostics.Add("The exact native Windows job cannot be verified empty in its original local session: " + error.Message);
+                diagnostics.Add("The exact native Windows job cannot be verified empty in its original named-object namespace and session: " + error.Message);
                 return null;
             }
         }

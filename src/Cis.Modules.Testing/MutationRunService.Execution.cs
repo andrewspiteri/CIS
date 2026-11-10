@@ -266,7 +266,7 @@ public sealed partial class MutationRunService
                     if (OperatingSystem.IsWindows())
                     {
                         driverJob!.Assign(process);
-                        containment = new(CisNativeWorkContainment.WindowsOuterJob, driverJobName!, process.SessionId);
+                        containment = driverJob!.CaptureNativeContainment();
                     }
                     scope?.Started(process.Id, process.StartTime.ToUniversalTime().ToString("O"), containment);
                     if (scope is not null)

@@ -56,13 +56,24 @@ public sealed partial class DeliveryWorkflowTests
         AssertAdHocSnapshot(initialBytes);
         foreach (var path in initialPaths) Assert.Equal(initialTimes[path], File.GetLastWriteTimeUtc(path));
 
+        var planPath = services.Changes.DossierFile(change, "plan.md");
+        const string authoredScope = "The approved fixture scope preserves authored details even while its task is InProgress or Blocked.";
+        File.WriteAllText(planPath, File.ReadAllText(planPath)
+            .Replace("## Approval summary", "## Approval summary\n\n" + authoredScope, StringComparison.Ordinal));
         AssertAdHocSuccess(services.Plans.Approve(repository.Path, change.Id,
-            "Synthetic reviewer", "Approve only the bounded synthetic verification task."));
-        var started = services.Plans.TransitionTask(new PlanTaskTransitionRequest(
-            repository.Path, change.Id, item.Id, "InProgress", "Synthetic controller",
-            "Start the approved synthetic task through its ordinary lifecycle."));
-        AssertAdHocSuccess(started);
-        Assert.Equal("InProgress", Assert.Single(started.WorkItems).Status);
+            "Distinct synthetic reviewer", "Approve only this bounded existing verification contract."));
+        var approvedPlan = File.ReadAllText(planPath);
+        foreach (var status in new[] { "InProgress", "Blocked" })
+        {
+            var transitioned = services.Plans.TransitionTask(new PlanTaskTransitionRequest(
+                repository.Path, change.Id, item.Id, status, "Synthetic controller",
+                "Record the approved synthetic task's actual lifecycle."));
+            AssertAdHocSuccess(transitioned);
+            Assert.Equal(status, Assert.Single(transitioned.WorkItems).Status);
+            Assert.Equal(approvedPlan, File.ReadAllText(planPath)
+                .Replace($"| {status} |", "| Draft |", StringComparison.Ordinal));
+            Assert.Contains($"task_status: {status}", File.ReadAllText(AdHocTaskPath(services, change, item)), StringComparison.Ordinal);
+        }
     }
 
     [Fact]
@@ -206,6 +217,57 @@ public sealed partial class DeliveryWorkflowTests
         foreach (var path in stablePaths) Assert.Equal(timestamps[path], File.GetLastWriteTimeUtc(path));
         foreach (var section in new[] { "Objective", "Required changes", "Constraints and exclusions", "Acceptance criteria", "Targeted validation", "Completion evidence" })
             Assert.Contains($"authored-contract: {section}", File.ReadAllText(taskPath), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AdHocPlanBuild_PreservesAuthoredPlanProseAcrossUnchangedAndChangedDraftProjections()
+    {
+        using var repository = TemporaryRepository.Create();
+        var services = CreateServices();
+        var alpha = AdHocFinding("IMPACT-ALPHA", "orders-api-alpha");
+        var change = CreateAdHocChange(repository, services, alpha);
+        var initial = services.Plans.Build(repository.Path, change.Id);
+        AssertAdHocSuccess(initial);
+        var alphaTask = Assert.Single(initial.WorkItems);
+        var planPath = services.Changes.DossierFile(change, "plan.md");
+        const string summary = "Keep the reviewer-authored bounded verification scope and its original ownership.";
+        const string ordering = "Retain this authored sequencing paragraph beside the generated task table.";
+        const string suffix = "## Retained scope notes\n\nThis authored section remains after the execution manifest.\n";
+        var authored = File.ReadAllText(planPath)
+            .Replace("## Approval summary", "## Approval summary\n\n" + summary, StringComparison.Ordinal)
+            .Replace("## Tasks for approval", "## Tasks for approval\n\n" + ordering, StringComparison.Ordinal)
+            .TrimEnd() + "\n\n" + suffix;
+        File.WriteAllText(planPath, authored);
+        File.SetLastWriteTimeUtc(planPath, new DateTime(2001, 2, 3, 4, 5, 6, DateTimeKind.Utc));
+        var initialBytes = File.ReadAllBytes(planPath);
+        var initialTime = File.GetLastWriteTimeUtc(planPath);
+
+        var unchanged = CreateServices().Plans.Build(repository.Path, change.Id);
+
+        AssertAdHocSuccess(unchanged);
+        Assert.False(unchanged.Applied);
+        Assert.Equal("unchanged", unchanged.Status);
+        Assert.Equal(initialBytes, File.ReadAllBytes(planPath));
+        Assert.Equal(initialTime, File.GetLastWriteTimeUtc(planPath));
+
+        WriteAdHocImpact(services, change, alpha, AdHocFinding("IMPACT-BRAVO", "orders-api-bravo"));
+        var expanded = CreateServices().Plans.Build(repository.Path, change.Id);
+
+        AssertAdHocSuccess(expanded);
+        Assert.Equal(2, expanded.WorkItems.Count);
+        Assert.Equal(alphaTask.Id, AdHocTaskFor(expanded, alpha.Id).Id);
+        var updated = File.ReadAllText(planPath);
+        Assert.Contains(summary, updated, StringComparison.Ordinal);
+        Assert.Contains(ordering, updated, StringComparison.Ordinal);
+        Assert.EndsWith(suffix, updated, StringComparison.Ordinal);
+        Assert.Contains("- Work items: 2 (2 actionable).", updated, StringComparison.Ordinal);
+        AssertAdHocSuccess(CreateServices().Plans.Validate(repository.Path, change.Id));
+        var finalBytes = File.ReadAllBytes(planPath);
+        var finalRebuild = CreateServices().Plans.Build(repository.Path, change.Id);
+        AssertAdHocSuccess(finalRebuild);
+        Assert.Equal("unchanged", finalRebuild.Status);
+        Assert.False(finalRebuild.Applied);
+        Assert.Equal(finalBytes, File.ReadAllBytes(planPath));
     }
 
     [Theory]

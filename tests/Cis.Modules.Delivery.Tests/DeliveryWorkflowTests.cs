@@ -99,7 +99,9 @@ public sealed partial class DeliveryWorkflowTests
     {
         using var repository = TemporaryRepository.Create();
         const string featurePath = "docs/cis/specs/approved-order-feature.md";
-        var authority = new StaticFeatureApprovalAuthority(featurePath);
+        const string reviewer = "Distinct synthetic feature reviewer";
+        const string rationale = "Retain the explicitly approved order lookup boundary.";
+        var authority = new StaticFeatureApprovalAuthority(featurePath, reviewer, rationale);
         var services = CreateServices(featureAuthorities: [authority]);
         var change = Assert.IsType<ChangeDossier>(services.Changes.Create(new ChangeCreateRequest(
             repository.Path,
@@ -132,15 +134,30 @@ status: Active
         Assert.Equal("Approved", derived.PlanStatus);
         Assert.True(derived.Validation!.Valid);
         Assert.All(services.Impacts.ReadImpact(change).Findings, finding => Assert.NotEqual("proposed", finding.State));
-        var plan = File.ReadAllText(services.Changes.DossierFile(change, "plan.md"));
+        var planPath = services.Changes.DossierFile(change, "plan.md");
+        var plan = File.ReadAllText(planPath);
         Assert.Contains("approval_basis: \"approved-feature:HLT-FR-001:sha256:approved-feature\"", plan, StringComparison.Ordinal);
-        Assert.Contains("approved_by: \"Product owner\"", plan, StringComparison.Ordinal);
+        Assert.Contains($"approved_by: \"{reviewer}\"", plan, StringComparison.Ordinal);
+        Assert.Contains(rationale, plan, StringComparison.Ordinal);
         var proposal = File.ReadAllText(services.Changes.DossierFile(change, "proposal.md"));
         Assert.Contains("- `ORDER-001`: The API returns the governed representation for an existing order.", proposal, StringComparison.Ordinal);
         Assert.DoesNotContain("TODO: define outcome-level acceptance criteria", proposal, StringComparison.Ordinal);
         var events = File.ReadAllText(services.Changes.DossierFile(change, "events.jsonl"));
         Assert.Contains("impact-authority-carried-forward", events, StringComparison.Ordinal);
         Assert.Contains("proposal-acceptance-authority-carried-forward", events, StringComparison.Ordinal);
+
+        const string authoredScope = "This reviewed plan paragraph retains the accepted lookup scope through routine task transitions.";
+        plan = plan.Replace("## Approval summary", "## Approval summary\n\n" + authoredScope, StringComparison.Ordinal);
+        File.WriteAllText(planPath, plan);
+        var task = derived.WorkItems.First(item => item.Category == "backend");
+        foreach (var status in new[] { "InProgress", "Blocked" })
+        {
+            var moved = services.Plans.TransitionTask(new PlanTaskTransitionRequest(
+                repository.Path, change.Id, task.Id, status, "Synthetic controller", "Record actual bounded task state."));
+            Assert.Equal(0, moved.ExitCode);
+            Assert.Equal(status, moved.WorkItems.Single(item => item.Id == task.Id).Status);
+            Assert.Equal(plan, File.ReadAllText(planPath).Replace($"| {status} |", $"| {task.Status} |", StringComparison.Ordinal));
+        }
     }
 
     [Fact]
@@ -2519,11 +2536,12 @@ authority: human-reviewed
                 Ready ? [] : ["An Active, current workspace technical intent is required."]);
     }
 
-    private sealed class StaticFeatureApprovalAuthority(string featurePath) : ICisFeatureApprovalAuthority
+    private sealed class StaticFeatureApprovalAuthority(string featurePath, string reviewer = "Product owner",
+        string rationale = "Approved bounded behavior.") : ICisFeatureApprovalAuthority
     {
         public CisFeatureApproval Evaluate(string repositoryPath, string featureSpecificationPath)
             => featureSpecificationPath.Equals(featurePath, StringComparison.OrdinalIgnoreCase)
-                ? new(true, true, "HLT-FR-001", featurePath, "Product owner", "Approved bounded behavior.",
+                ? new(true, true, "HLT-FR-001", featurePath, reviewer, rationale,
                     "sha256:approved-feature", [])
                 : new(false, false, null, null, null, null, null, []);
     }

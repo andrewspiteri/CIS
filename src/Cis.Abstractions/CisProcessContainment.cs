@@ -16,6 +16,9 @@ namespace Cis.Abstractions;
 public sealed class CisProcessJob : IDisposable
 {
     private readonly SafeFileHandle handle;
+    private readonly string? name;
+    private readonly string? objectPath;
+    private readonly int sessionId;
 
     public CisProcessJob() : this(null) { }
 
@@ -46,6 +49,31 @@ public sealed class CisProcessJob : IDisposable
             handle.Dispose();
             throw error;
         }
+        if (name is not null)
+        {
+            try
+            {
+                this.name = name;
+                objectPath = ReadObjectPath(handle);
+                ObjectNamespace(name, objectPath);
+                using var current = Process.GetCurrentProcess();
+                sessionId = current.SessionId;
+            }
+            catch
+            {
+                handle.Dispose();
+                throw;
+            }
+        }
+    }
+
+    /// <summary>Capture the original named-object binding from this actual job handle.</summary>
+    public CisNativeWorkContainment CaptureNativeContainment()
+    {
+        ObjectDisposedException.ThrowIf(handle.IsClosed, this);
+        if (name is null || objectPath is null)
+            throw new InvalidDataException("Only a named native job can supply its original namespace binding.");
+        return new(CisNativeWorkContainment.WindowsOuterJob, name, sessionId) { WindowsObjectPath = objectPath };
     }
 
     public void Assign(Process process)
@@ -82,6 +110,7 @@ public sealed class CisProcessJob : IDisposable
         ValidateNativeBinding(containment);
         using var job = Native.OpenJobObject(0x0004, false, containment.JobName); // JOB_OBJECT_QUERY
         if (job.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+        VerifyOpenedBinding(containment, job);
         if (!Native.QueryExtendedJobInformation(job, 9, out var limits, (uint)Marshal.SizeOf<ExtendedLimits>(), IntPtr.Zero))
             throw new Win32Exception(Marshal.GetLastWin32Error());
         var flags = limits.Basic.LimitFlags;
@@ -94,20 +123,30 @@ public sealed class CisProcessJob : IDisposable
 
     public static bool IsNamedNativeJobEmptyOrDestroyed(CisNativeWorkContainment containment)
     {
-        ValidateNativeBinding(containment);
+        var originalNamespace = ValidateNativeBinding(containment);
         using var job = Native.OpenJobObject(0x0004, false, containment.JobName);
         if (job.IsInvalid)
         {
             var error = Marshal.GetLastWin32Error();
-            if (error == 2) return true; // The uniquely created job was destroyed after its associated processes exited.
+            if (error == 2)
+            {
+                // A missing Win32 name proves nothing about a different namespace.
+                // Use the same CreateJobObject API to observe this caller's actual
+                // namespace; do not infer it from the session, token flags or GUID.
+                using var witness = new CisProcessJob(@"Local\cis-native-" + Guid.NewGuid().ToString("N"));
+                if (ObjectNamespace(witness.name!, witness.objectPath!) != originalNamespace)
+                    throw new InvalidDataException("The inspecting Windows named-object namespace differs from the recorded original namespace. A missing local job name does not prove its destruction; preserve the execution and reservations.");
+                return true;
+            }
             throw new Win32Exception(error);
         }
+        VerifyOpenedBinding(containment, job);
         if (!Native.QueryInformationJobObject(job, 1, out var accounting, (uint)Marshal.SizeOf<BasicAccounting>(), IntPtr.Zero))
             throw new Win32Exception(Marshal.GetLastWin32Error());
         return accounting.ActiveProcesses == 0;
     }
 
-    private static void ValidateNativeBinding(CisNativeWorkContainment containment)
+    private static string ValidateNativeBinding(CisNativeWorkContainment containment)
     {
         ArgumentNullException.ThrowIfNull(containment);
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
@@ -115,6 +154,63 @@ public sealed class CisProcessJob : IDisposable
         using var current = Process.GetCurrentProcess();
         if (containment.Protocol != CisNativeWorkContainment.WindowsOuterJob || containment.WindowsSessionId != current.SessionId)
             throw new InvalidDataException("Native job inspection requires its exact Windows protocol and original local session.");
+        if (containment.WindowsObjectPath is null)
+            throw new InvalidDataException("The original Windows named-object namespace was not recorded. Preserve the historical execution and reservations until genuine original namespace proof is available; the current namespace, matching session or PID absence cannot supply that proof.");
+        return ObjectNamespace(containment.JobName, containment.WindowsObjectPath);
+    }
+
+    private static void VerifyOpenedBinding(CisNativeWorkContainment containment, SafeFileHandle job)
+    {
+        if (ReadObjectPath(job) != containment.WindowsObjectPath)
+            throw new InvalidDataException("The opened Windows job does not match its recorded original named-object path. Preserve the exact execution and reservations.");
+    }
+
+    private static string ObjectNamespace(string name, string path)
+    {
+        var leaf = name[@"Local\".Length..];
+        var separator = path.LastIndexOf('\\');
+        if (path.Length is < 2 or > 32760 || path[0] != '\\' || path.Contains('\0')
+            || separator <= 0 || path[(separator + 1)..] != leaf)
+            throw new InvalidDataException("The retained Windows job requires its exact bounded original named-object path.");
+        return path[..separator];
+    }
+
+    private static string ReadObjectPath(SafeFileHandle job)
+    {
+        // ObjectNameInformation returns the actual object-manager path. Unsupported
+        // native queries hold the operation rather than guessing a Win32 namespace.
+        try
+        {
+            var status = Native.NtQueryObject(job, 1, IntPtr.Zero, 0, out var required);
+            if (status is not (unchecked((int)0xC0000004) or unchecked((int)0xC0000023) or unchecked((int)0x80000005))
+                || required < Marshal.SizeOf<UnicodeString>() || required > 65536)
+                throw new InvalidDataException($"The original Windows job object path could not be queried within its bound (NTSTATUS 0x{status:X8}).");
+            var buffer = Marshal.AllocHGlobal(checked((int)required));
+            try
+            {
+                status = Native.NtQueryObject(job, 1, buffer, required, out _);
+                if (status != 0)
+                    throw new InvalidDataException($"The original Windows job object path is unavailable (NTSTATUS 0x{status:X8}).");
+                var value = Marshal.PtrToStructure<UnicodeString>(buffer);
+                var offset = value.Buffer.ToInt64() - buffer.ToInt64();
+                if (value.Length == 0 || value.Length % 2 != 0 || value.Length > value.MaximumLength
+                    || value.Length > required || offset < Marshal.SizeOf<UnicodeString>() || offset > required - value.Length)
+                    throw new InvalidDataException("The Windows job object path query returned invalid bounded name information.");
+                return Marshal.PtrToStringUni(value.Buffer, value.Length / 2)
+                    ?? throw new InvalidDataException("The Windows job object path query returned no name.");
+            }
+            finally { Marshal.FreeHGlobal(buffer); }
+        }
+        catch (Exception error) when (error is EntryPointNotFoundException or DllNotFoundException)
+        { throw new NotSupportedException("This Windows installation cannot verify the original named-job namespace.", error); }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct UnicodeString
+    {
+        public ushort Length;
+        public ushort MaximumLength;
+        public IntPtr Buffer;
     }
 
     private static void ValidateNativeName(string name)
@@ -175,6 +271,11 @@ public sealed class CisProcessJob : IDisposable
 
     private static class Native
     {
+        [DllImport("ntdll.dll")]
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+        internal static extern int NtQueryObject(SafeFileHandle handle, int informationClass,
+            IntPtr information, uint length, out uint returnedLength);
+
         [DllImport("kernel32.dll", EntryPoint = "CreateJobObjectW", CharSet = CharSet.Unicode, SetLastError = true)]
         [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         internal static extern SafeFileHandle CreateJobObject(IntPtr attributes, string? name);

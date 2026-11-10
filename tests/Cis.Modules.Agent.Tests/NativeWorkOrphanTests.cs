@@ -106,7 +106,13 @@ public sealed partial class AgentExecutionTests
             var original = live.Executions.Single(item => item.ParentExecutionId is null);
             var driver = live.Executions.Single(item => item.NativeContainment is not null);
             Assert.Equal(host.Id, original.PreparationOwner!.ProcessId);
+            Assert.NotNull(driver.NativeContainment!.WindowsObjectPath);
             Assert.False(CisProcessJob.IsNamedNativeJobEmptyOrDestroyed(driver.NativeContainment!));
+            Assert.Throws<InvalidDataException>(() =>
+            {
+                if (OperatingSystem.IsWindows()) CisProcessJob.IsNamedNativeJobEmptyOrDestroyed(driver.NativeContainment! with
+                { WindowsObjectPath = null });
+            });
             Assert.Throws<InvalidDataException>(() =>
             {
                 if (OperatingSystem.IsWindows()) CisProcessJob.IsNamedNativeJobEmptyOrDestroyed(driver.NativeContainment! with

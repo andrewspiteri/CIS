@@ -21,6 +21,9 @@ Supported states are Draft, ReadyForReview, Approved, InProgress, Blocked, Defer
 Complete, Cancelled, and Decomposed. Invalid transitions fail. Completion requires
 resolved checklists and evidence. For UI-bearing plans, all downstream work is blocked
 until `design.md` has `gate_status: Approved`. Every transition appends an audit event.
+Routine transitions preserve the plan's approval attribution and authored sections.
+They update the selected task's existing approval-table and execution-row status cells,
+and its task-document lifecycle field, without regenerating the whole plan.
 Completion also snapshots sanitized CLI-usage counts, failures, possible token savings,
 and a ledger digest into the task and `verification.md` when local usage exists.
 

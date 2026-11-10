@@ -21,6 +21,9 @@ public sealed record CisNativeWorkRequest(string RepositoryPath, string Executio
 public sealed record CisNativeWorkContainment(string Protocol, string JobName, int WindowsSessionId)
 {
     public const string WindowsOuterJob = "cis-native-windows-outer-job-v1";
+    // Captured from the created job handle, never reconstructed from a later
+    // caller's session/token. Null is retained for historical records and holds inspection.
+    public string? WindowsObjectPath { get; init; }
 }
 
 public sealed record CisNativeWorkAdmission(bool Required, string Status, string Coverage,

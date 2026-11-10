@@ -664,7 +664,11 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
         }
 
         var updatedItems = plan.WorkItems.Select(candidate => candidate.Id == item.Id ? candidate with { Status = target } : candidate).ToArray();
-        File.WriteAllText(_changes.DossierFile(change, "plan.md"), RenderPlan(change, plan.Status, updatedItems, plan.Source));
+        var planPath = _changes.DossierFile(change, "plan.md");
+        string updatedPlan;
+        try { updatedPlan = UpdatePlanTaskStatus(File.ReadAllText(planPath), item.Id, target); }
+        catch (InvalidDataException error) { return Error(change.Id, error.Message); }
+        File.WriteAllText(planPath, updatedPlan);
         if (item.TaskPath is not null)
         {
             var taskPath = Path.Combine(Path.GetDirectoryName(_changes.DossierFile(change, "plan.md"))!, item.TaskPath.Replace('/', Path.DirectorySeparatorChar));

@@ -135,6 +135,11 @@ public sealed partial class PlanningService
                     throw new InvalidDataException($"Task {obsolete.Id} has an unsafe retirement destination. Preserve the contract and restore an unlinked in-dossier retired directory before rebuilding.");
             }
 
+            var planPath = _changes.DossierFile(change, "plan.md");
+            var originalPlan = File.Exists(planPath) ? File.ReadAllText(planPath) : string.Empty;
+            var planContent = RefreshAdHocPlanContent(originalPlan,
+                RenderPlan(change, "Draft", previous), RenderPlan(change, "Draft", selected));
+
             foreach (var item in selected)
             {
                 if (restorations.TryGetValue(item.Id, out var archived))
@@ -182,7 +187,7 @@ public sealed partial class PlanningService
                 // Retained active documents deliberately have no write path at all.
             }
             applied |= RetireObsoleteTasks(change, previous, selected, null, () => applied = true);
-            applied |= WriteIfChanged(_changes.DossierFile(change, "plan.md"), RenderPlan(change, "Draft", selected));
+            applied |= WriteIfChanged(planPath, planContent);
             applied |= RegisterTaskCatalogEntries(change, selected);
             if (applied)
                 _changes.AppendEvent(change, "plan-built", new Dictionary<string, string>

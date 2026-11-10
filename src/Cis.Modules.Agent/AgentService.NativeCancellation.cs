@@ -50,9 +50,9 @@ public sealed partial class AgentService
         {
             var owned = _workLedger.NativeExecution(authority, execution.ExecutionId);
             if (owned is not null) _workLedger.MarkRecoveryUncertain(authority, owned.Value.Reference,
-                "Cancellation stopped only verified recorded identities. Native child cleanup and restoration remain held until their retained evidence is reconciled.");
+                "Cancellation stopped only verified recorded identities. Native child cleanup and restoration remain held until original named-object namespace/containment proof and retained stopped-owner evidence are reconciled.");
         }
         var result = _workLedger.Read(authority, reference.ChangeId, reference.TaskId);
-        return result with { Status = "held", Errors = errors.Append("Inspect native output/owned-child recovery evidence, then reconcile the exact stopped executions through the existing work disposition route; cancellation alone does not release uncertain reservations.").ToArray() };
+        return result with { Status = "held", Errors = errors.Append("Inspect native output/owned-child recovery evidence and the original containment namespace, then reconcile the exact stopped executions through the existing work disposition route; cancellation alone does not release uncertain reservations.").ToArray() };
     }
 }

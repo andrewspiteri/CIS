@@ -297,6 +297,14 @@ Owned totals include declared physical paths, known CIS agent/management data an
 
 When native restoration is required, resume its retained profile. `--recovery-of <execution-id>` performs only the original pinned recovery command and healthy postflight, including when an interrupted controller lost its ordinary result record. The exact owner, original attempt and recovery recipe remain bound. Safely stopped recovery can spend the existing protected restoration reserve; it cannot clear live/uncertain process ownership, change its command or run a new campaign. Missing reports remain missing. Ordinary archive retrieval/restoration is a new bounded operation and does not acquire native recovery authority.
 
+Exact outside-root native scratch retains its admitting path, temporary parent and
+canonical native execution in the existing claim. Later TEMP changes neither expand
+ownership nor invalidate that binding. Historical claims need the same exact path in
+retained storage admission and operation paths, with its owner and native execution;
+missing or ambiguous provenance holds inspection/reconciliation without changing
+claims or reservations. Reads never install provenance from the current TEMP.
+Existing exact-name, reparse, finite-capacity and stopped-owner checks still apply.
+
 An exact, otherwise authorized restoration may proceed through a repeated-blocker
 exploration hold. The hold and blocker history remain in place for later diagnostic
 work; recovery retains the original attempt, consumption and reserve. Process
@@ -306,13 +314,26 @@ For an owned native cancellation, use `agent work disposition` with `kind: "canc
 
 For supported Windows native work, `kind: "reconcile"` verifies the original
 preparer and driver identities plus the recorded outer process job in its original
-Windows session. The job must be empty or verifiably destroyed. An unreadable job,
-reused identity, another host/session, historical unbound launch or missing Linux
+Windows named-object namespace and session. New receipts capture `WindowsObjectPath`
+from the actual created job handle. An opened job must match that exact path; a
+missing local name proves destruction only after a bounded empty job created through
+the same API establishes an exact namespace match. Session equality alone is not
+namespace proof: Windows also isolates named objects by application context.
+An unreadable job or namespace, reused identity, another host/session, historical
+unbound launch or missing Linux
 session proof remains held. Successful reconciliation charges the original bound
 conservatively and releases only pending work/storage reservations, preserving
 interrupted diagnostics and the original restoration obligation. The unchanged
 `--recovery-of` route can then use the remaining protected time and storage reserve;
 reconciliation grants no new allowance or attempt.
+
+Historical receipts without the original object path remain held. Recover that
+binding only from genuine retained launch evidence or a verifiable original context;
+do not fill it from the current caller, job GUID or an absent PID. Cancellation and
+human authorization cannot replace factual containment proof. See Microsoft's
+[named-object isolation](https://learn.microsoft.com/en-us/windows/uwp/communication/sharing-named-objects)
+and [job-object lifetime](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)
+contracts. Unsupported native object-path queries also hold rather than infer closure.
 
 If native execution finished safely but a storage settlement failed, use that same
 `reconcile` disposition with the original execution ID and current revision. CIS

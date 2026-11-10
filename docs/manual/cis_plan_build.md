@@ -57,7 +57,12 @@ can leave a partially applied build; no cross-file rollback is promised. Preserv
 files and restore a verified consistent contract/plan/catalogue binding before retrying.
 Do not delete a retained identity or replace an input hash to bypass that hold.
 
-Repeating an identical build returns `unchanged` without document/catalogue/event churn;
-an approved plan cannot be silently rebuilt. Use `cis plan import-spec` when the work
+Draft rebuilds retain authored plan paragraphs and sections. When accepted work changes,
+the command refreshes its generated task table, execution manifest and derived summary
+fields. A changed rebuild holds for reconciliation if it cannot identify the existing
+projections unambiguously.
+Repeating an identical build preserves the existing plan bytes and returns `unchanged`
+without document/catalogue/event churn; an approved plan cannot be silently rebuilt.
+Use `cis plan import-spec` when the work
 must be decomposed from a governed feature specification; that route retains its existing
 feature coverage and approval rules.

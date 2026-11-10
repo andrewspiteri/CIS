@@ -18,7 +18,11 @@ internal sealed partial class AgentWorkLedger
     }
 
     private sealed record StorageClaim(string Path, string OwnerTaskId, bool Scratch, bool Required,
-        string? RequiredByExecutionId = null, string? SupersededByExecutionId = null);
+        string? RequiredByExecutionId = null, string? SupersededByExecutionId = null)
+    {
+        public NativeScratchAdmission? NativeScratchAdmission { get; init; }
+    }
+    private sealed record NativeScratchAdmission(string Path, string TemporaryRoot, CisAgentWorkReference Reference);
     private sealed record StorageReservation(CisAgentWorkReference Reference, string OperationId, long MaximumGrowthBytes,
         long RecordHeadroomBytes, IReadOnlyList<string> Paths, bool Cleanup, bool Finalized = false)
     {
@@ -119,6 +123,7 @@ internal sealed partial class AgentWorkLedger
             var snapshot = SnapshotStorage(authority, reference.ChangeId, reference.TaskId, claims);
             var change = snapshot.Change;
             MatchStorageExecution(snapshot.State, change, reference, requireLive: true);
+            var scratchAdmissions = (claims ?? []).Select(claim => StorageClaimAdmission(snapshot.State, change, reference, claim)).ToArray();
             var allocation = change.Storage!;
             if (cleanup)
             {
@@ -166,6 +171,7 @@ internal sealed partial class AgentWorkLedger
                     + JsonSerializer.SerializeToUtf8Bytes(new
                     {
                         claims = claims ?? [],
+                        scratchAdmissions,
                         operation.Paths,
                         operation.Accounting,
                         operation.Initial
@@ -208,6 +214,7 @@ internal sealed partial class AgentWorkLedger
                 + JsonSerializer.SerializeToUtf8Bytes(new
                 {
                     claims = claims ?? [],
+                    scratchAdmissions,
                     operation.Paths,
                     operation.Accounting,
                     operation.Initial
@@ -306,8 +313,13 @@ internal sealed partial class AgentWorkLedger
                 }
                 storage.Reservations[reservationId] = reservation with { Finalized = true };
                 foreach (var path in required)
-                    if (!retainedRequired.Contains(path)) storage.Claims[path] = new(path, reference.OwnerTaskId,
-                        storage.Claims.GetValueOrDefault(path)?.Scratch == true, true, reference.ExecutionId);
+                    if (!retainedRequired.Contains(path))
+                    {
+                        var prior = storage.Claims.GetValueOrDefault(path);
+                        var admission = ValidateStorageClaim(current, change, new(path, prior?.Scratch == true, Required: true));
+                        storage.Claims[path] = new(path, reference.OwnerTaskId, prior?.Scratch == true, true, reference.ExecutionId)
+                        { NativeScratchAdmission = admission };
+                    }
                 foreach (var path in released)
                     if (storage.Claims.TryGetValue(path, out var claim) && claim.Required)
                         storage.Claims[path] = claim with { Required = false, RequiredByExecutionId = null, SupersededByExecutionId = null };
@@ -325,7 +337,7 @@ internal sealed partial class AgentWorkLedger
     private static bool RegisterStorageClaim(Ledger state, Change change, CisAgentWorkReference reference,
         CisOwnedStoragePath claim, string? ignoreReservationId = null)
     {
-        ValidateStorageClaim(state, change, claim);
+        var admission = StorageClaimAdmission(state, change, reference, claim);
         var path = Path.GetFullPath(claim.Path);
         var storage = change.Storage!;
         var prior = storage.Claims.GetValueOrDefault(path);
@@ -343,7 +355,8 @@ internal sealed partial class AgentWorkLedger
             }
         }
         storage.Claims[path] = new(path, reference.OwnerTaskId, claim.Scratch, claim.Required,
-            claim.Required ? reference.ExecutionId : null);
+            claim.Required ? reference.ExecutionId : null)
+        { NativeScratchAdmission = admission };
         return false;
     }
 
@@ -393,7 +406,17 @@ internal sealed partial class AgentWorkLedger
         if (change.Storage is not { } storage) return;
         foreach (var pair in storage.Reservations.Where(pair => pair.Value.Finalized
             && change.Executions.GetValueOrDefault(pair.Value.Reference.ExecutionId)?.Finalized == true).ToArray())
+        {
+            // An old exact admission receipt may be the only durable provenance.
+            // Carry its validated binding into the claim before compacting it.
+            foreach (var path in pair.Value.Paths)
+                if (storage.Claims.TryGetValue(path, out var claim) && claim.NativeScratchAdmission is null)
+                {
+                    var admission = ValidateStorageClaim(state, change, new(path, claim.Scratch, claim.Required));
+                    if (admission is not null) storage.Claims[path] = claim with { NativeScratchAdmission = admission };
+                }
             storage.Reservations.Remove(pair.Key);
+        }
         foreach (var claim in storage.Claims.Values.Where(claim => claim.Required && claim.RequiredByExecutionId is not null
             && claim.SupersededByExecutionId is not null).ToArray())
         {
@@ -495,24 +518,76 @@ internal sealed partial class AgentWorkLedger
     private static IEnumerable<string> PolicyPaths(CisOwnedStoragePolicy policy)
         => policy.Roots.Select(root => Path.GetFullPath(Path.Combine(root.RepositoryPath, root.Path)));
 
-    private static void ValidateStorageClaim(Ledger state, Change change, CisOwnedStoragePath claim)
+    private static NativeScratchAdmission? ValidateStorageClaim(Ledger state, Change change, CisOwnedStoragePath claim)
     {
         if (claim is null || !BoundedText(claim.Path) || !Path.IsPathFullyQualified(claim.Path))
             throw new InvalidDataException("Declare an exact absolute owned output or scratch path.");
         var path = Path.GetFullPath(claim.Path);
-        var within = StorageGroup(state, change).SelectMany(item => PolicyPaths(item.Storage!.Policy))
-            .Any(root => StorageWithin(root, path));
+        var retained = change.Storage!.Claims.GetValueOrDefault(path);
+        var admission = retained?.NativeScratchAdmission;
+        var within = WithinStoragePolicy(state, change, path);
         if (!within)
         {
-            var temporary = Path.TrimEndingDirectorySeparator(Path.GetTempPath());
             var name = Path.GetFileName(path);
             if (!claim.Scratch || !change.Storage!.Policy.AllowNativeScratch
-                || !StoragePathComparer.Equals(Path.GetDirectoryName(path), temporary)
                 || !System.Text.RegularExpressions.Regex.IsMatch(name, @"\A(?:cis-mutation-[a-f0-9]{32}|cis-[a-f0-9]{6}-[A-Za-z0-9_-]{15})\z"))
                 throw new InvalidDataException("This output is outside the explicitly owned CIS roots and supported exact native scratch paths.");
+            if (retained is not null)
+                admission ??= RecoverNativeScratchAdmission(state, change, retained);
+            else if (!StoragePathComparer.Equals(Path.GetDirectoryName(path), Path.TrimEndingDirectorySeparator(Path.GetTempPath())))
+                throw new InvalidDataException("New native scratch must be an exact supported child of its admitting invocation's temporary directory.");
         }
+        if (admission is not null) ValidateNativeScratchAdmission(state, change, path, claim.Scratch, admission);
         if (CisPathSafety.ContainsReparsePoint(Path.GetPathRoot(path)!, path))
             throw new InvalidDataException("Owned storage crosses a linked or unreadable path; its usage is unknown, not zero.");
+        return admission;
+    }
+
+    private static bool WithinStoragePolicy(Ledger state, Change change, string path)
+        => StorageGroup(state, change).SelectMany(item => PolicyPaths(item.Storage!.Policy)).Any(root => StorageWithin(root, path));
+
+    private static NativeScratchAdmission? StorageClaimAdmission(Ledger state, Change change,
+        CisAgentWorkReference reference, CisOwnedStoragePath claim)
+    {
+        var admission = ValidateStorageClaim(state, change, claim);
+        var path = Path.GetFullPath(claim.Path);
+        if (admission is not null || WithinStoragePolicy(state, change, path)) return admission;
+        // Only a new, already validated native claim captures the current context.
+        // Historical claims never acquire provenance from the inspecting TEMP.
+        admission = new(path, Path.GetDirectoryName(path)!, reference);
+        ValidateNativeScratchAdmission(state, change, path, claim.Scratch, admission);
+        return admission;
+    }
+
+    private static NativeScratchAdmission RecoverNativeScratchAdmission(Ledger state, Change change, StorageClaim claim)
+    {
+        var references = change.Storage!.Reservations.Values.Where(reservation =>
+                reservation.Paths.Contains(claim.Path, StoragePathComparer)
+                && reservation.OperationPaths.Contains(claim.Path, StoragePathComparer)
+                && reservation.Reference.OwnerTaskId == claim.OwnerTaskId
+                && change.Executions.TryGetValue(reservation.Reference.ExecutionId, out var execution)
+                && execution.Reference == reservation.Reference && execution.Stage?.NativeOperation is not null)
+            .Select(reservation => reservation.Reference).Distinct().ToArray();
+        if (references.Length != 1)
+            throw new InvalidDataException("Retained native scratch has no unique exact original native admission provenance. Preserve its claim and reservations; restore the original admission evidence before inspection or reconciliation. The current temporary directory cannot supply historical authority.");
+        var admission = new NativeScratchAdmission(claim.Path, Path.GetDirectoryName(claim.Path)!, references[0]);
+        ValidateNativeScratchAdmission(state, change, claim.Path, claim.Scratch, admission);
+        return admission;
+    }
+
+    private static void ValidateNativeScratchAdmission(Ledger state, Change change, string path, bool scratch,
+        NativeScratchAdmission admission)
+    {
+        if (!scratch || !change.Storage!.Policy.AllowNativeScratch || !BoundedText(admission.Path)
+            || !BoundedText(admission.TemporaryRoot) || !Path.IsPathFullyQualified(admission.Path)
+            || !Path.IsPathFullyQualified(admission.TemporaryRoot)
+            || !StoragePathComparer.Equals(Path.GetFullPath(admission.Path), path)
+            || !StoragePathComparer.Equals(Path.GetDirectoryName(path), Path.TrimEndingDirectorySeparator(Path.GetFullPath(admission.TemporaryRoot)))
+            || admission.Reference is not { } reference || reference.AuthorityRepositoryId != state.AuthorityId
+            || reference.AdoptionId != state.AdoptionId || reference.ChangeId != change.Id
+            || !change.Executions.TryGetValue(reference.ExecutionId, out var execution)
+            || execution.Reference != reference || execution.Stage?.NativeOperation is null)
+            throw new InvalidDataException("Retained native scratch admission provenance does not match its exact path and original canonical native execution. Restore that evidence without changing claims or reservations.");
     }
 
     private static long MeasureStoragePaths(IEnumerable<string> paths)

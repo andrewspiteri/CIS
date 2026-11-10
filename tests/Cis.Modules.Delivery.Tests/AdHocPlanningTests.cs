@@ -141,6 +141,34 @@ public sealed partial class DeliveryWorkflowTests
     }
 
     [Fact]
+    public void AdHocPlanBuild_NewPrerequisiteHoldsBeforeChangingRetainedContractOrPlan()
+    {
+        using var repository = TemporaryRepository.Create();
+        var services = CreateServices();
+        var verification = AdHocFinding("IMPACT-VERIFY", "orders-api-verification");
+        var change = CreateAdHocChange(repository, services, verification);
+        var first = services.Plans.Build(repository.Path, change.Id);
+        AssertAdHocSuccess(first);
+        var task = Assert.Single(first.WorkItems);
+        var taskPath = AdHocTaskPath(services, change, task);
+        WriteAdHocAuthoredContract(taskPath, task.Id, "retained-verification");
+        var prerequisite = AdHocFinding("IMPACT-CODE", "orders-api-code") with { Category = "implementation" };
+        WriteAdHocImpact(services, change, prerequisite, verification);
+        var before = AdHocSnapshot([taskPath, services.Changes.DossierFile(change, "plan.md"),
+            Path.Combine(repository.Path, "docs/cis/catalog.yml"), services.Changes.DossierFile(change, "events.jsonl")]);
+
+        var rebuilt = CreateServices().Plans.Build(repository.Path, change.Id);
+
+        Assert.Equal("reconciliation-required", rebuilt.Status);
+        Assert.NotEqual(0, rebuilt.ExitCode);
+        Assert.False(rebuilt.Applied);
+        Assert.Contains(rebuilt.Errors, error => error.Contains("prerequisite", StringComparison.Ordinal));
+        Assert.Equal(task.Id, Assert.Single(rebuilt.WorkItems).Id);
+        Assert.Single(Directory.EnumerateFiles(Path.GetDirectoryName(taskPath)!, "*.md"));
+        AssertAdHocSnapshot(before);
+    }
+
+    [Fact]
     public void AdHocPlanBuild_UnchangedRebuildPreservesWholeAuthoredContractAndCatalogBytes()
     {
         using var repository = TemporaryRepository.Create();
@@ -375,7 +403,7 @@ public sealed partial class DeliveryWorkflowTests
     }
 
     [Fact]
-    public void AdHocPlanBuild_LegacyUndocumentedRowKeepsItsIdentityDuringMaterialization()
+    public void AdHocPlanBuild_LegacyUndocumentedRowHoldsWithoutStampingAnUnprovedInputBasis()
     {
         using var repository = TemporaryRepository.Create();
         var services = CreateServices();
@@ -402,14 +430,22 @@ public sealed partial class DeliveryWorkflowTests
             """);
         var earlier = AdHocFinding("IMPACT-EARLIER", "orders-api-0-earlier");
         WriteAdHocImpact(services, change, earlier, alpha);
+        var before = AdHocSnapshot([services.Changes.DossierFile(change, "plan.md"),
+            Path.Combine(repository.Path, "docs/cis/catalog.yml"), services.Changes.DossierFile(change, "events.jsonl")]);
 
         var upgraded = CreateServices().Plans.Build(repository.Path, change.Id);
 
-        AssertAdHocSuccess(upgraded);
-        var retained = AdHocTaskFor(upgraded, alpha.Id);
+        Assert.Equal("reconciliation-required", upgraded.Status);
+        Assert.NotEqual(0, upgraded.ExitCode);
+        Assert.False(upgraded.Applied);
+        var retained = Assert.Single(upgraded.WorkItems);
         Assert.Equal("WORK-017", retained.Id);
-        Assert.True(File.Exists(AdHocTaskPath(services, change, retained)));
-        Assert.NotEqual(retained.Id, AdHocTaskFor(upgraded, earlier.Id).Id);
+        Assert.Equal([alpha.Id], retained.ImpactIds);
+        Assert.Null(retained.TaskPath);
+        Assert.Equal("The retained alpha behavior is verified.", retained.AcceptanceCriteria);
+        Assert.Equal("Run the identified native tests.", retained.Validation);
+        AssertAdHocSnapshot(before);
+        Assert.Empty(Directory.EnumerateFileSystemEntries(Path.Combine(Path.GetDirectoryName(services.Changes.DossierFile(change, "plan.md"))!, "agent-tasks")));
         Assert.Null(upgraded.Source);
     }
 

@@ -166,6 +166,16 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
         if (derivedOnlyRefresh && !string.Equals(content,
             RenderPlan(change, existing.Status, existing.WorkItems, existing.Source), StringComparison.Ordinal))
             return Error(change.Id, "Task generation inputs changed the approved plan. Review and replan before refreshing derived catalogues.");
+        try
+        {
+            var currentIds = workItems.Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
+            foreach (var obsolete in existing.WorkItems.Where(item => item.TaskPath is not null && !currentIds.Contains(item.Id)))
+                ResolveTaskRetirementPaths(change, obsolete);
+        }
+        catch (Exception error) when (error is InvalidDataException or IOException or UnauthorizedAccessException)
+        {
+            return new("invalid", change.Id, existing.Status, existing.WorkItems, null, [error.Message], false, existing.Source);
+        }
         var path = _changes.DossierFile(change, "plan.md");
         var applied = !derivedOnlyRefresh && WriteIfChanged(path, content);
         applied |= WriteIfChanged(_changes.DossierFile(change, "test-cases.md"), pack.ManualTestCasesMarkdown);
@@ -2300,29 +2310,22 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
         ChangeDossier change,
         IReadOnlyList<PlanWorkItem> previousItems,
         IReadOnlyList<PlanWorkItem> currentItems,
-        PlanSource? source)
+        PlanSource? source,
+        Action? onApplied = null)
     {
         var currentIds = currentItems.Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
         var changed = false;
         foreach (var obsolete in previousItems.Where(item => item.TaskPath is not null && !currentIds.Contains(item.Id)))
         {
+            var paths = ResolveTaskRetirementPaths(change, obsolete);
+            if (paths is null) continue;
+            var (activePath, retiredPath) = paths.Value;
             var dossier = Path.GetDirectoryName(_changes.DossierFile(change, "plan.md"))!;
-            var activePath = SafeTaskPath(dossier, obsolete.TaskPath!);
-            if (activePath is null || CisPathSafety.ContainsReparsePoint(change.RepositoryPath, activePath))
-                throw new InvalidDataException($"Task {obsolete.Id} has an unsafe retained task path.");
-            if (!File.Exists(activePath)) continue;
-            var relativeWithinTasks = obsolete.TaskPath!["agent-tasks/".Length..];
-            var retiredRelative = "agent-tasks/retired/" + relativeWithinTasks;
-            var retiredPath = SafeTaskPath(dossier, retiredRelative);
-            if (retiredPath is null || CisPathSafety.ContainsReparsePoint(change.RepositoryPath, retiredPath))
-                throw new InvalidDataException($"Task {obsolete.Id} requires an unlinked retirement path inside its dossier.");
-            retiredPath = AvailableRetiredPath(retiredPath);
-            if (CisPathSafety.ContainsReparsePoint(change.RepositoryPath, retiredPath))
-                throw new InvalidDataException($"Task {obsolete.Id} has an unsafe retirement destination.");
             Directory.CreateDirectory(Path.GetDirectoryName(retiredPath)!);
             if (CisPathSafety.ContainsReparsePoint(change.RepositoryPath, retiredPath))
                 throw new InvalidDataException($"Task {obsolete.Id} retirement path changed before the move.");
             File.Move(activePath, retiredPath);
+            onApplied?.Invoke();
             var retired = File.ReadAllText(retiredPath);
             if (source is null)
             {
@@ -2348,6 +2351,23 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
             changed = true;
         }
         return changed;
+    }
+
+    private (string ActivePath, string RetiredPath)? ResolveTaskRetirementPaths(ChangeDossier change, PlanWorkItem obsolete)
+    {
+        var dossier = Path.GetDirectoryName(_changes.DossierFile(change, "plan.md"))!;
+        var activePath = SafeTaskPath(dossier, obsolete.TaskPath!);
+        if (activePath is null || CisPathSafety.ContainsReparsePoint(change.RepositoryPath, activePath))
+            throw new InvalidDataException($"Task {obsolete.Id} has an unsafe retained task path. Restore its recorded unlinked path inside agent-tasks before re-importing or rebuilding.");
+        if (!File.Exists(activePath)) return null;
+        var relativeWithinTasks = obsolete.TaskPath!["agent-tasks/".Length..];
+        var retiredPath = SafeTaskPath(dossier, "agent-tasks/retired/" + relativeWithinTasks);
+        if (retiredPath is null || CisPathSafety.ContainsReparsePoint(change.RepositoryPath, retiredPath))
+            throw new InvalidDataException($"Task {obsolete.Id} requires an unlinked retirement path inside its dossier.");
+        retiredPath = AvailableRetiredPath(retiredPath);
+        if (CisPathSafety.ContainsReparsePoint(change.RepositoryPath, retiredPath))
+            throw new InvalidDataException($"Task {obsolete.Id} has an unsafe retirement destination.");
+        return (activePath, retiredPath);
     }
 
     private bool RestoreRetiredTask(ChangeDossier change, string taskPath)

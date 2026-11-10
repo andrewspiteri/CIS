@@ -29,7 +29,12 @@ Adding or reordering findings does not transfer an existing task or accounting o
 Removed work is explicitly archived under `agent-tasks/retired/`, with catalogue and
 event history; its identifier stays reserved. The same unchanged impact can reactivate
 its original task and authored evidence in Draft status. Reactivation grants no fresh
-capacity or completion approval. Ambiguous legacy bindings remain held.
+capacity or completion approval. Legacy rows without a retained durable document/input
+basis remain held: their ID and title do not prove the historical target or evidence.
+Their recorded identities and row contracts are preserved. This also applies to approved
+legacy plans; the approved-plan rebuild restriction remains in force, and a row alone
+does not establish an executable canonical task owner. Restore verified retained
+contracts/bindings or use the existing governed change/impact route to reconcile them.
 
 An unchanged retained task document is preserved byte-for-byte, including authored
 objectives, required changes, scope, acceptance, validation and evidence. If an accepted
@@ -41,6 +46,16 @@ genuinely different scope. This command does not amend an established contract b
 stamping a new hash, and introduces no automatic scope-amendment operation. Missing,
 unsafe or invalid durable documents block validation and approval rather than being
 silently regenerated.
+
+If accepted work adds a prerequisite to a retained task, or removes one of its recorded
+dependencies, build holds before changing the authored contract. Restore verified
+accepted inputs when corrupted, or reconcile the required ordering and retained
+contract through the existing governed change/impact route before rebuilding.
+
+Task, plan, catalogue and event writes use the existing separate files. An I/O failure
+can leave a partially applied build; no cross-file rollback is promised. Preserve those
+files and restore a verified consistent contract/plan/catalogue binding before retrying.
+Do not delete a retained identity or replace an input hash to bypass that hold.
 
 Repeating an identical build returns `unchanged` without document/catalogue/event churn;
 an approved plan cannot be silently rebuilt. Use `cis plan import-spec` when the work

@@ -57,11 +57,9 @@ public sealed partial class PlanningService
                 }
                 else if (item.TaskPath is null)
                 {
-                    // Legacy row-only plans still prove their original one-impact binding. Never
-                    // upgrade an ambiguous or changed row by its old positional WORK number.
-                    if (item.Category != seed.Category || item.Title != seed.Title)
-                        throw new InvalidDataException($"Legacy task {item.Id} has no durable impact basis and its recorded scope differs from {finding.Id}. Reconcile that retained scope before materializing it.");
-                    item = item with { TaskPath = $"agent-tasks/{item.Id}.md", InstanceKey = "ad-hoc-impact:" + finding.Id };
+                    // A matching ID/title cannot prove the old target/evidence. Do not
+                    // stamp today's basis onto an unproved historical task contract.
+                    throw new InvalidDataException($"Legacy task {item.Id} has no durable task document/input basis for {finding.Id}. Preserve its recorded identity and row contract; restore a verified retained contract/binding or reconcile it through the existing governed change/impact route before materializing it.");
                 }
                 if (archived is not null)
                 {
@@ -76,8 +74,11 @@ public sealed partial class PlanningService
             {
                 var item = selected[index];
                 var seed = seeds[index];
+                var prerequisites = seed.DependsOn.Select(id => temporaryIds[id]).ToArray();
                 if (!previous.Any(prior => prior.Id == item.Id) && !restorations.ContainsKey(item.Id))
-                    item = item with { DependsOn = seed.DependsOn.Select(id => temporaryIds[id]).ToArray() };
+                    item = item with { DependsOn = prerequisites };
+                else if (prerequisites.Except(item.DependsOn, StringComparer.Ordinal).Any())
+                    throw new InvalidDataException($"Task {item.Id} requires reconciliation of its retained dependencies: accepted work now adds a prerequisite. Preserve its authored contract and reconcile the required ordering before rebuilding.");
                 if (item.DependsOn.Any(id => !selected.Any(candidate => candidate.Id == id)))
                     throw new InvalidDataException($"Task {item.Id} retains a dependency on removed work. Reconcile its authored dependencies before retiring that work.");
                 selected[index] = item;
@@ -180,7 +181,7 @@ public sealed partial class PlanningService
                 }
                 // Retained active documents deliberately have no write path at all.
             }
-            applied |= RetireObsoleteTasks(change, previous, selected, null);
+            applied |= RetireObsoleteTasks(change, previous, selected, null, () => applied = true);
             applied |= WriteIfChanged(_changes.DossierFile(change, "plan.md"), RenderPlan(change, "Draft", selected));
             applied |= RegisterTaskCatalogEntries(change, selected);
             if (applied)
@@ -194,7 +195,10 @@ public sealed partial class PlanningService
         }
         catch (Exception error) when (error is InvalidDataException or IOException or UnauthorizedAccessException or JsonException or OverflowException)
         {
-            return new("reconciliation-required", change.Id, "Draft", previous, null, [error.Message], applied);
+            var message = applied
+                ? "The build was partially applied before it stopped. Preserve the retained task documents, plan, catalogue and events; restore a verified consistent identity/contract binding before retrying. No cross-file rollback occurred. " + error.Message
+                : error.Message;
+            return new("reconciliation-required", change.Id, "Draft", previous, null, [message], applied);
         }
     }
 

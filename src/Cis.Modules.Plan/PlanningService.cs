@@ -10,7 +10,7 @@ using Cis.Modules.Impact;
 
 namespace Cis.Modules.Plan;
 
-public sealed class PlanningService : ICisEngineeringTaskContractReader
+public sealed partial class PlanningService : ICisEngineeringTaskContractReader
 {
     private readonly ChangeDossierStore _changes;
     private readonly DecisionService _decisions;
@@ -95,22 +95,7 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
         }
 
         var accepted = impact.Findings.Where(item => item.State == "accepted").ToArray();
-        var workItems = BuildWorkItems(accepted);
-        var content = RenderPlan(change, "Draft", workItems);
-        var path = _changes.DossierFile(change, "plan.md");
-        var unchanged = File.Exists(path) && string.Equals(File.ReadAllText(path), content, StringComparison.Ordinal);
-        if (!unchanged)
-        {
-            File.WriteAllText(path, content);
-            _changes.AppendEvent(change, "plan-built", new Dictionary<string, string>
-            {
-                ["workItems"] = workItems.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                ["acceptedImpacts"] = accepted.Length.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            });
-        }
-
-        var validation = ValidateInternal(change, workItems, "Draft");
-        return new PlanResult(unchanged ? "unchanged" : "built", change.Id, "Draft", workItems, validation, [], !unchanged);
+        return BuildAdHocPlan(change, existing.WorkItems, accepted);
     }
 
     public PlanResult ImportSpec(FeatureSpecImportRequest request, string? ignoredReadinessCheck = null)
@@ -1043,9 +1028,10 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
                 errors.Add($"{item.Id} references missing parent {item.ParentId}.");
             }
 
+            ValidateTaskDocument(change, item, errors, source?.PublicEndpoints == true);
+            if (source is null) ValidateAdHocImpactContract(change, item, impact.Findings, errors);
             if (source is not null)
             {
-                ValidateTaskDocument(change, item, errors, source.PublicEndpoints);
                 var registered = _taskTypes.Find(item.TaskTypeKey);
                 if (registered is null)
                 {
@@ -1353,6 +1339,7 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
         var ordered = accepted
             .OrderBy(item => CategoryOrder(item.Category))
             .ThenBy(item => item.Target, StringComparer.Ordinal)
+            .ThenBy(item => item.Id, StringComparer.Ordinal)
             .ToArray();
         var items = new List<PlanWorkItem>();
         foreach (var finding in ordered)
@@ -1926,7 +1913,10 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
         if (document is null) return item;
         try
         {
-            var legacyType = item.TaskTypeKey == "core.legacy" ? TaskMetadata<string>(document, "task_type") : null;
+            var legacyType = item.TaskTypeKey == "core.legacy"
+                && item.InstanceKey?.StartsWith("ad-hoc-impact:", StringComparison.Ordinal) != true
+                && !HasTaskMetadata(document, "ad_hoc_impact_id")
+                ? TaskMetadata<string>(document, "task_type") : null;
             return item with
             {
                 TaskTypeKey = legacyType ?? item.TaskTypeKey,
@@ -2106,16 +2096,23 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
         }
 
         var dossier = Path.GetDirectoryName(_changes.DossierFile(change, "plan.md"))!;
-        var path = Path.GetFullPath(Path.Combine(dossier, item.TaskPath.Replace('/', Path.DirectorySeparatorChar)));
-        var expectedRoot = Path.GetFullPath(Path.Combine(dossier, "agent-tasks")) + Path.DirectorySeparatorChar;
-        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-        if (!path.StartsWith(expectedRoot, comparison) || !File.Exists(path))
+        var path = SafeTaskPath(dossier, item.TaskPath);
+        if (path is null || CisPathSafety.ContainsReparsePoint(change.RepositoryPath, path)
+            || !File.Exists(path) || new FileInfo(path).Length > 512 * 1024)
         {
-            errors.Add($"{item.Id} durable task document is missing or outside agent-tasks: {item.TaskPath}");
+            errors.Add($"{item.Id} durable task document is missing, unsafe, outside agent-tasks or exceeds 512 KiB: {item.TaskPath}");
             return;
         }
 
         var content = File.ReadAllText(path);
+        try
+        {
+            if (TaskMetadata<string>(content, "task_id") != item.Id
+                || TaskMetadata<string>(content, "task_type") != item.TaskTypeKey
+                || TaskMetadata<string>(content, "task_type_version") != item.TaskTypeVersion)
+                errors.Add($"{item.Id} task document identity/type/version does not match its canonical plan contract.");
+        }
+        catch (InvalidDataException error) { errors.Add($"{item.Id}: {error.Message}"); }
         foreach (var required in new[]
                  {
                      $"task_id: {item.Id}", $"task_type: {item.TaskTypeKey}", "## Objective", "## Required changes", "## Required outputs", "## Constraints and exclusions",
@@ -2303,7 +2300,7 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
         ChangeDossier change,
         IReadOnlyList<PlanWorkItem> previousItems,
         IReadOnlyList<PlanWorkItem> currentItems,
-        PlanSource source)
+        PlanSource? source)
     {
         var currentIds = currentItems.Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
         var changed = false;
@@ -2311,14 +2308,29 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
         {
             var dossier = Path.GetDirectoryName(_changes.DossierFile(change, "plan.md"))!;
             var activePath = SafeTaskPath(dossier, obsolete.TaskPath!);
-            if (activePath is null || !File.Exists(activePath)) continue;
+            if (activePath is null || CisPathSafety.ContainsReparsePoint(change.RepositoryPath, activePath))
+                throw new InvalidDataException($"Task {obsolete.Id} has an unsafe retained task path.");
+            if (!File.Exists(activePath)) continue;
             var relativeWithinTasks = obsolete.TaskPath!["agent-tasks/".Length..];
             var retiredRelative = "agent-tasks/retired/" + relativeWithinTasks;
-            var retiredPath = SafeTaskPath(dossier, retiredRelative)!;
+            var retiredPath = SafeTaskPath(dossier, retiredRelative);
+            if (retiredPath is null || CisPathSafety.ContainsReparsePoint(change.RepositoryPath, retiredPath))
+                throw new InvalidDataException($"Task {obsolete.Id} requires an unlinked retirement path inside its dossier.");
             retiredPath = AvailableRetiredPath(retiredPath);
+            if (CisPathSafety.ContainsReparsePoint(change.RepositoryPath, retiredPath))
+                throw new InvalidDataException($"Task {obsolete.Id} has an unsafe retirement destination.");
             Directory.CreateDirectory(Path.GetDirectoryName(retiredPath)!);
+            if (CisPathSafety.ContainsReparsePoint(change.RepositoryPath, retiredPath))
+                throw new InvalidDataException($"Task {obsolete.Id} retirement path changed before the move.");
             File.Move(activePath, retiredPath);
             var retired = File.ReadAllText(retiredPath);
+            if (source is null)
+            {
+                // The row leaves the active plan. Retain its exact scalar contract in
+                // the same task document, without reconstructing it from authored prose.
+                retired = ReplaceFrontMatter(retired, "ad_hoc_acceptance_criteria", JsonSerializer.Serialize(obsolete.AcceptanceCriteria));
+                retired = ReplaceFrontMatter(retired, "ad_hoc_validation", JsonSerializer.Serialize(obsolete.Validation));
+            }
             retired = ReplaceFrontMatter(retired, "status", "Archived");
             retired = ReplaceFrontMatter(retired, "task_status", "Retired");
             retired = AppendRetirementHistory(retired, source);
@@ -2330,8 +2342,8 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
                 ["taskId"] = obsolete.Id,
                 ["previousPath"] = obsolete.TaskPath!,
                 ["retiredPath"] = actualRelative,
-                ["sourceSha256"] = source.Sha256,
-                ["reason"] = "Task is no longer selected by the re-imported feature specification.",
+                ["sourceSha256"] = source?.Sha256 ?? change.GraphBuildId,
+                ["reason"] = source is null ? "Task is no longer selected by the accepted ad hoc impacts." : "Task is no longer selected by the re-imported feature specification.",
             });
             changed = true;
         }
@@ -2361,14 +2373,16 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
         return true;
     }
 
-    private string AppendRetirementHistory(string content, PlanSource source)
+    private string AppendRetirementHistory(string content, PlanSource? source)
     {
         const string heading = "## Retirement history";
         if (!content.Contains(heading, StringComparison.Ordinal))
             content = content.TrimEnd() + Environment.NewLine + Environment.NewLine + heading + Environment.NewLine + Environment.NewLine
                 + "| Timestamp UTC | Actor | Source digest | Rationale |" + Environment.NewLine
                 + "|---|---|---|---|" + Environment.NewLine;
-        var row = $"| {_clock().ToUniversalTime():O} | `cis plan import-spec` | `{Cell(source.Sha256)}` | Task is no longer selected by the re-imported feature specification. |";
+        var row = source is null
+            ? $"| {_clock().ToUniversalTime():O} | `cis plan build` | Not feature-sourced | Task is no longer selected by the accepted ad hoc impacts. |"
+            : $"| {_clock().ToUniversalTime():O} | `cis plan import-spec` | `{Cell(source.Sha256)}` | Task is no longer selected by the re-imported feature specification. |";
         return AppendTableRow(content, heading, row);
     }
 
@@ -2407,7 +2421,7 @@ public sealed class PlanningService : ICisEngineeringTaskContractReader
         var normalized = NormalizePath(relativePath);
         if (!normalized.StartsWith("agent-tasks/", StringComparison.Ordinal)
             || normalized.Contains("../", StringComparison.Ordinal)) return null;
-        var path = Path.GetFullPath(Path.Combine(dossier, normalized.Replace('/', Path.DirectorySeparatorChar)));
+        if (!CisPathSafety.TryResolveUnderRoot(dossier, normalized, out var path)) return null;
         var root = Path.GetFullPath(Path.Combine(dossier, "agent-tasks")) + Path.DirectorySeparatorChar;
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         return path.StartsWith(root, comparison) ? path : null;

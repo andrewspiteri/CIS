@@ -7,17 +7,24 @@ namespace Cis.Modules.Agent;
 
 public sealed partial class AgentService
 {
-    private const string AllocationScopeNotice = "Allocating work establishes authority-wide finite work accounting for every supported direct and story route. Sibling tasks will also need a canonical owner and allocated capacity, which may be inherited; this does not adopt engineering quality policy.";
+    private const string AllocationScopeNotice = "Allocating work establishes authority-wide finite work accounting for every supported direct, story and native route. Sibling tasks will also need a canonical owner and allocated capacity, which may be inherited; this does not adopt engineering quality policy.";
 
     public CisAgentWorkResult AllocateWork(string repositoryPath, string changeId, string inputPath, string actor, string reason)
+        => AllocateWork(repositoryPath, changeId, inputPath, actor, reason, adoptAccounting: false);
+
+    public CisAgentWorkResult AllocateWork(string repositoryPath, string changeId, string inputPath, string actor, string reason,
+        bool adoptAccounting)
     {
         var context = Resolve(repositoryPath, out var diagnostics);
         if (context is null) return WorkFailure(diagnostics);
         try
         {
-            if (!WorkRequired(context) && !RegisteredParticipantWorkRequired(context) && !_workLedger.HasCorrectionHistory(context))
-                return WorkFailure(["Work allocation requires applicable adopted controls or retained story correction history. A provider profile alone does not opt a minimal repository into accounting."]);
+            var requiresAdoption = !WorkRequired(context) && !RegisteredParticipantWorkRequired(context) && !_workLedger.HasCorrectionHistory(context);
+            if (requiresAdoption && !adoptAccounting)
+                return WorkFailure(["Work allocation requires applicable adopted controls, retained story correction history, or explicit --adopt-accounting for authorized accounting-only first use. A provider profile alone does not opt a minimal repository into accounting."]);
             var request = ReadWorkInput<CisAgentWorkAllocationRequest>(context, inputPath);
+            if (requiresAdoption && request.Storage is null)
+                return WorkFailure(["Accounting-only first use requires a finite Storage policy with MaximumBytes and explicit owned Roots; a storage-ceiling reference alone grants no capacity."]);
             if (request.Tasks is null || request.Tasks.Count is < 1 or > 1000)
                 return WorkFailure(["Supply a bounded list of canonical task allocations."]);
             var identities = request.Tasks.Select(task => WorkIdentity(context, changeId, task.TaskId, diagnostics, accountingOnly: true)).ToArray();

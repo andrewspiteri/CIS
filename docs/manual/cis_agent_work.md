@@ -3,7 +3,7 @@ title: "cis agent work"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-11-08"
+last_reviewed: "2026-11-10"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-agent-work
@@ -15,7 +15,7 @@ Allocate the work allowed for a change and its logical tasks, inspect consumptio
 
 ## Scope and authority
 
-Direct `agent run`, direct-task `agent resume` and governed story stages require work accounting under applicable adopted engineering defaults (`requireTaskCompletion: true`) or existing authority-owned accounting. Story control applies when the authority or a linked owned target has adopted it; an unconfigured target does not exempt the shared work. An exact registered owned participant's controls permit allocation at an authority that has no engineering quality policy. Retained story correction history also permits an authorized finite allocation against existing approved canonical work.
+Direct `agent run`, direct-task `agent resume` and governed story stages require work accounting under applicable adopted engineering defaults (`requireTaskCompletion: true`) or existing authority-owned accounting. Story control applies when the authority or a linked owned target has adopted it; an unconfigured target does not exempt the shared work. An exact registered owned participant's controls permit allocation at an authority that has no engineering quality policy. Retained story correction history also permits an authorized finite allocation against existing approved canonical work. A fresh minimal authority can explicitly adopt accounting alone with `agent work allocate --adopt-accounting`, using that same approved canonical ownership and an authorized finite allocation.
 
 Establishing that allocation adopts work accounting across the authority: every supported direct-task and story route then needs its canonical owner and applicable finite allocation, including sibling tasks with no correction history or engineering quality policy. Allocating one task grants no capacity to another. This adopts work accounting, not engineering quality policy, and grants no plan, design or completion approval. A provider profile alone does not adopt accounting. Authorities without adopted accounting or applicable engineering defaults retain their existing non-adopted execution boundaries. Product-document authoring and import operations retain their dedicated flows.
 
@@ -43,6 +43,7 @@ The two automatic correction rounds are durable under the story relationship. A 
 
 ```text
 cis agent work allocate <change-id> --input <allocation.json> --actor <identity> --reason <rationale>
+cis agent work allocate <change-id> --adopt-accounting --input <finite-allocation.json> --actor <allocation-authority> --reason <decision-rationale>
 cis agent work amend-time <change-id> <owner-task-id> --input <amendment.json> --actor <original-authority> --reason <rationale>
 cis agent work status <change-id> [--task <task-id>]
 cis agent work progress <change-id> <task-id> --input <checkpoint.json> --actor <identity>
@@ -54,6 +55,10 @@ These commands accept `--repo <authority-path>` and `--format <human|json|agent>
 ### Allocate
 
 Allocation values describe active time in seconds and logical-attempt limits. CIS reports measured capacity in milliseconds. A logical attempt is a bounded hypothesis investigation or planned delivery step; a provider invocation, command, or expected failing development test is not automatically a new logical attempt.
+
+Use `--adopt-accounting` for explicitly authorized first use when no applicable adopted controls or retained correction history exists. The request must include finite `storage.maximumBytes`, explicit owned `storage.roots` and any restoration reserve, as well as the ordinary task/change bounds, actor/reason, decision references and historical-unknown acknowledgment. A storage reference alone is insufficient for this route. The flag is a command option, not an allocation-JSON property. It does not approve a plan, accept impacts, make a task eligible or supply allocation authority.
+
+This adopts accounting across supported direct, story and native routes in the authority: sibling tasks need their own canonical ownership and capacity, or legitimate inherited capacity. It does not enable `requireTaskCompletion`, completion thresholds or another engineering-quality policy. Once accounting exists, omit the first-use option on ordinary updates; repeating it cannot reset consumption, history, reservations, original limits, uncertainty or revision checks. Missing/corrupt adopted state and historical governed-run references still require restoration/reconciliation through existing controls. The same ledger, adoption reference and transaction lock are used; no cross-file atomicity guarantee is added.
 
 The first allocation supplies:
 

@@ -12,15 +12,18 @@ public sealed partial class AgentModule
         var allocate = new Command("allocate", "Establish or update an authorized change and task allocation without resetting consumption.");
         var allocationChange = new Argument<string>("change-id");
         var allocationInput = Required("--input"); var allocationActor = Required("--actor"); var allocationReason = Required("--reason");
+        var adoptAccounting = new Option<bool>("--adopt-accounting")
+        { Description = "Explicitly adopt authority-wide finite accounting for a fresh minimal repository using approved canonical work and finite storage; does not adopt engineering quality policy." };
         var allocationRepo = Repo(); var allocationFormat = Format();
         allocate.Arguments.Add(allocationChange);
-        foreach (var option in new Option[] { allocationInput, allocationActor, allocationReason, allocationRepo, allocationFormat }) allocate.Options.Add(option);
+        foreach (var option in new Option[] { allocationInput, allocationActor, allocationReason, adoptAccounting, allocationRepo, allocationFormat }) allocate.Options.Add(option);
         allocate.SetAction(result =>
         {
             var format = result.GetValue(allocationFormat)!;
             if (!WorkFormatSupported(format)) return 2;
             return RenderWork(service.AllocateWork(result.GetValue(allocationRepo)!, result.GetValue(allocationChange)!,
-                result.GetValue(allocationInput)!, result.GetValue(allocationActor)!, result.GetValue(allocationReason)!), format);
+                result.GetValue(allocationInput)!, result.GetValue(allocationActor)!, result.GetValue(allocationReason)!,
+                result.GetValue(adoptAccounting)), format);
         });
         group.Subcommands.Add(allocate);
 

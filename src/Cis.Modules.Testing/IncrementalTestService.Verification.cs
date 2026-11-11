@@ -12,8 +12,11 @@ public sealed partial class IncrementalTestService
         try
         {
             Require(options.RefinementProfilePaths is null or { Length: <= 32 }, "At most 32 explicit rerun profiles are supported.");
-            var runOptions = new IncrementalTestOptions(options.RepositoryPath, options.ProfilePath);
+            var runOptions = new IncrementalTestOptions(options.RepositoryPath, options.ProfilePath, options.Layer);
             var input = Read(runOptions);
+            var wantMutation = options.Layer != "unit" && input.Profile.MutationCommand is not null;
+            Require(wantMutation || options.RefinementProfilePaths is null or { Length: 0 },
+                "Unit-only verification does not apply mutation refinement credits.");
             var leasePath = Safe(input.Repository, MutationRunService.LocalRoot + "/run.lock");
             // Existing native invocations use this lease. Verification never creates a cache or lock file.
             using var lease = File.Exists(leasePath) ? new FileStream(leasePath, FileMode.Open, FileAccess.Read, FileShare.None) : null;
@@ -23,7 +26,7 @@ public sealed partial class IncrementalTestService
             Require(!state.RecoveryRequired && state.ActiveExecutionUntilUtc is null,
                 "Native work or baseline recovery remains active.");
             var selection = Select(input, state, false);
-            Require(selection.Batches.All(batch => batch.UnitCurrent && (input.Profile.MutationCommand is null || batch.MutationCurrent)),
+            Require(selection.Batches.All(batch => batch.UnitCurrent && (!wantMutation || batch.MutationCurrent)),
                 "Every declared source requires completed current unit and configured mutation evidence.");
             var sources = new List<(Input Input, IncrementalTestState State, Selection Selection, string StateHash)>
                 { (input, state, selection, HashFile(input.StatePath)) };
@@ -32,14 +35,14 @@ public sealed partial class IncrementalTestService
             {
                 var saved = state.Batches[batch.Id];
                 VerifyRefinementUnit(input, batch, saved.Unit!);
-                if (input.Profile.MutationCommand is null) continue;
+                if (!wantMutation) continue;
                 VerifyFullFile(input, batch);
                 VerifyRefinementStage(input, batch, saved.Mutation!);
                 var native = ReadRefinementReport(input, batch, saved.Mutation!);
                 VerifyKilledDefinitions(native);
                 measured.Add(batch.SourceFile, ReadMutation(input, batch.SourceFile, Safe(input.Root, saved.Mutation!.ReportPath)).Mutation!);
             }
-            if (input.Profile.MutationCommand is not null)
+            if (wantMutation)
             {
                 Require(measured.Single(pair => PathComparer.Equals(Safe(input.Repository, pair.Key),
                     Safe(input.Repository, input.Profile.CanarySourceFile!))).Value.Killed >= input.Profile.MinimumCanaryKills,
@@ -95,14 +98,6 @@ public sealed partial class IncrementalTestService
                 {
                     foreach (var file in batch.TestFiles) AddInput(Safe(input.Repository, file), "test");
                     foreach (var file in batch.DependencyFiles) AddInput(Safe(input.Repository, file), "dependency");
-                    var saved = source.State.Batches[batch.Id];
-                    var stages = source.Input.Profile.MutationCommand is null ? new[] { saved.Unit } : new[] { saved.Unit, saved.Mutation };
-                    foreach (var stage in stages.Where(item => item is not null))
-                        foreach (var history in stage!.ProducerRevalidations)
-                        {
-                            AddInput(history.PreviousTestingAssemblyPath, "producer-history");
-                            AddInput(history.PreviousHelperAssemblyPath, "producer-history");
-                        }
                 }
             }
             AddInput(typeof(IncrementalTestService).Assembly.Location, "producer");
@@ -122,7 +117,7 @@ public sealed partial class IncrementalTestService
                 closures.TryAdd(closure.Id, closure);
                 var saved = state.Batches[batch.Id];
                 var unit = saved.Unit!;
-                var mutation = input.Profile.MutationCommand is null ? null : saved.Mutation!;
+                var mutation = wantMutation ? saved.Mutation! : null;
                 var unitPath = Safe(input.Root, unit.ReportPath);
                 var mutationPath = mutation is null ? null : Safe(input.Root, mutation.ReportPath);
                 var executions = new List<IncrementalEvidenceExecution> { EvidenceExecution("unit", unit.Execution!) };
@@ -141,7 +136,7 @@ public sealed partial class IncrementalTestService
                     executions.ToArray())
                 { FullPostflightReceiptVerified = mutation is not null });
             }
-            var raw = input.Profile.MutationCommand is null ? null : Counts(measured.Values.Sum(item => item.Killed),
+            var raw = !wantMutation ? null : Counts(measured.Values.Sum(item => item.Killed),
                 measured.Values.Sum(item => item.Survived), measured.Values.Sum(item => item.TimedOut),
                 measured.Values.Sum(item => item.NoCoverage), measured.Values.Sum(item => item.Denominator));
             var effective = raw is null ? null : Counts(raw.Killed + credits.Count, raw.Survived,
@@ -150,11 +145,11 @@ public sealed partial class IncrementalTestService
             // Reread mutable source, graph selection, cache state and immutable reports before publishing a receipt.
             foreach (var source in sources)
             {
-                var fresh = Read(new(input.Repository, Relative(input.Repository, source.Input.ProfilePath)));
+                var fresh = Read(new(input.Repository, Relative(input.Repository, source.Input.ProfilePath), source.Input.Layer));
                 Require(fresh.CommonIdentity == source.Input.CommonIdentity && HashFile(fresh.StatePath) == source.StateHash,
                     "Inputs or cache state changed during verification.");
                 var current = Select(fresh, State(fresh), false);
-                Require(current.Batches.All(batch => batch.UnitCurrent && (fresh.Profile.MutationCommand is null || batch.MutationCurrent))
+                Require(current.Batches.All(batch => batch.UnitCurrent && (!wantMutation || batch.MutationCurrent))
                     && HashObject(current.Batches) == HashObject(source.Selection.Batches),
                     "Graph selection, fingerprints or reports changed during verification.");
             }
@@ -163,12 +158,13 @@ public sealed partial class IncrementalTestService
             var receipt = new IncrementalEvidenceResult("verified", 0)
             {
                 ProfileId = input.Profile.Id,
+                Layer = options.Layer,
                 ProfilePath = Relative(input.Repository, input.ProfilePath),
                 ProfileSha256 = input.ProfileHash,
                 GraphBuildId = selection.Snapshot.Graph!.Build.Id,
                 RuntimeIdentifier = RuntimeInformation.RuntimeIdentifier,
                 OsDescription = RuntimeInformation.OSDescription,
-                EnvironmentSha256 = HashObject(new { inherited = AmbientEnvironmentIdentity(input.Profile, false), declared = input.Profile.Environment }),
+                EnvironmentSha256 = HashObject(new { inherited = AmbientEnvironmentIdentity(input.Profile, false, ignoreOverriddenTemporary: true), declared = input.Profile.Environment }),
                 TestingProducerSha256 = HashFile(typeof(IncrementalTestService).Assembly.Location),
                 HelperProducerSha256 = HashFile(typeof(CisProcessJob).Assembly.Location),
                 VerifiedUtc = DateTimeOffset.UtcNow,
@@ -181,7 +177,7 @@ public sealed partial class IncrementalTestService
                 Batches = batches,
                 Refinements = refinements,
                 Credits = credits.Values.ToArray(),
-                Diagnostics = [input.Profile.MutationCommand is null ? "Current declared unit scope verified. Release qualification remains separate."
+                Diagnostics = [!wantMutation ? "Current declared unit scope verified. Release qualification remains separate."
                     : "Current declared-scope evidence verified. Historical postflight XML is not retained; full-filter native postflight receipts were checked. Release qualification remains separate."],
             };
             Require(JsonSerializer.SerializeToUtf8Bytes(receipt, Json).Length <= 1024 * 1024,

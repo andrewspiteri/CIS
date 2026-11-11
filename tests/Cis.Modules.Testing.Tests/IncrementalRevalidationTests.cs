@@ -50,7 +50,7 @@ public sealed class IncrementalRevalidationTests
             var attempted = service.Run(options, 0, TestContext.Current.CancellationToken);
             competing = attempted;
             Assert.Equal(4, attempted.ExitCode);
-            Assert.Equal(parent.Reference.ExecutionId, attempted.WorkReference!.ParentExecutionId);
+            Assert.Null(attempted.WorkReference); // The exclusive lease rejects before governed admission.
             Assert.Equal(0, attempted.ExecutedUnitBatches);
             Assert.Contains(attempted.Diagnostics, diagnostic => diagnostic.Contains("run.lock", StringComparison.Ordinal));
             // Failure to acquire the native lease cannot publish a failure over
@@ -200,7 +200,7 @@ public sealed class IncrementalRevalidationTests
     }
 
     [Fact]
-    public void RevalidationRequiresReviewReasonAndInstalledProducer()
+    public void RevalidationRequiresReviewReasonAndRejectsTargetRepositoryDiscoveryFiles()
     {
         using var fixture = new IncrementalTestServiceTests.Fixture();
         var service = new IncrementalTestService(fixture);

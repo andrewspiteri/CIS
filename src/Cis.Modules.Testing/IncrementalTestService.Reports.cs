@@ -108,6 +108,11 @@ public sealed partial class IncrementalTestService
         }
         return new(fingerprint, completed ? "completed" : "failed", completed, relative, hash, execution,
             assessment?.Total ?? 0, assessment?.Passed ?? 0, assessment?.Failed ?? 0, assessment?.Skipped ?? 0,
-            assessment?.Mutation, DateTimeOffset.UtcNow, diagnostics.Concat(assessment?.Diagnostics ?? []).ToArray());
+            assessment?.Mutation, DateTimeOffset.UtcNow, diagnostics.Concat(assessment?.Diagnostics ?? []).ToArray())
+        {
+            AssessmentContractVersion = CisIncrementalResultContract.Version,
+            TestingProducerSha256 = HashFile(typeof(IncrementalTestService).Assembly.Location),
+            HelperProducerSha256 = execution.CisToolAssemblySha256,
+        };
     }
 }

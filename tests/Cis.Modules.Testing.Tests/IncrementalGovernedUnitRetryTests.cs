@@ -145,7 +145,7 @@ public sealed class IncrementalGovernedUnitRetryTests
 
     // Compose the existing graph/native fixture with the real work and storage
     // authority. Only the crash point between stop and marker publication is injected.
-    private sealed class GovernedUnitFixture : IDisposable
+    internal sealed class GovernedUnitFixture : IDisposable
     {
         public IncrementalTestServiceTests.Fixture Native { get; } = new();
         public AgentService Controller { get; }

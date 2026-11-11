@@ -15,10 +15,11 @@ public sealed partial class IncrementalTestService
         "CODEX_TOOL_CALL_ID", "CODEX_APP_TOOLS_PIPE_PATH",
     ];
 
-    private static string AmbientEnvironmentIdentity(IncrementalTestProfile profile, bool legacy)
+    private static string AmbientEnvironmentIdentity(IncrementalTestProfile profile, bool legacy, bool ignoreOverriddenTemporary = false)
     {
         var omitted = (legacy ? [] : SessionEnvironmentNames.Concat(profile.Environment.Keys))
             .Concat(CisNativeWorkEnvironment.Keys).ToHashSet(PathComparer);
+        if (ignoreOverriddenTemporary) omitted.UnionWith(["TEMP", "TMP", "TMPDIR"]);
         // Work coordinates authorize this invocation; they do not change the native
         // source/test/configuration identity. Keep them available for validated launch.
         // Only a combined digest is retained; inherited values may include credentials.
@@ -31,7 +32,7 @@ public sealed partial class IncrementalTestService
     internal static string PilotEnvironmentIdentity(Dictionary<string, string> declared)
         => HashObject(new
         {
-            ambient = AmbientEnvironmentIdentity(new IncrementalTestProfile { Environment = declared }, false),
+            ambient = AmbientEnvironmentIdentity(new IncrementalTestProfile { Environment = declared }, false, ignoreOverriddenTemporary: true),
             declared = declared.OrderBy(pair => pair.Key, StringComparer.Ordinal).ToArray(),
         });
 

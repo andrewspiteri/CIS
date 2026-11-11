@@ -123,6 +123,9 @@ is their working directory and `SHLVL` is `0`. Explicit profile environment valu
 override these defaults and remain pinned inputs. Other inherited variables,
 including `PATH` and `SSH_AUTH_SOCK`, remain identity inputs unless the profile
 overrides them. Inherited values are hashed, never saved in reports.
+Ambient `TEMP`, `TMP` and `TMPDIR` are also excluded because the native executor
+replaces them with its owned temporary directory. Explicit profile values remain
+material and are honored by execution.
 `CODEX_TOOL_CALL_ID` and `CODEX_APP_TOOLS_PIPE_PATH` are also canonicalized to empty
 as invocation bookkeeping; explicitly declared profile overrides remain material.
 
@@ -150,12 +153,21 @@ assertion quality. Review reflection, dynamic dispatch and process boundaries wh
 choosing scope and tests. Stryker's native coverage analysis remains responsible
 for test-to-mutant coverage during execution.
 
-Reuse checks relevant source and test bytes, dependency relationships, graph
-schema/extractors, the whole profile, declared configuration and tool files, the
-installed testing/helper assemblies, platform and inherited environment identity.
-Inherited environment values are hashed and are not saved. A graph build ID change
-alone does not invalidate otherwise unchanged work. Native report hashes and parsed
-outcomes are rechecked before reuse.
+Reuse checks the parsed inputs that affect the selected stage: relevant source,
+tests and dependencies, the effective command/filter, configuration, declared
+toolchain, platform and effective environment. Unit identity excludes profile JSON
+formatting, retention/storage settings and mutation-only settings. Profile and
+mutation-only template files cannot re-enter unit identity as raw graph fallback
+dependencies. A graph build ID change alone does not invalidate unchanged work.
+Inherited environment values are hashed, never saved.
+
+Accepted stages record assessment contract version **2**. CIS producer hashes are
+retained separately as provenance; unrelated CIS assembly changes do not change a
+consumer result's identity. Status, reuse and verification apply the same current
+result checks, including native execution facts and the retained report's hash and
+parsed counts. Keep the current native report and compact input/result metadata.
+Deleting that report makes its result noncurrent. `verify --layer unit` verifies
+accepted unit scope even when the profile also describes mutation work.
 
 Native build commands must compile the declared inputs. After restoring files
 with timestamps older than existing build outputs, run a clean or forced baseline
@@ -254,31 +266,29 @@ report or refund an attempt. The normal unit retry needs no `recoveryCommand`.
 
 ### Revalidate a compatible runner update
 
-After reviewing a testing-module update for compatibility, use `revalidate` to
-preserve completed results whose other inputs still match. Supply the previous
-installed `Cis.Modules.Testing.dll` outside the target repository, with its original
-`Cis.Abstractions.dll` beside it, and record the review reason. Review compatibility
-of both assemblies. For example, correcting a false storage-scan failure leaves earlier
-completed native verdicts unchanged.
+Versioned accepted results remain reusable across compatible CIS installations
+without a manual producer transition. The assessment contract and material inputs
+must still match. Old CIS installations and chains of DLL paths are not required
+for later status, reuse or verification.
+
+`revalidate` can inspect compatible results or migrate a provable unversioned
+legacy result without running tests. Record the actual compatibility reason. The
+optional `--previous-testing-assembly` supplies original producer digests when
+legacy evidence lacks them; it is a one-time discovery input, not an installation
+retention requirement. Existing compact legacy provenance can also supply its
+digests. Missing legacy identity proof remains held rather than receiving a pass.
 
 ```text
-cis test incremental revalidate --repo <repository> --profile <relative.json> --previous-testing-assembly <absolute-previous-Cis.Modules.Testing.dll> --reason "Reviewed guard correction; native assessment rules unchanged." --format agent
+cis test incremental revalidate --repo <repository> --profile <relative.json> --reason "Reviewed compatible result assessment contract and unchanged material inputs." --format agent
 ```
 
-CIS reconstructs the previous producer's input identity, rechecks native reports
-and source, then updates eligible cache fingerprints. Reports and original native
-execution records remain unchanged. Changed inputs, failed stages, unfinished
-execution and recovery holds cannot acquire completion through this command.
-The reason records the compatibility review; CIS does not infer compatibility
-from that text. A changed result interpretation needs its own policy review.
-
-Revalidation also saves a structured producer history on each changed stage. Each
-link binds the previous and current testing/helper hashes, input fingerprints,
-unchanged report hash, environment digests and compatibility review. Histories are
-limited to eight links. Keep the reviewed previous binary pairs at their recorded
-locations while refinement still relies on their native receipts. Refinement
-rechecks those files and the complete chain; a text diagnostic alone cannot
-authorize an older helper. Refresh native results when the history limit is reached.
+CIS rechecks the native report, its original execution facts and the relevant
+inputs. Eligible legacy results acquire the current contract and compact producer
+metadata while keeping their report and native execution records unchanged.
+Versioned results do not accumulate a producer chain or require a native refresh
+after eight updates. Changed material inputs, failed/incomplete stages and unsettled
+work cannot acquire completion through compatibility text. A change in result
+interpretation requires an explicit contract-version change.
 
 For the one-time transition from the original full-environment cache identity,
 add `--legacy-session-environment` while still in the original launch environment.
@@ -286,7 +296,8 @@ Review that the earlier native work did not rely on the now-canonical session
 values, or declare required values in the profile and rerun affected work. The
 flag reconstructs the old identity before checking reports; it cannot recover a
 lost original environment or authorize reuse when other inputs changed. Later
-compatible updates use ordinary `revalidate` without this flag.
+compatible CIS updates need no manual transition. If you choose to inspect
+versioned results with `revalidate`, omit this flag.
 
 Defaults are four file batches and 1,200 seconds per invocation. The maximums are
 512 batches and 3,600 seconds. Scheduling reserves time for baseline recovery;

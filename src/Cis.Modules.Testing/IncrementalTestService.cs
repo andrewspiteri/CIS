@@ -178,8 +178,8 @@ public sealed partial class IncrementalTestService
                 {
                     state.Batches.TryGetValue(batch.Id, out var prior);
                     var mutation = options.Layer == "unit"
-                        && (prior?.Unit is null || Current(input, batch.SourceFile, prior.Unit, batch.UnitFingerprint, false))
-                        && Current(input, batch.SourceFile, prior?.Mutation, batch.MutationFingerprint, true)
+                        && (prior?.Unit is null || Current(input, batch.SourceFile, prior.Unit, batch.UnitFingerprint, false, batch.TestFilter))
+                        && Current(input, batch.SourceFile, prior?.Mutation, batch.MutationFingerprint, true, batch.TestFilter)
                         ? prior!.Mutation : null;
                     state.Batches[batch.Id] = new(batch.SourceFile, null, mutation);
                 }
@@ -196,7 +196,7 @@ public sealed partial class IncrementalTestService
                 state.Batches.TryGetValue(batch.Id, out var prior);
                 var saved = prior ?? new(batch.SourceFile, null, null);
                 var retainMutation = (batch.UnitCurrent || saved.Unit is null)
-                    && Current(input, batch.SourceFile, saved.Mutation, batch.MutationFingerprint, true);
+                    && Current(input, batch.SourceFile, saved.Mutation, batch.MutationFingerprint, true, batch.TestFilter);
                 var reserve = mutationWanted && !retainMutation ? 2 * input.Profile.RecoveryTimeoutSeconds + 10 : 0;
                 if (options.MaximumSeconds - watch.Elapsed.TotalSeconds <= reserve + 2) break;
                 attempted++;
@@ -219,7 +219,7 @@ public sealed partial class IncrementalTestService
                     if (!result.Completed || execution.SettlementErrors.Count > 0)
                     { diagnostics.AddRange(result.Diagnostics); failed = true; break; }
                 }
-                if (!mutationWanted || Current(input, batch.SourceFile, saved.Mutation, batch.MutationFingerprint, true)) continue;
+                if (!mutationWanted || Current(input, batch.SourceFile, saved.Mutation, batch.MutationFingerprint, true, batch.TestFilter)) continue;
                 if (options.MaximumSeconds - watch.Elapsed.TotalSeconds <= reserve + 2) break;
                 state = state with { RecoveryRequired = true, RecoverySourceFile = batch.SourceFile };
                 saved = saved with { Mutation = null };
@@ -228,7 +228,7 @@ public sealed partial class IncrementalTestService
                 var nativeOutput = Work(input);
                 var native = Execute(input, batch, input.Profile.MutationCommand!, nativeOutput,
                     Seconds(input, options, watch, reserve, nativeTimeoutSeconds > 0 ? nativeTimeoutSeconds : null), ref state);
-                var assessed = Assess(input, batch, true, nativeOutput, native, Unchanged(input, batch));
+                var assessed = Assess(input, batch, true, nativeOutput, native, Unchanged(input, batch, mutation: true));
                 executedMutation++;
                 rerunMutations.Add(batch.Id);
                 // A crash between native completion and recovery cannot publish a reusable mutation result.
@@ -238,7 +238,7 @@ public sealed partial class IncrementalTestService
                 var recovered = Recover(input, batch, ref state, out var recovery, out var postflight, out var passed);
                 assessed = assessed with
                 {
-                    Completed = assessed.Completed && recovered && Unchanged(input, batch),
+                    Completed = assessed.Completed && recovered && Unchanged(input, batch, mutation: true),
                     RecoveryExecution = recovery,
                     PostflightExecution = postflight,
                     PostflightPassed = passed,
@@ -357,13 +357,14 @@ public sealed partial class IncrementalTestService
         return (association, reference?.ExecutionId, recipe, false);
     }
 
-    private bool Unchanged(Input input, IncrementalTestBatch batch)
+    private bool Unchanged(Input input, IncrementalTestBatch batch, bool mutation = false)
     {
         var options = new IncrementalTestOptions(input.Repository, Relative(input.Repository, input.ProfilePath), input.Layer);
         var now = Read(options);
-        if (now.CommonIdentity != input.CommonIdentity) return false;
+        if ((mutation ? now.MutationIdentity != input.MutationIdentity : now.UnitIdentity != input.UnitIdentity)) return false;
         var selected = Select(now, new(), false).Batches.Single(item => item.Id == batch.Id);
-        return selected.UnitFingerprint == batch.UnitFingerprint && selected.MutationFingerprint == batch.MutationFingerprint;
+        return selected.UnitFingerprint == batch.UnitFingerprint
+            && (!mutation || selected.MutationFingerprint == batch.MutationFingerprint);
     }
 
     private static int Seconds(Input input, IncrementalTestOptions options, Stopwatch watch, int reserve, int? nativeOverride = null)

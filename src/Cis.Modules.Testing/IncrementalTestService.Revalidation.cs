@@ -5,7 +5,10 @@ namespace Cis.Modules.Testing;
 public sealed partial class IncrementalTestService
 {
     /// <summary>Revalidates completed cache entries after a reviewed, compatible testing-module update.</summary>
-    public IncrementalTestResult Revalidate(IncrementalTestOptions options, string previousTestingAssembly, string reason,
+    public IncrementalTestResult Revalidate(IncrementalTestOptions options, string reason)
+        => Revalidate(options, null, reason);
+
+    public IncrementalTestResult Revalidate(IncrementalTestOptions options, string? previousTestingAssembly, string reason,
         bool legacySessionEnvironment = false)
     {
         CisNativeWorkAdmission? admission = null;
@@ -19,22 +22,25 @@ public sealed partial class IncrementalTestService
             work, "native-finished", admission?.Control);
         try
         {
-            Require(reason is { Length: > 0 and <= 1024 } && !string.IsNullOrWhiteSpace(reason), "A reviewed compatibility reason is required.");
+            Require(reason is { Length: > 0 and <= 1024 } && !string.IsNullOrWhiteSpace(reason) && !reason.Contains('\0'), "A reviewed compatibility reason is required.");
             Require(!options.Force, "Cache revalidation cannot force execution.");
             admission = AdmitMetadata(options, "incremental-revalidate");
             if (!admission.Allowed) return Complete(new("held", 4) { Diagnostics = admission.Errors });
             work = admission.Scope;
             input = MetadataInput(options, work);
-            Require(Path.IsPathFullyQualified(previousTestingAssembly) && File.Exists(previousTestingAssembly)
-                && !CisPathSafety.IsUnderRoot(input.Repository, previousTestingAssembly, allowRoot: true)
-                && !CisPathSafety.ContainsReparsePoint(Path.GetPathRoot(previousTestingAssembly)!, previousTestingAssembly),
-                "The previous installed testing assembly must be an existing absolute, unlinked path outside the target repository.");
-            var oldHash = HashFile(previousTestingAssembly);
-            var previousHelper = Path.Combine(Path.GetDirectoryName(previousTestingAssembly)!, "Cis.Abstractions.dll");
-            Require(File.Exists(previousHelper) && !CisPathSafety.IsUnderRoot(input.Repository, previousHelper, allowRoot: true)
-                && !CisPathSafety.ContainsReparsePoint(Path.GetPathRoot(previousHelper)!, previousHelper),
-                "The previous installed helper must be beside the previous testing assembly.");
-            var oldHelperHash = HashFile(previousHelper);
+            // An old installed assembly is an optional legacy digest-discovery
+            // source. Modern results and retained legacy digest links need no old
+            // installation files. Never load code from the supplied file.
+            var oldHash = HashFile(typeof(IncrementalTestService).Assembly.Location);
+            if (!string.IsNullOrEmpty(previousTestingAssembly) && File.Exists(previousTestingAssembly))
+            {
+                Require(Path.IsPathFullyQualified(previousTestingAssembly)
+                    && !CisPathSafety.IsUnderRoot(input.Repository, previousTestingAssembly, allowRoot: true)
+                    && !CisPathSafety.ContainsReparsePoint(Path.GetPathRoot(previousTestingAssembly)!, previousTestingAssembly),
+                    "An explicit legacy producer discovery file must be an absolute, unlinked installed file outside the target repository.");
+                oldHash = HashFile(previousTestingAssembly);
+            }
+            var oldHelperHash = HashFile(typeof(CisProcessJob).Assembly.Location);
             var oldInput = Read(options, oldHash, oldHelperHash, legacySessionEnvironment);
             Directory.CreateDirectory(Path.GetDirectoryName(Safe(input.Repository, MutationRunService.LocalRoot + "/run.lock"))!);
             lease = new FileStream(Safe(input.Repository, MutationRunService.LocalRoot + "/run.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
@@ -45,31 +51,36 @@ public sealed partial class IncrementalTestService
             Require(state.ActiveExecutionUntilUtc is null, "An active native invocation must finish before cache revalidation.");
             var old = Select(oldInput, state, false);
             var current = Select(input, state, false);
-            var pending = old.Batches.Where(batch => state.RecoveryRequired && batch.SourceFile == state.RecoverySourceFile
-                && state.Batches.TryGetValue(batch.Id, out var saved) && RecoverableNative(oldInput, batch, saved, oldHash, oldHelperHash))
-                .Select(batch => batch.Id).ToHashSet(StringComparer.Ordinal);
-            Require(!state.RecoveryRequired || pending.Count == 1,
-                "Pending recovery requires an unchanged admissible completed native report before producer revalidation.");
+            var legacySelections = new Dictionary<string, (Input Input, Selection Selection)>(StringComparer.Ordinal);
             var units = 0;
             var mutations = 0;
             var awaitingRecovery = 0;
+            var unprovenLegacy = 0;
             foreach (var batch in current.Batches)
             {
-                var prior = old.Batches.Single(item => item.Id == batch.Id);
                 if (!state.Batches.TryGetValue(batch.Id, out var saved)) continue;
-                var diagnostic = "Compatible completed cache revalidated from testing producer " + oldHash
-                    + (legacySessionEnvironment ? " using the original full inherited environment" : "") + ": " + reason;
-                if (prior.UnitCurrent && saved.Unit is { Completed: true })
+                var unitProof = LegacyProof(saved.Unit);
+                var mutationProof = LegacyProof(saved.Mutation);
+                var unitCurrent = batch.UnitCurrent || unitProof is { } priorUnit && priorUnit.Batch.UnitCurrent;
+                var mutationCurrent = batch.MutationCurrent || mutationProof is { } priorMutation && priorMutation.Batch.MutationCurrent;
+                var recoveryProof = mutationProof ?? (input, batch);
+                var pendingRecovery = state.RecoveryRequired && batch.SourceFile == state.RecoverySourceFile
+                    && RecoverableNative(recoveryProof.Item1, recoveryProof.Item2, saved);
+                if (saved.Unit?.AssessmentContractVersion == 0 && !unitCurrent) unprovenLegacy++;
+                if (saved.Mutation?.AssessmentContractVersion == 0 && !mutationCurrent && !pendingRecovery) unprovenLegacy++;
+                var diagnostic = "Completed native report rechecked under result-assessment contract "
+                    + CisIncrementalResultContract.Version + ": " + reason;
+                if (unitCurrent && saved.Unit is { Completed: true })
                 {
                     saved = saved with { Unit = RevalidateProducer(saved.Unit, batch.UnitFingerprint) };
                     units++;
                 }
-                if (prior.UnitCurrent && prior.MutationCurrent && saved.Mutation is { Completed: true })
+                if (unitCurrent && mutationCurrent && saved.Mutation is { Completed: true })
                 {
                     saved = saved with { Mutation = RevalidateProducer(saved.Mutation, batch.MutationFingerprint) };
                     mutations++;
                 }
-                else if (pending.Contains(batch.Id))
+                else if (pendingRecovery)
                 {
                     saved = saved with { Mutation = RevalidateProducer(saved.Mutation!, batch.MutationFingerprint, false) };
                     awaitingRecovery++;
@@ -78,24 +89,45 @@ public sealed partial class IncrementalTestService
 
                 IncrementalStageResult RevalidateProducer(IncrementalStageResult stage, string fingerprint, bool addDiagnostic = true)
                 {
-                    var history = stage.ProducerRevalidations;
-                    if (stage.Fingerprint != fingerprint)
-                    {
-                        Require(history is { Length: < 8 }, "Producer revalidation history reached its eight-link limit; refresh the native stage.");
-                        history = [.. history, new(previousTestingAssembly, previousHelper, oldHash, oldHelperHash,
-                            HashFile(typeof(IncrementalTestService).Assembly.Location), HashFile(typeof(CisProcessJob).Assembly.Location),
-                            stage.Fingerprint, fingerprint, stage.ReportSha256,
-                            AmbientEnvironmentIdentity(input.Profile, legacySessionEnvironment), AmbientEnvironmentIdentity(input.Profile, false),
-                            legacySessionEnvironment, reason, DateTimeOffset.UtcNow)];
-                    }
                     return stage with
                     {
+                        AssessmentContractVersion = CisIncrementalResultContract.Version,
+                        TestingProducerSha256 = HashFile(typeof(IncrementalTestService).Assembly.Location),
+                        HelperProducerSha256 = stage.Execution!.CisToolAssemblySha256,
                         Fingerprint = fingerprint,
-                        ProducerRevalidations = history,
-                        Diagnostics = addDiagnostic ? stage.Diagnostics.Append(diagnostic).Distinct(StringComparer.Ordinal).ToArray() : stage.Diagnostics
+                        // Current material identity and original native producer
+                        // facts replace an unbounded installation transition chain.
+                        ProducerRevalidations = [],
+                        Diagnostics = addDiagnostic ? stage.Diagnostics.Where(message =>
+                            !message.StartsWith("Completed native report rechecked under result-assessment contract ", StringComparison.Ordinal)
+                            && !message.StartsWith("Compatible completed cache revalidated from testing producer ", StringComparison.Ordinal))
+                            .Append(diagnostic).ToArray() : stage.Diagnostics
                     };
                 }
+
+                (Input Input, IncrementalTestBatch Batch)? LegacyProof(IncrementalStageResult? stage)
+                {
+                    if (stage?.AssessmentContractVersion != 0) return null;
+                    if (stage.ProducerRevalidations is null) return null;
+                    var link = stage.ProducerRevalidations.LastOrDefault();
+                    var testing = link?.TestingSha256 ?? oldHash;
+                    var helper = link?.HelperSha256 ?? stage.Execution?.CisToolAssemblySha256 ?? oldHelperHash;
+                    if (!ProducerDigest(testing) || !ProducerDigest(helper)) return null;
+                    var environment = link?.EnvironmentSha256;
+                    var legacyEnvironment = link is null && legacySessionEnvironment;
+                    var key = testing + ":" + helper + ":" + environment + ":" + legacyEnvironment;
+                    if (!legacySelections.TryGetValue(key, out var proof))
+                    {
+                        var priorInput = link is null && testing == oldHash && helper == oldHelperHash
+                            ? oldInput : Read(options, testing, helper, legacyEnvironment, environment);
+                        proof = (priorInput, ReferenceEquals(priorInput, oldInput) ? old : Select(priorInput, state, false));
+                        legacySelections.Add(key, proof);
+                    }
+                    return (proof.Input, proof.Selection.Batches.Single(item => item.Id == batch.Id));
+                }
             }
+            Require(!state.RecoveryRequired || awaitingRecovery == 1,
+                "Pending recovery requires an unchanged admissible completed native report before producer revalidation.");
             // Reports and native execution records are unchanged. Failed/incomplete results stay held.
             Save(input, state);
             var final = Select(Read(options), state, false);
@@ -106,7 +138,8 @@ public sealed partial class IncrementalTestService
                 RetainedBytes = Bytes(input.Storage),
                 WorkReference = admission.Reference,
                 WorkCoverage = admission.Coverage,
-                Diagnostics = [$"Revalidated {units} unit and {mutations} mutation results; {awaitingRecovery} completed native reports still await recovery. {reason}"],
+                Diagnostics = [$"Revalidated {units} unit and {mutations} mutation results; {awaitingRecovery} completed native reports still await recovery. {reason}",
+                    .. (unprovenLegacy == 0 ? Array.Empty<string>() : new[] { $"{unprovenLegacy} legacy stages remain pending because their original inputs could not be verified. Their reports are retained; establish that input identity or rerun only the unverified scope within the existing allocation." })],
             };
             SaveLatest(input, result);
             return Complete(result);

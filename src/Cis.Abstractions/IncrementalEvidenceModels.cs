@@ -2,7 +2,10 @@ namespace Cis.Abstractions;
 
 /// <summary>Verify current saved native evidence without executing tests or changing the cache.</summary>
 public sealed record IncrementalEvidenceOptions(string RepositoryPath, string ProfilePath,
-    string[]? RefinementProfilePaths = null);
+    string[]? RefinementProfilePaths = null)
+{
+    public string Layer { get; init; } = "all";
+}
 
 public sealed record IncrementalEvidenceInput(string Path, string Sha256, string[] Roles);
 
@@ -40,6 +43,8 @@ public sealed record IncrementalEvidenceReportPin(string SourceFile, string Role
 /// <summary>A current declared-scope receipt. Release scope and acceptance remain the receiver's decision.</summary>
 public sealed record IncrementalEvidenceResult(string Status, int ExitCode)
 {
+    public int AssessmentContractVersion => CisIncrementalResultContract.Version;
+    public string Layer { get; init; } = "all";
     public int SchemaVersion => 1;
     public string Policy => "cis-incremental-evidence-v1";
     public bool Qualified => false;

@@ -251,9 +251,7 @@ public sealed partial class IncrementalTestService
         foreach (var phase in new[] { (stage.RecoveryExecution!, input.Profile.RecoveryCommand!), (stage.PostflightExecution!, input.Profile.UnitCommand) })
         {
             var producer = phase.Item1.CisToolAssemblySha256;
-            Require(producer == helper || producer == HashFile(typeof(CisProcessJob).Assembly.Location)
-                || stage.ProducerRevalidations.Any(link => link.PreviousHelperSha256 == producer),
-                "Recovery/postflight helper is outside the verified producer history.");
+            Require(ProducerDigest(producer), "Recovery/postflight producer metadata is missing or malformed.");
             VerifyRefinementCommand(input, batch, phase.Item1, phase.Item2, true, producer!);
         }
     }
@@ -296,11 +294,29 @@ public sealed partial class IncrementalTestService
     private string RefinementProducer(Input input, IncrementalTestBatch batch, IncrementalStageResult stage, bool mutation = true,
         string? expectedTesting = null, string? expectedHelper = null)
     {
+        if (stage.AssessmentContractVersion == CisIncrementalResultContract.Version)
+        {
+            Require(ProducerDigest(stage.TestingProducerSha256) && ProducerDigest(stage.HelperProducerSha256)
+                && stage.Execution?.CisToolAssemblySha256 == stage.HelperProducerSha256,
+                "Accepted result producer metadata is missing or disagrees with its native execution.");
+            // Producer bytes are provenance, not consumer test inputs. The current
+            // contract rechecks native facts and the retained report without needing
+            // the installation that originally produced them.
+            return stage.HelperProducerSha256!;
+        }
+        Require(stage.AssessmentContractVersion == 0 && input.LegacyIdentity,
+            "This saved result needs a supported assessment-contract revalidation before reuse.");
         var history = stage.ProducerRevalidations;
-        Require(history is { Length: <= 8 }, "Producer revalidation history is missing or exceeds eight links.");
-        var testing = expectedTesting ?? HashFile(typeof(IncrementalTestService).Assembly.Location);
-        var helper = expectedHelper ?? HashFile(typeof(CisProcessJob).Assembly.Location);
-        if (history.Length == 0) return helper;
+        Require(history is not null, "Producer revalidation history is missing.");
+        var testing = expectedTesting ?? input.LegacyTestingProducer;
+        var helper = expectedHelper ?? input.LegacyHelperProducer;
+        Require(ProducerDigest(testing) && ProducerDigest(helper), "The legacy result's retained producer identities are unavailable.");
+        if (history!.Length == 0)
+        {
+            Require(stage.Execution?.CisToolAssemblySha256 == helper,
+                "The legacy native helper does not match its retained material-input identity.");
+            return helper!;
+        }
         var options = new IncrementalTestOptions(input.Repository, Relative(input.Repository, input.ProfilePath));
         IncrementalProducerRevalidation? prior = null;
         foreach (var link in history)
@@ -311,36 +327,35 @@ public sealed partial class IncrementalTestService
                 "Producer revalidation does not bind this completed native report and compatibility review.");
             foreach (var digest in new[] { link.PreviousTestingSha256, link.PreviousHelperSha256, link.TestingSha256, link.HelperSha256,
                 link.PreviousFingerprint, link.Fingerprint, link.PreviousEnvironmentSha256, link.EnvironmentSha256 })
-                Require(digest is not null && Regex.IsMatch(digest, @"\A[a-f0-9]{64}\z", RegexOptions.CultureInvariant),
+                Require(ProducerDigest(digest),
                     "Producer revalidation has a malformed identity digest.");
-            foreach (var artifact in new[] { (link.PreviousTestingAssemblyPath, link.PreviousTestingSha256),
-                (link.PreviousHelperAssemblyPath, link.PreviousHelperSha256) })
-                Require(Path.IsPathFullyQualified(artifact.Item1) && File.Exists(artifact.Item1)
-                    && !CisPathSafety.IsUnderRoot(input.Repository, artifact.Item1, allowRoot: true)
-                    && !CisPathSafety.ContainsReparsePoint(Path.GetPathRoot(artifact.Item1)!, artifact.Item1)
-                    && HashFile(artifact.Item1) == artifact.Item2, "The reviewed previous producer binary is missing, linked or changed.");
-            Require(PathComparer.Equals(link.PreviousHelperAssemblyPath,
-                Path.Combine(Path.GetDirectoryName(link.PreviousTestingAssemblyPath)!, "Cis.Abstractions.dll")),
-                "Previous producer binaries do not form the reviewed testing/helper pair.");
             if (prior is not null)
                 Require(link.PreviousFingerprint == prior.Fingerprint && link.PreviousTestingSha256 == prior.TestingSha256
                     && link.PreviousHelperSha256 == prior.HelperSha256 && link.VerifiedUtc >= prior.VerifiedUtc,
                     "Producer revalidation chain is disconnected.");
-            var oldInput = Read(options, link.PreviousTestingSha256, link.PreviousHelperSha256,
-                link.LegacySessionEnvironment, link.PreviousEnvironmentSha256);
-            var newInput = Read(options, link.TestingSha256, link.HelperSha256, false, link.EnvironmentSha256);
-            var oldBatch = Select(oldInput, new(), false).Batches.Single(item => item.Id == batch.Id);
-            var newBatch = Select(newInput, new(), false).Batches.Single(item => item.Id == batch.Id);
-            Require((mutation ? oldBatch.MutationFingerprint : oldBatch.UnitFingerprint) == link.PreviousFingerprint
-                && (mutation ? newBatch.MutationFingerprint : newBatch.UnitFingerprint) == link.Fingerprint,
-                "Producer revalidation fingerprints do not match the unchanged current source and input graph.");
             prior = link;
         }
         Require(prior!.Fingerprint == stage.Fingerprint && prior.TestingSha256 == testing && prior.HelperSha256 == helper
             && prior.EnvironmentSha256 == AmbientEnvironmentIdentity(input.Profile, false),
             "Producer revalidation does not reach the current testing/helper inputs.");
+        // Validate the connected history's endpoints against current material input
+        // bytes. Intermediate producer transitions do not require installed DLLs or
+        // repeated graph reads, and cannot impose a native-refresh counter.
+        var first = history[0];
+        var original = Read(options, first.PreviousTestingSha256, first.PreviousHelperSha256,
+            first.LegacySessionEnvironment, first.PreviousEnvironmentSha256);
+        var latest = Read(options, prior.TestingSha256, prior.HelperSha256, false, prior.EnvironmentSha256);
+        var originalBatch = Select(original, new(), false).Batches.Single(item => item.Id == batch.Id);
+        var latestBatch = Select(latest, new(), false).Batches.Single(item => item.Id == batch.Id);
+        Require((mutation ? originalBatch.MutationFingerprint : originalBatch.UnitFingerprint) == first.PreviousFingerprint
+            && (mutation ? latestBatch.MutationFingerprint : latestBatch.UnitFingerprint) == prior.Fingerprint
+            && stage.Execution?.CisToolAssemblySha256 == first.PreviousHelperSha256,
+            "Producer revalidation fingerprints do not match the unchanged current source and input graph.");
         return history[0].PreviousHelperSha256;
     }
+
+    private static bool ProducerDigest(string? digest)
+        => digest is not null && Regex.IsMatch(digest, @"\A[a-f0-9]{64}\z", RegexOptions.CultureInvariant);
 
     private static RefinementReport ReadRefinementReport(Input input, IncrementalTestBatch batch, IncrementalStageResult stage)
     {

@@ -14,7 +14,7 @@ public sealed partial class IncrementalTestService
             || stage.Fingerprint != batch.MutationFingerprint || stage.Diagnostics.Contains(ChangedExecutionInputs, StringComparer.Ordinal)
             || stage.Execution is not { Status: "exited", ExitCode: 0 or 2, Error: null, OutputTruncated: false }
             || saved.Unit is not { Execution: { } unitExecution } || !Healthy(unitExecution)
-            || !Current(input, batch.SourceFile, saved.Unit, batch.UnitFingerprint, false)) return false;
+            || !Current(input, batch.SourceFile, saved.Unit, batch.UnitFingerprint, false, batch.TestFilter)) return false;
         // A completed healthy recovery on a failed native stage is not a recovery-only failure.
         if (stage.Status == "failed" && stage.RecoveryExecution is { } recovery && Healthy(recovery)
             && stage.PostflightExecution is { } postflight && Healthy(postflight) && stage.PostflightPassed > 0) return false;
@@ -42,7 +42,7 @@ public sealed partial class IncrementalTestService
         if (resumable) RetainRecoveryAttempt(input, batch, saved!.Mutation!);
         var healthy = Recover(input, batch, ref state, out var recovery, out var postflight, out var passed, clearRecovery: !resumable);
         if (!resumable) return healthy;
-        var unchanged = Unchanged(input, batch);
+        var unchanged = Unchanged(input, batch, true);
         var admissible = unchanged && RecoverableNative(input, batch, saved!);
         var stage = saved!.Mutation!;
         var completed = healthy && admissible;
@@ -55,7 +55,10 @@ public sealed partial class IncrementalTestService
             {
                 Completed = completed,
                 Status = completed ? stage.Mutation!.TimedOut > 0 ? "completed-with-timeouts" : "completed" : "failed",
-                RecoveryExecution = recovery, PostflightExecution = postflight, PostflightPassed = passed, Diagnostics = diagnostics,
+                RecoveryExecution = recovery,
+                PostflightExecution = postflight,
+                PostflightPassed = passed,
+                Diagnostics = diagnostics,
             },
         };
         state = state with { RecoveryRequired = !completed, RecoverySourceFile = completed ? null : batch.SourceFile };
@@ -68,7 +71,9 @@ public sealed partial class IncrementalTestService
         var path = Safe(input.Root, "recovery-history-" + batch.Id + ".json");
         var history = File.Exists(path) ? ReadJson<JsonObject>(path, 262144) : new JsonObject
         {
-            ["schemaVersion"] = 1, ["sourceFile"] = batch.SourceFile, ["attempts"] = new JsonArray(),
+            ["schemaVersion"] = 1,
+            ["sourceFile"] = batch.SourceFile,
+            ["attempts"] = new JsonArray(),
         };
         Require(history["schemaVersion"]?.GetValue<int>() == 1 && history["sourceFile"]?.GetValue<string>() == batch.SourceFile
             && history["attempts"] is JsonArray, "Recovery history is invalid.");
@@ -78,8 +83,13 @@ public sealed partial class IncrementalTestService
             && entry["sha256"]?.GetValue<string>() == HashObject(entry["attempt"])), "Recovery history contains a changed attempt.");
         var attempt = JsonSerializer.SerializeToNode(new
         {
-            stage.ReportSha256, stage.Fingerprint, stage.Status, stage.Diagnostics,
-            stage.RecoveryExecution, stage.PostflightExecution, stage.PostflightPassed,
+            stage.ReportSha256,
+            stage.Fingerprint,
+            stage.Status,
+            stage.Diagnostics,
+            stage.RecoveryExecution,
+            stage.PostflightExecution,
+            stage.PostflightPassed,
         }, Json)!;
         var digest = HashObject(attempt);
         if (attempts.Any(item => item?["sha256"]?.GetValue<string>() == digest)) return;

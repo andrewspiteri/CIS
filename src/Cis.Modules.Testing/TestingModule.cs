@@ -155,10 +155,13 @@ public sealed partial class TestingModule : ICisModule
         }
         var revalidate = new Command("revalidate", "Recheck completed caches after a reviewed compatible testing-module update without executing native tests.");
         var revalidateRepository = Repo(); var revalidateFormat = Format(); var revalidateProfile = Required("--profile");
-        var previous = Required("--previous-testing-assembly"); var reason = Required("--reason");
+        var revalidateLayer = new Option<string>("--layer") { DefaultValueFactory = _ => "all", Description = "unit or all declared evidence." };
+        var previous = new Option<string?>("--previous-testing-assembly")
+        { Description = "Optional original producer for proving an unversioned legacy result. Versioned results do not need an obsolete installation." };
+        var reason = Required("--reason");
         var legacySession = new Option<bool>("--legacy-session-environment") { Description = "Reconstruct pre-normalization cache identity from the original inherited environment. Requires compatibility review." };
         revalidate.Options.Add(revalidateRepository); revalidate.Options.Add(revalidateFormat); revalidate.Options.Add(revalidateProfile);
-        revalidate.Options.Add(previous); revalidate.Options.Add(reason);
+        revalidate.Options.Add(previous); revalidate.Options.Add(reason); revalidate.Options.Add(revalidateLayer);
         revalidate.Options.Add(legacySession);
         var revalidateWork = NativeAssociation(revalidate);
         revalidate.SetAction(parse =>
@@ -168,13 +171,13 @@ public sealed partial class TestingModule : ICisModule
             var reader = services.GetService<ICisGraphSnapshotReader>();
             if (reader is null) return RenderIncremental(new("missing-graph-module", 2), output);
             return RenderIncremental(new IncrementalTestService(reader, services.GetService<ICisNativeWorkController>(),
-                services.GetService<ICisOwnedStorageController>()).Revalidate(new(parse.GetValue(revalidateRepository)!, parse.GetValue(revalidateProfile)!)
+                services.GetService<ICisOwnedStorageController>()).Revalidate(new(parse.GetValue(revalidateRepository)!, parse.GetValue(revalidateProfile)!, parse.GetValue(revalidateLayer)!)
                 {
                     Work = new(parse.GetValue(revalidateWork.Change), parse.GetValue(revalidateWork.Task), parse.GetValue(revalidateWork.Parent),
                         parse.GetValue(revalidateWork.Authority), parse.GetValue(revalidateWork.Actor))
                     { RecoveryOfExecutionId = parse.GetValue(revalidateWork.Recovery) }
                 },
-                parse.GetValue(previous)!, parse.GetValue(reason)!, parse.GetValue(legacySession)), output);
+                parse.GetValue(previous) ?? "", parse.GetValue(reason)!, parse.GetValue(legacySession)), output);
         });
         root.Subcommands.Add(revalidate);
         var refine = new Command("refine", "Verify completed native timeout reruns and save a separate source-bound attestation without executing tests.");
@@ -201,11 +204,12 @@ public sealed partial class TestingModule : ICisModule
         root.Subcommands.Add(refine);
         var verify = new Command("verify", "Verify current saved unit and mutation evidence without executing or changing the cache.");
         var verifyRepository = Repo(); var verifyFormat = Format(); var verifyProfile = Required("--profile");
+        var verifyLayer = new Option<string>("--layer") { DefaultValueFactory = _ => "all", Description = "unit or all declared evidence." };
         var refinementProfiles = new Option<string[]>("--refinement-profile")
         {
             Description = "Explicit native timeout rerun profiles to reverify. May be repeated; saved sidecar claims are not trusted.",
         };
-        verify.Options.Add(verifyRepository); verify.Options.Add(verifyFormat); verify.Options.Add(verifyProfile); verify.Options.Add(refinementProfiles);
+        verify.Options.Add(verifyRepository); verify.Options.Add(verifyFormat); verify.Options.Add(verifyProfile); verify.Options.Add(refinementProfiles); verify.Options.Add(verifyLayer);
         verify.SetAction(parse =>
         {
             var output = parse.GetValue(verifyFormat)!;
@@ -214,7 +218,8 @@ public sealed partial class TestingModule : ICisModule
             if (reader is null) return RenderEvidence(new("missing-graph-module", 2), output);
             return RenderEvidence(new IncrementalTestService(reader, services.GetService<ICisNativeWorkController>(),
                 services.GetService<ICisOwnedStorageController>()).Verify(new(parse.GetValue(verifyRepository)!,
-                parse.GetValue(verifyProfile)!, parse.GetValue(refinementProfiles))), output);
+                parse.GetValue(verifyProfile)!, parse.GetValue(refinementProfiles))
+                { Layer = parse.GetValue(verifyLayer)! }), output);
         });
         root.Subcommands.Add(verify);
         root.Subcommands.Add(SourceVariant(services));

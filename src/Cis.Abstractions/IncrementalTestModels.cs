@@ -1,5 +1,11 @@
 namespace Cis.Abstractions;
 
+/// <summary>Meaning of accepted native results, independent of CIS installation bytes.</summary>
+public static class CisIncrementalResultContract
+{
+    public const int Version = 2;
+}
+
 /// <summary>Native commands and complete input inventory for bounded development feedback.</summary>
 public sealed record IncrementalTestProfile
 {
@@ -47,6 +53,10 @@ public sealed record IncrementalStageResult(string Fingerprint, string Status, b
     int Total, int Passed, int Failed, int Skipped, TestMutationSummary? Mutation,
     DateTimeOffset FinishedUtc, string[] Diagnostics)
 {
+    // Missing means legacy/unversioned; never silently upgrade a retained result.
+    public int AssessmentContractVersion { get; init; }
+    public string? TestingProducerSha256 { get; init; }
+    public string? HelperProducerSha256 { get; init; }
     public MutationNativeExecution? RecoveryExecution { get; init; }
     public MutationNativeExecution? PostflightExecution { get; init; }
     public int PostflightPassed { get; init; }

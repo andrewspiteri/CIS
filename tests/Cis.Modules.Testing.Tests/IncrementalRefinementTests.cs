@@ -290,29 +290,31 @@ public sealed class IncrementalRefinementTests
     [InlineData("report")]
     [InlineData("fingerprint")]
     [InlineData("helper")]
-    [InlineData("artifact")]
+    [InlineData("native-producer")]
     [InlineData("reason")]
-    [InlineData("length")]
+    [InlineData("disconnected")]
     public void InventedOrMismatchedProducerHistoryCannotAuthorizeOldNativeReceipts(string fault)
     {
         using var fixture = new Fixture();
-        fixture.RevalidatePreviousProducer();
+        fixture.PreparePreviousProducer();
         fixture.ChangeRerunStage(stage =>
         {
             var proof = stage.ProducerRevalidations[0];
             return stage with
             {
+                Execution = fault == "native-producer" ? stage.Execution! with { CisToolAssemblySha256 = new('a', 64) } : stage.Execution,
                 ProducerRevalidations = fault switch
                 {
                     "report" => [proof with { ReportSha256 = new('a', 64) }],
                     "fingerprint" => [proof with { PreviousFingerprint = new('a', 64) }],
                     "helper" => [proof with { PreviousHelperSha256 = new('a', 64) }],
-                    "artifact" => [proof with { PreviousHelperAssemblyPath = fixture.Inner.Full("tool.txt") }],
                     "reason" => [proof with { Reason = "" }],
-                    _ => Enumerable.Repeat(proof, 9).ToArray(),
+                    "disconnected" => [proof, proof],
+                    _ => [proof],
                 }
             };
         });
+        Assert.Equal(0, fixture.RevalidatePreparedProducer().ReusedMutationBatches);
         Assert.Equal(4, fixture.Refine().ExitCode);
         Assert.Empty(fixture.Inner.Calls());
     }
@@ -504,6 +506,17 @@ public sealed class IncrementalRefinementTests
 
         internal void RevalidatePreviousProducer()
         {
+            PreparePreviousProducer();
+            Assert.Equal(1, RevalidatePreparedProducer().ReusedMutationBatches);
+            foreach (var state in _states.Values) Assert.All(state.Batches.Values, saved =>
+            {
+                Assert.Equal(CisIncrementalResultContract.Version, saved.Unit!.AssessmentContractVersion);
+                Assert.Equal(CisIncrementalResultContract.Version, saved.Mutation!.AssessmentContractVersion);
+                Assert.Empty(saved.Mutation.ProducerRevalidations);
+            });
+        }
+        internal void PreparePreviousProducer()
+        {
             _previousProducerDirectory = Directory.CreateTempSubdirectory("cis-refinement-producer-").FullName;
             var testing = System.IO.Path.Combine(_previousProducerDirectory, "Cis.Modules.Testing.dll");
             var helper = System.IO.Path.Combine(_previousProducerDirectory, "Cis.Abstractions.dll");
@@ -514,24 +527,45 @@ public sealed class IncrementalRefinementTests
             File.AppendAllText(helper, "previous fixture helper producer");
             var read = typeof(IncrementalTestService).GetMethod("Read", BindingFlags.NonPublic | BindingFlags.Static)!;
             var select = typeof(IncrementalTestService).GetMethod("Select", BindingFlags.NonPublic | BindingFlags.Instance)!;
+            var environment = (string)typeof(IncrementalTestService).GetMethod("AmbientEnvironmentIdentity", BindingFlags.NonPublic | BindingFlags.Static)!
+                .Invoke(null, [Original, false, false])!;
+            var currentTesting = Hash(typeof(IncrementalTestService).Assembly.Location);
+            var currentHelper = Hash(typeof(CisProcessJob).Assembly.Location);
             foreach (var (id, path) in new[] { ("sample", "profile.json"), ("rerun", "rerun.json") })
             {
-                var input = read.Invoke(null, [new IncrementalTestOptions(Inner.Path, path), Hash(testing), Hash(helper), false, null]);
+                var input = read.Invoke(null, [new IncrementalTestOptions(Inner.Path, path), Hash(testing), Hash(helper), false, environment]);
                 var selection = select.Invoke(Service, [input, new IncrementalTestState(), false])!;
                 var batches = (IncrementalTestBatch[])selection.GetType().GetProperty("Batches")!.GetValue(selection)!;
+                var currentInput = read.Invoke(null, [new IncrementalTestOptions(Inner.Path, path), currentTesting, currentHelper, false, environment]);
+                var currentSelection = select.Invoke(Service, [currentInput, new IncrementalTestState(), false])!;
+                var currentBatches = (IncrementalTestBatch[])currentSelection.GetType().GetProperty("Batches")!.GetValue(currentSelection)!;
                 foreach (var batch in batches)
                 {
                     var saved = _states[id].Batches[batch.Id];
+                    var current = currentBatches.Single(candidate => candidate.Id == batch.Id);
+                    var reviewed = DateTimeOffset.UtcNow;
                     _states[id].Batches[batch.Id] = saved with
                     {
                         Unit = saved.Unit! with
                         {
-                            Fingerprint = batch.UnitFingerprint,
+                            AssessmentContractVersion = 0,
+                            TestingProducerSha256 = null,
+                            HelperProducerSha256 = null,
+                            Fingerprint = current.UnitFingerprint,
+                            ProducerRevalidations = [new(testing, helper, Hash(testing), Hash(helper), currentTesting, currentHelper,
+                                batch.UnitFingerprint, current.UnitFingerprint, saved.Unit.ReportSha256,
+                                environment, environment, false, "Reviewed compatible previous fixture producers.", reviewed)],
                             Execution = saved.Unit.Execution! with { CisToolAssemblySha256 = Hash(helper) }
                         },
                         Mutation = saved.Mutation! with
                         {
-                            Fingerprint = batch.MutationFingerprint,
+                            AssessmentContractVersion = 0,
+                            TestingProducerSha256 = null,
+                            HelperProducerSha256 = null,
+                            Fingerprint = current.MutationFingerprint,
+                            ProducerRevalidations = [new(testing, helper, Hash(testing), Hash(helper), currentTesting, currentHelper,
+                                batch.MutationFingerprint, current.MutationFingerprint, saved.Mutation.ReportSha256,
+                                environment, environment, false, "Reviewed compatible previous fixture producers.", reviewed)],
                             Execution = saved.Mutation.Execution! with { CisToolAssemblySha256 = Hash(helper) },
                             RecoveryExecution = saved.Mutation.RecoveryExecution! with { CisToolAssemblySha256 = Hash(helper) },
                             PostflightExecution = saved.Mutation.PostflightExecution! with { CisToolAssemblySha256 = Hash(helper) }
@@ -539,11 +573,20 @@ public sealed class IncrementalRefinementTests
                     };
                 }
                 Save(id);
+            }
+        }
+        internal IncrementalTestResult RevalidatePreparedProducer()
+        {
+            IncrementalTestResult? last = null;
+            foreach (var (id, path) in new[] { ("sample", "profile.json"), ("rerun", "rerun.json") })
+            {
+                var testing = System.IO.Path.Combine(_previousProducerDirectory!, "Cis.Modules.Testing.dll");
                 var result = Service.Revalidate(new(Inner.Path, path), testing, "Reviewed compatible previous fixture producers.");
                 Assert.True(result.ExitCode == 0, string.Join("; ", result.Diagnostics));
                 _states[id] = JsonSerializer.Deserialize<IncrementalTestState>(File.ReadAllText(Inner.Full(IncrementalTestService.LocalRoot + "/" + id + "/state.json")), Json)!;
-                Assert.All(_states[id].Batches.Values, saved => Assert.Single(saved.Mutation!.ProducerRevalidations));
+                last = result;
             }
+            return last!;
         }
         private void ChangeStage(string id, string source, Func<IncrementalStageResult, IncrementalStageResult> change)
         {
@@ -604,12 +647,20 @@ public sealed class IncrementalRefinementTests
                 var relative = "reports/" + batch.Id;
                 var unitStage = new IncrementalStageResult(batch.UnitFingerprint, "completed", true, relative + "-unit.xml", Hash(Inner.Full(unit)),
                     Execution(profile, batch, profile.UnitCommand, false), 1, 1, 0, 0, null,
-                    DateTimeOffset.UtcNow.AddSeconds(refreshed ? -1 : -20), []);
+                    DateTimeOffset.UtcNow.AddSeconds(refreshed ? -1 : -20), [])
+                {
+                    AssessmentContractVersion = CisIncrementalResultContract.Version,
+                    TestingProducerSha256 = Hash(typeof(IncrementalTestService).Assembly.Location),
+                    HelperProducerSha256 = Hash(typeof(CisProcessJob).Assembly.Location),
+                };
                 var mutationStage = new IncrementalStageResult(batch.MutationFingerprint, status == "Timeout" ? "completed-with-timeouts" : "completed", true,
                     relative + "-mutation.json", Hash(Inner.Full(mutation)), Execution(profile, batch, profile.MutationCommand!, false),
                     1, status == "Killed" ? 1 : 0, status == "Killed" ? 0 : 1, 0, Summary(profile, batch.SourceFile, Inner.Full(mutation)),
                     DateTimeOffset.UtcNow.AddSeconds(-3), [])
                 {
+                    AssessmentContractVersion = CisIncrementalResultContract.Version,
+                    TestingProducerSha256 = Hash(typeof(IncrementalTestService).Assembly.Location),
+                    HelperProducerSha256 = Hash(typeof(CisProcessJob).Assembly.Location),
                     RecoveryExecution = Execution(profile, batch, profile.RecoveryCommand!, true),
                     PostflightExecution = Execution(profile, batch, profile.UnitCommand, true),
                     PostflightPassed = 1,

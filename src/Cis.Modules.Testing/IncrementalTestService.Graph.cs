@@ -68,15 +68,60 @@ public sealed partial class IncrementalTestService
             var inputHashes = dependencies.Select(file => new { file, hash = HashFile(Safe(input.Repository, file)) }).ToArray();
             var relevantEdges = dependencies.SelectMany(file => forward.GetValueOrDefault(file, []).Select(target => file + "->" + target))
                 .Order(StringComparer.Ordinal).ToArray();
-            var identity = HashObject(new { input.CommonIdentity, source, tests, filter, inputHashes, relevantEdges,
-                graph.SchemaVersion, snapshot.Manifest.Extractors, selection = narrow ? "graph" : "all-tests" });
-            var unit = HashObject(new { identity, layer = "unit" });
-            var mutation = HashObject(new { identity, layer = "mutation" });
+            string unit;
+            string mutation;
+            if (input.LegacyIdentity)
+            {
+                var identity = HashObject(new
+                {
+                    input.CommonIdentity,
+                    source,
+                    tests,
+                    filter,
+                    inputHashes,
+                    relevantEdges,
+                    graph.SchemaVersion,
+                    snapshot.Manifest.Extractors,
+                    selection = narrow ? "graph" : "all-tests"
+                });
+                unit = HashObject(new { identity, layer = "unit" });
+                mutation = HashObject(new { identity, layer = "mutation" });
+            }
+            else
+            {
+                // Even an inconclusive test selection retains positive dependency
+                // evidence. Only unrelated fallback inventory can be discarded.
+                var explicitUnitInputs = Closure(tests.Append(source), forward)
+                    .Select(file => Safe(input.Repository, file)).ToHashSet(PathComparer);
+                var unitInputs = dependencies.Where(file => UnitDependencyInput(input, file, explicitUnitInputs)).ToArray();
+                var unitHashes = unitInputs.Select(file => new { file, hash = HashFile(Safe(input.Repository, file)) }).ToArray();
+                var unitEdges = unitInputs.SelectMany(file => forward.GetValueOrDefault(file, [])
+                    .Where(target => UnitDependencyInput(input, target, explicitUnitInputs)).Select(target => file + "->" + target))
+                    .Order(StringComparer.Ordinal).ToArray();
+                var mutationInputs = dependencies.Where(file => !PathComparer.Equals(Safe(input.Repository, file), input.ProfilePath)).ToArray();
+                var mutationHashes = mutationInputs.Select(file => new { file, hash = HashFile(Safe(input.Repository, file)) }).ToArray();
+                var mutationEdges = mutationInputs.SelectMany(file => forward.GetValueOrDefault(file, [])
+                    .Where(target => !PathComparer.Equals(Safe(input.Repository, target), input.ProfilePath)).Select(target => file + "->" + target))
+                    .Order(StringComparer.Ordinal).ToArray();
+                // The effective closure, filter and file contents carry selection.
+                // Producer and extractor build coordinates are provenance only.
+                unit = HashObject(new { input.UnitIdentity, source, tests, filter, inputHashes = unitHashes, relevantEdges = unitEdges });
+                mutation = HashObject(new
+                {
+                    input.MutationIdentity,
+                    unit,
+                    source,
+                    tests,
+                    filter,
+                    inputHashes = mutationHashes,
+                    relevantEdges = mutationEdges
+                });
+            }
             var id = "file-" + HashObject(source)[..20];
             state.Batches.TryGetValue(id, out var prior);
             result.Add(new(id, source, narrow ? "graph" : "all-tests", tests, filter, unit, mutation,
-                !force && Current(input, source, prior?.Unit, unit, false),
-                !force && profile.MutationCommand is not null && Current(input, source, prior?.Mutation, mutation, true), dependencies));
+                !force && Current(input, source, prior?.Unit, unit, false, filter),
+                !force && profile.MutationCommand is not null && Current(input, source, prior?.Mutation, mutation, true, filter), dependencies));
         }
         return new(snapshot, result.ToArray());
     }
@@ -117,19 +162,25 @@ public sealed partial class IncrementalTestService
         return found;
     }
 
-    private static bool Current(Input input, string source, IncrementalStageResult? result, string fingerprint, bool mutation)
+    private bool Current(Input input, string source, IncrementalStageResult? result, string fingerprint, bool mutation, string testFilter)
     {
-        if (result is not { Completed: true } || result.Fingerprint != fingerprint) return false;
+        if (result is not { Completed: true } || result.Fingerprint != fingerprint
+            || result.AssessmentContractVersion != CisIncrementalResultContract.Version
+                && !(input.LegacyIdentity && result.AssessmentContractVersion == 0)) return false;
         try
         {
             var path = Safe(input.Root, result.ReportPath);
             if (!File.Exists(path) || HashFile(path) != result.ReportSha256) return false;
+            var batch = new IncrementalTestBatch("file-" + HashObject(source)[..20], source, "retained-result", [], testFilter,
+                mutation ? "" : fingerprint, mutation ? fingerprint : "", false, false, []);
             if (!mutation)
             {
+                VerifyRefinementUnit(input, batch, result);
                 var unit = ReadUnit(input, path);
                 return unit is { Status: "passed", Total: > 0, Failed: 0, Skipped: 0 }
                     && unit.Total == result.Total && unit.Passed == result.Passed && unit.Failed == result.Failed && unit.Skipped == result.Skipped;
             }
+            VerifyRefinementStage(input, batch, result);
             var measured = ReadMutation(input, source, path).Mutation;
             return measured is { ValidEvidence: true, RuntimeErrors: 0, Pending: 0, Unknown: 0 }
                 && HashObject(measured) == HashObject(result.Mutation);

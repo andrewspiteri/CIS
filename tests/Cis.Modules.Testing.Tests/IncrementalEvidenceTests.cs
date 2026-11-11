@@ -87,7 +87,7 @@ public sealed class IncrementalEvidenceTests
     [InlineData("postflight")]
     [InlineData("postflight-count")]
     [InlineData("helper")]
-    [InlineData("history")]
+    [InlineData("producer-metadata")]
     [InlineData("command")]
     [InlineData("active")]
     [InlineData("completed")]
@@ -109,7 +109,7 @@ public sealed class IncrementalEvidenceTests
             case "postflight": fixture.ChangeStage("sample", "src/A.cs", stage => stage with { PostflightExecution = stage.PostflightExecution! with { Error = "failed" } }); break;
             case "postflight-count": fixture.ChangeStage("sample", "src/A.cs", stage => stage with { PostflightPassed = 0 }); break;
             case "helper": fixture.ChangeStage("sample", "src/A.cs", stage => stage with { Execution = stage.Execution! with { CisToolAssemblySha256 = new('a', 64) } }); break;
-            case "history": fixture.ChangeStage("sample", "src/A.cs", stage => stage with { ProducerRevalidations = null! }); break;
+            case "producer-metadata": fixture.ChangeStage("sample", "src/A.cs", stage => stage with { TestingProducerSha256 = null }); break;
             case "command": fixture.ChangeStage("sample", "src/A.cs", stage => stage with { Execution = stage.Execution! with { Command = ["unrelated"] } }); break;
             case "active": fixture.ChangeState("sample", state => state with { RecoveryRequired = true }); break;
             case "completed": fixture.ChangeStage("sample", "src/A.cs", stage => stage with { Completed = false }); break;
@@ -199,8 +199,11 @@ public sealed class IncrementalEvidenceTests
         if (explicitlyDisabled) settings[name]!["enabled"] = false;
         fixture.Inner.Write("config.json", new JsonObject { ["stryker-config"] = settings }.ToJsonString(Fixture.Json));
         var profile = fixture.Profile("profile.json");
-        fixture.WriteProfile("profile.json", profile with { StrykerConfigFile = "config.json",
-            MutationCommand = [.. profile.MutationCommand!, "--config-file", "{mutationConfig}"] });
+        fixture.WriteProfile("profile.json", profile with
+        {
+            StrykerConfigFile = "config.json",
+            MutationCommand = [.. profile.MutationCommand!, "--config-file", "{mutationConfig}"]
+        });
         fixture.Rebind("profile.json", ["--config-file", "{mutationConfig}"]);
         var result = fixture.Verify();
         Assert.True(result.ExitCode == (explicitlyDisabled ? 0 : 4), string.Join("; ", result.Diagnostics));
@@ -349,7 +352,8 @@ public sealed class IncrementalEvidenceTests
             File.WriteAllText(path, report.ToJsonString(Json));
             var summary = new StrykerJsonResultAdapter().Read(new(Inner.Path,
                 new(id, id, "mutation", "native", "run", ".", "stryker-json", path, "-", "-", "-", "always", "local", "current-result"),
-                path, null, null, 90)).Mutation! with { Qualified = false, Scope = "incremental-batch", SourcePath = "" };
+                path, null, null, 90)).Mutation! with
+            { Qualified = false, Scope = "incremental-batch", SourcePath = "" };
             if (report["files"]![source]!["mutants"]!.AsArray().Count == 0) summary = summary with { ValidEvidence = true };
             ChangeStage(id, source, stage => stage with { ReportSha256 = Hash(path), Mutation = summary });
         }
@@ -366,9 +370,15 @@ public sealed class IncrementalEvidenceTests
                     state.Batches[batch.Id] = saved with
                     {
                         Unit = saved.Unit! with { Fingerprint = batch.UnitFingerprint },
-                        Mutation = saved.Mutation! with { Fingerprint = batch.MutationFingerprint,
-                            Execution = saved.Mutation.Execution! with { Command = [.. saved.Mutation.Execution!.Command!, .. (addedNativeArguments ?? [])
-                                .Select(value => value.Replace("{mutationConfig}", System.IO.Path.Combine(Inner.Full(IncrementalTestService.LocalRoot + "/" + profile.Id + "/work/012345abcdef"), "stryker-config.json"), StringComparison.Ordinal))] } },
+                        Mutation = saved.Mutation! with
+                        {
+                            Fingerprint = batch.MutationFingerprint,
+                            Execution = saved.Mutation.Execution! with
+                            {
+                                Command = [.. saved.Mutation.Execution!.Command!, .. (addedNativeArguments ?? [])
+                                .Select(value => value.Replace("{mutationConfig}", System.IO.Path.Combine(Inner.Full(IncrementalTestService.LocalRoot + "/" + profile.Id + "/work/012345abcdef"), "stryker-config.json"), StringComparison.Ordinal))]
+                            }
+                        },
                     };
                 }
                 return state;
@@ -429,22 +439,36 @@ public sealed class IncrementalEvidenceTests
                         File.ReadAllText(Inner.Full(IncrementalTestService.LocalRoot + "/sample/" + template.Unit!.ReportPath)));
                     Inner.Write(IncrementalTestService.LocalRoot + "/sample/" + prefix + "-mutation.json", JsonSerializer.Serialize(new
                     {
-                        schemaVersion = "2", thresholds = new { high = 100, low = 90 },
-                        files = new Dictionary<string, object> { [batch.SourceFile] = new
+                        schemaVersion = "2",
+                        thresholds = new { high = 100, low = 90 },
+                        files = new Dictionary<string, object>
                         {
-                            language = "cs", source = File.ReadAllText(Inner.Full(batch.SourceFile)), mutants = Array.Empty<object>(),
-                        } },
+                            [batch.SourceFile] = new
+                            {
+                                language = "cs",
+                                source = File.ReadAllText(Inner.Full(batch.SourceFile)),
+                                mutants = Array.Empty<object>(),
+                            }
+                        },
                     }, Json));
-                    var unit = template.Unit! with { ReportPath = prefix + "-unit.xml",
+                    var unit = template.Unit! with
+                    {
+                        ReportPath = prefix + "-unit.xml",
                         ReportSha256 = Hash(Inner.Full(IncrementalTestService.LocalRoot + "/sample/" + prefix + "-unit.xml")),
-                        Execution = Execution(profile.UnitCommand, false) };
-                    var mutation = template.Mutation! with { ReportPath = prefix + "-mutation.json",
-                        Execution = Execution(profile.MutationCommand!, false), RecoveryExecution = Execution(profile.RecoveryCommand!, true),
-                        PostflightExecution = Execution(profile.UnitCommand, true) };
+                        Execution = Execution(profile.UnitCommand, false)
+                    };
+                    var mutation = template.Mutation! with
+                    {
+                        ReportPath = prefix + "-mutation.json",
+                        Execution = Execution(profile.MutationCommand!, false),
+                        RecoveryExecution = Execution(profile.RecoveryCommand!, true),
+                        PostflightExecution = Execution(profile.UnitCommand, true)
+                    };
                     state.Batches.Add(batch.Id, new(batch.SourceFile, unit, mutation));
                     MutationNativeExecution Execution(string[] command, bool full) => template.Unit.Execution! with
                     {
-                        ExecutablePath = command[0], Command = command.Select(value => value.Replace("{sourceFile}", batch.SourceFile, StringComparison.Ordinal)
+                        ExecutablePath = command[0],
+                        Command = command.Select(value => value.Replace("{sourceFile}", batch.SourceFile, StringComparison.Ordinal)
                             .Replace("{testFilter}", full ? profile.FullTestFilter : batch.TestFilter, StringComparison.Ordinal)
                             .Replace("{output}", Inner.Full(IncrementalTestService.LocalRoot + "/sample/work/012345abcdef"), StringComparison.Ordinal)).ToArray(),
                     };
@@ -460,8 +484,14 @@ public sealed class IncrementalEvidenceTests
             public CisGraphSnapshotReadResult Read(string repositoryPath)
             {
                 var result = inner.Read(repositoryPath);
-                return result with { Manifest = result.Manifest! with { Inputs = [.. result.Manifest!.Inputs,
-                    .. extraInputs.Select(file => new CisGraphInput(file, Hash(inner.Full(file))))] } };
+                return result with
+                {
+                    Manifest = result.Manifest! with
+                    {
+                        Inputs = [.. result.Manifest!.Inputs,
+                    .. extraInputs.Select(file => new CisGraphInput(file, Hash(inner.Full(file))))]
+                    }
+                };
             }
         }
         public void Dispose() => _base.Dispose();

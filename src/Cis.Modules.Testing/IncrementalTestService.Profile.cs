@@ -26,6 +26,11 @@ public sealed partial class IncrementalTestService
         string ProfileHash, string Storage, string Root, string StatePath, string CommonIdentity)
     {
         public string Layer { get; init; } = "all";
+        public string UnitIdentity { get; init; } = "";
+        public string MutationIdentity { get; init; } = "";
+        public bool LegacyIdentity { get; init; }
+        public string? LegacyTestingProducer { get; init; }
+        public string? LegacyHelperProducer { get; init; }
         public ICisNativeWorkScope? Work { get; init; }
         public ICisOwnedStorageController? OwnedStorage { get; init; }
         public CancellationToken Cancellation { get; init; }
@@ -110,19 +115,106 @@ public sealed partial class IncrementalTestService
         foreach (var command in new[] { profile.UnitCommand, profile.MutationCommand, profile.RecoveryCommand }.Where(value => value is not null))
             Require(Path.IsPathFullyQualified(command![0]) && tools.Contains(Path.GetFullPath(command[0]), PathComparer),
                 "Each native command must use an absolute executable included in toolFiles.");
-        var common = new
+        var profileHash = HashFile(path);
+        var legacyIdentity = previousTestingProducer is not null || previousHelperProducer is not null;
+        string commonIdentity;
+        string unitIdentity;
+        string mutationIdentity;
+        if (legacyIdentity)
         {
-            profile = HashFile(path),
-            configuration = profile.ConfigFiles.Order(StringComparer.Ordinal).Select(file => new { file, hash = HashFile(Safe(repository, file)) }).ToArray(),
-            tools = tools.Select(file => new { file, hash = HashFile(file) }).ToArray(),
-            cis = new[] { previousTestingProducer ?? HashFile(typeof(IncrementalTestService).Assembly.Location), previousHelperProducer ?? HashFile(typeof(CisProcessJob).Assembly.Location) },
-            platform = System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier,
-            ambientEnvironment = environmentIdentity ?? AmbientEnvironmentIdentity(profile, legacySessionEnvironment),
-        };
+            // Explicit migration may reconstruct the old contract from retained
+            // producer/environment digests. Normal currentness never uses it.
+            var common = new
+            {
+                profile = profileHash,
+                configuration = profile.ConfigFiles.Order(StringComparer.Ordinal).Select(file => new { file, hash = HashFile(Safe(repository, file)) }).ToArray(),
+                tools = tools.Select(file => new { file, hash = HashFile(file) }).ToArray(),
+                cis = new[] { previousTestingProducer ?? HashFile(typeof(IncrementalTestService).Assembly.Location), previousHelperProducer ?? HashFile(typeof(CisProcessJob).Assembly.Location) },
+                platform = System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier,
+                ambientEnvironment = environmentIdentity ?? AmbientEnvironmentIdentity(profile, legacySessionEnvironment),
+            };
+            commonIdentity = unitIdentity = mutationIdentity = HashObject(common);
+        }
+        else
+        {
+            var working = Relative(repository, Safe(repository, profile.WorkingDirectory, true));
+            var declared = profile.Environment.OrderBy(pair => pair.Key, StringComparer.Ordinal).ToArray();
+            var ambient = environmentIdentity ?? AmbientEnvironmentIdentity(profile, false, ignoreOverriddenTemporary: true);
+            var platform = System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier;
+            var selectedMutationConfiguration = profile.StrykerConfigFile is null ? null
+                : Relative(repository, Safe(repository, profile.StrykerConfigFile));
+            unitIdentity = HashObject(new
+            {
+                contract = CisIncrementalResultContract.Version,
+                working,
+                command = profile.UnitCommand,
+                reportPath = Relative(repository, Safe(repository, profile.UnitReportPath)),
+                profile.UnitResultFormat,
+                mutationConfiguration = UnitRendersMutationConfiguration(profile) ? selectedMutationConfiguration : null,
+                configuration = profile.ConfigFiles.Where(file => UnitConfigurationInput(repository, profile, path, file))
+                    .Order(StringComparer.Ordinal).Select(file => new { file, hash = HashFile(Safe(repository, file)) }).ToArray(),
+                // toolFiles is the declared common native toolchain inventory;
+                // command indirection does not make a listed tool unit-irrelevant.
+                tools = tools.Select(file => new { file, hash = HashFile(file) }).ToArray(),
+                declared,
+                ambient,
+                platform
+            });
+            mutationIdentity = HashObject(new
+            {
+                contract = CisIncrementalResultContract.Version,
+                unitIdentity,
+                command = profile.MutationCommand,
+                recovery = profile.RecoveryCommand,
+                mutationConfiguration = selectedMutationConfiguration,
+                profile.MutationReportPath,
+                profile.CanarySourceFile,
+                profile.MinimumCanaryKills,
+                profile.BreakThreshold,
+                profile.RerunAdditionalTimeoutMilliseconds,
+                configuration = profile.ConfigFiles.Where(file => !PathComparer.Equals(Safe(repository, file), path))
+                    .Order(StringComparer.Ordinal).Select(file => new { file, hash = HashFile(Safe(repository, file)) }).ToArray(),
+                tools = tools.Select(file => new { file, hash = HashFile(file) }).ToArray()
+            });
+            commonIdentity = HashObject(new { unitIdentity, mutationIdentity });
+        }
         var storage = Safe(repository, ".cis/local/testing");
         var root = Safe(repository, LocalRoot + "/" + profile.Id);
-        return new(repository, profile, path, common.profile, storage, root, Safe(root, "state.json"), HashObject(common))
-        { Layer = options.Layer };
+        return new(repository, profile, path, profileHash, storage, root, Safe(root, "state.json"), commonIdentity)
+        {
+            Layer = options.Layer,
+            UnitIdentity = unitIdentity,
+            MutationIdentity = mutationIdentity,
+            LegacyIdentity = legacyIdentity,
+            LegacyTestingProducer = previousTestingProducer,
+            LegacyHelperProducer = previousHelperProducer
+        };
+    }
+
+    private static bool UnitConfigurationInput(string repository, IncrementalTestProfile profile, string profilePath, string relative)
+    {
+        var file = Safe(repository, relative);
+        if (PathComparer.Equals(file, profilePath)) return false; // Parsed effective fields are already bound.
+        if (profile.StrykerConfigFile is null || !PathComparer.Equals(file, Safe(repository, profile.StrykerConfigFile))) return true;
+        if (UnitRendersMutationConfiguration(profile)) return true;
+        var working = Safe(repository, profile.WorkingDirectory, true);
+        var references = new[] { relative, Relative(repository, file), Relative(working, file), file, Path.GetFileName(file) }
+            .Select(value => value.Replace('\\', '/')).Where(value => value.Length > 0).Distinct(PathComparer).ToArray();
+        // A basename or embedded path can be consumed through a wrapper or a
+        // declared environment setting. Ambiguous references stay material.
+        return profile.UnitCommand.Concat(profile.Environment.Values).Any(value =>
+            references.Any(reference => value.Replace('\\', '/').Contains(reference, CisPathSafety.PlatformComparison)));
+    }
+
+    private static bool UnitRendersMutationConfiguration(IncrementalTestProfile profile)
+        => profile.UnitCommand.Any(argument => argument.Contains("{mutationConfig}", StringComparison.Ordinal));
+
+    private static bool UnitDependencyInput(Input input, string relative, IReadOnlySet<string> explicitUnitInputs)
+    {
+        var file = Safe(input.Repository, relative);
+        if (PathComparer.Equals(file, input.ProfilePath)) return false;
+        return explicitUnitInputs.Contains(file)
+            || UnitConfigurationInput(input.Repository, input.Profile, input.ProfilePath, relative);
     }
 
     private static void Command(string[]? values, bool output)

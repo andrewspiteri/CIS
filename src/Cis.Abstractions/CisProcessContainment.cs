@@ -327,6 +327,19 @@ public sealed class CisProcessJob : IDisposable
 [SupportedOSPlatform("linux")]
 public static class CisProcessSession
 {
+    public static long GetStartTicks(int processId)
+    {
+        RequireLinux(processId);
+        var stat = File.ReadAllText("/proc/" + processId.ToString(CultureInfo.InvariantCulture) + "/stat");
+        var end = stat.LastIndexOf(')');
+        if (end < 0) throw new InvalidDataException("Malformed process stat record.");
+        var fields = stat[(end + 1)..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        // After comm, state is field 3; starttime is the exact kernel field 22.
+        if (fields.Length < 20 || !long.TryParse(fields[19], NumberStyles.None, CultureInfo.InvariantCulture, out var ticks) || ticks < 0)
+            throw new InvalidDataException("Malformed process start-tick record.");
+        return ticks;
+    }
+
     public static bool IsSessionLeader(int processId)
     {
         RequireLinux(processId);

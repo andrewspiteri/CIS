@@ -108,12 +108,12 @@ public sealed partial class MutationRunService
             if (options.Kind == "qualification")
             {
                 canary = Attempt(repository, input.Profile, input.Path, input.Hash, identity, "canary", storage,
-                    work, _ownedStorage, cancellationToken);
+                    work, _ownedStorage, cancellationToken, workController: _nativeWork);
                 if (canary.ExitCode != 0)
                     return Complete(BlockedByCanary(repository, input.Profile, input.Hash, identity, canary, work, _ownedStorage));
             }
             var result = Attempt(repository, input.Profile, input.Path, input.Hash, identity, options.Kind, storage,
-                work, _ownedStorage, cancellationToken, canary);
+                work, _ownedStorage, cancellationToken, canary, _nativeWork);
             if (options.Kind == "canary" && input.Profile.CorrectnessPilot is not null && result.ExitCode == 0)
             {
                 pilot = RunCorrectnessPilot(repository, input.Profile, input.Path, work, cancellationToken, _ownedStorage, _nativeWork);
@@ -173,7 +173,7 @@ public sealed partial class MutationRunService
     private static MutationRunResult Attempt(string repository, MutationRunProfile profile, string profilePath,
         string profileHash, MutationSourceIdentity identity, string kind, string storage,
         ICisNativeWorkScope? parent = null, ICisOwnedStorageController? ownedStorage = null,
-        CancellationToken cancellationToken = default, MutationRunResult? canary = null)
+        CancellationToken cancellationToken = default, MutationRunResult? canary = null, ICisNativeWorkController? workController = null)
     {
         var started = DateTimeOffset.UtcNow;
         var runId = kind + "-" + started.ToString("yyyyMMdd-HHmmss", System.Globalization.CultureInfo.InvariantCulture) + "-" + Guid.NewGuid().ToString("N");
@@ -220,7 +220,7 @@ public sealed partial class MutationRunService
         {
             enteredNative = true;
             execution = Execute(repository, output, storage, profile, kind == "canary" ? profile.CanaryCommand ?? profile.Command : profile.Command,
-                work, cancellationToken, ownedStorage, storageReservation) with
+                work, cancellationToken, ownedStorage, storageReservation, workController) with
             { SettlementReference = parent?.Reference ?? work?.Reference, WorkAuthorityPath = work?.AuthorityPath };
             Require(execution.SafelyStopped,
                 "Owned native work has not been proven stopped; its output and reservation remain held before report admission or cleanup.");
@@ -242,7 +242,7 @@ public sealed partial class MutationRunService
                 using var healthWork = healthAdmission?.Scope;
                 enteredHealth = true;
                 healthCheck = Execute(repository, Resolve(output, "health"), storage, profile, profile.HealthCheckCommand,
-                    healthWork, cancellationToken, ownedStorage, storageReservation);
+                    healthWork, cancellationToken, ownedStorage, storageReservation, workController);
                 Require(healthCheck.SafelyStopped,
                     "Owned postflight work has not been proven stopped; its output and reservation remain held before publication or cleanup.");
                 if (healthWork is not null)

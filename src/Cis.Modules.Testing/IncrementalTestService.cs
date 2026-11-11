@@ -76,7 +76,7 @@ public sealed partial class IncrementalTestService
                     WorkControl = admission.Control
                 };
             work = admission.Scope;
-            input = Read(options) with { Work = work, OwnedStorage = _ownedStorage, Cancellation = cancellationToken };
+            input = Read(options) with { Work = work, WorkController = _nativeWork, OwnedStorage = _ownedStorage, Cancellation = cancellationToken };
             Require(nativeTimeoutSeconds is >= 0 and <= 3600, "Native timeout override must be 0-3600 seconds.");
             if (nativeTimeoutSeconds > 0)
             {
@@ -412,7 +412,7 @@ public sealed partial class IncrementalTestService
             .Replace("{mutationConfig}", mutationConfig ?? "", StringComparison.Ordinal)).ToArray();
         limits = limits with { Environment = NativeEnvironment(input.Profile, working) };
         var execution = MutationRunService.Execute(input.Repository, output, input.Storage, limits, expanded, work, input.Cancellation,
-            input.OwnedStorage, input.ActiveStorage) with
+            input.OwnedStorage, input.ActiveStorage, input.WorkController) with
         { SettlementReference = input.Work?.Reference, WorkAuthorityPath = work?.AuthorityPath };
         if (work is not null)
         {

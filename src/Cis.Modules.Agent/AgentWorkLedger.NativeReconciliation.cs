@@ -51,8 +51,10 @@ internal sealed partial class AgentWorkLedger
             new("Native execution tree reconciled", request.Evidence, owner.Hypothesis ?? "Retain the original native scope and recovery recipe.",
                 previouslyFinalized
                     ? "Time and attempts remain unchanged; pending storage was settled from the exact already-stopped native receipts and retained evidence stays protected."
-                    : "Conservatively charged the original bound after exact stopped owners and actual named-job closure; native restoration remains separate.",
-                "Inspect retained diagnostics and restore only through the original recipe before further native work."),
+                    : "Conservatively charged the original bound after exact stopped owners and empty owned job/session verification; native restoration remains separate.",
+                tree.Any(item => item.NativeRestorationRequired)
+                    ? "Inspect retained diagnostics and restore only through the original recipe before further native work."
+                    : "Preserve current results and retry only unfinished or invalidated unit work within the remaining allowance."),
             owner.Consumed, Reserved(change, owner.Id))
         { Origin = "reconciliation" });
         return Result(state, change, root.Reference.TaskId, "reconciled", true);

@@ -285,11 +285,22 @@ public sealed partial class AgentService : ICisNativeWorkController
                 try
                 {
                     using var process = Process.GetProcessById(id);
-                    if (!OperatingSystem.IsWindows() || !CisProcessJob.IsNamedNativeJobMember(containment, process))
-                        throw new InvalidDataException("The actual native driver is not inside the declared non-breakaway kill-on-close job.");
+                    if (OperatingSystem.IsWindows())
+                    {
+                        if (!CisProcessJob.IsNamedNativeJobMember(containment, process))
+                            throw new InvalidDataException("The actual native driver is not inside the declared non-breakaway kill-on-close job.");
+                    }
+                    else if (OperatingSystem.IsLinux())
+                    {
+                        var session = NativeLinuxSessionId(containment);
+                        if (!CisProcessSession.IsSessionLeader(session)
+                            || !CisProcessSafety.IsSameOrDescendant(session, id))
+                            throw new InvalidDataException("The actual gated Linux worker is not an owned session leader under this native driver.");
+                    }
+                    else throw new PlatformNotSupportedException("Native containment supports Windows and Linux.");
                 }
                 catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
-                { throw new InvalidDataException("Native Windows job assignment could not be verified before target launch.", error); }
+                { throw new InvalidDataException("Native process containment could not be verified before target launch.", error); }
             }
             processId = id; processStarted = at;
             var result = service._workLedger.AttachProcess(binding.Authority, reference, id, at, containment);

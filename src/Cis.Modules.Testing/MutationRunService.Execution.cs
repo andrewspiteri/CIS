@@ -10,7 +10,7 @@ public sealed partial class MutationRunService
     internal static MutationNativeExecution Execute(string repository, string output, string storage,
         MutationRunProfile profile, string[] command, ICisNativeWorkScope? scope = null,
         CancellationToken cancellationToken = default, ICisOwnedStorageController? ownedStorage = null,
-        NativeStorageReservation? storageReservation = null)
+        NativeStorageReservation? storageReservation = null, ICisNativeWorkController? workController = null)
     {
         var temporary = Path.Combine(Path.GetTempPath(), "cis-mutation-" + Guid.NewGuid().ToString("N"));
         var ownsReservation = storageReservation is null;
@@ -112,6 +112,8 @@ public sealed partial class MutationRunService
             Require(FileHash(installed) == FileHash(helper), "Installed mutation helper copy failed hash verification.");
             var request = Path.Combine(temporary, "request.json");
             var launchGate = Path.Combine(temporary, "controller.ready");
+            var sessionRecord = OperatingSystem.IsLinux() && scope is not null ? Path.Combine(temporary, "session.json") : null;
+            var sessionGate = sessionRecord is not null ? Path.Combine(temporary, "session.ready") : null;
             Directory.CreateDirectory(output);
             var cancellationPath = Resolve(output, ".cancel-native");
             // Unix-domain sockets include TMPDIR in their 108-byte path limit. A repository
@@ -120,7 +122,7 @@ public sealed partial class MutationRunService
             if (OperatingSystem.IsLinux())
             {
                 scratchMarker = Resolve(storage, "native-scratch.json");
-                RecoverNativeScratch(nativeTemporaryRoot, storage, scratchMarker);
+                RecoverNativeScratch(nativeTemporaryRoot, storage, scratchMarker, scope, workController, ownedStorage);
             }
             Require(!OperatingSystem.IsLinux() || Encoding.UTF8.GetByteCount(nativeTemporary) <= 40,
                 "Native temporary path is too long for Unix-domain sockets. Set TMPDIR to a short, owned temporary root.");
@@ -138,7 +140,8 @@ public sealed partial class MutationRunService
                     "The admitted native storage operation lost its attributed growth domain.");
             }
             if (scratchMarker is not null)
-                AtomicJson(scratchMarker, new NativeScratch(nativeTemporary, DateTimeOffset.UtcNow.AddSeconds(profile.TimeoutSeconds + 45)));
+                AtomicJson(scratchMarker, new NativeScratch(nativeTemporary, DateTimeOffset.UtcNow.AddSeconds(profile.TimeoutSeconds + 45))
+                { WorkReference = scope?.Reference, AuthorityPath = scope?.AuthorityPath });
             Directory.CreateDirectory(nativeTemporary);
             ownsNativeTemporary = true;
             var environment = IncrementalTestService.PilotNativeEnvironment(profile.Environment,
@@ -165,6 +168,8 @@ public sealed partial class MutationRunService
                 storageRoot = storage,
                 scratchRoot = nativeTemporary,
                 cancellationPath,
+                sessionRecordPath = sessionRecord,
+                sessionGatePath = sessionGate,
                 ownedPaths,
                 maximumOwnedBytes = ownedMaximum,
                 operationPaths = operation?.Paths ?? [],
@@ -198,6 +203,8 @@ public sealed partial class MutationRunService
                     StorageRoot = [string]$request.storageRoot; TimeoutSeconds = [int]$request.timeoutSeconds
                     ScratchRoot = [string]$request.scratchRoot
                     CancellationPath = [string]$request.cancellationPath
+                    SessionRecordPath = [string]$request.sessionRecordPath
+                    SessionGatePath = [string]$request.sessionGatePath
                     OwnedPaths = [string[]]$request.ownedPaths
                     MaximumOwnedBytes = [long]$request.maximumOwnedBytes
                     OperationPaths = [string[]]$request.operationPaths
@@ -277,6 +284,37 @@ public sealed partial class MutationRunService
                             Math.Max(1, (int)Math.Floor(remaining.TotalSeconds - Math.Min(3, remaining.TotalSeconds - 1))));
                         WriteRequest();
                     }
+                    if (sessionRecord is not null && sessionGate is not null && scope is not null)
+                    {
+                        // The driver may create its trusted setsid worker, whose
+                        // own target gate remains closed until the real session
+                        // binding has been verified and durably attached below.
+                        File.WriteAllText(launchGate, "ready");
+                        var waiting = Stopwatch.StartNew();
+                        while (!File.Exists(sessionRecord))
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+                            Require(!process.HasExited && waiting.Elapsed < TimeSpan.FromSeconds(10)
+                                && scope.Remaining >= TimeSpan.FromSeconds(1),
+                                "The native driver did not provide its gated Linux worker session within the admitted window.");
+                            Thread.Sleep(10);
+                        }
+                        Require(!CisPathSafety.IsReparsePoint(sessionRecord) && new FileInfo(sessionRecord).Length is > 0 and <= 4096,
+                            "The native Linux session record is not a bounded regular file.");
+                        var session = JsonSerializer.Deserialize<NativeLinuxSession>(File.ReadAllText(sessionRecord), Json)
+                            ?? throw new InvalidDataException("The native Linux worker session record is missing.");
+                        scope.Started(process.Id, process.StartTime.ToUniversalTime().ToString("O"),
+                            new(CisNativeWorkContainment.LinuxOwnedSession, "", 0)
+                            {
+                                LinuxSessionId = session.SessionId,
+                                LinuxSessionStartedAtUtc = session.StartedAtUtc,
+                                LinuxSessionStartTicks = session.StartTicks
+                            });
+                        cancellationToken.ThrowIfCancellationRequested();
+                        Require(scope.Remaining >= TimeSpan.FromSeconds(1),
+                            "Durable Linux session bookkeeping exhausted the admitted window before target launch.");
+                        File.WriteAllText(sessionGate, "ready");
+                    }
                 }
                 catch (Exception error) when (Expected(error)) { admissionFailure = error; RequestStop(); }
                 File.WriteAllText(launchGate, "ready");
@@ -329,25 +367,56 @@ public sealed partial class MutationRunService
         };
     }
 
-    private sealed record NativeScratch(string Path, DateTimeOffset UntilUtc);
+    private sealed record NativeLinuxSession(int SessionId, string StartedAtUtc, long StartTicks);
+
+    private sealed record NativeScratch(string Path, DateTimeOffset UntilUtc)
+    {
+        public CisAgentWorkReference? WorkReference { get; init; }
+        public string? AuthorityPath { get; init; }
+    }
 
     private static string NativeScratchPrefix(string storage)
         => "cis-" + Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(Path.GetFullPath(storage))))[..6] + "-";
 
-    private static void RecoverNativeScratch(string root, string storage, string marker)
+    private static void RecoverNativeScratch(string root, string storage, string marker, ICisNativeWorkScope? scope,
+        ICisNativeWorkController? workController, ICisOwnedStorageController? ownedStorage)
     {
         if (!File.Exists(marker)) return;
         Require(!CisPathSafety.IsReparsePoint(marker) && new FileInfo(marker).Length <= 4096, "Invalid native scratch recovery marker.");
         var prior = JsonSerializer.Deserialize<NativeScratch>(File.ReadAllText(marker), Json)
             ?? throw new InvalidDataException("Invalid native scratch recovery marker.");
-        Require(prior.UntilUtc <= DateTimeOffset.UtcNow, "Previous native scratch may still be active until " + prior.UntilUtc.ToString("O") + ".");
         Require(string.Equals(Path.TrimEndingDirectorySeparator(Path.GetDirectoryName(prior.Path) ?? ""),
             Path.TrimEndingDirectorySeparator(root), StringComparison.Ordinal)
             && Path.GetFileName(prior.Path).StartsWith(NativeScratchPrefix(storage), StringComparison.Ordinal)
             && System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(prior.Path), @"\Acis-[a-f0-9]{6}-[A-Za-z0-9_-]{15}\z", System.Text.RegularExpressions.RegexOptions.CultureInvariant),
             "Native scratch recovery requires its original short temporary root.");
+        if (prior.WorkReference is not { } reference)
+        {
+            Require(prior.UntilUtc <= DateTimeOffset.UtcNow,
+                "Previous native scratch may still be active until " + prior.UntilUtc.ToString("O") + ".");
+            Require(scope is null, "Historical native scratch has no exact work reference. Retire that disposable scratch through its original storage owner before continuing.");
+            DeleteOwnedNativeTemporary(root, prior.Path);
+            File.Delete(marker);
+            return;
+        }
+        Require(scope is not null && workController is not null && ownedStorage is not null
+            && reference.AdoptionId == scope.Reference.AdoptionId && reference.AuthorityRepositoryId == scope.Reference.AuthorityRepositoryId
+            && reference.ChangeId == scope.Reference.ChangeId && reference.TaskId == scope.Reference.TaskId
+            && reference.OwnerTaskId == scope.Reference.OwnerTaskId && prior.AuthorityPath is not null
+            && string.Equals(Path.GetFullPath(prior.AuthorityPath), Path.GetFullPath(scope.AuthorityPath), CisPathSafety.PlatformComparison),
+            "Native scratch must retain its exact original work owner and authority; a new invocation cannot reclaim another owner's output.");
+        var settlement = workController.InspectSettlement(scope.AuthorityPath, reference);
+        Require(CisNativeWorkSettlement.Complete(settlement, reference),
+            "The original native scratch execution or its storage still requires settlement; preserve its output and reservation. "
+                + string.Join(" ", settlement.Errors));
+        var admitted = ownedStorage.Reserve(scope.AuthorityPath, scope.Reference, "scratch-retirement/" + Guid.NewGuid().ToString("N"), 0,
+            [new(prior.Path, Scratch: true) { MutatesExisting = true }, new(marker) { MutatesExisting = true }]);
+        Require(admitted.Allowed, string.Join(" ", admitted.Result.Errors));
+        using var mutation = new NativeStorageReservation(scope.AuthorityPath, scope.Reference, admitted, 0, ownedStorage);
         DeleteOwnedNativeTemporary(root, prior.Path);
         File.Delete(marker);
+        var settled = SettleNativeStorage(mutation, ownedStorage, true, supersededRequiredPaths: [prior.Path, marker]);
+        Require(settled?.Allowed == true, string.Join(" ", settled?.Errors ?? []));
     }
 
     private static void DeleteOwnedNativeTemporary(string storage, string path)

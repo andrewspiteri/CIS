@@ -18,7 +18,9 @@ internal sealed partial class AgentWorkLedger
     private static void ValidateStorageMutation(Ledger state, Change change, CisAgentWorkReference reference,
         string path, string? ignoreReservation = null)
     {
-        ValidateStorageClaim(state, change, new(path));
+        // Outside-root scratch can be mutated only through its existing exact
+        // admission; a caller-selected scratch flag cannot create that authority.
+        ValidateStorageClaim(state, change, new(path, Scratch: change.Storage!.Claims.GetValueOrDefault(path)?.Scratch == true));
         foreach (var repository in StorageGroup(state, change).SelectMany(item => item.Storage!.Policy.Roots)
             .Select(item => item.RepositoryPath).Distinct(StoragePathComparer))
             if (new[] { CisAgentWorkPaths.Ledger, CisAgentWorkPaths.Adoption, CisAgentWorkPaths.Lock }

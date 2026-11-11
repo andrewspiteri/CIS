@@ -26,6 +26,23 @@ public sealed partial class AgentService
             return values;
         }).Distinct().ToArray();
         var errors = new List<string>();
+        if (OperatingSystem.IsLinux())
+            foreach (var execution in tree.Where(item => !item.Finalized && item.NativeContainment is not null))
+            {
+                if (execution.PreparationOwner?.HostId.Equals(Environment.MachineName, StringComparison.OrdinalIgnoreCase) != true)
+                { errors.Add("A recorded native session belongs to another host and was not targeted."); continue; }
+                try
+                {
+                    var containment = execution.NativeContainment!;
+                    CisProcessSession.Terminate(NativeLinuxSessionId(containment));
+                    var wait = Stopwatch.StartNew();
+                    while (!NativeLinuxSessionEmpty(containment) && wait.Elapsed < TimeSpan.FromSeconds(5)) Thread.Sleep(10);
+                    if (!NativeLinuxSessionEmpty(containment)) errors.Add("The recorded Linux session did not stop within the bounded cancellation wait.");
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException
+                    or InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException or ArgumentException)
+                { errors.Add("The recorded Linux session could not be stopped: " + error.Message); }
+            }
         foreach (var identity in identities)
         {
             if (!identity.HostId.Equals(Environment.MachineName, StringComparison.OrdinalIgnoreCase))
@@ -50,9 +67,9 @@ public sealed partial class AgentService
         {
             var owned = _workLedger.NativeExecution(authority, execution.ExecutionId);
             if (owned is not null) _workLedger.MarkRecoveryUncertain(authority, owned.Value.Reference,
-                "Cancellation stopped only verified recorded identities. Native child cleanup and restoration remain held until original named-object namespace/containment proof and retained stopped-owner evidence are reconciled.");
+                "Cancellation targeted only verified recorded identities and their retained process containment. Reconcile the stopped owners and empty original job/session before releasing reservations; native restoration remains separate.");
         }
         var result = _workLedger.Read(authority, reference.ChangeId, reference.TaskId);
-        return result with { Status = "held", Errors = errors.Append("Inspect native output/owned-child recovery evidence and the original containment namespace, then reconcile the exact stopped executions through the existing work disposition route; cancellation alone does not release uncertain reservations.").ToArray() };
+        return result with { Status = "held", Errors = errors.Append("Inspect native output and the retained job/session, then reconcile the exact stopped executions through the existing work disposition route; cancellation alone does not release uncertain reservations.").ToArray() };
     }
 }

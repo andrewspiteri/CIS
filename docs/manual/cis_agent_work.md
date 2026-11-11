@@ -327,10 +327,23 @@ from the actual created job handle. An opened job must match that exact path; a
 missing local name proves destruction only after a bounded empty job created through
 the same API establishes an exact namespace match. Session equality alone is not
 namespace proof: Windows also isolates named objects by application context.
-An unreadable job or namespace, reused identity, another host/session, historical
-unbound launch or missing Linux
-session proof remains held. Successful reconciliation charges the original bound
-conservatively and releases only pending work/storage reservations, preserving
+An unreadable job or namespace, reused identity, another host/session or historical
+unbound launch remains held.
+
+On Linux, the existing runner starts its trusted native worker in a separate
+session. Before releasing that worker's launch gate, CIS verifies and records the
+actual session leader's process identity under the recorded driver. Cancellation
+uses that retained session to stop its live process groups, then targets the
+verified driver and controller identities. Reconciliation requires the recorded
+owners and driver to have stopped and the retained session to have no live
+members. It does not infer child closure from the driver's absence. This covers
+the supported trusted runner; it does not contain code that deliberately detaches
+into another session. A missing or ambiguous historical session binding stays
+unknown. Use controlled unit retirement below when its conditions apply.
+
+Successful reconciliation charges observed execution time when available, or the
+original admitted bound when duration is unknown, and releases only pending
+work/storage reservations, preserving
 interrupted diagnostics and the original restoration obligation. The unchanged
 `--recovery-of` route can then use the remaining protected time and storage reserve;
 reconciliation grants no new allowance or attempt.
@@ -374,7 +387,7 @@ resources, supply this input to `agent work disposition <change> <task>`:
 
 Selecting a basis does not perform cleanup. The controller must first establish
 that old work cannot interfere. `process-cleanup` uses the supported complete
-process/job cleanup checks; `retired-environment` records the controller's factual
+process/job or Linux-session cleanup checks; `retired-environment` records the controller's factual
 retirement of the disposable executor. A known live driver or another active
 invocation still holds disposal. A long-lived controller can retire its own
 returned invocation without exiting. Missing historical fields stay unknown.

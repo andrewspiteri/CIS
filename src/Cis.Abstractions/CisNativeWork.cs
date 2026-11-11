@@ -17,13 +17,21 @@ public sealed record CisNativeWorkRequest(string RepositoryPath, string Executio
     public string? RecoveryBasis { get; init; }
 }
 
-/// <summary>Installed gated driver containment; recorded only after actual Windows job assignment.</summary>
+/// <summary>Installed gated native containment, verified before the target starts.</summary>
 public sealed record CisNativeWorkContainment(string Protocol, string JobName, int WindowsSessionId)
 {
     public const string WindowsOuterJob = "cis-native-windows-outer-job-v1";
+    public const string LinuxOwnedSession = "cis-native-linux-session-v1";
     // Captured from the created job handle, never reconstructed from a later
     // caller's session/token. Null is retained for historical records and holds inspection.
     public string? WindowsObjectPath { get; init; }
+    // The existing Linux supervisor owns this actual setsid worker session.
+    // Its leader identity is captured while the worker is still launch-gated.
+    public int? LinuxSessionId { get; init; }
+    public string? LinuxSessionStartedAtUtc { get; init; }
+    // Kernel start ticks identify the leader exactly across runtime processes;
+    // converting Linux uptime to UTC is only an observation, not PID identity.
+    public long? LinuxSessionStartTicks { get; init; }
 }
 
 /// <summary>Read-only qualification of a retained native tree for restart closure proof.

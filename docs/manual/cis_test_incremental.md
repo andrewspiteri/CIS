@@ -262,6 +262,19 @@ After their accounting is settled, it clears stale activity markers and retries
 only unfinished or invalidated unit batches, preserving current completed results.
 Live conflicting work still blocks launch, even after a displayed deadline.
 
+On Linux, supported native cancellation stops the worker's recorded session as
+well as verified driver/controller processes. After cancellation, reconcile the
+stopped tree before retrying; the driver's absence alone does not establish that
+its children stopped. Controlled retirement below is an alternative when its
+conditions apply.
+The retained session covers the existing trusted runner, including process groups
+within it, rather than code that deliberately creates another session. Missing
+historical session bindings remain unknown and can use controlled retirement when
+its conditions apply. The same saved unit results and finite accounting survive.
+After exact settlement, retry can retire that invocation's recorded short temporary
+directory through the existing storage authority without waiting for its old
+scratch timeout. Missing or ambiguous scratch ownership remains held.
+
 For a disposable legacy unit invocation with incomplete cleanup observations,
 first clean up its processes or retire its execution environment and shared
 resources, then use the controlled `abandon-native-unit` disposition described in

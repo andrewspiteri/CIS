@@ -32,6 +32,7 @@ public sealed partial class IncrementalTestService
         public string? LegacyTestingProducer { get; init; }
         public string? LegacyHelperProducer { get; init; }
         public ICisNativeWorkScope? Work { get; init; }
+        public ICisNativeWorkController? WorkController { get; init; }
         public ICisOwnedStorageController? OwnedStorage { get; init; }
         public CancellationToken Cancellation { get; init; }
         public MutationRunService.NativeStorageReservation? ActiveStorage { get; set; }

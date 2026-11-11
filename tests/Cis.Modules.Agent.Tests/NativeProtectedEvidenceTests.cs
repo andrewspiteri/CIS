@@ -63,6 +63,17 @@ public sealed partial class AgentExecutionTests
         Assert.True(seeded.ExitCode == 0, JsonSerializer.Serialize(seeded, JsonOptions));
         var statePath = Path.Combine(repository.Path, seeded.StatePath!);
         var state = JsonSerializer.Deserialize<IncrementalTestState>(File.ReadAllBytes(statePath), JsonOptions)!;
+        Assert.Null(state.RecoveryBasis); // Ordinary unit execution does not pin an unused mutation recipe.
+        var unitCalls = File.ReadAllLines(Path.Combine(repository.Path, ".cis/native-calls.log"));
+        // Select the genuine mutation-capable route to retain its recipe. Its
+        // pilot gate must hold expansion before any additional native launch.
+        var mutationReadiness = service.Run(options with { Layer = "all" }, 0, TestContext.Current.CancellationToken);
+        Assert.Equal("pilot-required", mutationReadiness.Status);
+        Assert.Equal(4, mutationReadiness.ExitCode);
+        Assert.Equal(0, mutationReadiness.ExecutedUnitBatches);
+        Assert.Equal(0, mutationReadiness.ExecutedMutationBatches);
+        Assert.Equal(unitCalls, File.ReadAllLines(Path.Combine(repository.Path, ".cis/native-calls.log")));
+        state = JsonSerializer.Deserialize<IncrementalTestState>(File.ReadAllBytes(statePath), JsonOptions)!;
         Assert.NotNull(state.RecoveryBasis);
         var latestPath = Path.Combine(Path.GetDirectoryName(statePath)!, "latest-run.json");
         var reportBytes = state.Batches.Values.ToDictionary(batch => Path.Combine(Path.GetDirectoryName(statePath)!, batch.Unit!.ReportPath),

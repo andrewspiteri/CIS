@@ -1,11 +1,19 @@
 using System.Text.Json;
 using System.Xml.Linq;
+using System.Diagnostics;
 
 // Fault-injection fixture for the shared runner's tests; these are synthetic protocol results.
 if (args.Length < 3) return 2;
 var mode = args[0];
 var output = args[1];
 var source = args[2];
+if (mode == "unit-block-child")
+{
+    using var interference = new FileStream(".cis/native-interference.lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+    File.WriteAllText(".cis/native-block-child.ready", Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    Thread.Sleep(Timeout.Infinite);
+    return 1;
+}
 string? configuredFilter = null;
 if (mode == "config-mutation")
 {
@@ -26,13 +34,29 @@ if (File.Exists(".cis/environment-probe.json"))
     File.WriteAllText(".cis/environment-observed.json", JsonSerializer.Serialize(values));
     File.AppendAllText(".cis/environment-launches.jsonl", JsonSerializer.Serialize(new { kind = mode, output = Path.GetFileName(output), values }) + "\n");
 }
-var overrideFile = Path.Combine(".cis", "fault-" + Path.GetFileName(source));
+var localOverride = Path.Combine(".cis", "local", "fault-" + Path.GetFileName(source));
+var overrideFile = File.Exists(localOverride) ? localOverride : Path.Combine(".cis", "fault-" + Path.GetFileName(source));
 if (mode is "unit" or "mutation" && File.Exists(overrideFile))
 {
     var fault = File.ReadAllText(overrideFile).Trim();
     if (fault.StartsWith(mode + ":", StringComparison.Ordinal)) mode = fault[(mode.Length + 1)..];
 }
 File.AppendAllText(".cis/native-calls.log", mode + " " + source + " " + (configuredFilter ?? (args.Length > 3 ? args[3] : "")) + "\n");
+if (mode == "unit-block")
+{
+    var start = new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false, CreateNoWindow = true };
+    start.ArgumentList.Add(typeof(Program).Assembly.Location);
+    foreach (var argument in new[] { "unit-block-child", output, source }) start.ArgumentList.Add(argument);
+    using var child = Process.Start(start)!;
+    var wait = Stopwatch.StartNew();
+    while (!File.Exists(".cis/native-block-child.ready") && !child.HasExited && wait.Elapsed < TimeSpan.FromSeconds(10)) Thread.Sleep(10);
+    if (!File.Exists(".cis/native-block-child.ready")) return 2;
+    var ready = ".cis/native-block-ready.json";
+    File.WriteAllText(ready + ".tmp", JsonSerializer.Serialize(new { parent = Environment.ProcessId, child = child.Id }));
+    File.Move(ready + ".tmp", ready, overwrite: true);
+    Thread.Sleep(Timeout.Infinite);
+    return 1;
+}
 if (mode == "recovery")
 {
     if (File.Exists(".cis/recovery-failure")) { Console.Error.WriteLine("native-recovery-failed"); return 1; }

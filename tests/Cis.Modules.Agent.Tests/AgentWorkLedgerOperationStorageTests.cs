@@ -5,6 +5,65 @@ namespace Cis.Modules.Agent.Tests;
 public sealed partial class AgentWorkLedgerTests
 {
     [Fact]
+    public void WorkLedger_ExactRetainedScratchMutationPreservesItsAdmissionAndSupersessionGuards()
+    {
+        using var f = new Fixture();
+        var first = f.Identity("WORK-A");
+        var second = f.Identity("WORK-B");
+        var allocation = new CisAgentWorkAllocationRequest(600, 6, 0,
+            [new(first.TaskId, 240, 3), new(second.TaskId, 240, 3)], "approved scratch retirement", "finite shared storage",
+            AcknowledgeHistoricalUnknown: true)
+        { Controllers = ["Controller"], Storage = new(16 * 1024 * 1024, [new(f.Context.RepositoryPath, ".cis/local")]) };
+        Assert.Equal(0, f.Ledger.Allocate(f.Context, first.ChangeId, allocation, [first, second], "Allocation owner",
+            "Retire only known stopped scratch without granting cross-owner supersession.").ExitCode);
+        var stage = new CisAgentWorkStage("native-testing", "fixture", "unit", f.Context.RepositoryId) { NativeOperation = "native-unit" };
+        var original = f.Ledger.Admit(f.Context, first, "native/original-scratch", 60, 180, stage: stage, controller: "Controller");
+        var foreign = f.Ledger.Admit(f.Context, second, "native/foreign-owner", 60, 180, stage: stage, controller: "Controller");
+        Assert.True(original.Admitted); Assert.True(foreign.Admitted);
+        var scratch = Path.Combine(Path.GetTempPath(), "cis-mutation-" + Guid.NewGuid().ToString("N"));
+        var reservation = f.Ledger.ReserveStorage(f.Context, original.Reference!, "original-scratch", 4096,
+            [new(scratch, Scratch: true)], false, false, "Controller");
+        Assert.True(reservation.Allowed, string.Join("; ", reservation.Result.Errors));
+        Directory.CreateDirectory(scratch);
+        var payload = Path.Combine(scratch, "diagnostic.txt");
+        File.WriteAllText(payload, "retained native scratch");
+        try
+        {
+            var live = f.Ledger.ReserveStorage(f.Context, foreign.Reference!, "live-scratch-mutation", 0,
+                [new(scratch, Scratch: true) { MutatesExisting = true }], false, false, "Controller");
+            Assert.False(live.Allowed);
+            Assert.Contains(live.Result.Errors, error => error.Contains("pending", StringComparison.Ordinal));
+            Assert.True(f.Ledger.SettleStorage(f.Context, original.Reference!, reservation.ReservationId!, true, [scratch]).Allowed);
+            f.Time = f.Time.AddSeconds(1);
+            Assert.Equal(0, f.Ledger.Settle(f.Context, original.Reference!, "native-finished", true).ExitCode);
+            var wrongOwner = f.Ledger.ReserveStorage(f.Context, foreign.Reference!, "foreign-scratch-mutation", 0,
+                [new(scratch, Scratch: true) { MutatesExisting = true }], false, false, "Controller");
+            Assert.False(wrongOwner.Allowed);
+            Assert.Contains(wrongOwner.Result.Errors, error => error.Contains("Required evidence", StringComparison.Ordinal));
+            Assert.Equal("retained native scratch", File.ReadAllText(payload));
+            var current = f.Ledger.Admit(f.Context, first, "native/current-owner", 60, 180, stage: stage, controller: "Controller");
+            Assert.True(current.Admitted);
+            var unknown = Path.Combine(Path.GetTempPath(), "cis-mutation-" + Guid.NewGuid().ToString("N"));
+            Assert.False(f.Ledger.ReserveStorage(f.Context, current.Reference!, "unknown-scratch-mutation", 0,
+                [new(unknown, Scratch: true) { MutatesExisting = true }], false, false, "Controller").Allowed);
+            var before = f.Ledger.Read(f.Context, first.ChangeId, first.TaskId).Work!;
+            var mutation = f.Ledger.ReserveStorage(f.Context, current.Reference!, "known-scratch-mutation", 0,
+                [new(scratch, Scratch: true) { MutatesExisting = true }], false, false, "Controller");
+            Assert.True(mutation.Allowed, string.Join("; ", mutation.Result.Errors));
+            Directory.Delete(scratch, recursive: true);
+            Assert.True(f.Ledger.SettleStorage(f.Context, current.Reference!, mutation.ReservationId!, true, null,
+                supersededRequiredPaths: [scratch]).Allowed);
+            Assert.Equal(0, f.Ledger.Settle(f.Context, current.Reference!, "native-finished", true).ExitCode);
+            var after = f.Ledger.Read(f.Context, first.ChangeId, first.TaskId).Work!;
+            Assert.Equal(before.Task!.ConsumedMilliseconds, after.Task!.ConsumedMilliseconds);
+            Assert.Equal(before.Task.UsedAttempts, after.Task.UsedAttempts);
+            Assert.Equal(0, after.Task.ReservedMilliseconds);
+            Assert.DoesNotContain(scratch, f.Ledger.InspectStorage(f.Context, first.ChangeId, first.TaskId).Storage!.ProtectedPaths);
+        }
+        finally { if (Directory.Exists(scratch)) Directory.Delete(scratch, recursive: true); }
+    }
+
+    [Fact]
     public void WorkLedger_RequiredPromotionWaitsForAnAlreadyAuthorizedForeignMutationThenSettlesWithoutNewCapacity()
     {
         using var f = new Fixture();

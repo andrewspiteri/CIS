@@ -7,7 +7,7 @@ using Xunit;
 namespace Cis.Modules.Testing.Tests;
 
 [Collection("Incremental environment")]
-public sealed class IncrementalGovernedUnitRetryTests
+public sealed partial class IncrementalGovernedUnitRetryTests
 {
     [Theory]
     [InlineData("unit", false, false)]
@@ -154,7 +154,7 @@ public sealed class IncrementalGovernedUnitRetryTests
         public string StatePath => Native.Full(IncrementalTestService.LocalRoot + "/sample/state.json");
         private readonly List<ICisNativeWorkScope> _held = [];
 
-        public GovernedUnitFixture(bool mutationConfigured = false, bool recoveryConfigured = false)
+        public GovernedUnitFixture(bool mutationConfigured = false, bool recoveryConfigured = false, Func<DateTimeOffset>? clock = null)
         {
             Native.Save(Native.Profile with
             {
@@ -170,7 +170,7 @@ public sealed class IncrementalGovernedUnitRetryTests
             Native.Write("docs/cis/changes/CIS-0001/agent-tasks/WORK-090.md",
                 "---\ntask_status: InProgress\ntargets: [\"sample\"]\n---\n# Unit work\nVerify the existing selected cases.\n");
             Association = new("CIS-0001", "WORK-090", AuthorityPath: Native.Path, Actor: "Controller");
-            Controller = new(new CisRepositoryContextResolver());
+            Controller = new(new CisRepositoryContextResolver(), clock: clock);
             var allocation = new CisAgentWorkAllocationRequest(1200, 6, 120,
                 [new("WORK-090", 1200, 6, 120)], "fixture:unit-work", "fixture:finite-storage", AcknowledgeHistoricalUnknown: true)
             {

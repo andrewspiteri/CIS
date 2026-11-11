@@ -146,6 +146,8 @@ function Invoke-BoundedMutationProcess {
         [Collections.IDictionary]$Environment = @{},
         [string]$ScratchRoot,
         [string]$CancellationPath,
+        [string]$SessionRecordPath,
+        [string]$SessionGatePath,
         [string[]]$OwnedPaths = @(),
         [long]$MaximumOwnedBytes = [long]::MaxValue,
         [string[]]$OperationPaths = @(),
@@ -260,6 +262,22 @@ function Invoke-BoundedMutationProcess {
             while (-not [Cis.Abstractions.CisProcessSession]::IsSessionLeader($sessionId)) {
                 if ($process.HasExited -or $sessionWait.Elapsed.TotalSeconds -gt 2) { throw 'Mutation launcher did not establish its owned process session.' }
                 Start-Sleep -Milliseconds 10
+            }
+            if ($SessionRecordPath -or $SessionGatePath) {
+                if (-not [IO.Path]::IsPathFullyQualified($SessionRecordPath) -or
+                    -not [IO.Path]::IsPathFullyQualified($SessionGatePath)) { throw 'Native session admission paths must be absolute.' }
+                # The trusted worker still waits on its existing target gate.
+                # Persist its actual session identity through the controller first.
+                $record = @{ sessionId = $sessionId; startedAtUtc = $process.StartTime.ToUniversalTime().ToString('O')
+                    startTicks = [Cis.Abstractions.CisProcessSession]::GetStartTicks($sessionId) } | ConvertTo-Json -Compress
+                [IO.File]::WriteAllText($SessionRecordPath + '.tmp', $record)
+                [IO.File]::Move($SessionRecordPath + '.tmp', $SessionRecordPath)
+                $admissionWait = [Diagnostics.Stopwatch]::StartNew()
+                while (-not [IO.File]::Exists($SessionGatePath)) {
+                    if ($process.HasExited -or $admissionWait.Elapsed.TotalSeconds -ge 10 -or
+                        ($CancellationPath -and [IO.File]::Exists($CancellationPath))) { throw 'The native controller did not admit its owned Linux session.' }
+                    Start-Sleep -Milliseconds 10
+                }
             }
         }
         $streams[0].reader = $process.StandardOutput

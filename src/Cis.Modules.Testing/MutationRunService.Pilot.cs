@@ -391,7 +391,7 @@ public sealed partial class MutationRunService
             {
                 storageReservation = BeginNativeStorage(repository, output, storage, limits, child, ownedStorage);
                 enteredExecute = true;
-                native = Execute(repository, output, storage, limits, command, child, cancellationToken, ownedStorage, storageReservation);
+                native = Execute(repository, output, storage, limits, command, child, cancellationToken, ownedStorage, storageReservation, workController);
                 executeWall += phaseWatch.ElapsedMilliseconds;
                 Require(native.SafelyStopped,
                     "Pilot native ownership or child cleanup is uncertain; retain its original output and resolve the owned execution before report movement or cleanup.");

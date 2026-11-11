@@ -44,4 +44,6 @@ Use the same owner for supported native mutation/incremental work. Inherit a ver
 
 Check the original operation growth grant separately from the shared owned ceiling. Exact verified original restoration may use its existing recipe/reserve/attempt through a repeated-blocker exploration hold; retain that hold and history for further exploration. This does not bypass other capacity, uncertainty or permission holds.
 
+On Linux, cancel the retained native worker session and verified driver/controller identities through the existing work disposition. Reconcile after the recorded owners have stopped and that session has no live members, then retry ordinary unit work within remaining capacity. CIS records the actual worker session before opening its launch gate; an absent driver alone does not prove child closure. This covers the existing trusted runner, not deliberately detached code. Historical missing session bindings remain unknown; use controlled unit retirement only when its factual conditions apply. Preserve accepted reports, consumption and used attempts.
+
 For command syntax, rule limits and current resumption behavior, read the `cis agent run` and `cis agent resume` manuals from the CIS distribution.

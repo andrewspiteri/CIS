@@ -20,26 +20,53 @@ public sealed partial class AgentService
                 return null;
             }
             if (!execution.LaunchIntent && execution.ProcessId is null) continue;
-            if (!OperatingSystem.IsWindows() || execution.NativeContainment is not { } containment
+            if (execution.NativeContainment is not { } containment
                 || execution.ProcessId is not { } processId || execution.ProcessStartedAtUtc is not { } started
                 || !NativeRecordedIdentityStopped(new(owner.HostId, processId, started)))
             {
-                diagnostics.Add("Launched native work requires its recorded stopped driver and actual Windows outer-job binding. Linux session ownership, historical unbound drivers and missing process metadata remain held; PID absence alone does not establish stopped children.");
+                diagnostics.Add("Launched native work requires its recorded stopped driver and actual owned job/session binding. Historical unbound drivers and missing process metadata remain held; PID absence alone does not establish stopped children.");
                 return null;
             }
             try
             {
-                if (!CisProcessJob.IsNamedNativeJobEmptyOrDestroyed(containment))
-                { diagnostics.Add("The recorded native Windows job still owns active processes; retain its work and storage reservations."); return null; }
+                var empty = OperatingSystem.IsWindows() ? CisProcessJob.IsNamedNativeJobEmptyOrDestroyed(containment)
+                    : OperatingSystem.IsLinux() ? NativeLinuxSessionEmpty(containment)
+                    : throw new PlatformNotSupportedException("Native reconciliation supports Windows and Linux.");
+                if (!empty)
+                { diagnostics.Add("The recorded native job/session still owns active processes; retain its work and storage reservations."); return null; }
             }
             catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException
                 or InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException or ArgumentException)
             {
-                diagnostics.Add("The exact native Windows job cannot be verified empty in its original named-object namespace and session: " + error.Message);
+                diagnostics.Add("The exact native job/session cannot be verified empty from its retained binding: " + error.Message);
                 return null;
             }
         }
         return tree;
+    }
+
+    private static bool NativeLinuxSessionEmpty(CisNativeWorkContainment containment)
+    {
+        if (!OperatingSystem.IsLinux()) throw new PlatformNotSupportedException();
+        return CisProcessSession.GetLiveProcessIds(NativeLinuxSessionId(containment)).Length == 0;
+    }
+
+    private static int NativeLinuxSessionId(CisNativeWorkContainment containment)
+    {
+        if (!OperatingSystem.IsLinux()) throw new PlatformNotSupportedException();
+        if (containment.Protocol != CisNativeWorkContainment.LinuxOwnedSession
+            || containment.LinuxSessionId is not > 1
+            || containment.LinuxSessionStartTicks is null or < 0)
+            throw new InvalidDataException("The actual Linux worker session and its leader start identity were not recorded before target launch. Retire the disposable environment rather than infer child closure from a driver PID.");
+        var session = containment.LinuxSessionId.Value;
+        try
+        {
+            if (CisProcessSession.GetStartTicks(session) != containment.LinuxSessionStartTicks.Value)
+                throw new InvalidDataException("The recorded Linux session leader PID has been reused; no replacement process or session was targeted.");
+        }
+        catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException)
+        { /* The leader can exit while its retained session still owns children. */ }
+        return session;
     }
 
     private static bool NativeRecordedIdentityStopped(CisAgentWorkPreparationOwner identity)

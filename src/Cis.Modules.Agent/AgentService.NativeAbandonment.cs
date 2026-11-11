@@ -59,13 +59,30 @@ public sealed partial class AgentService
                 if (!AbandonedIdentityStopped(identity))
                     errors.Add("An original unit controller/driver is still live or unreadable. Stop it before disposing of its invocation.");
             }
-            if (request.DisposalBasis != "process-cleanup" || !execution.LaunchIntent) continue;
-            if (!OperatingSystem.IsWindows() || execution.NativeContainment is not { WindowsObjectPath: not null } containment)
+            if (!execution.LaunchIntent) continue;
+            if (request.DisposalBasis != "process-cleanup")
+            {
+                // A retirement statement cannot override a known live local
+                // session. Historical missing bindings remain missing.
+                if (OperatingSystem.IsLinux() && execution.NativeContainment is { Protocol: CisNativeWorkContainment.LinuxOwnedSession } known
+                    && execution.PreparationOwner?.HostId.Equals(Environment.MachineName, StringComparison.OrdinalIgnoreCase) == true)
+                    try
+                    {
+                        if (!NativeLinuxSessionEmpty(known)) errors.Add("The original Linux unit session still owns processes. Stop them before retiring its environment.");
+                    }
+                    catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException
+                        or InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException or ArgumentException)
+                    { errors.Add("The recorded Linux unit session could not be inspected: " + error.Message); }
+                continue;
+            }
+            if (execution.NativeContainment is not { } containment)
             { errors.Add("This invocation has no supported complete process-cleanup receipt. Retire its disposable environment before disposal."); continue; }
             try
             {
-                if (!CisProcessJob.IsNamedNativeJobEmptyOrDestroyed(containment))
-                    errors.Add("The old unit job still owns processes. Stop them before disposal.");
+                var empty = OperatingSystem.IsWindows() ? CisProcessJob.IsNamedNativeJobEmptyOrDestroyed(containment)
+                    : OperatingSystem.IsLinux() ? NativeLinuxSessionEmpty(containment)
+                    : throw new PlatformNotSupportedException("Native cleanup supports Windows and Linux.");
+                if (!empty) errors.Add("The old unit job/session still owns processes. Stop them before disposal.");
             }
             catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException
                 or InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException or ArgumentException)

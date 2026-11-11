@@ -44,6 +44,12 @@ Inspect structured readiness and errors as well as the command exit code. Import
 
 Source adoption preserves the supplied facts without settling missing choices. Necessary unresolved `TI-Q-*` choices block dependent technical work even after adoption; absent optional capabilities remain nonblocking. Inspect the identified remaining choices and record only authorised answers through the procedure above.
 
+Explicit accepted exclusions, including AI/model execution outside the selected
+architecture, are source facts. Reuse them with their source references and
+acceptance basis, including before a questionnaire is saved. Agent transcription
+does not create a new human answer, actor or answer time. Missing necessary choices
+and conflicting current direction still require resolution.
+
 Treat the workspace as authority for exactly one product. Derive product technology and
 module direction only from owned repositories. Record producer, consumer, and
 bidirectional dependency repositories as bounded integration evidence; never infer their

@@ -3,7 +3,7 @@ title: "cis ui-direction questions"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-09-14"
+last_reviewed: "2026-11-11"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-ui-direction-questions
@@ -28,3 +28,11 @@ Observed shell, styles, typography, components and responsive behavior prefill a
 directions. When code supplies an existing component system, it is presented for human
 confirmation instead of automatically adopting a generic framework-profile choice.
 Existing human answers are preserved. Discovery never resolves subjective choices itself.
+
+An explicit no-visual-UI direction in the current accepted technical baseline can
+resolve applicability even when it spans several paragraphs or no technical
+questionnaire has been saved. CIS keeps source provenance; it does not record the
+fact as a newly supplied human answer. Machine-facing HTTP, CLI or API contracts
+alone do not select a visual interface. Conflicting recorded or canonical visual
+direction blocks continuation. The resulting `design/ui-direction.md` record still
+requires explicit human approval through `cis ui-direction approve`.

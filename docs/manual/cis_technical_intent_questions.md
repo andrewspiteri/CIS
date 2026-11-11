@@ -3,7 +3,7 @@ title: "cis technical-intent questions"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-11-02"
+last_reviewed: "2026-11-11"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-technical-intent-questions
@@ -41,6 +41,13 @@ surfaces, frontend/backend stacks, current repository and architecture topology,
 identified transactional database, contracts, identity, deployment, asynchronous processing,
 operations, testing, supporting stores, and AI boundaries where evidence exists. A human may
 override any derived direction with `answer`.
+
+Source interpretation can reuse explicit accepted facts before a questionnaire is
+saved. This includes a statement that AI/model execution is outside the selected
+architecture. Derived answers retain source references, digests and acceptance
+basis; agent transcription supplies no new human actor or answer time. A current
+AI requirement conflicting with that exclusion remains blocked for reconciliation.
+Genuinely missing necessary choices remain unanswered.
 
 For a greenfield project, and for any existing-project choice that cannot be established safely,
 the question remains `Unanswered`. Advisory text is not an answer. The questionnaire becomes

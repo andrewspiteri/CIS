@@ -9,6 +9,7 @@ namespace Cis.Modules.TechnicalIntent;
 public sealed partial class TechnicalIntentQuestionnaireService
 {
     private const string PrimaryStoreValues = "PostgreSQL|SQLite|SQL Server|MySQL|MariaDB";
+    private const string ModelExclusionDirection = @"\b(?:AI|learned models?)\b[^.!?]*\b(?:excluded|not applicable|not required|deferred|do(?:es)? not become selected architecture)\b|\bno\s+(?:AI|learned models?)\b";
 
     // Topic routing selects original passages, never a generated recommendation.
     private static readonly IReadOnlyDictionary<string, (string Content, string Heading)> DocumentTopics =
@@ -277,7 +278,7 @@ public sealed partial class TechnicalIntentQuestionnaireService
     {
         if (id == "TI-Q-006")
             return ReadPrimaryStoreClaims(passage).Any() || Regex.IsMatch(passage.Text,
-                @"\b(?:no durable application data|no database (?:is )?required|database (?:is )?not applicable)\b",
+                @"\b(?:no durable application data|no database (?:is )?required|database (?:is )?not applicable|no (?:new )?transactional (?:application )?system of record (?:is )?(?:introduced|required|selected))\b",
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
         var pattern = id switch
         {
@@ -287,7 +288,7 @@ public sealed partial class TechnicalIntentQuestionnaireService
             "TI-Q-004" => @"\b(?:monolith|microservices?|serverless|event.driven services|client.only|existing architecture)\b",
             "TI-Q-007" => @"\b(?:Redis|cache|search(?: index)?|object storage|blob storage|graph (?:database|store)|analytics warehouse|vector store|message broker|disk spool|supporting store|none)\b|\bno\s+(?:additional|supporting)\s+(?:data\s+)?(?:services?|stores?)\b",
             "TI-Q-008" => @"\b(?:HTTP|JSON|gRPC|GraphQL|WebSocket|files|batches|in.process|events|messages|SDKs?)\b",
-            "TI-Q-015" => @"\b(?:AI|learned models?)\b.*\b(?:excluded|not applicable|not required|deferred)\b|\bno\s+(?:AI|learned models?)\b|\b(?:local model|managed model API|self.hosted model|model hosting|model provider|model governance|human approval required)\b",
+            "TI-Q-015" => ModelExclusionDirection + @"|\b(?:local model|managed model API|self.hosted model|model hosting|model provider|model governance|human approval required)\b",
             _ => null,
         };
         return pattern is null || Regex.IsMatch(passage.Text, pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
@@ -398,7 +399,37 @@ public sealed partial class TechnicalIntentQuestionnaireService
             errors.Add("Authoritative input conflict: primary data store. Retain and reconcile both statements: "
                 + string.Join("; ", conflicting.Select(item => $"{item.Citation} — {item.Text}")));
         }
+        var modelScope = documents.Where(item => item.Accepted || includeSelectedDraft && item.Selected)
+            .SelectMany(document => document.Passages.SelectMany(passage => ReadModelScopeClaims(passage)
+                .Select(claim => (claim.Selected, claim.Text, Citation: $"{document.Path}:{passage.Line} — {passage.Heading}")))).ToArray();
+        if (modelScope.Select(claim => claim.Selected).Distinct().Count() > 1)
+        {
+            conflicts.Add("TI-Q-015");
+            errors.Add("Authoritative input conflict: AI/model scope. Retain and reconcile both statements: "
+                + string.Join("; ", modelScope.Select(item => $"{item.Citation} — {item.Text}")));
+        }
         return conflicts;
+    }
+
+    private static IEnumerable<(bool Selected, string Text)> ReadModelScopeClaims(DocumentPassage passage)
+    {
+        foreach (var direction in Regex.Split(passage.Text, @"(?<=[.!?;])\s+",
+            RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
+        {
+            // A future option is neither a current model selection nor a
+            // contradiction of the accepted current exclusion.
+            if (Regex.IsMatch(direction, @"\b(?:future|later phase|phase\s*[2-9]|proposed|consider|optional|may|could)\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))) continue;
+            if (Regex.IsMatch(direction, ModelExclusionDirection,
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
+                yield return (false, direction);
+            if (Regex.Matches(direction,
+                @"\b(?:use[sd]?|require[sd]?|must use|shall use|will use)\s+(?:(?:a|an|the)\s+)?(?:AI|learned models?|local model|managed model API|self.hosted model)\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
+                .Any(selection => !Regex.IsMatch(direction[..selection.Index], @"\b(?:not|never)\s+\z",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))))
+                yield return (true, direction);
+        }
     }
 
     // One bounded scalar interpretation is used for source derivation and for

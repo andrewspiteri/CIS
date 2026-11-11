@@ -89,6 +89,7 @@ public sealed partial class UiDirectionQuestionnaireService
         var existing = File.Exists(state.Path!) ? File.ReadAllText(state.Path) : null;
         var previous = existing is null ? new Dictionary<string, UiDirectionQuestion>(StringComparer.Ordinal) : Parse(existing);
         var sourceChanged = existing is not null && ReadNested(existing, "solution_design_hash") != state.SolutionVersion;
+        var preserveNoUi = !sourceChanged && previous.Count == Definitions.Count && !RequiresUi(previous.Values.ToArray());
         var derived = Derive(state);
         var baseline = _baseline.Discover(state.Workspace!.WorkspacePath);
         // Code observations are proposals for the common direction, not design authority.
@@ -99,6 +100,9 @@ public sealed partial class UiDirectionQuestionnaireService
                 ? original with { Suggestion = suggestion } : original;
             if (previous.TryGetValue(definition.Id, out var item) && !string.IsNullOrWhiteSpace(item.Answer))
             {
+                // A new reader can recognize existing no-UI source wording without
+                // erasing inapplicable visual answers and invalidating its approval.
+                if (preserveNoUi) return item;
                 if (item.ResolutionSource == "repository-evidence")
                     return derived.TryGetValue(definition.Id, out var refreshed) ? ToDerived(definition, refreshed) : ToQuestion(definition);
                 if (!sourceChanged) return item;
@@ -143,8 +147,13 @@ public sealed partial class UiDirectionQuestionnaireService
         if (!questions.ContainsKey(id.Trim())) return Result("invalid", state, questions.Values.ToArray(), false, [$"Unknown UI-direction question '{id.Trim()}'."]);
         var updated = questions.Values.Select(item => item.Id == id.Trim() ? item with
         {
-            Status = "Answered", Answer = answer.Trim(), AnsweredBy = actor.Trim(), AnsweredAtUtc = _clock().ToString("O"),
-            ResolutionSource = "human", Confidence = "confirmed", Evidence = [],
+            Status = "Answered",
+            Answer = answer.Trim(),
+            AnsweredBy = actor.Trim(),
+            AnsweredAtUtc = _clock().ToString("O"),
+            ResolutionSource = "human",
+            Confidence = "confirmed",
+            Evidence = [],
         } : item).OrderBy(item => item.Id, StringComparer.Ordinal).ToArray();
         Write(state.Path!, Render(state.Authority!.Id, state.SolutionVersion!, Complete(updated), updated));
         var stableId = $"{state.Authority.Id}:spec:ui-direction-questionnaire";
@@ -196,6 +205,9 @@ public sealed partial class UiDirectionQuestionnaireService
         var ready = status.Validation is { } validation
             && CisDefinitionDraftScope.Accepts(validation.Valid, validation.Current, validation.EffectiveStatus);
         var version = ready ? SourceDigest(authority.RepositoryPath, docs) : null;
+        if (ready && ConflictingRecordedFrontend(authority.RepositoryPath, docs))
+            return new(resolution.Workspace, authority, context.Context, path, version, false,
+                ["Recorded frontend direction conflicts with the accepted technical baseline; reconcile the conflicting source decision before UI applicability."]);
         return new(resolution.Workspace, authority, context.Context, path, version, ready && version is not null, []);
     }
 
@@ -204,7 +216,7 @@ public sealed partial class UiDirectionQuestionnaireService
         var result = new Dictionary<string, DerivedDirection>(StringComparer.Ordinal);
         var root = state.Authority!.RepositoryPath;
         var docs = state.Authority.DocumentationRoot.Replace('/', Path.DirectorySeparatorChar);
-        if (RecordedNoFrontend(root, docs) is { } noFrontend)
+        if ((RecordedNoFrontend(root, docs) ?? AcceptedNoFrontend(root, docs)) is { } noFrontend)
         {
             result["UI-Q-001"] = new("No user-facing UI", "high", [noFrontend]);
             return result;

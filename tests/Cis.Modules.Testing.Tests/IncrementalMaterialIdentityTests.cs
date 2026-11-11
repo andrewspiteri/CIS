@@ -275,6 +275,68 @@ public sealed class IncrementalMaterialIdentityTests
         });
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void EquivalentExecutablePathSpellingsKeepAcceptedUnitEvidenceCurrentWithoutNativeReplay(bool windowsSlashes)
+    {
+        if (windowsSlashes && !OperatingSystem.IsWindows()) Assert.Skip("Windows alternate path separators.");
+        using var fixture = new GovernedUnitFixture();
+        var executable = fixture.Native.Profile.UnitCommand[0];
+        var spelling = windowsSlashes ? executable.Replace('\\', '/')
+            : Path.Combine(Path.GetDirectoryName(executable)!, ".", Path.GetFileName(executable));
+        fixture.Native.Save(fixture.Native.Profile with
+        { UnitCommand = [spelling, .. fixture.Native.Profile.UnitCommand.Skip(1)] });
+        AssertCompleted(fixture.Run());
+        var calls = fixture.Native.Calls();
+        var reports = Reports(fixture);
+        Assert.Equal(2, calls.Length);
+        var stage = fixture.Native.SavedState().Batches.Values.First().Unit!;
+        Assert.NotEqual(spelling, stage.Execution!.Command![0]);
+        Assert.Equal(Path.GetFullPath(spelling), Path.GetFullPath(stage.Execution.Command[0]));
+
+        var plan = fixture.Service.Plan(fixture.Options());
+        var status = fixture.Service.Plan(fixture.Options()); // CLI status uses the same read-only currentness path.
+        var verified = fixture.Service.Verify(new(fixture.Native.Path, "profile.json") { Layer = "unit" });
+
+        Assert.True(plan.ScopeComplete);
+        Assert.Equal(0, status.PendingUnitBatches);
+        Assert.Equal(0, verified.ExitCode);
+        AssertWarm(fixture, calls, reports);
+    }
+
+    [Theory]
+    [InlineData("executable")]
+    [InlineData("filter")]
+    public void SavedCommandTamperingStillInvalidatesEvidenceWithoutLaunchingNativeWork(string damage)
+    {
+        using var fixture = new GovernedUnitFixture();
+        AssertCompleted(fixture.Run());
+        var calls = fixture.Native.Calls();
+        var state = fixture.Native.SavedState();
+        var key = state.Batches.Keys.Order(StringComparer.Ordinal).First();
+        var saved = state.Batches[key];
+        var stage = saved.Unit!;
+        var command = stage.Execution!.Command!.ToArray();
+        var executable = stage.Execution.ExecutablePath;
+        if (damage == "executable")
+            command[0] = executable = fixture.Native.Full("different-native-executable");
+        else
+            command[Array.IndexOf(fixture.Native.Profile.UnitCommand, "{testFilter}")] = "FullyQualifiedName~Different.Tests";
+        state.Batches[key] = saved with
+        { Unit = stage with { Execution = stage.Execution with { Command = command, ExecutablePath = executable } } };
+        fixture.Native.WriteState(state);
+
+        var plan = fixture.Service.Plan(fixture.Options());
+        var verified = fixture.Service.Verify(new(fixture.Native.Path, "profile.json") { Layer = "unit" });
+
+        Assert.Equal(1, plan.PendingUnitBatches);
+        Assert.False(plan.Batches.Single(batch => batch.Id == key).UnitCurrent);
+        Assert.Equal(4, verified.ExitCode);
+        Assert.Equal(stage.Fingerprint, fixture.Native.SavedState().Batches[key].Unit!.Fingerprint);
+        Assert.Equal(calls, fixture.Native.Calls());
+    }
+
     private static void AssertCompleted(IncrementalTestResult result)
     {
         Assert.True(result.ExitCode == 0, string.Join("; ", result.Diagnostics));

@@ -161,6 +161,11 @@ mutation-only template files cannot re-enter unit identity as raw graph fallback
 dependencies. A graph build ID change alone does not invalidate unchanged work.
 Inherited environment values are hashed, never saved.
 
+When checking a saved command, CIS compares absolute executable paths in their
+canonical form and keeps every other argument exact. This accepts the runner's
+normalized spelling of the same executable for an unchanged profile. The declared
+tool, filter and bounded output requirements still apply.
+
 Accepted stages record assessment contract version **2**. CIS producer hashes are
 retained separately as provenance; unrelated CIS assembly changes do not change a
 consumer result's identity. Status, reuse and verification apply the same current

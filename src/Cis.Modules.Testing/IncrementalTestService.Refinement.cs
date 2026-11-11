@@ -270,7 +270,10 @@ public sealed partial class IncrementalTestService
         var actual = execution.Command;
         Require(actual is not null && actual.Length == template.Length
             && execution.CisToolAssemblySha256 == helper
-            && PathComparer.Equals(execution.ExecutablePath, actual[0]),
+            && PathComparer.Equals(execution.ExecutablePath, actual[0])
+            && (Path.IsPathFullyQualified(template[0]) && Path.IsPathFullyQualified(actual[0])
+                ? PathComparer.Equals(Path.GetFullPath(template[0]), Path.GetFullPath(actual[0]))
+                : StringComparer.Ordinal.Equals(template[0], actual[0])),
             "Native execution command or installed helper identity is missing or changed.");
         string? output = null;
         for (var index = 0; index < template.Length; index++)
@@ -288,7 +291,8 @@ public sealed partial class IncrementalTestService
             .Replace("{testFilter}", fullTests ? input.Profile.FullTestFilter : batch.TestFilter, StringComparison.Ordinal)
             .Replace("{output}", output ?? "{output}", StringComparison.Ordinal)
             .Replace("{mutationConfig}", output is null ? "{mutationConfig}" : Path.Combine(output, "stryker-config.json"), StringComparison.Ordinal)).ToArray();
-        Require(expanded.SequenceEqual(actual, StringComparer.Ordinal), "Native execution does not match its current profile command.");
+        Require(expanded.Skip(1).SequenceEqual(actual.Skip(1), StringComparer.Ordinal),
+            "Native execution does not match its current profile command.");
     }
 
     private string RefinementProducer(Input input, IncrementalTestBatch batch, IncrementalStageResult stage, bool mutation = true,

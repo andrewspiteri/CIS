@@ -22,6 +22,7 @@ public sealed partial class DeliveryWorkflowTests
     [InlineData("Without network or file access, external integration, or persistence, keep the current value.")]
     [InlineData("Without network access, writes to the database, or a background worker, keep the current value.")]
     [InlineData("Without network access, write access to the database, or a background worker, keep the current value.")]
+    [InlineData("Implement a dedicated in-memory value holder and run unit tests and independent review.")]
     [InlineData("Without network access, the value stored each night, external integration, or persistence, keep current values.")]
     public void PlanImportSpec_ProportionateExclusionListPlacementsKeepOnlyBackendBehavior(string requirement)
     {
@@ -50,10 +51,15 @@ public sealed partial class DeliveryWorkflowTests
 
         Assert.True(result.ExitCode == 0, string.Join("; ", result.Errors.Concat(result.Validation?.Errors ?? [])));
         Assert.DoesNotContain(result.WorkItems, item => item.Category == "integration");
-        Assert.Equal(new[] { "assurance", "backend", "coordination", "delivery", "documentation", "verification" },
+        Assert.Equal(new[] { "backend" },
             result.WorkItems.Select(item => item.Category).Order(StringComparer.Ordinal));
         var backend = Assert.Single(result.WorkItems, item => item.Category == "backend");
         Assert.Equal(new[] { "VALUE-001" }, backend.RequirementIds);
+        Assert.Null(backend.ParentId);
+        Assert.Equal(new[] { "task-completion", "task-contract", "task-documentation", "task-independent-review" },
+            backend.VerificationObligations.Select(obligation => obligation.Id).Order(StringComparer.Ordinal));
+        Assert.Contains("native", backend.Validation, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("independent review", backend.AcceptanceCriteria, StringComparison.OrdinalIgnoreCase);
         var context = File.ReadAllText(Path.Combine(Path.GetDirectoryName(services.Changes.DossierFile(change, "plan.md"))!, backend.TaskPath!));
         Assert.Contains(requirement, context, StringComparison.Ordinal);
     }
@@ -108,7 +114,7 @@ public sealed partial class DeliveryWorkflowTests
             Assert.Contains(requirement, context, StringComparison.Ordinal);
             Assert.Contains("changing existing callers", context, StringComparison.Ordinal);
         }
-        Assert.Equal(new[] { "assurance", "backend", "coordination", "data", "delivery", "documentation", "verification" },
+        Assert.Equal(new[] { "backend", "data" },
             result.WorkItems.Select(item => item.Category).Order(StringComparer.Ordinal));
     }
 
@@ -209,11 +215,11 @@ public sealed partial class DeliveryWorkflowTests
             """);
         var result = services.Plans.ImportSpec(new(repository.Path, change.Id, source));
         Assert.True(result.ExitCode == 0, string.Join("; ", result.Errors.Concat(result.Validation?.Errors ?? [])));
-        Assert.Equal(new[] { "assurance", "backend", "coordination", "delivery", "documentation", "verification" },
+        Assert.Equal(new[] { "backend" },
             result.WorkItems.Select(item => item.Category).Order(StringComparer.Ordinal));
         Assert.False(result.Source!.PublicEndpoints);
         Assert.Equal(explicitAbsence ? new[] { "VALUE-001", "VALUE-002" } : ["VALUE-001"], result.Source.RequirementIds);
-        var verification = Assert.Single(result.WorkItems, item => item.Category == "verification");
+        var verification = Assert.Single(result.WorkItems, item => item.Category == "backend");
         Assert.DoesNotContain(verification.RequiredOutputs!, output => output.StartsWith("test-cases.", StringComparison.Ordinal));
         Assert.DoesNotContain("TC-*", verification.Validation, StringComparison.Ordinal);
         var taskPath = Path.Combine(Path.GetDirectoryName(services.Changes.DossierFile(change, "plan.md"))!, verification.TaskPath!);
@@ -222,7 +228,7 @@ public sealed partial class DeliveryWorkflowTests
             .Split("## Constraints and exclusions", StringSplitOptions.None)[0];
         var rows = matrix.Split('\n').Where(line => line.StartsWith("| ", StringComparison.Ordinal)).ToArray();
         Assert.Equal(verification.VerificationObligations.Count + 1, rows.Length);
-        var obligation = Assert.Single(verification.VerificationObligations);
+        var obligation = Assert.Single(verification.VerificationObligations, item => item.Id == "task-contract");
         Assert.Contains($"| {obligation.Id} | {obligation.EvidenceRoute} |", matrix, StringComparison.Ordinal);
         Assert.Contains(obligation.Description, matrix, StringComparison.Ordinal);
         Assert.Contains("VALUE-001", matrix, StringComparison.Ordinal);
@@ -266,7 +272,7 @@ public sealed partial class DeliveryWorkflowTests
             """);
         var result = services.Plans.ImportSpec(new(repository.Path, change.Id, source));
         Assert.True(result.ExitCode == 0, string.Join("; ", result.Errors.Concat(result.Validation?.Errors ?? [])));
-        Assert.Equal(new[] { "assurance", "backend", "contract", "coordination", "delivery", "documentation", "security", "verification" },
+        Assert.Equal(new[] { "backend", "contract", "security" },
             result.WorkItems.Select(item => item.Category).Order(StringComparer.Ordinal));
         Assert.False(result.Source!.PublicEndpoints);
         var security = Assert.Single(result.WorkItems, item => item.Category == "security");
@@ -276,12 +282,12 @@ public sealed partial class DeliveryWorkflowTests
         Assert.Contains("concurrency", backend.AcceptanceCriteria, StringComparison.Ordinal);
         var directory = Path.GetDirectoryName(services.Changes.DossierFile(change, "plan.md"))!;
         Assert.Contains("Concurrent updates preserve one atomic in-memory value.", File.ReadAllText(Path.Combine(directory, backend.TaskPath!)), StringComparison.Ordinal);
-        var verification = Assert.Single(result.WorkItems, item => item.Category == "verification");
+        var verification = Assert.Single(result.WorkItems, item => item.Category == "backend");
         Assert.Contains(verification.RequiredOutputs!, output => output.StartsWith("test-cases.md", StringComparison.Ordinal));
         var matrix = File.ReadAllText(Path.Combine(directory, verification.TaskPath!))
             .Split("## Structured test-obligation matrix", StringSplitOptions.None)[1]
             .Split("## Constraints and exclusions", StringSplitOptions.None)[0];
-        Assert.Single(verification.VerificationObligations);
+        Assert.Single(verification.VerificationObligations, item => item.Id == "task-contract");
         Assert.Contains("| task-contract | review |", matrix, StringComparison.Ordinal);
         Assert.DoesNotContain("| mutation |", matrix, StringComparison.Ordinal);
     }
@@ -309,8 +315,8 @@ public sealed partial class DeliveryWorkflowTests
         var first = Assert.IsType<FeatureIssuePack>(FeatureIssuePackBuilder.Build(repository.Path, source, "CIS-0001", [], registry, [], [],
             new Dictionary<string, IReadOnlyList<string>>(), defaultObligations:
             task => FeatureIssuePackBuilder.DefaultVerificationObligations(task, ["unit"])).Pack);
-        var verification = Assert.Single(first.WorkItems, item => item.Category == "verification");
-        var priorGenerated = Assert.Single(verification.VerificationObligations) with
+        var verification = Assert.Single(first.WorkItems, item => item.Category == "backend");
+        var priorGenerated = Assert.Single(verification.VerificationObligations, item => item.Id == "task-contract") with
         {
             Description = "Historical default validation.",
             EvidenceExpectations = ["Historical default validation."],
@@ -335,10 +341,11 @@ public sealed partial class DeliveryWorkflowTests
             task => FeatureIssuePackBuilder.DefaultVerificationObligations(task, ["unit"]),
             task => new(task.RequiredOutputs ?? [], task.NegativeCriteria ?? [])
             {
-                VerificationObligations = task.Id == verification.Id ? [priorGenerated]
+                VerificationObligations = task.Id == verification.Id
+                    ? [priorGenerated, .. verification.VerificationObligations.Where(obligation => obligation.Id != "task-contract")]
                     : first.WorkItems.Single(prior => prior.Id == task.Id).VerificationObligations,
             }).Pack);
-        var current = Assert.Single(refreshed.WorkItems, item => item.Category == "verification");
+        var current = Assert.Single(refreshed.WorkItems, item => item.Category == "backend");
         Assert.Equal(verification.Id, current.Id);
         Assert.Equal(verification.InstanceKey, current.InstanceKey);
         Assert.Equal(JsonSerializer.Serialize(release), JsonSerializer.Serialize(Assert.Single(current.VerificationObligations, obligation => obligation.Id == release.Id)));
@@ -389,15 +396,15 @@ public sealed partial class DeliveryWorkflowTests
         Assert.True(result.ExitCode == 0, string.Join("; ", result.Errors.Concat(result.Validation?.Errors ?? [])));
         Assert.Equal(isPublic, result.Source!.PublicEndpoints);
         Assert.Equal(isPublic
-                ? new[] { "assurance", "backend", "contract", "coordination", "delivery", "documentation", "observability", "security", "verification" }
-                : ["assurance", "backend", "coordination", "delivery", "documentation", "verification"],
+                ? new[] { "backend", "contract", "observability", "security" }
+                : ["backend"],
             result.WorkItems.Select(item => item.Category).Order(StringComparer.Ordinal));
-        var verification = Assert.Single(result.WorkItems, item => item.Category == "verification");
+        var verification = Assert.Single(result.WorkItems, item => item.Category == "backend");
         Assert.Equal(isPublic, verification.AcceptanceCriteria.Contains("PUBLIC-ENDPOINT-CACHE", StringComparison.Ordinal));
         var task = File.ReadAllText(Path.Combine(Path.GetDirectoryName(services.Changes.DossierFile(change, "plan.md"))!, verification.TaskPath!));
         var matrix = task.Split("## Structured test-obligation matrix", StringSplitOptions.None)[1]
             .Split("## Constraints and exclusions", StringSplitOptions.None)[0];
-        Assert.Equal(2, matrix.Split('\n').Count(line => line.StartsWith("| ", StringComparison.Ordinal)));
+        Assert.Equal(verification.VerificationObligations.Count + 1, matrix.Split('\n').Count(line => line.StartsWith("| ", StringComparison.Ordinal)));
         Assert.Contains("| task-contract | review |", matrix, StringComparison.Ordinal);
     }
 
@@ -446,13 +453,13 @@ public sealed partial class DeliveryWorkflowTests
         var result = services.Plans.ImportSpec(new(repository.Path, change.Id, source));
         Assert.True(result.ExitCode == 0, string.Join("; ", result.Errors.Concat(result.Validation?.Errors ?? [])));
         Assert.Equal(new[] { "GOAL-001", "GOAL-002" }, result.Source!.RequirementIds);
-        Assert.Equal(new[] { "assurance", "backend", "coordination", "delivery", "documentation", "verification" },
+        Assert.Equal(new[] { "backend" },
             result.WorkItems.Select(item => item.Category).Order(StringComparer.Ordinal));
-        var verification = Assert.Single(result.WorkItems, item => item.Category == "verification");
+        var verification = Assert.Single(result.WorkItems, item => item.Category == "backend");
         var task = File.ReadAllText(Path.Combine(Path.GetDirectoryName(services.Changes.DossierFile(change, "plan.md"))!, verification.TaskPath!));
         var matrix = task.Split("## Structured test-obligation matrix", StringSplitOptions.None)[1]
             .Split("## Constraints and exclusions", StringSplitOptions.None)[0];
-        Assert.Equal(2, matrix.Split('\n').Count(line => line.StartsWith("| ", StringComparison.Ordinal)));
+        Assert.Equal(verification.VerificationObligations.Count + 1, matrix.Split('\n').Count(line => line.StartsWith("| ", StringComparison.Ordinal)));
         Assert.Contains("| task-contract | review |", matrix, StringComparison.Ordinal);
     }
 
@@ -485,20 +492,20 @@ public sealed partial class DeliveryWorkflowTests
         var result = services.Plans.ImportSpec(new(repository.Path, change.Id, source));
         Assert.True(result.ExitCode == 0, string.Join("; ", result.Errors.Concat(result.Validation?.Errors ?? [])));
         Assert.Equal(denial.StartsWith("Requests", StringComparison.Ordinal)
-                ? new[] { "assurance", "backend", "contract", "coordination", "delivery", "documentation", "security", "verification" }
-                : ["assurance", "backend", "coordination", "delivery", "documentation", "security", "verification"],
+                ? new[] { "backend", "contract", "security" }
+                : ["backend", "security"],
             result.WorkItems.Select(item => item.Category).Order(StringComparer.Ordinal));
         Assert.False(result.Source!.PublicEndpoints);
         var security = Assert.Single(result.WorkItems, task => task.Category == "security");
         Assert.Equal(new[] { "ACCESS-001" }, security.RequirementIds);
         var directory = Path.GetDirectoryName(services.Changes.DossierFile(change, "plan.md"))!;
         Assert.Contains(denial, File.ReadAllText(Path.Combine(directory, security.TaskPath!)), StringComparison.Ordinal);
-        var verification = Assert.Single(result.WorkItems, task => task.Category == "verification");
+        var verification = Assert.Single(result.WorkItems, task => task.Category == "backend");
         Assert.Contains(verification.RequiredOutputs!, output => output.StartsWith("test-cases.md", StringComparison.Ordinal));
         var matrix = File.ReadAllText(Path.Combine(directory, verification.TaskPath!))
             .Split("## Structured test-obligation matrix", StringSplitOptions.None)[1]
             .Split("## Constraints and exclusions", StringSplitOptions.None)[0];
-        Assert.Equal(2, matrix.Split('\n').Count(line => line.StartsWith("| ", StringComparison.Ordinal)));
+        Assert.Equal(verification.VerificationObligations.Count + 1, matrix.Split('\n').Count(line => line.StartsWith("| ", StringComparison.Ordinal)));
         Assert.Contains("| task-contract | review |", matrix, StringComparison.Ordinal);
     }
 
@@ -541,7 +548,7 @@ public sealed partial class DeliveryWorkflowTests
         var current = Assert.Single(pack.WorkItems, task => task.Category == "backend");
         Assert.Equal(previous.Id, current.Id);
         Assert.Equal(previous.InstanceKey, current.InstanceKey);
-        var obligation = Assert.Single(current.VerificationObligations);
+        var obligation = Assert.Single(current.VerificationObligations, item => item.Id == "task-contract");
         Assert.Equal(currentGate is null ? "review" : "native", obligation.EvidenceRoute);
         Assert.Equal(currentGate is null ? Array.Empty<string>() : [currentGate], obligation.SharedGateIds);
         Assert.Equal(new[] { current.AcceptanceCriteria }, obligation.Criteria);
@@ -633,7 +640,7 @@ public sealed partial class DeliveryWorkflowTests
         var first = Assert.IsType<FeatureIssuePack>(FeatureIssuePackBuilder.Build(repository.Path, source, "CIS-0001", [], registry, [], [],
             new Dictionary<string, IReadOnlyList<string>>(), defaultObligations:
             task => FeatureIssuePackBuilder.DefaultVerificationObligations(task, ["unit"])).Pack);
-        var verification = Assert.Single(first.WorkItems, task => task.Category == "verification");
+        var verification = Assert.Single(first.WorkItems, task => task.Category == "backend");
         var replacement = new CisTaskVerificationObligation("accepted-direct-proof", [verification.AcceptanceCriteria],
             "Retain the accepted direct value proof.", "artifact", ["accepted/direct-value.json"])
         { BasisReferences = ["accepted-proof-decision"] };
@@ -646,7 +653,7 @@ public sealed partial class DeliveryWorkflowTests
             { VerificationObligations = first.WorkItems.Single(prior => prior.Id == task.Id).VerificationObligations });
         Assert.Empty(refreshed.Errors);
         var pack = Assert.IsType<FeatureIssuePack>(refreshed.Pack);
-        var current = Assert.Single(pack.WorkItems, task => task.Category == "verification");
+        var current = Assert.Single(pack.WorkItems, task => task.Category == "backend");
         Assert.Equal(verification.Id, current.Id);
         Assert.Equal(JsonSerializer.Serialize(replacement), JsonSerializer.Serialize(Assert.Single(current.VerificationObligations)));
         var matrix = pack.TaskDocuments[current.TaskPath!].Split("## Structured test-obligation matrix", StringSplitOptions.None)[1]
@@ -663,6 +670,126 @@ public sealed partial class DeliveryWorkflowTests
         Assert.Contains(legacy.Errors, error => error.Contains("no retained generated verification baseline", StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData("Not applicable. Account conversion and ownership transfer are excluded.", false)]
+    [InlineData("Account conversion and ownership transfer are excluded.", false)]
+    [InlineData("Account conversion is excluded. Archive inactive session identifiers.", true)]
+    public void FeaturePack_ProportionateLifecycleExclusionsDoNotCreateWorkButPositiveTransitionsRemain(string direction, bool lifecycle)
+    {
+        using var repository = TemporaryRepository.Create();
+        const string source = "docs/cis/specs/lifecycle-scope.md";
+        repository.Write(source, $$"""
+            ---
+            title: Local value scope
+            type: feature-specification
+            ---
+
+            ## Functional requirements
+
+            | ID | Surface | Requirement | Acceptance criteria |
+            | --- | --- | --- | --- |
+            | VALUE-001 | backend | Replace the local value. | The previous value is returned exactly. |
+
+            ## Lifecycle, conversion, and carry-forward
+
+            {{direction}}
+            """);
+
+        var result = FeatureIssuePackBuilder.Build(repository.Path, source, "CIS-0001", [],
+            new TaskTypeRegistry([new CoreTaskTypeProvider()]), [], [], new Dictionary<string, IReadOnlyList<string>>());
+
+        Assert.Empty(result.Errors);
+        var pack = Assert.IsType<FeatureIssuePack>(result.Pack);
+        Assert.Equal(lifecycle, pack.WorkItems.Any(task => task.Category == "lifecycle"));
+        Assert.Single(pack.WorkItems, task => task.Category == "backend");
+    }
+
+    [Fact]
+    public void FeaturePack_ProportionateSeparateDocumentationAndAssuranceKeepTheirOwnDeliverables()
+    {
+        using var repository = TemporaryRepository.Create();
+        const string source = "docs/cis/specs/owned-deliverables.md";
+        repository.Write(source, """
+            ---
+            title: Bounded value and owned reports
+            type: feature-specification
+            ---
+
+            ## Functional requirements
+
+            | ID | Surface | Requirement | Acceptance criteria |
+            | --- | --- | --- | --- |
+            | VALUE-001 | backend | Replace the local value. | The old value is returned exactly. |
+            | GUIDE-001 | documentation | Publish a separately owned operator guide. | The named maintainer accepts the guide. |
+            | REVIEW-001 | assurance | Publish a separately owned independent assurance report. | The independent reviewer records findings and dispositions. |
+            """);
+        var registry = new TaskTypeRegistry([new CoreTaskTypeProvider()]);
+
+        var result = FeatureIssuePackBuilder.Build(repository.Path, source, "CIS-0001", [], registry, [], [],
+            new Dictionary<string, IReadOnlyList<string>>());
+
+        Assert.Empty(result.Errors);
+        var pack = Assert.IsType<FeatureIssuePack>(result.Pack);
+        Assert.Equal(new[] { "assurance", "backend", "documentation" }, pack.WorkItems.Select(task => task.Category).Order(StringComparer.Ordinal));
+        var backend = Assert.Single(pack.WorkItems, task => task.Category == "backend");
+        var documentation = Assert.Single(pack.WorkItems, task => task.Category == "documentation");
+        var assurance = Assert.Single(pack.WorkItems, task => task.Category == "assurance");
+        Assert.Equal(new[] { "GUIDE-001" }, documentation.RequirementIds);
+        Assert.Equal(new[] { "REVIEW-001" }, assurance.RequirementIds);
+        Assert.Contains(backend.Id, assurance.DependsOn);
+        Assert.DoesNotContain(backend.VerificationObligations, obligation => obligation.Id is "task-documentation" or "task-independent-review");
+        Assert.Contains(backend.VerificationObligations, obligation => obligation.Id == "task-completion");
+    }
+
+    [Fact]
+    public void FeaturePack_ProportionateRefreshPreservesExistingOverheadIdentitiesStatusAndAcceptedEvidence()
+    {
+        using var repository = TemporaryRepository.Create();
+        const string source = "docs/cis/specs/retained-work.md";
+        repository.Write(source, """
+            ---
+            title: Existing local value
+            type: feature-specification
+            ---
+
+            ## Functional requirements
+
+            | ID | Surface | Requirement | Acceptance criteria |
+            | --- | --- | --- | --- |
+            | VALUE-001 | backend | Replace the local value. | The old value is returned exactly. |
+            """);
+        var formerTypes = new CoreTaskTypeProvider().GetTaskTypes().Select(definition =>
+            definition.Category is "coordination" or "documentation" or "verification" or "assurance" or "delivery"
+                ? definition with { CreationPolicy = "always" } : definition).ToArray();
+        var previousRegistry = new TaskTypeRegistry([new TestTaskTypeProvider("cis.core", formerTypes)]);
+        var first = Assert.IsType<FeatureIssuePack>(FeatureIssuePackBuilder.Build(repository.Path, source, "CIS-0001", [], previousRegistry, [], [],
+            new Dictionary<string, IReadOnlyList<string>>()).Pack);
+        var backend = Assert.Single(first.WorkItems, task => task.Category == "backend");
+        var evidence = new CisTaskVerificationObligation("accepted-native-result", [backend.AcceptanceCriteria],
+            "Retain the accepted current native result.", "artifact", ["accepted/results.trx"])
+        { BasisReferences = ["accepted-native-result-decision"] };
+        var existing = first.WorkItems.Select(task => task.Id == backend.Id ? task with
+        {
+            Status = "complete",
+            RequiredOutputs = [.. task.RequiredOutputs!, "Retained authored implementation note"],
+            VerificationObligations = [.. task.VerificationObligations, evidence]
+        } : task).ToArray();
+
+        var refreshed = FeatureIssuePackBuilder.Build(repository.Path, source, "CIS-0001", [],
+            new TaskTypeRegistry([new CoreTaskTypeProvider()]), [], existing, new Dictionary<string, IReadOnlyList<string>>(),
+            first.Source.Sha256, readImportedLists: task => new(first.WorkItems.Single(prior => prior.Id == task.Id).RequiredOutputs!, task.NegativeCriteria!)
+            { VerificationObligations = first.WorkItems.Single(prior => prior.Id == task.Id).VerificationObligations });
+
+        Assert.Empty(refreshed.Errors);
+        var pack = Assert.IsType<FeatureIssuePack>(refreshed.Pack);
+        Assert.Equal(existing.Select(task => (task.Id, task.InstanceKey, task.Status)), pack.WorkItems.Select(task => (task.Id, task.InstanceKey, task.Status)));
+        var current = Assert.Single(pack.WorkItems, task => task.Id == backend.Id);
+        Assert.Equal(backend.AcceptanceCriteria, current.AcceptanceCriteria);
+        Assert.Contains("Retained authored implementation note", current.RequiredOutputs!);
+        Assert.Equal(JsonSerializer.Serialize(evidence), JsonSerializer.Serialize(Assert.Single(current.VerificationObligations,
+            obligation => obligation.Id == evidence.Id)));
+    }
+
     [Fact]
     public void PlanImportSpec_ProportionateLegacyDefaultWithoutBaselineUpgradesThroughNormalImport()
     {
@@ -671,7 +798,9 @@ public sealed partial class DeliveryWorkflowTests
         const string priorValidation = "Trace TC-* identities into automated tests, refresh the catalogue, then run focused and affected suites, contract/migration checks, browser journeys, and coverage gates.";
         var legacyRegistry = new TaskTypeRegistry([new TestTaskTypeProvider("cis.core", new CoreTaskTypeProvider().GetTaskTypes()
             .Select(definition => definition.Key == "core.verification"
-                ? definition with { AcceptanceCriteria = priorAcceptance, Validation = priorValidation } : definition).ToArray())]);
+                ? definition with { CreationPolicy = "always", AcceptanceCriteria = priorAcceptance, Validation = priorValidation }
+                : definition.Category is "coordination" or "documentation" or "assurance" or "delivery"
+                    ? definition with { CreationPolicy = "always" } : definition).ToArray())]);
         var legacyServices = CreateServices(taskTypes: legacyRegistry);
         var change = Assert.IsType<ChangeDossier>(legacyServices.Changes.Create(new ChangeCreateRequest(repository.Path,
             "Existing direct value component", "The existing component retains its bounded value behavior.", [new ChangeRoot("orders-api", "component")])).Change);

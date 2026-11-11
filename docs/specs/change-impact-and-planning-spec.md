@@ -196,14 +196,17 @@ alone. Token-aware matching prevents partial words and credential labels such as
 
 Task decomposition is deterministic and surface-aware. Frontend requirements produce
 a separate, matched wireframe, visual/interaction design, and frontend implementation
-chain for every affected frontend type, plus shared verification work. A public,
+chain for every affected frontend type, with verification obligations in the owning
+tasks unless a separately owned verification deliverable is required. A public,
 customer, and backoffice change therefore has three UI chains rather than one ambiguous
 frontend task. Classification-specific task documents contain only their assigned
 requirements while retaining the full canonical specification as context.
-Backend and contract requirements produce documentation/contract, data/migration,
-API/permission, and backend work as applicable. Cross-module handoffs, search/retrieval,
+Backend and contract requirements produce data/migration, API/permission, and backend
+work as applicable. Documentation stays within that work unless it has a separately
+owned outcome. Cross-module handoffs, search/retrieval,
 and lifecycle/carry-forward each become bounded workstreams when detected. Every plan
-ends with explicit regression and final-handoff work. Security, data, integration,
+includes regression, independent review and completion checks in its owning tasks;
+separate workflow tasks require an explicit owned deliverable. Security, data, integration,
 cross-surface, and migration signals increase complexity.
 
 Repository routing uses imported target roles when available: frontend chains route to
@@ -215,7 +218,8 @@ planning conservatively retains the feature's declared target list.
 An unauthenticated public application endpoint activates the
 [`PUBLIC-ENDPOINT-CACHE`](public-endpoint-caching-policy-spec.md) rule. Planning adds
 the policy marker and concrete cache/database-isolation obligations to Security, API
-contract, Backend, Observability, Verification, and Independent assurance tasks. A
+contract, Backend and Observability tasks, including native verification and
+independent review within those tasks or in explicitly planned separate work. A
 valid plan therefore cannot omit caching, allow direct database/repository access
 from the endpoint boundary, or leave cache keys, freshness, invalidation, stampede,
 failure, security, and operational evidence implicit.
@@ -250,7 +254,7 @@ must cite and conform to an approved repository design-guideline path and digest
 missing or conflicting guidelines block design approval. `design.md` is the durable
 renderer, asset, guideline-conformance, validation, and human
 approval record. UI-bearing plans must enforce
-`coordination -> validated wireframes -> visual/interaction design approval -> all
+`validated wireframes -> visual/interaction design approval -> all
 remaining delivery work`. A completed design pack enters a global review pause: all
 non-review work stops until a human approves it. Rejection permits only wireframe and
 design revision before resubmission. Design approval releases, but does not itself

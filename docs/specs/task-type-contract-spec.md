@@ -191,13 +191,18 @@ conflict, replacement, upgrade, and removal rules are governed by
 
 ## 10. Final completion authority
 
-Final Delivery Sweep owns the deterministic planned-versus-actual audit, completion
+When a separately owned Final Delivery Sweep is planned, it owns the deterministic planned-versus-actual audit, completion
 gate, evidence index, and reproducible handoff. It directly depends on every
 applicable delivery task and produces a `ready` or `not-ready` recommendation.
 It cannot record stakeholder acceptance or close the change.
 
-Coordination / scope guard owns final human feature acceptance. It may complete only
-after Final Delivery Sweep is Complete and every child has a valid terminal
+When a separately owned Coordination / scope guard is planned, it records final human feature acceptance. It may complete only
+after any planned Final Delivery Sweep is Complete and every actual child has a valid terminal
 disposition. The acceptance record identifies the human actor, timestamp, rationale,
-accepted deferrals/residual risks, and exact final-sweep evidence. External tracker
+accepted deferrals/residual risks, and exact completion evidence, including any
+planned final sweep. External tracker
 closure, merge, deployment, or release never exercises this authority implicitly.
+Without these separate tasks, the owning implementation work retains acceptance,
+documentation, native verification, independent review and completion checks. Human
+acceptance remains in the canonical feature/change approval record. A smaller task
+set neither grants approval nor removes an applicable obligation.

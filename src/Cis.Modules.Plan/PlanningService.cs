@@ -647,11 +647,18 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
                 return Error(change.Id, "Final Delivery Sweep requires a terminal disposition for every delivery task: " + string.Join(", ", unresolved));
         }
 
+        if (target == "Complete" && plan.Source is not null
+            && !plan.WorkItems.Any(candidate => candidate.TaskTypeKey == "core.delivery.final-sweep"))
+        {
+            var workloadFindings = ReviewInlineDeliveryCompletion(change, plan.WorkItems, item);
+            if (workloadFindings.Count > 0) return Error(change.Id, workloadFindings.ToArray());
+        }
+
         if (target == "Complete" && item.TaskTypeKey == "core.coordination.scope-guard")
         {
             var finalSweep = plan.WorkItems.FirstOrDefault(candidate =>
                 candidate.TaskTypeKey == "core.delivery.final-sweep");
-            if (finalSweep is null || !CanonicalStatus(finalSweep.Status).Equals("Complete", StringComparison.Ordinal))
+            if (finalSweep is not null && !CanonicalStatus(finalSweep.Status).Equals("Complete", StringComparison.Ordinal))
                 return Error(change.Id, "Coordination final acceptance requires a completed Final Delivery Sweep.");
             var unresolved = plan.WorkItems.Where(candidate =>
                     candidate.Id != item.Id
@@ -1123,7 +1130,7 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
                         || !design.DependsOn.Contains(wireframe.Id, StringComparer.Ordinal)
                         || frontends.Any(frontend => !frontend.DependsOn.Contains(design.Id, StringComparer.Ordinal)))
                     {
-                        errors.Add($"UI-bearing `{frontendType}` scope requires a matched coordination -> wireframe -> design -> frontend ordering.");
+                        errors.Add($"UI-bearing `{frontendType}` scope requires matched wireframe -> design -> frontend ordering.");
                     }
                 }
                 var designIds = workItems.Where(item => item.Category == "design").Select(item => item.Id).ToArray();
@@ -1167,26 +1174,27 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
 
             if (source.PublicEndpoints)
             {
-                foreach (var category in new[] { "security", "contract", "backend", "observability", "verification", "assurance" })
+                foreach (var category in new[] { "security", "contract", "backend", "observability" })
                 {
                     if (!workItems.Any(item => item.Category == category))
                     {
                         errors.Add($"PUBLIC-ENDPOINT-CACHE requires a {category} task for unauthenticated endpoint scope.");
                     }
                 }
+                errors.AddRange(ValidateInlinePublicEndpointVerification(workItems));
             }
 
-            if (workItems.Count(item => item.TaskTypeKey == "core.coordination.scope-guard") != 1)
+            if (workItems.Count(item => item.TaskTypeKey == "core.coordination.scope-guard") > 1)
             {
-                errors.Add("Imported feature plans require exactly one registered Coordination / scope guard task type.");
+                errors.Add("A feature plan cannot contain duplicate feature-wide Coordination / scope guard tasks.");
             }
             var finalSweeps = workItems.Where(item => item.TaskTypeKey == "core.delivery.final-sweep").ToArray();
             var finalSweep = finalSweeps.FirstOrDefault();
-            if (finalSweeps.Length != 1 || finalSweep is null)
+            if (finalSweeps.Length > 1)
             {
-                errors.Add("Imported feature plans require exactly one Final Delivery Sweep task type.");
+                errors.Add("A feature plan cannot contain duplicate feature-wide Final Delivery Sweep tasks.");
             }
-            else
+            else if (finalSweep is not null)
             {
                 foreach (var predecessor in workItems.Where(item =>
                              item.Id != finalSweep.Id

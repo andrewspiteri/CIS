@@ -19,9 +19,9 @@ cis:
 | --- | --- |
 | Stable type key | `core.assurance.independent` |
 | Provider | CIS Plan core module |
-| Creation policy | Always |
-| Required predecessor(s) | Verification |
-| Primary consumer(s) | Final Delivery Sweep and Coordination |
+| Creation policy | Only for a separately owned assurance deliverable |
+| Required predecessor(s) | Owning implementation with verification evidence, or a separately planned Verification task |
+| Primary consumer(s) | Feature/change acceptance and any separately planned final handoff or coordination |
 
 Challenge implementation and verification with organizational or technical independence proportional to risk. It seeks evidence of false confidence rather than repeating the implementing agent's checklist.
 
@@ -29,7 +29,7 @@ Challenge implementation and verification with organizational or technical indep
 
 ### Creation evidence
 
-- Every governed feature creates this task; assurance techniques vary by risk.
+- Create this task for an explicit, separately owned assurance deliverable. Otherwise proportionate independent review remains an obligation of the implementing task, with a distinct reviewer and recorded findings.
 
 ### Required inputs
 

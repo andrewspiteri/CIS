@@ -40,7 +40,10 @@ internal static partial class FeatureIssuePackBuilder
             spec.References,
             spec.FrontendTypes,
             spec.PublicEndpoints);
-        var applicable = registry.Definitions.Where(definition => IsApplicable(definition, spec)).ToArray();
+        var applicable = registry.Definitions.Where(definition => IsApplicable(definition, spec)
+            || definition.ProviderKey.Equals("cis.core", StringComparison.OrdinalIgnoreCase)
+                && WorkflowRoles.Contains(definition.Category)
+                && existingItems.Any(item => item.TaskTypeKey.Equals(definition.Key, StringComparison.OrdinalIgnoreCase))).ToArray();
         var resolution = registry.ResolveApplicable(applicable, selections);
         if (!resolution.IsSuccess)
         {
@@ -76,6 +79,7 @@ internal static partial class FeatureIssuePackBuilder
         var allRequirements = spec.Requirements.Select(item => item.Id).ToArray();
         var allImpacts = accepted.Select(item => item.Id).ToArray();
         var applicable = definitions.ToArray();
+        var hasCoordination = applicable.Any(definition => definition.Key == "core.coordination.scope-guard");
         var instances = applicable.SelectMany(definition =>
             (IsFrontendCategory(definition.Category) ? spec.FrontendTypes.Cast<string?>() : [null])
             .SelectMany(frontendType =>
@@ -171,7 +175,8 @@ internal static partial class FeatureIssuePackBuilder
         var idsByType = instances.GroupBy(instance => instance.Definition.Key, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.Select(instance =>
                 (instance.FrontendType, instance.StoryId, Id: idByIdentity[Identity(instance.Definition.Key, instance.FrontendType, instance.StoryId)])).ToArray(), StringComparer.OrdinalIgnoreCase);
-        var coordinationId = idsByType["core.coordination.scope-guard"].Single().Id;
+        var coordinationId = idsByType.TryGetValue("core.coordination.scope-guard", out var coordination)
+            ? coordination.Single().Id : null;
         var items = new List<PlanWorkItem>();
 
         foreach (var instance in instances)
@@ -189,7 +194,8 @@ internal static partial class FeatureIssuePackBuilder
                 _ => allImpacts,
             };
             var highParent = definition.Key == "core.coordination.scope-guard";
-            var importedLists = GeneratedLists(spec, definition.Category, instance.StoryId);
+            var embedded = EmbeddedRoles(definition.Category, applicable.Select(type => type.Category));
+            var importedLists = GeneratedLists(spec, definition.Category, instance.StoryId, embedded);
             ImportedTaskLists? priorLists = null;
             try { if (existing is not null) priorLists = readImportedLists?.Invoke(existing); }
             catch (InvalidDataException error) { problems.Add($"{existing!.Id}: {error.Message}"); }
@@ -202,10 +208,20 @@ internal static partial class FeatureIssuePackBuilder
             var validation = spec.PublicEndpoints && PublicEndpointPolicyCategory(definition.Category)
                 ? definition.Validation + " " + PublicEndpointValidation(definition.Category)
                 : definition.Validation;
-            if (instance.StoryId is not null)
+            if (instance.StoryId is not null || embedded.Count > 0)
             {
                 acceptance += " " + string.Join(" ", spec.Requirements.Where(requirement => requirementIds.Contains(requirement.Id)).Select(requirement => requirement.AcceptanceCriteria));
-                validation = $"For story {instance.StoryId}: {validation}";
+                if (instance.StoryId is not null) validation = $"For story {instance.StoryId}: {validation}";
+            }
+            if (embedded.Count > 0)
+            {
+                acceptance += " " + string.Join(" ", embedded.Select(EmbeddedAcceptance));
+                validation += " " + string.Join(" ", embedded.Select(EmbeddedValidation));
+                if (spec.PublicEndpoints)
+                {
+                    acceptance += " " + PublicEndpointAcceptance("verification");
+                    validation += " " + PublicEndpointValidation("verification") + " " + PublicEndpointValidation("assurance");
+                }
             }
             if (!spec.Frontend && definition.Category == "verification")
                 validation = validation.Replace("browser journeys, ", string.Empty, StringComparison.OrdinalIgnoreCase);
@@ -215,7 +231,7 @@ internal static partial class FeatureIssuePackBuilder
                 id,
                 definition.Category,
                 highParent ? "high" : definition.DefaultComplexity,
-                highParent ? null : coordinationId,
+                highParent ? null : existing?.ParentId ?? coordinationId,
                 existing?.TaskPath ?? $"agent-tasks/{id}.md",
                 instance.FrontendType is null ? definition.Title : $"{definition.Title} ({instance.FrontendType})",
                 requirementIds,
@@ -238,7 +254,8 @@ internal static partial class FeatureIssuePackBuilder
                 InstanceKey = keyByIdentity[identity],
                 WorkOwnerTaskId = existing?.WorkOwnerTaskId,
             };
-            var generated = defaultObligations?.Invoke(item) ?? DefaultVerificationObligations(item, []);
+            var generated = (defaultObligations?.Invoke(item) ?? DefaultVerificationObligations(item, []))
+                .Concat(EmbeddedObligations(spec, item, embedded)).ToArray();
             generatedObligations[id] = generated;
             var priorGenerated = priorLists?.VerificationObligations;
             if (existing is not null && priorGenerated is null)
@@ -275,6 +292,16 @@ internal static partial class FeatureIssuePackBuilder
         {
             var assigned = instance.Definition.CreationPolicy == "always" ? allRequirements
                 : RequirementIds(spec, instance.Definition.Category, instance.FrontendType, instance.Definition.TriggerTerms.ToArray());
+            if (!hasCoordination && IsImplementationCategory(instance.Definition.Category))
+                assigned = assigned.Concat(spec.Requirements.Where(requirement =>
+                    !applicable.Any(type => MatchesCategory(requirement, type.Category, type.TriggerTerms))
+                    && instances.Where(candidate => IsImplementationCategory(candidate.Definition.Category)
+                        && (candidate.StoryId == requirement.StoryId || candidate.StoryId is null)
+                        && (candidate.FrontendType is null || requirement.FrontendType is null || candidate.FrontendType == requirement.FrontendType))
+                        .OrderBy(candidate => candidate.Definition.Category == "backend" ? 0 : 1)
+                        .ThenBy(candidate => candidate.Definition.Order).ThenBy(candidate => candidate.FrontendType, StringComparer.Ordinal)
+                        .FirstOrDefault() == instance).Select(requirement => requirement.Id))
+                    .Distinct(StringComparer.Ordinal).ToArray();
             if (instance.StoryId is not null)
                 return assigned.Where(id => spec.Requirements.Any(requirement => requirement.Id == id && requirement.StoryId == instance.StoryId)).ToArray();
             return IsStoryScopedCategory(instance.Definition.Category) && instances.Any(candidate => candidate.Definition.Key == instance.Definition.Key && candidate.StoryId is not null)
@@ -282,7 +309,8 @@ internal static partial class FeatureIssuePackBuilder
         }
     }
 
-    private static ImportedTaskLists GeneratedLists(FeatureSpec spec, string category, string? storyId)
+    private static ImportedTaskLists GeneratedLists(FeatureSpec spec, string category, string? storyId,
+        IReadOnlyList<string>? embedded = null)
     {
         IReadOnlyList<string> negative = spec.Exclusions.Count > 0 ? spec.Exclusions
             : ["Do not expand scope beyond accepted impacts and the imported feature specification."];
@@ -291,6 +319,12 @@ internal static partial class FeatureIssuePackBuilder
         var outputs = RequiredOutputs(category);
         if (category == "verification" && !RequiresTestCatalogue(spec))
             outputs = outputs.Where(output => !output.StartsWith("test-cases.", StringComparison.Ordinal)).ToArray();
+        if (embedded is { Count: > 0 })
+        {
+            outputs = outputs.Concat(embedded.Select(EmbeddedOutput)).ToArray();
+            if (embedded.Contains("verification") && RequiresTestCatalogue(spec))
+                outputs = outputs.Concat(RequiredOutputs("verification").Where(output => output.StartsWith("test-cases.", StringComparison.Ordinal))).ToArray();
+        }
         return new(outputs.Select(output => storyId is null ? output : $"{storyId}: {output}").ToArray(), negative);
     }
 
@@ -346,6 +380,83 @@ internal static partial class FeatureIssuePackBuilder
     private static string Identity(string taskTypeKey, string? frontendType, string? storyId) => $"{taskTypeKey}|{frontendType ?? "none"}|{storyId ?? "shared"}";
     private static bool IsStoryScopedCategory(string category) => category is not ("coordination" or "documentation" or "wireframe" or "design" or "security" or "verification" or "assurance" or "delivery");
     private static bool IsNonCodeCategory(string category) => category is "coordination" or "documentation" or "wireframe" or "design" or "assurance" or "delivery";
+    private static bool IsImplementationCategory(string category) => !IsNonCodeCategory(category);
+    private static readonly string[] WorkflowRoles = ["coordination", "documentation", "verification", "assurance", "delivery"];
+    private static IReadOnlyList<string> EmbeddedRoles(string category, IEnumerable<string> categories)
+        => IsImplementationCategory(category) ? WorkflowRoles.Except(categories, StringComparer.Ordinal).ToArray() : [];
+
+    private static string EmbeddedAcceptance(string role) => role switch
+    {
+        "coordination" => "This task covers its accepted scope, exclusions and dependencies.",
+        "documentation" => "Affected documentation agrees with the change, or a no-change rationale is recorded.",
+        "verification" => "Affected native tests prove the acceptance and negative criteria with a retained accepted result.",
+        "assurance" => "Proportionate independent review records required findings, their disposition and residual risk.",
+        _ => "Completion records actual acceptance, settled ownership and the remaining obligations without turning missing evidence into a pass."
+    };
+    private static string EmbeddedValidation(string role) => role switch
+    {
+        "coordination" => "Check the task's scope and dependencies within this work.",
+        "documentation" => "Align affected documentation and retain validation or a no-change rationale.",
+        "verification" => "Run the affected native checks, retain the accepted report and current input identity, and reuse valid unchanged results.",
+        "assurance" => "Independently review this task's implementation and verification evidence; resolve required findings and record optional advice.",
+        _ => "Check actual acceptance, report currentness, accounting settlement, documentation and review before completing this task; apply existing completion policy at its declared boundary."
+    };
+    private static string EmbeddedOutput(string role) => role switch
+    {
+        "coordination" => "Recorded scope and dependency check",
+        "documentation" => "Affected documentation or no-change rationale",
+        "verification" => "Accepted native test report and current-input metadata",
+        "assurance" => "Independent review findings and disposition",
+        _ => "Completion record and remaining obligations"
+    };
+    private static IEnumerable<Cis.Abstractions.CisTaskVerificationObligation> EmbeddedObligations(
+        FeatureSpec spec, PlanWorkItem task, IReadOnlyList<string> embedded)
+    {
+        foreach (var (role, id) in new[] { ("documentation", "task-documentation"), ("assurance", "task-independent-review"), ("delivery", "task-completion") })
+        {
+            if (!embedded.Contains(role)) continue;
+            var expectations = new List<string> { EmbeddedOutput(role) };
+            if (role == "delivery" && WorkloadEvidenceReview.SuggestsVolumeSensitiveWork(string.Join(" ", spec.Requirements
+                .Where(requirement => task.RequirementIds.Contains(requirement.Id)).Select(PositiveRequirement)
+                .Select(requirement => requirement.Text + " " + requirement.AcceptanceCriteria))))
+                expectations.Add("workload-evidence.json for this task's volume-sensitive scope");
+            yield return new(id, [task.AcceptanceCriteria], EmbeddedValidation(role)
+                + (spec.PublicEndpoints && role == "assurance" ? " " + PublicEndpointValidation("assurance") : ""), "review", expectations)
+            { BasisReferences = task.RequirementIds };
+        }
+    }
+
+    private static bool SeparatelyOwnedWorkflow(FeatureRequirement requirement, string category)
+    {
+        requirement = PositiveRequirement(requirement);
+        var text = requirement.Text + " " + requirement.AcceptanceCriteria;
+        var role = category switch
+        {
+            "documentation" => @"documentation|specification|guide|manual|reference",
+            "verification" => @"verification|test(?:ing)?|acceptance evidence",
+            "assurance" => @"assurance|independent review|audit|assessment",
+            "delivery" => @"delivery|handoff|release package|completion audit",
+            _ => @"coordination|dependency ledger|handoff ownership"
+        };
+        var categorySurface = Surface(requirement.Surface, category);
+        var roleMatch = Regex.IsMatch(text, @"\b(?:" + role + @")\b",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        if (!categorySurface && !roleMatch) return false;
+        var ownedRole = Regex.IsMatch(text,
+            @"\b(?:separately[ -]owned|independently[ -]owned)\s+(?:(?!(?:with|and|for|then|while)\b)\w+[ -]+){0,3}(?:" + role + @")\b",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        if (ownedRole) return true;
+        var artifact = Regex.IsMatch(text, @"\b(?:guide|manual|specification|catalogue|catalog|(?:verification|test|review|audit|delivery) report|evidence package|handoff package|approval boundary|dependency ledger)\b",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        if (artifact && Regex.IsMatch(text,
+            @"\b(?:standalone|dedicated)\s+(?:(?!(?:with|and|for|then|while)\b)\w+[ -]+){0,3}(?:" + role + @")\b",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))) return true;
+        // A named surface plus a published artifact or explicit handoff/approval
+        // outcome can have its own owner. Routine workflow verbs alone cannot.
+        return categorySurface && Regex.IsMatch(text, @"\b(?:deliver|publish|produce|maintain|own|approve|hand\s+off)\w*\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
+            && artifact;
+    }
 
     internal static IReadOnlyList<Cis.Abstractions.CisTaskVerificationObligation> DefaultVerificationObligations(PlanWorkItem task, IReadOnlyList<string> nativeGates)
     {
@@ -365,6 +476,8 @@ internal static partial class FeatureIssuePackBuilder
     private static bool IsApplicable(Cis.Abstractions.CisTaskTypeDefinition definition, FeatureSpec spec)
     {
         if (definition.CreationPolicy.Equals("always", StringComparison.OrdinalIgnoreCase)) return true;
+        if (definition.ProviderKey.Equals("cis.core", StringComparison.OrdinalIgnoreCase) && WorkflowRoles.Contains(definition.Category))
+            return spec.Requirements.Any(requirement => SeparatelyOwnedWorkflow(requirement, definition.Category));
         if (definition.Category is "wireframe" or "design" or "frontend") return spec.Frontend;
         if (spec.PublicEndpoints && definition.Category is "security" or "contract" or "backend" or "observability") return true;
         if (definition.Category == "data") return spec.Data;
@@ -500,6 +613,11 @@ internal static partial class FeatureIssuePackBuilder
                 keys.AddRange(applicable.Where(candidate => candidate.Order > 20 && candidate.Order < definition.Order)
                     .Select(candidate => candidate.Key));
                 break;
+            case "assurance":
+                if (!idsByType.ContainsKey("core.verification"))
+                    keys.AddRange(applicable.Where(candidate => IsImplementationCategory(candidate.Category))
+                        .Select(candidate => candidate.Key));
+                break;
             case "delivery":
                 keys.AddRange(applicable.Where(candidate =>
                         candidate.Key != definition.Key
@@ -516,7 +634,7 @@ internal static partial class FeatureIssuePackBuilder
                 || candidate.FrontendType.Equals(frontendType, StringComparison.OrdinalIgnoreCase)).ToArray();
             // Existing feature-wide assurance and the global design barrier
             // deliberately cover all declared instances at their shared scope.
-            if (definition.Category is "verification" or "delivery" || key == "core.design.visual" && frontendType is null)
+            if (definition.Category is "verification" or "assurance" or "delivery" || key == "core.design.visual" && frontendType is null)
             {
                 result.UnionWith(candidates.Select(candidate => candidate.Id));
                 continue;
@@ -579,7 +697,8 @@ internal static partial class FeatureIssuePackBuilder
         builder.AppendLine($"targets: {JsonSerializer.Serialize(item.Targets ?? [])}");
         builder.AppendLine($"decision_ids: {JsonSerializer.Serialize(item.DecisionIds ?? [])}");
         builder.AppendLine($"verification_obligations: {JsonSerializer.Serialize(item.VerificationObligations)}");
-        var importedLists = GeneratedLists(spec, item.Category, item.StoryId);
+        var importedLists = GeneratedLists(spec, item.Category, item.StoryId,
+            EmbeddedRoles(item.Category, allItems.Select(task => task.Category)));
         builder.AppendLine($"imported_required_outputs: {JsonSerializer.Serialize(importedLists.RequiredOutputs)}");
         builder.AppendLine($"imported_negative_criteria: {JsonSerializer.Serialize(importedLists.NegativeCriteria)}");
         builder.AppendLine($"imported_verification_obligations: {JsonSerializer.Serialize(generatedObligations)}");
@@ -611,7 +730,7 @@ internal static partial class FeatureIssuePackBuilder
             builder.AppendLine($"- {output}");
         }
 
-        if (item.Category == "verification")
+        if (item.VerificationObligations.Count > 0)
         {
             builder.AppendLine();
             builder.AppendLine("## Structured test-obligation matrix");
@@ -1383,6 +1502,7 @@ internal static partial class FeatureIssuePackBuilder
         var text = $" {requirement.Text} {requirement.AcceptanceCriteria}".ToLowerInvariant();
         return category switch
         {
+            "coordination" or "documentation" or "verification" or "assurance" or "delivery" => SeparatelyOwnedWorkflow(requirement, category),
             "wireframe" or "design" or "frontend" => requirement.Frontend,
             "security" => Surface(requirement.Surface, "security") || Regex.IsMatch(text,
                 @"\b(?:auth|(?:un)?(?:authenticat|authoriz|authoris)\w*|sessions?|identity|cookies?|secrets?|permissions?|cors|csrf|origin|redirects?|sensitive|exposure|trust)\b|\bonly\s+(?:the\s+)?(?:owner|member|actor|user)\b",
@@ -1619,7 +1739,11 @@ internal static partial class FeatureIssuePackBuilder
 
     private static bool ContainsLifecycleRequirementSignal(FeatureRequirement requirement)
     {
-        var text = $" {requirement.Text} {requirement.AcceptanceCriteria}".ToLowerInvariant();
+        var text = string.Join("; ", Regex.Split($" {requirement.Text}; {requirement.AcceptanceCriteria}", @"[.;\r\n]+",
+                RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
+            .Where(clause => !Regex.IsMatch(clause, @"\b(?:is|are)\s+excluded\s*$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))))
+            .ToLowerInvariant();
         if (ContainsAny(text, "lifecycle", "carry-forward", "carry forward", "conversion",
                 "becomes a customer", "inherited", "archive", "ownership transfer",
                 "permanently delete", "permanent deletion", "soft-delete", "soft delete"))

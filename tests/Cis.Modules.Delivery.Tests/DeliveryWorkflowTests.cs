@@ -351,7 +351,7 @@ status: Active
     }
 
     [Fact]
-    public void PlanImportSpec_CreatesFrontendBackendDesignAndVerificationTasksAndDecomposesHighWork()
+    public void PlanImportSpec_CreatesFrontendBackendDesignWithInlineVerification()
     {
         using var repository = TemporaryRepository.Create();
         var services = CreateServices();
@@ -389,10 +389,9 @@ status: Active
         Assert.Contains(imported.WorkItems, item => item.Category == "frontend");
         Assert.Contains(imported.WorkItems, item => item.Category == "backend");
         Assert.Contains(imported.WorkItems, item => item.Category == "contract");
-        Assert.Contains(imported.WorkItems, item => item.Category == "verification");
-        var high = Assert.Single(imported.WorkItems, item => item.Complexity == "high");
-        Assert.Equal("decomposed", high.Status);
-        Assert.True(imported.WorkItems.Count(item => item.ParentId == high.Id) >= 2);
+        Assert.DoesNotContain(imported.WorkItems, item => item.Category is "coordination" or "documentation" or "verification" or "assurance" or "delivery");
+        Assert.All(imported.WorkItems.Where(item => item.Category is not ("wireframe" or "design")), item =>
+            Assert.Contains(item.VerificationObligations, obligation => obligation.Id == "task-independent-review"));
         Assert.All(imported.WorkItems, item =>
         {
             Assert.Contains(item.Complexity, new[] { "low", "medium", "high" });
@@ -436,7 +435,7 @@ status: Active
         Assert.Contains("\"customer\"", testCasesCsv, StringComparison.Ordinal);
         var csvSha = "sha256:" + Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(testCasesCsv))).ToLowerInvariant();
         Assert.Contains($"csv_sha256: \"{csvSha}\"", testCasesMarkdown, StringComparison.Ordinal);
-        var verificationTask = Assert.Single(imported.WorkItems, item => item.Category == "verification");
+        var verificationTask = Assert.Single(imported.WorkItems, item => item.Category == "backend");
         Assert.Contains("test-cases.md manual test catalogue with automated-test traceability", verificationTask.RequiredOutputs!);
         Assert.Contains("test-cases.csv test-management import", verificationTask.RequiredOutputs!);
 
@@ -590,7 +589,7 @@ status: Draft
         const string appendedOutput = "Retain the reviewed appended handoff artifact.";
         const string appendedBoundary = "Preserve the reviewed appended compatibility boundary.";
         File.WriteAllText(backendPath, File.ReadAllText(backendPath)
-            .Replace("## Constraints and exclusions", "- " + appendedOutput + "\n\n## Constraints and exclusions", StringComparison.Ordinal)
+            .Replace("## Structured test-obligation matrix", "- " + appendedOutput + "\n\n## Structured test-obligation matrix", StringComparison.Ordinal)
             .Replace("## Context and evidence", "- " + appendedBoundary + "\n\n## Context and evidence", StringComparison.Ordinal));
         Assert.Equal("approved", services.Plans.Approve(repository.Path, change.Id).Status);
         var approvedBackend = Assert.Single(services.Plans.Show(repository.Path, change.Id).WorkItems, item => item.Id == backend.Id);
@@ -713,7 +712,7 @@ status: Draft
 
         Assert.Equal(0, imported.ExitCode);
         Assert.True(imported.Source!.PublicEndpoints);
-        foreach (var category in new[] { "security", "contract", "backend", "observability", "verification", "assurance" })
+        foreach (var category in new[] { "security", "contract", "backend", "observability" })
         {
             var item = Assert.Single(imported.WorkItems, candidate => candidate.Category == category);
             Assert.Contains("PUBLIC-ENDPOINT-CACHE", item.AcceptanceCriteria, StringComparison.Ordinal);
@@ -1210,7 +1209,9 @@ status: Draft
 
 | ID | Surface | Requirement | Acceptance criteria |
 | --- | --- | --- | --- |
-| POLICY-001 | documentation | Document the order policy and its backend rule. | The canonical policy and implementation rule agree. |
+| POLICY-001 | documentation | Publish a dedicated order-policy guide and its backend rule. | The canonical policy and implementation rule agree. |
+| POLICY-002 | coordination | Maintain a separately owned scope and dependency ledger. | The scope and final acceptance decision are recorded. |
+| POLICY-003 | delivery | Produce a separately owned final handoff package. | The package reconciles actual task dispositions and readiness. |
 """);
         var imported = services.Plans.ImportSpec(new FeatureSpecImportRequest(
             repository.Path, change.Id, "docs/cis/specs/order-policy-feature-spec.md"));
@@ -1352,9 +1353,8 @@ status: Draft
         Assert.Equal(6, result.Source.Requirements);
         foreach (var category in new[]
                  {
-                     "documentation", "security", "data", "database-migration", "contract", "backend",
-                     "wireframe", "design", "frontend", "integration", "lifecycle", "verification",
-                     "assurance", "delivery",
+                     "security", "data", "database-migration", "contract", "backend",
+                     "wireframe", "design", "frontend", "integration", "lifecycle",
                  })
         {
             Assert.True(result.WorkItems.Any(item => item.Category == category),
@@ -1368,10 +1368,8 @@ status: Draft
         Assert.Contains(design.Id, frontend.DependsOn);
         Assert.All(result.WorkItems.Where(item => item.Category is not ("coordination" or "wireframe" or "design")),
             item => Assert.Contains(design.Id, item.DependsOn));
-        var finalSweep = Assert.Single(result.WorkItems, item => item.TaskTypeKey == "core.delivery.final-sweep");
-        Assert.All(result.WorkItems.Where(item =>
-                item.Id != finalSweep.Id && item.TaskTypeKey != "core.coordination.scope-guard"),
-            item => Assert.Contains(item.Id, finalSweep.DependsOn));
+        Assert.All(result.WorkItems.Where(item => item.Category is not ("wireframe" or "design")),
+            item => Assert.Contains(item.VerificationObligations, obligation => obligation.Id == "task-completion"));
         var designTask = File.ReadAllText(Path.Combine(
             Path.GetDirectoryName(services.Changes.DossierFile(change, "plan.md"))!,
             design.TaskPath!.Replace('/', Path.DirectorySeparatorChar)));
@@ -1463,17 +1461,15 @@ status: Draft
         Assert.DoesNotContain(result.WorkItems, item => item.Category is "wireframe" or "design" or "frontend");
         Assert.DoesNotContain(result.WorkItems, item => item.Category is "data-backfill" or "rollout");
         Assert.Contains(result.WorkItems, item => item.Category == "database-migration");
-        var verification = Assert.Single(result.WorkItems, item => item.Category == "verification");
-        var assurance = Assert.Single(result.WorkItems, item => item.Category == "assurance");
+        var verification = Assert.Single(result.WorkItems, item => item.Category == "backend");
         Assert.Contains("PUBLIC-ENDPOINT-CACHE", verification.AcceptanceCriteria, StringComparison.Ordinal);
         Assert.DoesNotContain("browser journeys", verification.Validation, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("independent", verification.Validation, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("independent", assurance.Validation, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains(verification.Id, assurance.DependsOn);
+        Assert.Contains(verification.VerificationObligations, obligation => obligation.Id == "task-independent-review"
+            && obligation.EvidenceRoute == "review");
         var verificationTask = File.ReadAllText(Path.Combine(
             Path.GetDirectoryName(services.Changes.DossierFile(change, "plan.md"))!,
             verification.TaskPath!.Replace('/', Path.DirectorySeparatorChar)));
-        Assert.DoesNotContain("independent assurance results", verificationTask, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Independent review findings and disposition", verificationTask, StringComparison.Ordinal);
     }
 
     [Fact]

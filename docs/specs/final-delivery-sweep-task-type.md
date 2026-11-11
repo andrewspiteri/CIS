@@ -19,9 +19,9 @@ cis:
 | --- | --- |
 | Stable type key | `core.delivery.final-sweep` |
 | Provider | CIS Plan core module |
-| Creation policy | Always |
-| Required predecessor(s) | Independent Assurance and all applicable delivery tasks |
-| Primary consumer(s) | Coordination final human acceptance and change closure |
+| Creation policy | Only for a separately owned final handoff deliverable |
+| Required predecessor(s) | All applicable delivery tasks, including any separately planned Independent Assurance |
+| Primary consumer(s) | Canonical feature/change human acceptance, through Coordination when planned |
 
 Perform the deterministic planned-versus-actual completion audit and construct a reproducible handoff. This task recommends readiness; it does not own final human feature acceptance.
 
@@ -29,7 +29,7 @@ Perform the deterministic planned-versus-actual completion audit and construct a
 
 ### Creation evidence
 
-- Every governed feature creates this task.
+- Create this task for an explicit, separately owned final handoff deliverable. Otherwise scope reconciliation and completion checks stay in the implementing tasks.
 
 ### Required inputs
 
@@ -41,13 +41,13 @@ Perform the deterministic planned-versus-actual completion audit and construct a
 2. Confirm every child has a valid terminal disposition and every approval/deferral/risk authority is recorded.
 3. Run repository completion gates, strict docs validation, final affected checks, and evidence integrity checks.
 4. Identify unplanned work, missing artifacts, stale generated state, blockers, and handoff/cleanup obligations.
-5. Produce a readiness recommendation for Coordination without converting any blocker into a pass.
+5. Produce a readiness recommendation for the feature/change owner, through Coordination when planned, without converting any blocker into a pass.
 
 ## Required outputs, dependencies, and authority
 
 - Planned-versus-actual report and final evidence index.
 - Reproducible handoff with baseline, diff, commands, artifacts, deferrals, residual risks, and operational/release state.
-- Ready/not-ready recommendation to Coordination.
+- Ready/not-ready recommendation to the feature/change owner, through Coordination when planned.
 
 Only tasks without an unresolved dependency may run concurrently. Approved Visual
 Design is a direct global dependency for every downstream UI-bearing task. Human

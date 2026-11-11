@@ -42,14 +42,17 @@ rerun same-path `cis plan import-spec` to generate a revised Draft before contin
 
 When completing `core.delivery.final-sweep`, terminal disposition is role-aware:
 executable tasks must be Complete/Deferred/Cancelled, approved wireframe and design
-review gates remain terminal at Approved, and the coordination parent remains terminal
+review gates remain terminal at Approved, and a planned coordination parent remains terminal
 at Decomposed until the final sweep is complete. This preserves truthful review and
 decomposition lifecycles while still rejecting unresolved executable work.
 
 ## Representative workload gate
 
-Completing `core.delivery.final-sweep` also checks `workload-evidence.json` beside
-`plan.md`. If plan titles or acceptance criteria suggest volume-sensitive work, a
+Completing a separately planned `core.delivery.final-sweep` checks
+`workload-evidence.json` beside `plan.md`. Without a separate sweep, the owning
+implementation task checks its applicable workload evidence. The last actual
+delivery task to finish also checks the plan-wide profile; in a one-task plan,
+that is the same implementation task. If applicable scope suggests volume-sensitive work, a
 missing profile blocks completion. Any supplied profile is checked regardless of
 keyword detection. Applicable evidence must declare a passed end-to-end result and
 bind an existing repository-local artifact by SHA-256; component or installation

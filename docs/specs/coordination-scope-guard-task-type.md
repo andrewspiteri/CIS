@@ -19,7 +19,7 @@ cis:
 | --- | --- |
 | Stable type key | `core.coordination.scope-guard` |
 | Provider | CIS Plan core module |
-| Creation policy | Always; exactly once per feature delivery pack |
+| Creation policy | Only for a separately owned coordination deliverable; at most one feature-wide root |
 | Parent | None; this is the root task for the feature pack |
 | Children | Every task created to deliver or assure the feature |
 | Canonical instance | `changes/<change-id>/agent-tasks/<task-id>.md` |
@@ -37,8 +37,9 @@ decisions delegated to another task type.
 
 ## 3. Creation triggers
 
-The task is created whenever CIS imports a feature specification or creates a
-feature delivery plan. Creation requires a stable change ID, a canonical feature
+Create this task when the feature explicitly requires a separately owned
+coordination deliverable. Otherwise scope checks stay within the implementation
+task contracts. Creation requires a stable change ID, a canonical feature
 specification path and digest, at least one requirement or goal, and the exact graph
 or Git baseline used for impact analysis.
 
@@ -111,9 +112,10 @@ to their dependencies.
 Every child is contained by the approved scope represented by this task, but that
 containment must not be encoded as an execution edge that makes the parent wait on
 itself. The parent completes only after all child dispositions and final evidence
-are resolved. In particular, `core.delivery.final-sweep` must be Complete before
-Coordination records final human feature acceptance. Final Delivery Sweep owns the
-deterministic readiness recommendation; Coordination owns acceptance authority.
+are resolved. If a separate `core.delivery.final-sweep` is planned, it must be
+Complete before Coordination records final human feature acceptance. Otherwise
+the implementing tasks carry readiness checks, and acceptance stays with the
+canonical feature/change decision. No task completion infers human acceptance.
 
 ## 8. Human approval gates
 
@@ -148,7 +150,7 @@ invent the approver identity or rationale.
 - [ ] The plan has explicit human approval with actor, timestamp, and rationale.
 - [ ] All children are complete, validly cancelled, or deferred with approved risk.
 - [ ] Final planned-versus-actual scope and task disposition are recorded.
-- [ ] Final Delivery Sweep is Complete and its exact readiness evidence is linked.
+- [ ] Any planned Final Delivery Sweep is Complete; exact readiness evidence is linked in either case.
 - [ ] A human has explicitly accepted the feature outcome, known deferrals, and
       residual risks with actor, timestamp, and rationale.
 
@@ -170,7 +172,7 @@ The coordination process must not:
 
 Deterministic validation checks:
 
-- stable and unique task identities and exactly one coordination root;
+- stable and unique task identities and at most one planned coordination root;
 - source path, digest, baseline, and target existence;
 - requirement, accepted-impact, exclusion, and negative-criteria coverage;
 - registered task-type trigger decisions;
@@ -234,7 +236,7 @@ Detailed Jira and GitHub mappings follow only after the task model is approved.
 
 ## 16. Open review questions
 
-1. Should Coordination and Final delivery sweep remain separate tasks?
+1. Which separately owned coordination or handoff outcomes justify dedicated tasks for a larger feature?
 2. Must every conditional omission have a reason, or only partial trigger matches?
 3. Can the same human role approve the plan and final feature acceptance?
 4. What threshold promotes coordination complexity from medium to high?

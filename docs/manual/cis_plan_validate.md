@@ -29,6 +29,11 @@ invalid even if its front matter still says `Approved`.
 delivery concern enforced by `cis verify validate`, after implementation has had the
 opportunity to create the mapped tests.
 
+Coordination, documentation, verification, assurance and final-sweep tasks are
+optional separately owned deliverables. Their checks remain in implementation
+task contracts when no separate task is justified. Validation preserves existing
+reviewed task identities and scope; it does not require an overhead task chain.
+
 ```text
 cis plan validate <change-id> [--repo <path>] [--format <human|json|agent>]
 ```

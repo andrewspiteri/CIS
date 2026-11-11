@@ -19,8 +19,8 @@ cis:
 | --- | --- |
 | Stable type key | `core.documentation.contracts` |
 | Provider | CIS Plan core module |
-| Creation policy | Always |
-| Required predecessor(s) | Coordination; approved Visual Design for UI-bearing scope |
+| Creation policy | Only for a separately owned documentation or contract deliverable |
+| Required predecessor(s) | Planned Coordination where applicable; approved Visual Design for UI-bearing scope |
 | Primary consumer(s) | All implementation and verification tasks |
 
 Keep canonical specifications, decisions, contracts, dictionaries, references, and navigation aligned with the approved change. This task owns documentary truth and traceability, not production behavior.
@@ -29,7 +29,7 @@ Keep canonical specifications, decisions, contracts, dictionaries, references, a
 
 ### Creation evidence
 
-- Every governed feature creates this task.
+- Create this task for an explicit, separately owned documentation or contract deliverable. Otherwise documentation obligations stay in the implementing task.
 - Additional affected documents are selected from accepted impacts, graph relationships, task targets, and repository catalogs.
 
 ### Required inputs

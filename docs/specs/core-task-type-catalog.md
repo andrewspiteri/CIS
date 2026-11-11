@@ -22,8 +22,12 @@ version. Core keys are unique. A second provider claiming a core key is a startu
 not an implicit replacement.
 
 Conditional types are created only from evidence in the imported feature specification.
-The always-created types are Coordination, Documentation, Verification, Independent
-assurance, and Final delivery. Search/projection is deliberately extension-owned.
+Coordination, Documentation, Verification, Independent assurance and Final delivery
+are separate tasks only when they represent a justified independently owned outcome
+or handoff. Their obligations normally remain within implementation work. Generate
+the smallest justified task set, preserve existing reviewed instances on refresh,
+and retain native checks, independent review and completion evidence. This is not a
+universal one-task limit. Search/projection is deliberately extension-owned.
 
 Wireframe, Visual design, and Frontend implementation are qualified by frontend type:
 `public`, `customer`, or `backoffice`. Planning instantiates one matched chain per
@@ -32,12 +36,12 @@ an explicit decomposition dimension.
 
 ## 2. Ordered definitions
 
-| Order | Key | Category | Creation evidence | Required predecessor(s) | Primary output | Acceptance and validation focus |
+| Order | Key | Category | Creation evidence | Required predecessor(s), when separately planned | Primary output | Acceptance and validation focus |
 | --- | --- | --- | --- | --- | --- | --- |
-| 000 | `core.coordination.scope-guard` | Coordination | Always | None | Coverage/gate ledger and child dispositions | Every requirement, impact, exclusion, task type, dependency, and final disposition is visible; graph and planned-versus-actual validation pass. |
+| 000 | `core.coordination.scope-guard` | Coordination | Separately owned coordination deliverable | None | Coverage/gate ledger and child dispositions | Every requirement, impact, exclusion, task type, dependency, and final disposition is visible; graph and planned-versus-actual validation pass. |
 | 010 | `core.design.wireframe` | Wireframe | Screen, route, web/native UI, tab, view, or frontend scope | Coordination | Approved `wireframes.md` | Stable screens, states, actions, side effects, paths, denied behavior, coverage, and exact human-approved digest. |
 | 020 | `core.design.visual` | Visual design | Same UI evidence as Wireframe | Wireframe | Self-contained renderer, PNG manifest, `design.md` decision | Guideline provenance, shared shell and complete reusable control/component system, Sharp/SVG runtime, artifacts, hashes, and explicit global-gate decision. |
-| 030 | `core.documentation.contracts` | Documentation | Always | Design when UI-bearing | Updated canonical specifications, contracts, decisions, dictionaries, and references | Canonical sources agree with approved behavior and exclusions; strict documentation and drift checks pass. |
+| 030 | `core.documentation.contracts` | Documentation | Separately owned documentation/contract deliverable | Design when UI-bearing | Updated canonical specifications, contracts, decisions, dictionaries, and references | Canonical sources agree with approved behavior and exclusions; strict documentation and drift checks pass. |
 | 040 | `core.security.permissions` | Security and permissions | Authorization, authentication, visibility, exposure, sensitive data, secrets, or trust boundaries | Documentation; Design when UI-bearing | Policy/permission/exposure changes and negative tests | Positive and prohibited access paths, redaction, secrets, abuse cases, and security regressions are proven. |
 | 050 | `core.data.persistence` | Data and persistence | Model, entity, record, storage, audit, repository, or database behavior | Documentation, Security; Design when UI-bearing | Model, constraints, persistence, audit/retention behavior | Persistence invariants match the approved model without excluded storage; model/repository/constraint tests pass. |
 | 060 | `core.data.database-migration` | Database migration | Schema, table, column, index, constraint, migration, or database object | Data; Design when UI-bearing | Repeatable forward migration and rollback/roll-forward position | Idempotency, compatibility, schema result, operational recovery, and rollback status are tested. |
@@ -50,9 +54,9 @@ an explicit decomposition dimension.
 | 130 | `core.operations.observability` | Observability/operations | Logging, metrics, traces, alerts, dashboard, runbook, support, or operations | Backend and Infrastructure where applicable; Design when UI-bearing | Telemetry, alerts, dashboards, and support procedure | Emission, redaction, detection, diagnosis, alert behavior, runbook, and failure drill are validated. |
 | 140 | `core.lifecycle.carry-forward` | Lifecycle | Conversion, carry-forward, inheritance, archive/restore, history, retention, or lifecycle | Backend and Data where applicable; Design when UI-bearing | Identity/provenance-preserving lifecycle behavior | Transitions avoid duplication and preserve ownership, visibility, history, audit, permission, and retention behavior. |
 | 150 | `core.release.rollout` | Rollout/release | Release, staged rollout, canary, compatibility window, rollback, feature flag, or post-release evidence | Infrastructure and Observability where applicable; Design when UI-bearing | Activation/rollback plan, criteria, ownership, communication | Flag behavior, staged activation, compatibility, rollback rehearsal, release notes, and post-release validation pass. |
-| 160 | `core.verification` | Verification | Always | Every applicable implementation/operations type; Design when UI-bearing | `test-cases.md`, `test-cases.csv`, live `TC-*` automated-test references, and `verification.md` acceptance/negative-criteria evidence | Every requirement has a stable manual case reflected by recognized automated coverage, and every required/prohibited behavior has reproducible passing evidence or approved residual risk. |
-| 170 | `core.assurance.independent` | Independent assurance | Always, depth proportional to risk | Verification; Design when UI-bearing | Independent findings, disposition, and residual risk | Applicable mutation, security, architecture, accessibility, or independent-agent challenge is complete and findings are resolved or accepted. |
-| 180 | `core.delivery.final-sweep` | Final delivery | Always | Every applicable delivery task, including Independent assurance; Design when UI-bearing | Planned-versus-actual reconciliation and handoff evidence | All child tasks have valid dispositions; strict docs, affected checks, evidence audit, scope reconciliation, and completion gate pass. |
+| 160 | `core.verification` | Verification | Separately owned verification deliverable | Every applicable implementation/operations type; Design when UI-bearing | `test-cases.md`, `test-cases.csv`, live `TC-*` automated-test references, and `verification.md` acceptance/negative-criteria evidence | Every requirement has a stable manual case reflected by recognized automated coverage, and every required/prohibited behavior has reproducible passing evidence or approved residual risk. |
+| 170 | `core.assurance.independent` | Independent assurance | Separately owned assurance deliverable, depth proportional to risk | Owning implementation with verification evidence, or planned Verification; Design when UI-bearing | Independent findings, disposition, and residual risk | Applicable mutation, security, architecture, accessibility, or independent-agent challenge is complete and findings are resolved or accepted. |
+| 180 | `core.delivery.final-sweep` | Final delivery | Separately owned final handoff deliverable | Every applicable delivery task, including Independent assurance; Design when UI-bearing | Planned-versus-actual reconciliation and handoff evidence | All child tasks have valid dispositions; strict docs, affected checks, evidence audit, scope reconciliation, and completion gate pass. |
 
 ## 3. Global design barrier
 
@@ -70,7 +74,7 @@ renderers compose these definitions and do not independently redraw equivalent c
 
 ## 4. Public endpoint architecture barrier
 
-Every unauthenticated endpoint activates Security, API contract, Backend,
+Every unauthenticated application endpoint activates Security, API contract, Backend,
 Observability, Verification, and Independent assurance obligations marked
 `PUBLIC-ENDPOINT-CACHE`. The endpoint response path must traverse a governed cache,
 and its route/controller/handler must not directly depend on or query a database,
@@ -79,7 +83,7 @@ cache miss. Cache population belongs behind an application/query abstraction. Th
 canonical details are in
 [Public Endpoint Caching Policy](public-endpoint-caching-policy-spec.md).
 
-## 4. Evidence and completion
+## 5. Evidence and completion
 
 Tasks cannot transition to Complete while acceptance or validation checkboxes remain
 open or completion evidence remains a placeholder. Completion snapshots the sanitized
@@ -90,7 +94,7 @@ under `.cis/local/feedback/`.
 Deferral must identify the unmet criterion, reason, owner, follow-up, risk, and required
 human authority. A blocker, deferral, or skipped check is never converted into a pass.
 
-## 5. Detailed definitions
+## 6. Detailed definitions
 
 Coordination, Wireframe, and Visual Design are defined respectively in
 `coordination-scope-guard-task-type.md`, `wireframe-task-type.md`, and

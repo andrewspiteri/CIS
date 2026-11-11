@@ -64,9 +64,13 @@ task-type keys. Planning behaves as follows:
 
 ## Replacement policy
 
-Core types are non-replaceable. An extension may satisfy additional product-specific
-work but cannot remove Coordination, Documentation, Verification, Independent
-Assurance, Final Delivery Sweep, or any triggered core type.
+Core type definitions remain available and non-replaceable. Their availability does
+not require a separate task instance for every feature. An extension may satisfy
+additional product-specific work but cannot remove applicable obligations. Planning
+keeps coordination, documentation, verification, independent review and completion
+checks within implementation work unless a justified separately owned outcome or
+handoff needs another task. Preserve existing reviewed instances and genuine
+triggered core deliverables.
 
 For extension types, replacement is allowed only through an explicit repository
 selection that names the replaced and replacement keys. The replacement must:

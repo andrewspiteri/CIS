@@ -71,10 +71,15 @@ do not make a task applicable. Credential names such as `API key` are not themse
 API-contract evidence.
 
 The command requires planning-ready, human-reviewed impact findings. It writes the
-dependency ledger to `plan.md` and one durable Markdown task per workstream under
+dependency ledger to `plan.md` and durable Markdown tasks for the justified owned outcomes under
 `agent-tasks/`. It also generates `test-cases.md` for human review and
 `test-cases.csv` for import into TestRail or another test-management system.
-Workstreams are created only when the specification requires them:
+Keep documentation, native verification, independent review and completion checks
+inside implementation tasks unless a separate owned outcome, handoff or approval
+boundary warrants another task. A small backend change can have one implementation
+task; UI, migration and cross-repository deliverables may need several. Re-import
+preserves existing reviewed task identities, authored scope, statuses and useful
+results. Workstreams are created only when the specification requires them:
 
 - parent coordination and scope guard;
 - wireframes followed by visual/interaction design and one exact combined review;
@@ -115,8 +120,9 @@ integration, observability, verification, assurance, and delivery remain workspa
 Missing role evidence falls back to the declared feature targets.
 
 When the specification identifies an unauthenticated public application endpoint, CIS
-also creates or activates Security, API contract, Backend, Observability, Verification,
-and Independent assurance tasks containing `PUBLIC-ENDPOINT-CACHE`. These tasks require
+also creates or activates Security, API contract, Backend and Observability tasks
+containing `PUBLIC-ENDPOINT-CACHE`, with native verification and independent review
+within the owning work unless those are separately owned deliverables. These tasks require
 a governed cache response path and prohibit direct database/repository access from the
 route/controller/handler, including on cache miss. The detailed policy is seeded as
 `specs/public-endpoint-caching-policy-spec.md`. Pre-authentication identity protocol
@@ -165,7 +171,7 @@ Each item records its stable task-type key/version and is classified `low`, `med
 or `high`. A high item is stored only as a `decomposed` parent and must have at least
 two bounded low- or medium-complexity children before validation can pass.
 
-For frontend work, `coordination -> validated wireframes -> rendered design approval ->
+For frontend work, `validated wireframes -> rendered design approval ->
 every downstream task` is required. A rendered design sets a global pause: no
 implementation, verification, or delivery task may start until a human approves the
 exact wireframe digest, renderer, and PNG manifest together. Teams may use the separate

@@ -19,7 +19,7 @@ cis:
 | --- | --- |
 | Stable type key | `core.verification` |
 | Provider | CIS Plan core module |
-| Creation policy | Always |
+| Creation policy | Only for a separately owned verification deliverable |
 | Required predecessor(s) | Every applicable implementation, migration, operations, and rollout task; approved Visual Design for UI-bearing scope |
 | Primary consumer(s) | Independent Assurance and Final Delivery Sweep |
 
@@ -29,7 +29,7 @@ Prove every requirement, acceptance criterion, prohibited behavior, compatibilit
 
 ### Creation evidence
 
-- Every governed feature creates this task.
+- Create this task for an explicit, separately owned verification deliverable. Otherwise native checks, acceptance evidence and the shared verification ledger stay in the implementing task.
 
 ### Required inputs
 

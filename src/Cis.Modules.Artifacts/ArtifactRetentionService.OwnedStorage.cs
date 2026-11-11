@@ -9,7 +9,7 @@ public sealed partial class ArtifactRetentionService
     private readonly AsyncLocal<ArtifactWork?> _artifactWork = new();
     private sealed record ArtifactWork(ICisNativeWorkScope Scope, CisNativeWorkOptions Association,
         string ReservationId, string RepositoryPath, Stopwatch Monitor, string? OperationId = null,
-        long MaximumGrowthBytes = 0, bool Cleanup = false);
+        long MaximumGrowthBytes = 0, bool Cleanup = false, string? CleanupRecordPath = null);
 
     public ArtifactOperationResult Compact(string repositoryPath, string family, bool confirmed, CisNativeWorkOptions? association = null)
         => GovernedOperation(repositoryPath, "compact", association, confirmed,
@@ -62,8 +62,19 @@ public sealed partial class ArtifactRetentionService
             _artifactWork.Value = new(scope, boundAssociation, "", repositoryPath, Stopwatch.StartNew());
             var maximumGrowth = growth();
             var management = Path.GetFullPath(Path.Combine(repositoryPath, StateRoot));
+            var cleanupRecord = operation == "clean"
+                ? Path.Combine(management, "cleanup", $"CLEAN-{_clock().ToUniversalTime():yyyyMMddHHmmss}-{Guid.NewGuid():N}.json") : null;
+            var output = operation switch
+            {
+                "clean" => cleanupRecord!,
+                "compact" => Path.Combine(management, "archive"),
+                "retrieve" => Path.Combine(management, "retrieved"),
+                "restore" => Path.Combine(management, "restore"),
+                _ => throw new InvalidDataException("Unknown artifact output domain.")
+            };
             reserved = ownedStorage.Reserve(scope.AuthorityPath, scope.Reference, operation, maximumGrowth,
-                [new(management)], cleanup: operation is "clean" or "compact" or "restore", actor: scope.Actor);
+                [new(Path.Combine(management, "operation.lock")), new(output)],
+                cleanup: operation is "clean" or "compact" or "restore", actor: scope.Actor);
             if (!reserved.Allowed) throw new InvalidDataException(string.Join(" ", reserved.Result.Errors));
             var admittedStorage = reserved.Result.Storage
                 ?? throw new InvalidDataException("The admitted artifact growth has no readable owned-storage inventory; unknown usage is not zero.");
@@ -72,7 +83,7 @@ public sealed partial class ArtifactRetentionService
             if (reserved.Operation is null)
                 throw new InvalidDataException("The artifact operation has no attributed storage domain; unknown usage is not zero.");
             _artifactWork.Value = new(scope, boundAssociation, reserved.ReservationId!, repositoryPath, Stopwatch.StartNew(),
-                operation, reserved.MaximumGrowthBytes, operation is "clean" or "compact" or "restore");
+                operation, reserved.MaximumGrowthBytes, operation is "clean" or "compact" or "restore", cleanupRecord);
             CheckArtifactWork(force: true);
             Directory.CreateDirectory(management);
             // One existing native output lease also excludes retention while Testing writes.

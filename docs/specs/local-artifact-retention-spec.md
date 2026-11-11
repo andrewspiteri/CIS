@@ -55,4 +55,4 @@ diagnostics into permanent archive bundles is not the default retention strategy
 
 ## Idempotence and failure
 
-No candidates produces `unchanged`. Invalid policy, missing archives, digest mismatch, traversal, and restore conflicts fail before destructive work. Archive and cleanup records are excluded from their own retention families to avoid recursive deletion authority.
+No candidates produces `unchanged`. Invalid policy, missing archives, digest mismatch, traversal, and restore conflicts fail before destructive work. The management root and unknown descendants cannot become retention families. Its known generated `archive`, `retrieved`, `restore` and `cleanup` subtrees may use explicit delete or preserve policies under the existing ownership and leases. Re-archiving them remains rejected. Exact controls, pending output and current required results remain protected; an operation does not protect every historical management artifact merely by reserving its own output.

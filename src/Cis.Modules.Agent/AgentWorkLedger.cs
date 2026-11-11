@@ -66,6 +66,8 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
         public long RestorationSpent { get; set; }
         public long Consumed { get; set; }
         public int UsedAttempts { get; set; }
+        public long CompactedExecutionCount { get; set; }
+        public bool ConservativeHistory { get; set; }
         public string DecisionReference { get; set; } = "";
         public string StorageReference { get; set; } = "";
         public string Actor { get; set; } = "";
@@ -105,6 +107,7 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
         public string NextAction { get; set; } = "Run the next bounded action within the allocation.";
         public List<string> Outcomes { get; set; } = [];
         public List<CisAgentWorkCheckpointRecord> Checkpoints { get; set; } = [];
+        public long CompactedCheckpointCount { get; set; }
     }
     private sealed class Execution
     {
@@ -1242,9 +1245,12 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
             var lockPath = SafePath(authority, CisAgentWorkPaths.Lock);
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             using var held = AcquireTransactionLock(lockPath);
-            var current = Load(authority); var next = action(current);
+            var current = Load(authority);
+            if (current is not null) CompactLedgerHistory(current);
+            var next = action(current);
             if (!next.Result.Applied) return next.Result;
             foreach (var change in next.State.Changes.Values) CompactStorageState(next.State, change);
+            CompactLedgerHistory(next.State);
             foreach (var change in next.State.Changes.Values) ValidateStorageRecordBounds(change);
             next.State.Revision++;
             var serialized = JsonSerializer.Serialize(next.State, LedgerJson);
@@ -1302,7 +1308,7 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
         }
         foreach (var (id, change) in state.Changes)
         {
-            if (change is null || change.Id != id || change.Milliseconds < 0 || change.Attempts < 1 || change.Consumed < 0 || change.UsedAttempts < 0
+            if (change is null || change.Id != id || change.Milliseconds < 0 || change.Attempts < 1 || change.Consumed < 0 || change.UsedAttempts < 0 || change.CompactedExecutionCount < 0
                 || change.Restoration < 0 || change.Restoration > change.Milliseconds || change.RestorationSpent < 0 || change.RestorationSpent > change.Restoration
                 || change.Owners is null || change.Bindings is null || change.Executions is null
                 || change.Controllers is null || change.Controllers.Count == 0 || change.AllocationHistory is null || change.HistoricalRuns is null
@@ -1311,7 +1317,7 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
                 throw new InvalidDataException("A containing-change accounting record is corrupt; restore it without replenishing capacity.");
             ValidateStorageState(authority, state, change);
             foreach (var (ownerId, owner) in change.Owners)
-                if (owner is null || owner.Id != ownerId || owner.Milliseconds < 0 || owner.Attempts < 1 || owner.Consumed < 0 || owner.UsedAttempts < 0
+                if (owner is null || owner.Id != ownerId || owner.Milliseconds < 0 || owner.Attempts < 1 || owner.Consumed < 0 || owner.UsedAttempts < 0 || owner.CompactedCheckpointCount < 0
                     || owner.Restoration < 0 || owner.Restoration > owner.Milliseconds || owner.RestorationSpent < 0 || owner.RestorationSpent > owner.Restoration
                     || owner.Checkpoints is null || owner.Outcomes is null
                     || owner.ReflectionWindowMilliseconds is < 30_000)
@@ -1366,7 +1372,7 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
                 RestorationOfExecutionId = item.RestorationOfExecutionId
             }).ToArray();
         return new(status, new(state.AuthorityId, change.Id, taskId, owner?.Id, Revision(state), state.AdoptionId,
-            change.Executions.Values.Any(item => item.ConservativeRecovery) || change.HistoricalRuns.Count > 0
+            change.ConservativeHistory || change.Executions.Values.Any(item => item.ConservativeRecovery) || change.HistoricalRuns.Count > 0
                 ? "Measured from the authorized baseline with conservative full-bound recovery charges; earlier historical effort is unmeasured."
                 : "Measured from the authorized baseline; earlier historical effort is unmeasured.", executions.Any(item => item.RecoveryReason is not null) ? "uncertain" : "known",
             hold, explicitHold ?? (hold == ReflectionAction || hold is not null && owner is not null && hold == NativeRestorationHold(change, owner)

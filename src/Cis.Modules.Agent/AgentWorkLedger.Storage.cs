@@ -142,13 +142,18 @@ internal sealed partial class AgentWorkLedger
             var operation = StorageOperation(authority, snapshot.State, change, reference, claims, existing.Value);
             var retainedProtection = 0;
             var deletionRepository = execution.Stage?.RepositoryPath ?? authority.RepositoryPath;
-            var deletionPaths = new[] { ".cis/local/artifacts", ".cis/local/testing/mutation/run.lock" }
+            var deletionPaths = new[] { ".cis/local/artifacts", ".cis/local/artifacts/operation.lock", ".cis/local/testing/mutation/run.lock" }
                 .Select(path => Path.GetFullPath(Path.Combine(deletionRepository, path))).ToHashSet(StoragePathComparer);
+            var cleanupRecords = Path.GetFullPath(Path.Combine(deletionRepository, ".cis/local/artifacts/cleanup"));
             var deletionRecord = cleanup && operationId == "clean" && execution.Stage?.NativeOperation == "artifacts-clean"
                 && (existing.Value?.MaximumGrowthBytes ?? maximumGrowthBytes) <= MaximumDeletionRecordGrowth && claims is { Count: > 0 }
                 && claims.All(claim => !claim.Scratch && !claim.Required)
                 && (existing.Value?.Paths ?? []).Concat(claims.Select(claim => Path.GetFullPath(claim.Path))).All(path =>
-                    deletionPaths.Contains(path) && allocation.Claims.GetValueOrDefault(path) is not { Scratch: true } and not { Required: true });
+                    (deletionPaths.Contains(path) || StoragePathComparer.Equals(Path.GetDirectoryName(path), cleanupRecords)
+                        && Path.GetFileName(path) is { Length: <= 160 } name && name.StartsWith("CLEAN-", StringComparison.Ordinal)
+                        && name.EndsWith(".json", StringComparison.Ordinal)
+                        && name[..^5].All(character => char.IsAsciiLetterOrDigit(character) || character == '-'))
+                    && allocation.Claims.GetValueOrDefault(path) is not { Scratch: true } and not { Required: true });
             var protectedRestoration = deletionRecord || execution.RestorationOfExecutionId is not null
                 ? 0 : allocation.Policy.RestorationBytes;
             if (existing.Value is { } previous)
@@ -497,7 +502,7 @@ internal sealed partial class AgentWorkLedger
             .Concat(group.SelectMany(item => item.Storage!.Policy.Roots.Where(root => root.Scratch)
                 .Select(root => Path.GetFullPath(Path.Combine(root.RepositoryPath, root.Path)))))
             .Concat(group.SelectMany(item => item.Storage!.Reservations.Values.Where(reservation => !reservation.Finalized).SelectMany(reservation => reservation.Paths)))
-            .Concat(group.SelectMany(item => item.Storage!.Policy.Roots.Select(root => Path.GetFullPath(Path.Combine(root.RepositoryPath, ".cis/local/artifacts")))))
+            .Concat(group.SelectMany(item => item.Storage!.Policy.Roots.Select(root => Path.GetFullPath(Path.Combine(root.RepositoryPath, ".cis/local/artifacts/operation.lock")))))
             .Concat(new[] { CisAgentWorkPaths.Ledger, CisAgentWorkPaths.Adoption, CisAgentWorkPaths.Lock }
                 .Select(relative => Path.GetFullPath(Path.Combine(authority.RepositoryPath, relative))))
             .Distinct(StoragePathComparer).ToArray();

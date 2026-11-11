@@ -7,7 +7,7 @@ namespace Cis.Modules.Agent.Tests;
 public sealed partial class AgentWorkLedgerTests
 {
     [Fact]
-    public void WorkLedger_OwnedStorageHistoryCapacityHoldsNewExpansionButKeepsSettlementAndDeletionAvailable()
+    public void WorkLedger_OwnedStorageHistoryCompactsWithoutBypassingAnActiveOwnerOrBlockingSettlementAndDeletion()
     {
         using var f = new Fixture(); var identity = f.Identity("WORK-A");
         var allocation = new CisAgentWorkAllocationRequest(600, 5, 0, [new(identity.TaskId, 600, 5)],
@@ -28,7 +28,8 @@ public sealed partial class AgentWorkLedgerTests
         File.WriteAllText(ledgerPath, state.ToJsonString());
         Assert.InRange(new FileInfo(ledgerPath).Length, 6 * 1024 * 1024, 8 * 1024 * 1024 - 65536);
         var held = f.Ledger.Admit(f.Context, identity, "native/no-new-expansion", 30, 180, stage: stage, controller: "Controller");
-        Assert.False(held.Admitted); Assert.Contains("finite ledger capacity", held.Result.Work!.HoldReason!, StringComparison.Ordinal);
+        Assert.False(held.Admitted);
+        Assert.DoesNotContain("finite ledger capacity", held.Result.Work!.HoldReason ?? "", StringComparison.Ordinal);
         var deletion = f.Ledger.Admit(f.Context, identity, "artifacts/only-deletion", 30, 180,
             active.Reference!.ExecutionId, stage: stage with { NativeOperation = "artifacts-clean" }, controller: "Controller");
         Assert.True(deletion.Admitted, string.Join("; ", deletion.Result.Errors));

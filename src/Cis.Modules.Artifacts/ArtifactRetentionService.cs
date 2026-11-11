@@ -133,7 +133,9 @@ public sealed partial class ArtifactRetentionService
         if (errors.Count > 0) return Result(context, "failed", inventory.Rules, candidates, ReadArchives(context), [], errors, false);
         if (candidates.Length == 0) return Result(context, "unchanged", inventory.Rules, [], ReadArchives(context), [], [], false);
         var id = $"CLEAN-{_clock().ToUniversalTime():yyyyMMddHHmmss}-{ShortDigest(string.Join('\n', candidates.Select(item => item.Path)))}";
-        var recordPath = Path.Combine(context.RepositoryPath, StateRoot.Replace('/', Path.DirectorySeparatorChar), "cleanup", id + ".json");
+        var recordPath = _artifactWork.Value?.CleanupRecordPath
+            ?? Path.Combine(context.RepositoryPath, StateRoot.Replace('/', Path.DirectorySeparatorChar), "cleanup", id + ".json");
+        id = Path.GetFileNameWithoutExtension(recordPath);
         Directory.CreateDirectory(Path.GetDirectoryName(recordPath)!);
         File.WriteAllText(recordPath, JsonSerializer.Serialize(new
         {
@@ -239,6 +241,7 @@ public sealed partial class ArtifactRetentionService
                 || familyPath.Contains("..", StringComparison.Ordinal) || !familyPath.StartsWith(".cis/local/", StringComparison.Ordinal)
                 || familyPath.Equals(StateRoot, StringComparison.OrdinalIgnoreCase)
                 || familyPath.StartsWith(StateRoot + "/", StringComparison.OrdinalIgnoreCase)
+                    && (!IsDisposableManagementFamily(familyPath) || cells[4] == "archive")
                 || cells[4] is not ("preserve" or "archive" or "delete"))
             { errors.Add($"Invalid artifact retention row: {line.Trim()}"); continue; }
             rules.Add(new(cells[0], familyPath, days, latest, cells[4], maximumBytes));
@@ -252,6 +255,11 @@ public sealed partial class ArtifactRetentionService
                     errors.Add($"Artifact families have overlapping paths: {rules[index].Family}, {other.Family}");
         return rules;
     }
+
+    private static bool IsDisposableManagementFamily(string path)
+        => new[] { "archive", "retrieved", "restore", "cleanup" }.Any(directory =>
+            path.Equals(StateRoot + "/" + directory, StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith(StateRoot + "/" + directory + "/", StringComparison.OrdinalIgnoreCase));
 
     private IReadOnlyList<LocalArtifactEntry> ReadEntries(CisRepositoryContext context, ArtifactRetentionRule rule, List<string> errors)
         => RankEntries(context, rule, errors).Select((entry, index) => new LocalArtifactEntry(
@@ -294,7 +302,7 @@ public sealed partial class ArtifactRetentionService
     private static bool ContainsWorkControlState(CisRepositoryContext context, string path)
     {
         var entry = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
-        return new[] { CisAgentWorkPaths.Ledger, CisAgentWorkPaths.Adoption, CisAgentWorkPaths.Lock }.Any(relative =>
+        return new[] { CisAgentWorkPaths.Ledger, CisAgentWorkPaths.Adoption, CisAgentWorkPaths.Lock, StateRoot + "/operation.lock" }.Any(relative =>
         {
             var control = Path.GetFullPath(Path.Combine(context.RepositoryPath, relative));
             return string.Equals(control, entry, CisPathSafety.PlatformComparison)
@@ -603,10 +611,12 @@ public sealed partial class ArtifactRetentionService
                 archiveBytes = new DirectoryInfo(archiveRoot).EnumerateFiles("*.zip", MetadataOptions(recursive: false)).Sum(file => file.Length);
         }
         long configured = families.Sum(family => family.LiveBytes);
+        var configuredManagement = families.Where(family => rules.Any(rule => rule.Family == family.Family
+            && IsDisposableManagementFamily(rule.Path))).Sum(family => family.LiveBytes);
         return new(status, context.RepositoryPath, rules, entries, archives, outputs, storageErrors.Distinct(StringComparer.Ordinal).ToArray(), applied)
         {
             FamilyStorage = families,
-            Storage = new(configured, archiveBytes, management, checked(configured + management)),
+            Storage = new(configured, archiveBytes, management, checked(configured + management - configuredManagement)),
             OwnedStorage = owned
         };
     }

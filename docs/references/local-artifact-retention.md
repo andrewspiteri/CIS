@@ -3,7 +3,7 @@ title: "Change Impact Studio Local Artifact Retention"
 type: local-artifact-retention
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-11-09"
+last_reviewed: "2026-11-11"
 review_cadence: "on evidence, storage, privacy, or recovery-policy change"
 cis:
   stable_id: change-impact-studio:reference:local-artifact-retention
@@ -75,7 +75,7 @@ growth. A sampled retention check refreshes the same reservation without grantin
 another allowance. None of these measurements grants supersession or deletion
 authority.
 
-Active, uncertain and current required native evidence and durable accounting remain protected. Successful authorized deletion reconciles surviving bytes but never resets time or attempts. Protected evidence that prevents fitting the ceiling holds expansion: inspect the reported usage and plan, perform only delegated eligible cleanup, or return to the original allocation authority. The existing management area is not a configurable delete family; this checkpoint does not add an archive-pruning permission. Ordinary archive retrieval and restoration still need their finite operation allowance; they do not acquire the special time reserve for genuine native baseline recovery.
+Active, uncertain and current required native evidence and durable accounting remain protected. Successful authorized deletion reconciles surviving bytes but never resets time or attempts. Protected evidence that prevents fitting the ceiling holds expansion: inspect the reported usage and plan, perform only delegated eligible cleanup, or return to the original allocation authority. The management root itself is not a retention family. Explicit delete or preserve policies may cover only its known generated `.cis/local/artifacts/archive`, `retrieved`, `restore` and `cleanup` subtrees; unknown descendants and recursive re-archiving remain rejected. Exact controls, required reports and active output stay protected under the existing leases. Each operation reserves its own output, including an exact cleanup receipt, rather than pinning the whole management area. Configured management entries are counted once in the local total. Ordinary archive retrieval and restoration still need their finite operation allowance; they do not acquire the special time reserve for genuine native baseline recovery.
 
 Archive restoration rechecks the original destinations against the current owned roots and protected evidence before claiming or writing those paths. An old archive does not grant path ownership. Testing destinations also use the existing native output lease, including when the archive's original family differs from the current profile.
 

@@ -1,11 +1,200 @@
 using Cis.Abstractions;
 using Cis.Modules.Artifacts;
 using Cis.Modules.Repository;
+using Cis.Modules.Agent;
+using System.Text.Json;
 
 namespace Cis.Modules.Artifacts.Tests;
 
 public sealed partial class ArtifactRetentionTests
 {
+    [Theory]
+    [InlineData("archive", "old.zip")]
+    [InlineData("retrieved", "old/report-copy.txt")]
+    [InlineData("restore", "old/staged-output.txt")]
+    [InlineData("cleanup", "old.json")]
+    public void GovernedManagementCleanupRemovesObsoleteCopiesAndKeepsExactControlsAndRequiredResults(string directory, string entry)
+    {
+        using var fixture = new GovernedArtifactFixture();
+        fixture.Policy(directory);
+        var obsolete = ".cis/local/artifacts/" + directory + "/" + entry;
+        fixture.Repository.Write(obsolete, "obsolete generated copy");
+        fixture.Repository.Age(obsolete, ArtifactOld);
+        fixture.RetainCurrentEvidence();
+        var required = fixture.RequiredBytes();
+        var control = Path.GetFullPath(Path.Combine(fixture.Repository.Path, ".cis/local/artifacts/operation.lock"));
+        fixture.Repository.Write(".cis/local/artifacts/operation.lock", "");
+        var inventory = fixture.Storage.Inspect(fixture.Repository.Path, fixture.Association);
+        Assert.Contains(control, inventory.Storage!.ProtectedPaths);
+        Assert.DoesNotContain(Path.GetFullPath(Path.Combine(fixture.Repository.Path, ArtifactRetentionService.StateRoot)), inventory.Storage.ProtectedPaths);
+        var plan = fixture.Service.Plan(fixture.Repository.Path, "obsolete", fixture.Association);
+        Assert.Empty(plan.Errors);
+        Assert.True(Assert.Single(plan.Entries).Candidate);
+        Assert.All(fixture.Service.Plan(fixture.Repository.Path, "current", fixture.Association).Entries,
+            item => { Assert.True(item.Protected); Assert.False(item.Candidate); });
+
+        var cleaned = fixture.Service.Clean(fixture.Repository.Path, "obsolete", true, fixture.Association);
+
+        Assert.True(cleaned.ExitCode == 0, string.Join("; ", cleaned.Errors));
+        Assert.Equal("cleaned", cleaned.Status);
+        Assert.False(File.Exists(Path.Combine(fixture.Repository.Path, obsolete)));
+        Assert.True(File.Exists(control));
+        fixture.AssertRequiredBytes(required);
+        Assert.Equal(0, cleaned.OwnedStorage!.Storage!.ReservedBytes);
+        var fresh = fixture.Service.Inventory(fixture.Repository.Path, association: fixture.Association);
+        Assert.Empty(fresh.Errors);
+        Assert.Equal(fresh.Storage!.ManagementBytes, fresh.Storage.TotalReportedBytes - fresh.FamilyStorage
+            .Where(item => item.Family == "current").Sum(item => item.LiveBytes));
+        var receipt = Assert.Single(cleaned.Outputs);
+        Assert.True(File.Exists(Path.Combine(fixture.Repository.Path, receipt)));
+        // The current receipt is protected while written, not pinned forever.
+        // A later eligible cleanup retires it and retains its own one tombstone.
+        if (directory == "cleanup")
+        {
+            fixture.Repository.Age(receipt, ArtifactOld);
+            var next = fixture.Service.Clean(fixture.Repository.Path, "obsolete", true, fixture.Association);
+            Assert.Equal(0, next.ExitCode);
+            Assert.False(File.Exists(Path.Combine(fixture.Repository.Path, receipt)));
+            Assert.True(File.Exists(Path.Combine(fixture.Repository.Path, Assert.Single(next.Outputs))));
+            Assert.Single(Directory.GetFiles(Path.Combine(fixture.Repository.Path, ".cis/local/artifacts/cleanup")));
+            fixture.AssertRequiredBytes(required);
+        }
+    }
+
+    [Fact]
+    public void GovernedManagementCleanupKeepsAnotherPendingOperationsExactOutput()
+    {
+        using var fixture = new GovernedArtifactFixture(includeOtherOwner: true);
+        fixture.Policy("retrieved");
+        const string old = ".cis/local/artifacts/retrieved/old/report-copy.txt";
+        const string pending = ".cis/local/artifacts/retrieved/pending/report-copy.txt";
+        fixture.Repository.Write(old, "obsolete retrieval");
+        fixture.Repository.Age(old, ArtifactOld);
+        var admitted = fixture.Native.Admit(new(fixture.Repository.Path, "native/pending-copy", "unit-preparation", 60,
+            fixture.Association with { TaskId = "WORK-091" }));
+        Assert.True(admitted.Allowed, string.Join("; ", admitted.Errors));
+        using var scope = admitted.Scope!;
+        var output = Path.GetFullPath(Path.Combine(fixture.Repository.Path, ".cis/local/artifacts/retrieved/pending"));
+        var reserved = fixture.Storage.Reserve(fixture.Repository.Path, scope.Reference, "pending-copy", 4096,
+            [new(output)], actor: "Cleaner");
+        Assert.True(reserved.Allowed, string.Join("; ", reserved.Result.Errors));
+        fixture.Repository.Write(pending, "pending generated copy");
+        fixture.Repository.Age(pending, ArtifactOld);
+
+        var cleaned = fixture.Service.Clean(fixture.Repository.Path, "obsolete", true, fixture.Association);
+
+        Assert.True(cleaned.ExitCode == 0, string.Join("; ", cleaned.Errors));
+        Assert.False(File.Exists(Path.Combine(fixture.Repository.Path, old)));
+        Assert.Equal("pending generated copy", File.ReadAllText(Path.Combine(fixture.Repository.Path, pending)));
+        Assert.True(cleaned.OwnedStorage!.Storage!.ReservedBytes >= 4096);
+        Assert.Contains(output, cleaned.OwnedStorage.Storage.ProtectedPaths);
+        Assert.True(fixture.Storage.Settle(fixture.Repository.Path, scope.Reference, reserved.ReservationId!, true).Allowed);
+        Assert.Equal(0, scope.Finish("native-finished", "The fixture copy operation ended.", []).ExitCode);
+    }
+
+    [Fact]
+    public void GovernedManagementCleanupHoldsOnAnActiveLease()
+    {
+        using var fixture = new GovernedArtifactFixture();
+        fixture.Policy("archive");
+        const string obsolete = ".cis/local/artifacts/archive/old.zip";
+        fixture.Repository.Write(obsolete, "obsolete generated archive");
+        fixture.Repository.Age(obsolete, ArtifactOld);
+        var control = Path.Combine(fixture.Repository.Path, ".cis/local/artifacts/operation.lock");
+        using var lease = new FileStream(control, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+
+        var held = fixture.Service.Clean(fixture.Repository.Path, "obsolete", true, fixture.Association);
+
+        Assert.Equal(4, held.ExitCode);
+        Assert.False(held.Applied);
+        Assert.Equal("obsolete generated archive", File.ReadAllText(Path.Combine(fixture.Repository.Path, obsolete)));
+        Assert.Equal(0, held.OwnedStorage!.Storage!.ReservedBytes);
+    }
+
+    [Fact]
+    public void GovernedManagementCleanupNeedsItsExistingCleanupDelegation()
+    {
+        using var fixture = new GovernedArtifactFixture(cleanupDelegated: false);
+        fixture.Policy("retrieved");
+        const string obsolete = ".cis/local/artifacts/retrieved/old/report-copy.txt";
+        fixture.Repository.Write(obsolete, "obsolete generated retrieval");
+        fixture.Repository.Age(obsolete, ArtifactOld);
+
+        var held = fixture.Service.Clean(fixture.Repository.Path, "obsolete", true, fixture.Association);
+
+        Assert.Equal(4, held.ExitCode);
+        Assert.Contains(held.Errors, error => error.Contains("no delegated cleanup authority", StringComparison.Ordinal));
+        Assert.Equal("obsolete generated retrieval", File.ReadAllText(Path.Combine(fixture.Repository.Path, obsolete)));
+    }
+
+    private static readonly DateTime ArtifactOld = new(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+    private sealed class GovernedArtifactFixture : IDisposable
+    {
+        public Fixture Repository { get; } = Fixture.Create();
+        public AgentService Controller { get; }
+        public ICisNativeWorkController Native => Controller;
+        public ICisOwnedStorageController Storage => Controller;
+        public CisNativeWorkOptions Association { get; }
+        public ArtifactRetentionService Service { get; }
+
+        public GovernedArtifactFixture(bool cleanupDelegated = true, bool includeOtherOwner = false)
+        {
+            Repository.Write("docs/cis/catalog.yml", "schema_version: 1\nrepository: artifacts-fixture\ndocuments: []\n");
+            Repository.Write("docs/cis/changes/CIS-0001/plan.md", "---\nstatus: Approved\nfeature_spec_frontend: false\n---\n# Bounded retention\n");
+            Repository.Write("docs/cis/changes/CIS-0001/impact.md", "---\nstatus: Accepted\n---\n# Impact\n| Finding | Status |\n|---|---|\n| IMPACT-1 | accepted |\n");
+            Repository.Write("docs/cis/changes/CIS-0001/agent-tasks/WORK-090.md",
+                "---\ntask_status: InProgress\ntargets: [\"artifacts-fixture\"]\n---\n# Generated artifact cleanup\nRetain required evidence and retire eligible copies.\n");
+            if (includeOtherOwner)
+                Repository.Write("docs/cis/changes/CIS-0001/agent-tasks/WORK-091.md",
+                    "---\ntask_status: InProgress\ntargets: [\"artifacts-fixture\"]\n---\n# Pending generated copy\nPreserve its existing bounded operation and output.\n");
+            Controller = new(new CisRepositoryContextResolver());
+            Association = new("CIS-0001", "WORK-090", AuthorityPath: Repository.Path, Actor: "Cleaner");
+            var allocation = new CisAgentWorkAllocationRequest(1200, 8, 120,
+                includeOtherOwner ? [new("WORK-090", 600, 4, 60), new("WORK-091", 600, 4, 60)] : [new("WORK-090", 1200, 8, 120)],
+                "fixture:cleanup-work", "fixture:finite-storage", AcknowledgeHistoricalUnknown: true)
+            {
+                Controllers = ["Cleaner"],
+                Storage = new(32 * 1024 * 1024, [new(Repository.Path, ".cis/local")])
+                { RestorationBytes = 1024 * 1024, CleanupControllers = cleanupDelegated ? ["Cleaner"] : [] }
+            };
+            Repository.Write(".cis/local/artifact-allocation.json", JsonSerializer.Serialize(allocation, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+            var allocated = Controller.AllocateWork(Repository.Path, "CIS-0001", ".cis/local/artifact-allocation.json", "Allocation owner",
+                "Allocate finite retention with the explicit existing cleanup delegation.", adoptAccounting: true);
+            Assert.True(allocated.ExitCode == 0, string.Join("; ", allocated.Errors));
+            Service = Repository.Service(Controller, Controller);
+        }
+
+        public void Policy(string directory) => Repository.Write("docs/cis/references/local-artifact-retention.md", $"""
+            | Family | Path | Retain days | Keep latest | Action |
+            |---|---|---:|---:|---|
+            | obsolete | .cis/local/artifacts/{directory} | 7 | 0 | delete |
+            | current | .cis/local/testing/current | 7 | 0 | delete |
+            """);
+
+        public void RetainCurrentEvidence()
+        {
+            var admission = Native.Admit(new(Repository.Path, "native/current-result", "unit-verification", 60, Association));
+            Assert.True(admission.Allowed, string.Join("; ", admission.Errors));
+            using var scope = admission.Scope!;
+            var paths = new[] { "report.trx", "state.json" }.Select(file => Path.Combine(Repository.Path, ".cis/local/testing/current", file)).ToArray();
+            var reservation = Storage.Reserve(Repository.Path, scope.Reference, "current-evidence", 4096,
+                paths.Select(path => new CisOwnedStoragePath(path)).ToArray(), actor: "Cleaner");
+            Assert.True(reservation.Allowed, string.Join("; ", reservation.Result.Errors));
+            Repository.Write(".cis/local/testing/current/report.trx", "<TestRun><ResultSummary><Counters total=\"1\" passed=\"1\" failed=\"0\" /></ResultSummary></TestRun>");
+            Repository.Write(".cis/local/testing/current/state.json", "{\"fixture\":\"current required report/input metadata\"}");
+            foreach (var path in paths) File.SetLastWriteTimeUtc(path, ArtifactOld);
+            Assert.True(Storage.Settle(Repository.Path, scope.Reference, reservation.ReservationId!, true, paths).Allowed);
+            Assert.Equal(0, scope.Finish("native-finished", "Retain the fixture's required report and input metadata.", paths).ExitCode);
+        }
+
+        public Dictionary<string, byte[]> RequiredBytes() => Directory.GetFiles(Path.Combine(Repository.Path, ".cis/local/testing/current"))
+            .ToDictionary(path => path, File.ReadAllBytes, StringComparer.Ordinal);
+        public void AssertRequiredBytes(IReadOnlyDictionary<string, byte[]> expected)
+        { foreach (var file in expected) Assert.Equal(file.Value, File.ReadAllBytes(file.Key)); }
+        public void Dispose() => Repository.Dispose();
+    }
+
     [Fact]
     public void VerifiedTransientTransferCleanupKeepsRequiredResultsAndDoesNotBecomeExecutionInput()
     {

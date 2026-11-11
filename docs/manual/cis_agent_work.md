@@ -25,6 +25,14 @@ One authority-owned record retains the containing change, logical accounting own
 
 Historical runs remain readable. Initial allocation must explicitly acknowledge that earlier unmeasured effort is unknown; it does not assert that those runs cost nothing. The accounting guarantee covers supported controllers sharing this authoritative state. It does not supervise independent hosts or raw external agent commands. Storage owner and ceiling references are recorded; complete storage enforcement is outside this slice.
 
+Supported mutations compact redundant settled execution and checkpoint history
+before it consumes the finite ledger allowance. Aggregate consumption, used attempts,
+allocations and open/closed attempt state remain authoritative. Unresolved work,
+current required execution references and their dependencies remain available,
+alongside bounded recent detail and necessary compact history summaries. Compaction
+grants no capacity and cannot reopen a closed attempt. Status reads do not rewrite
+the ledger. Irreducible required state can still hold admission safely.
+
 ### Story ownership and continuation
 
 Inspect a story task without allocating or launching work:

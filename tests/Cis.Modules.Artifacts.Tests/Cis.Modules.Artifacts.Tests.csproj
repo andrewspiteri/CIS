@@ -2,6 +2,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Cis.Modules.Repository\Cis.Modules.Repository.csproj" />
     <ProjectReference Include="..\..\src\Cis.Modules.Artifacts\Cis.Modules.Artifacts.csproj" />
+    <ProjectReference Include="..\..\src\Cis.Modules.Agent\Cis.Modules.Agent.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />

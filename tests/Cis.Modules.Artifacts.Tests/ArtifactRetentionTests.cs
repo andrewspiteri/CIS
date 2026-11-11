@@ -550,7 +550,9 @@ public sealed partial class ArtifactRetentionTests
 
     [Theory]
     [InlineData("| state | .cis/local/artifacts | 0 | 0 | delete |")]
-    [InlineData("| state | .cis/local/artifacts\\archive | 0 | 0 | delete |")]
+    [InlineData("| state | .cis/local/artifacts\\archive | 0 | 0 | archive |")]
+    [InlineData("| state | .cis/local/artifacts/unknown | 0 | 0 | delete |")]
+    [InlineData("| state | .cis/local/artifacts/operation.lock | 0 | 0 | delete |")]
     [InlineData("| first | .cis/local/runs | 0 | 0 | delete |\n| nested | .cis/local/runs/nested | 0 | 0 | delete |")]
     [InlineData("| first | .cis/local/runs | 0 | 0 | delete |\n| nested | .cis/local/runs\\nested | 0 | 0 | delete |")]
     public void Plan_RejectsManagementAndOverlappingFamilyAuthority(string profile)

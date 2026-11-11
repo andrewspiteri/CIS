@@ -1237,7 +1237,8 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
             return (state, action(state, change, execution));
         });
 
-    private CisAgentWorkResult Mutate(CisRepositoryContext authority, Func<Ledger?, (Ledger State, CisAgentWorkResult Result)> action)
+    private CisAgentWorkResult Mutate(CisRepositoryContext authority, Func<Ledger?, (Ledger State, CisAgentWorkResult Result)> action,
+        IReadOnlyList<CisAgentWorkReference>? pendingStorageWork = null)
     {
         try
         {
@@ -1246,7 +1247,7 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             using var held = AcquireTransactionLock(lockPath);
             var current = Load(authority);
-            if (current is not null) CompactLedgerHistory(current);
+            if (current is not null) CompactLedgerHistory(current, pendingStorageWork);
             var next = action(current);
             if (!next.Result.Applied) return next.Result;
             foreach (var change in next.State.Changes.Values) CompactStorageState(next.State, change);

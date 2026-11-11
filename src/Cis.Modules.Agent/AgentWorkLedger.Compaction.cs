@@ -9,7 +9,7 @@ internal sealed partial class AgentWorkLedger
     private const int RecentSettledTreesPerOwner = 4;
     private const int RecentClosedCheckpointsPerOwner = 8;
 
-    private void CompactLedgerHistory(Ledger state)
+    private void CompactLedgerHistory(Ledger state, IReadOnlyList<CisAgentWorkReference>? pendingStorageWork = null)
     {
         if (JsonSerializer.SerializeToUtf8Bytes(state, LedgerJson).Length < LedgerCompactionBytes) return;
         foreach (var change in state.Changes.Values)
@@ -25,6 +25,12 @@ internal sealed partial class AgentWorkLedger
             {
                 if (id is not null && change.Executions.TryGetValue(id, out var execution)) roots.Add(execution.RootId);
             }
+            // Reservation admission validates these exact dependencies before and
+            // inside its transaction. Keep them through pre-mutation compaction,
+            // before their pending reservation has been written.
+            foreach (var reference in pendingStorageWork ?? [])
+                if (reference.ChangeId == change.Id && change.Executions.GetValueOrDefault(reference.ExecutionId)?.Reference == reference)
+                    Keep(reference.ExecutionId);
             foreach (var execution in change.Executions.Values.Where(execution => !execution.Finalized
                 || execution.NativeRestorationRequired || execution.RecoveryReason is not null || execution.NativeCancellationRequested
                 || execution.Stage is { Route: "story-task" } or { CorrectionRoundId: not null }
@@ -39,8 +45,14 @@ internal sealed partial class AgentWorkLedger
                 {
                     Keep(claim.RequiredByExecutionId); Keep(claim.SupersededByExecutionId);
                     Keep(claim.NativeScratchAdmission?.Reference.ExecutionId);
+                    foreach (var reference in claim.RetainedWorkReferences) Keep(reference.ExecutionId);
                 }
-                foreach (var reservation in storage.Reservations.Values) Keep(reservation.Reference.ExecutionId);
+                foreach (var reservation in storage.Reservations.Values)
+                {
+                    Keep(reservation.Reference.ExecutionId);
+                    foreach (var reference in reservation.RetainedWorkReferences.Values.SelectMany(references => references))
+                        Keep(reference.ExecutionId);
+                }
             }
             foreach (var relation in state.Corrections.Values)
             {

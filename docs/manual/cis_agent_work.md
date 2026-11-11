@@ -33,6 +33,11 @@ alongside bounded recent detail and necessary compact history summaries. Compact
 grants no capacity and cannot reopen a closed attempt. Status reads do not rewrite
 the ledger. Irreducible required state can still hold admission safely.
 
+Current cache metadata retains the exact native work references it still needs,
+even when a later metadata operation publishes it. A successful replacement updates
+those dependencies; failed publication keeps the previous set. Compaction preserves
+current and pending references while removing unrelated settled history.
+
 ### Story ownership and continuation
 
 Inspect a story task without allocating or launching work:

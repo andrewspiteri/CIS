@@ -51,7 +51,9 @@ public sealed partial class IncrementalTestService
                 {
                     var bytes = JsonSerializer.SerializeToUtf8Bytes(result with { WorkControl = null }, Json).LongLength
                         + (state is null ? 0 : JsonSerializer.SerializeToUtf8Bytes(state, Json).LongLength);
-                    publication = MutationRunService.BeginEvidenceMutation(scope, input.OwnedStorage, paths, checked((bytes + 131072) * 3));
+                    publication = MutationRunService.BeginEvidenceMutation(scope, input.OwnedStorage, paths, checked((bytes + 131072) * 3),
+                        new Dictionary<string, IReadOnlyList<CisAgentWorkReference>>(PathComparer)
+                        { [input.StatePath] = RetainedWorkReferences(state!) });
                 }
                 if (publish) WriteSettledIncremental(input, state, result);
             }

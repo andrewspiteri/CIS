@@ -61,21 +61,23 @@ public sealed partial class MutationRunService
 
     internal static void OwnedJson<T>(string path, T value, string repository, ICisNativeWorkScope? scope,
         ICisOwnedStorageController? controller, IReadOnlyList<string>? additionalRequiredPaths = null,
-        IReadOnlyList<string>? supersededRequiredPaths = null)
+        IReadOnlyList<string>? supersededRequiredPaths = null,
+        IReadOnlyList<CisAgentWorkReference>? retainedWorkReferences = null)
     {
         if (scope is null) { AtomicJson(path, value); return; }
         Require(controller is not null, "Governed native metadata requires the owned-storage controller.");
         var bytes = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(value, Json).LongLength;
         var admission = controller.Reserve(scope.AuthorityPath, scope.Reference,
             scope.Reference.ExecutionId + "/metadata/" + Guid.NewGuid().ToString("N"), bytes,
-            [new(path) { MutatesExisting = true }]);
+            [new(path) { MutatesExisting = true, RetainedWorkReferences = retainedWorkReferences }]);
         Require(admission.Allowed, string.Join(" ", admission.Result.Errors));
         var published = false;
         try { AtomicJson(path, value); published = true; }
         finally
         {
             var settled = controller.Settle(scope.AuthorityPath, scope.Reference, admission.ReservationId!, true,
-                new[] { path }.Concat(additionalRequiredPaths ?? []).ToArray(), published ? supersededRequiredPaths : null);
+                published ? new[] { path }.Concat(additionalRequiredPaths ?? []).ToArray() : null,
+                published ? supersededRequiredPaths : null);
             Require(settled.Allowed, string.Join(" ", settled.Errors));
         }
     }

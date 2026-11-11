@@ -75,7 +75,8 @@ public sealed partial class IncrementalTestService
             var required = next is null ? [] : RequiredReports(input, next);
             var superseded = next is { RecoveryRequired: false, ActiveExecutionUntilUtc: null }
                 ? input.PreviousRequiredReports.Except(required, PathComparer).ToArray() : [];
-            MutationRunService.OwnedJson(path, value, input.Repository, input.Work, input.OwnedStorage, required, superseded);
+            MutationRunService.OwnedJson(path, value, input.Repository, input.Work, input.OwnedStorage, required, superseded,
+                next is null ? null : RetainedWorkReferences(next));
         }
         else
         {
@@ -101,6 +102,22 @@ public sealed partial class IncrementalTestService
         => state.Batches.Values.SelectMany(batch => new[] { batch.Unit?.ReportPath, batch.Mutation?.ReportPath })
             .Where(path => !string.IsNullOrEmpty(path)).Select(path => Safe(input.Root, path!))
             .Distinct(PathComparer).ToArray();
+
+    private static CisAgentWorkReference[] RetainedWorkReferences(IncrementalTestState state)
+    {
+        var references = new HashSet<CisAgentWorkReference>();
+        if (state.WorkReference is { } original) references.Add(original);
+        if (state.ActiveWorkReference is { } active) references.Add(active);
+        foreach (var batch in state.Batches.Values)
+            foreach (var stage in new[] { batch.Unit, batch.Mutation })
+                if (stage is not null)
+                    foreach (var execution in new[] { stage.Execution, stage.RecoveryExecution, stage.PostflightExecution })
+                    {
+                        if (execution?.WorkReference is { } work) references.Add(work);
+                        if (execution?.SettlementReference is { } settlement) references.Add(settlement);
+                    }
+        return references.ToArray();
+    }
 
     private static string Work(Input input)
     {

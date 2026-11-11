@@ -21,6 +21,7 @@ internal sealed partial class AgentWorkLedger
         string? RequiredByExecutionId = null, string? SupersededByExecutionId = null)
     {
         public NativeScratchAdmission? NativeScratchAdmission { get; init; }
+        public IReadOnlyList<CisAgentWorkReference> RetainedWorkReferences { get; init; } = [];
     }
     private sealed record NativeScratchAdmission(string Path, string TemporaryRoot, CisAgentWorkReference Reference);
     private sealed record StorageReservation(CisAgentWorkReference Reference, string OperationId, long MaximumGrowthBytes,
@@ -29,6 +30,7 @@ internal sealed partial class AgentWorkLedger
         public IReadOnlyList<string> OperationPaths { get; init; } = [];
         public IReadOnlyList<string> AccountingPaths { get; init; } = [];
         public long? InitialOperationBytes { get; init; }
+        public Dictionary<string, IReadOnlyList<CisAgentWorkReference>> RetainedWorkReferences { get; init; } = new(StoragePathComparer);
     }
     private sealed record StorageSnapshot(Ledger State, Change Change, string OwnerTaskId, long OwnedBytes,
         long ProtectedBytes, IReadOnlyList<string> Paths, IReadOnlyList<string> ProtectedPaths);
@@ -94,7 +96,57 @@ internal sealed partial class AgentWorkLedger
                 || !change.Executions.TryGetValue(pair.Value.Reference.ExecutionId, out var execution) || execution.Reference != pair.Value.Reference))
             throw new InvalidDataException("Owned-storage accounting is incomplete; restore its original claims and reservations rather than assuming zero usage.");
         foreach (var grouped in StorageGroup(state, change)) ValidateStoragePolicy(authority, grouped.Storage!.Policy);
-        foreach (var claim in storage.Claims.Values) ValidateStorageClaim(state, change, new(claim.Path, claim.Scratch, claim.Required));
+        foreach (var claim in storage.Claims.Values)
+        {
+            ValidateStorageClaim(state, change, new(claim.Path, claim.Scratch, claim.Required));
+            ValidateRetainedWorkReferences(state, change, claim.OwnerTaskId, claim.RetainedWorkReferences);
+            if (!claim.Required && claim.RetainedWorkReferences.Count != 0)
+                throw new InvalidDataException("Only required published evidence may retain native work dependencies.");
+        }
+        foreach (var reservation in storage.Reservations.Values)
+        {
+            if (reservation.RetainedWorkReferences is null || reservation.RetainedWorkReferences.Count > 100
+                || reservation.RetainedWorkReferences.Keys.Any(path => !reservation.Paths.Contains(path, StoragePathComparer)))
+                throw new InvalidDataException("Pending evidence dependencies must belong to the original exact storage paths.");
+            foreach (var references in reservation.RetainedWorkReferences.Values)
+                ValidateRetainedWorkReferences(state, change, reservation.Reference.OwnerTaskId, references);
+            if (reservation.RetainedWorkReferences.Values.Sum(references => references.Count) > MaximumStorageRecords)
+                throw new InvalidDataException("Pending evidence dependencies exceed the bounded storage inventory.");
+        }
+    }
+
+    private static void ValidateRetainedWorkReferences(Ledger state, Change change, string ownerTaskId,
+        IReadOnlyList<CisAgentWorkReference>? references)
+    {
+        if (references is null || references.Count > MaximumStorageRecords)
+            throw new InvalidDataException("Supply a bounded exact set of retained evidence work references.");
+        foreach (var reference in references)
+        {
+            if (reference is null || reference.ChangeId != change.Id || reference.OwnerTaskId != ownerTaskId)
+                throw new InvalidDataException("Retained evidence work must belong to the same canonical change and owner.");
+            MatchStorageExecution(state, change, reference, requireLive: false);
+        }
+    }
+
+    private static Dictionary<string, IReadOnlyList<CisAgentWorkReference>> StorageRetainedWorkReferences(
+        Ledger state, Change change, CisAgentWorkReference reference, IReadOnlyList<CisOwnedStoragePath>? claims,
+        StorageReservation? previous)
+    {
+        var retained = previous is null ? new Dictionary<string, IReadOnlyList<CisAgentWorkReference>>(StoragePathComparer)
+            : new Dictionary<string, IReadOnlyList<CisAgentWorkReference>>(previous.RetainedWorkReferences, StoragePathComparer);
+        foreach (var claim in claims ?? [])
+        {
+            if (claim.RetainedWorkReferences is not { } references) continue;
+            ValidateRetainedWorkReferences(state, change, reference.OwnerTaskId, references);
+            var path = Path.GetFullPath(claim.Path);
+            var exact = references.Distinct().ToArray();
+            if (retained.TryGetValue(path, out var original) && !original.ToHashSet().SetEquals(exact))
+                throw new InvalidDataException("Published work dependencies cannot change within the same storage operation.");
+            retained[path] = exact;
+        }
+        if (retained.Values.Sum(references => references.Count) > MaximumStorageRecords)
+            throw new InvalidDataException("Pending evidence dependencies exceed the bounded storage inventory.");
+        return retained;
     }
 
     internal CisOwnedStorageResult InspectStorage(CisRepositoryContext authority, string changeId, string taskId,
@@ -139,6 +191,7 @@ internal sealed partial class AgentWorkLedger
             // temporarily use that headroom to free an otherwise full ordinary pool.
             var existing = allocation.Reservations.FirstOrDefault(pair => pair.Value.Reference == reference
                 && pair.Value.OperationId == operationId);
+            var retainedWork = StorageRetainedWorkReferences(snapshot.State, change, reference, claims, existing.Value);
             var operation = StorageOperation(authority, snapshot.State, change, reference, claims, existing.Value);
             var retainedProtection = 0;
             var deletionRepository = execution.Stage?.RepositoryPath ?? authority.RepositoryPath;
@@ -166,6 +219,7 @@ internal sealed partial class AgentWorkLedger
                     ValidateStorageMutation(snapshot.State, change, reference, Path.GetFullPath(claim.Path), existing.Key);
                 ValidateOperationOverlap(snapshot.State, change, reference, operation.Paths, operation.Accounting, existing.Key);
                 if (merged.Length == previous.Paths.Count && operation.Paths.SequenceEqual(previous.OperationPaths, StoragePathComparer)
+                    && retainedWork.Count == previous.RetainedWorkReferences.Count
                     && (claims ?? []).All(claim => allocation.Claims.TryGetValue(Path.GetFullPath(claim.Path), out var current)
                     && current.Scratch == claim.Scratch && (!claim.Required || current.Required
                         && current.OwnerTaskId == reference.OwnerTaskId && current.SupersededByExecutionId is null)))
@@ -193,6 +247,8 @@ internal sealed partial class AgentWorkLedger
                     CheckRevision(current, Revision(snapshot.State));
                     var currentChange = ChangeFor(current, reference.ChangeId);
                     MatchStorageExecution(current, currentChange, reference, requireLive: true);
+                    foreach (var references in retainedWork.Values)
+                        ValidateRetainedWorkReferences(current, currentChange, reference.OwnerTaskId, references);
                     ValidateOperationOverlap(current, currentChange, reference, operation.Paths, operation.Accounting, existing.Key);
                     foreach (var claim in (claims ?? []).Where(item => item.MutatesExisting))
                         ValidateStorageMutation(current, currentChange, reference, Path.GetFullPath(claim.Path), existing.Key);
@@ -204,10 +260,11 @@ internal sealed partial class AgentWorkLedger
                         OperationPaths = operation.Paths,
                         AccountingPaths = operation.Accounting,
                         InitialOperationBytes = operation.Initial,
+                        RetainedWorkReferences = retainedWork,
                         RecordHeadroomBytes = checked(previous.RecordHeadroomBytes + extraHeadroom)
                     };
                     return (current, Result(current, currentChange, reference.TaskId, "storage-claimed", true));
-                });
+                }, retainedWork.Values.SelectMany(references => references).ToArray());
                 return registered.ExitCode == 0
                     ? OperationAdmission(StorageProtectionResult(InspectStorage(authority, reference.ChangeId, reference.TaskId) with { Status = "reserved" }, retainedProtection), existing.Key, previous.MaximumGrowthBytes, operation)
                     : new(new(registered.Status, true, null, registered.Errors), null, 0);
@@ -238,6 +295,8 @@ internal sealed partial class AgentWorkLedger
                 CheckRevision(current, Revision(snapshot.State));
                 var currentChange = ChangeFor(current, reference.ChangeId);
                 MatchStorageExecution(current, currentChange, reference, requireLive: true);
+                foreach (var references in retainedWork.Values)
+                    ValidateRetainedWorkReferences(current, currentChange, reference.OwnerTaskId, references);
                 ValidateOperationOverlap(current, currentChange, reference, operation.Paths, operation.Accounting);
                 foreach (var claim in (claims ?? []).Where(item => item.MutatesExisting))
                     ValidateStorageMutation(current, currentChange, reference, Path.GetFullPath(claim.Path));
@@ -245,11 +304,16 @@ internal sealed partial class AgentWorkLedger
                     if (RegisterStorageClaim(current, currentChange, reference, claim)) retainedProtection++;
                 currentChange.Storage!.Reservations.Add(id, new(reference, operationId, growth, recordHeadroom,
                     (claims ?? []).Select(claim => Path.GetFullPath(claim.Path)).ToArray(), cleanup)
-                { OperationPaths = operation.Paths, AccountingPaths = operation.Accounting, InitialOperationBytes = operation.Initial });
+                {
+                    OperationPaths = operation.Paths,
+                    AccountingPaths = operation.Accounting,
+                    InitialOperationBytes = operation.Initial,
+                    RetainedWorkReferences = retainedWork
+                });
                 result = StorageResult(snapshot, "reserved") with
                 { Storage = ViewStorage(snapshot, checked(pending + growth + recordHeadroom)) };
                 return (current, Result(current, currentChange, reference.TaskId, "storage-reserved", true));
-            });
+            }, retainedWork.Values.SelectMany(references => references).ToArray());
             if (mutation.ExitCode != 0 || result is null) return new(new(mutation.Status, true, null, mutation.Errors), null, 0);
             return OperationAdmission(StorageProtectionResult(InspectStorage(authority, reference.ChangeId, reference.TaskId) with { Status = "reserved" }, retainedProtection), id, growth, operation);
         }
@@ -295,7 +359,12 @@ internal sealed partial class AgentWorkLedger
                     }
                     if (storage.Claims.GetValueOrDefault(path) is { Required: true } prior && prior.OwnerTaskId != reference.OwnerTaskId)
                     {
-                        try { ValidateSupersededClaim(current, change, reference, path, reservationId); }
+                        try
+                        {
+                            ValidateSupersededClaim(current, change, reference, path, reservationId);
+                            if (prior.RetainedWorkReferences.Count != 0 && !reservation.RetainedWorkReferences.ContainsKey(path))
+                                throw new InvalidDataException("Another owner's published dependencies remain protected until explicitly replaced.");
+                        }
                         catch (InvalidDataException)
                         {
                             retainedProtection++; retainedRequired.Add(path);
@@ -323,11 +392,21 @@ internal sealed partial class AgentWorkLedger
                         var prior = storage.Claims.GetValueOrDefault(path);
                         var admission = ValidateStorageClaim(current, change, new(path, prior?.Scratch == true, Required: true));
                         storage.Claims[path] = new(path, reference.OwnerTaskId, prior?.Scratch == true, true, reference.ExecutionId)
-                        { NativeScratchAdmission = admission };
+                        {
+                            NativeScratchAdmission = admission,
+                            RetainedWorkReferences = reservation.RetainedWorkReferences.GetValueOrDefault(path)
+                                ?? prior?.RetainedWorkReferences ?? []
+                        };
                     }
                 foreach (var path in released)
                     if (storage.Claims.TryGetValue(path, out var claim) && claim.Required)
-                        storage.Claims[path] = claim with { Required = false, RequiredByExecutionId = null, SupersededByExecutionId = null };
+                        storage.Claims[path] = claim with
+                        {
+                            Required = false,
+                            RequiredByExecutionId = null,
+                            SupersededByExecutionId = null,
+                            RetainedWorkReferences = []
+                        };
                 PruneMissingStorageClaims(change, reservation.Paths.Concat(superseded));
                 return (current, Result(current, change, reference.TaskId, "storage-settled", true));
             });
@@ -357,11 +436,14 @@ internal sealed partial class AgentWorkLedger
                     storage.Claims[path] = prior with { SupersededByExecutionId = null };
                     return true;
                 }
+                // A pending replacement cannot transfer published dependencies
+                // to another owner before its own evidence is successfully settled.
+                if (prior.RetainedWorkReferences.Count != 0) return true;
             }
         }
         storage.Claims[path] = new(path, reference.OwnerTaskId, claim.Scratch, claim.Required,
             claim.Required ? reference.ExecutionId : null)
-        { NativeScratchAdmission = admission };
+        { NativeScratchAdmission = admission, RetainedWorkReferences = prior?.RetainedWorkReferences ?? [] };
         return false;
     }
 
@@ -429,7 +511,13 @@ internal sealed partial class AgentWorkLedger
             {
                 var replacement = change.Executions[claim.SupersededByExecutionId!].Reference;
                 ValidateSupersededClaim(state, change, replacement, claim.Path);
-                storage.Claims[claim.Path] = claim with { Required = false, RequiredByExecutionId = null, SupersededByExecutionId = null };
+                storage.Claims[claim.Path] = claim with
+                {
+                    Required = false,
+                    RequiredByExecutionId = null,
+                    SupersededByExecutionId = null,
+                    RetainedWorkReferences = []
+                };
             }
             catch (Exception error) when (Recoverable(error)) { /* Unknown or still-needed evidence keeps its original protection. */ }
         }

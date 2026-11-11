@@ -29,10 +29,13 @@ public sealed partial class AgentWorkLedgerTests
         File.WriteAllText(payload, "retained native scratch");
         try
         {
+            var originalPendingLedger = File.ReadAllBytes(Path.Combine(f.Context.RepositoryPath, CisAgentWorkPaths.Ledger));
             var live = f.Ledger.ReserveStorage(f.Context, foreign.Reference!, "live-scratch-mutation", 0,
                 [new(scratch, Scratch: true) { MutatesExisting = true }], false, false, "Controller");
             Assert.False(live.Allowed);
-            Assert.Contains(live.Result.Errors, error => error.Contains("pending", StringComparison.Ordinal));
+            Assert.Contains(live.Result.Errors, error => error.Contains("overlapping writable storage domain", StringComparison.Ordinal));
+            Assert.Equal(originalPendingLedger, File.ReadAllBytes(Path.Combine(f.Context.RepositoryPath, CisAgentWorkPaths.Ledger)));
+            Assert.Equal("retained native scratch", File.ReadAllText(payload));
             Assert.True(f.Ledger.SettleStorage(f.Context, original.Reference!, reservation.ReservationId!, true, [scratch]).Allowed);
             f.Time = f.Time.AddSeconds(1);
             Assert.Equal(0, f.Ledger.Settle(f.Context, original.Reference!, "native-finished", true).ExitCode);

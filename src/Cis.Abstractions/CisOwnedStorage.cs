@@ -22,6 +22,9 @@ public sealed record CisOwnedStoragePath(string Path, bool Scratch = false, bool
     public bool MutatesExisting { get; init; }
     /// <summary>Include the admitted native target's declared writable roots in this operation's measured domain.</summary>
     public bool IncludeRepositoryWrites { get; init; }
+    /// <summary>Exact same-owner work needed by the published evidence. Null preserves existing dependencies;
+    /// an explicit list replaces them when this path is successfully settled as required.</summary>
+    public IReadOnlyList<CisAgentWorkReference>? RetainedWorkReferences { get; init; }
 }
 
 /// <summary>One immutable growth grant, distinct from the shared owned-storage inventory.</summary>

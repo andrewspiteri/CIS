@@ -269,6 +269,7 @@ public sealed partial class IncrementalTestService
     {
         var actual = execution.Command;
         Require(actual is not null && actual.Length == template.Length
+            && actual.All(argument => argument is not null)
             && execution.CisToolAssemblySha256 == helper
             && PathComparer.Equals(execution.ExecutablePath, actual[0])
             && (Path.IsPathFullyQualified(template[0]) && Path.IsPathFullyQualified(actual[0])

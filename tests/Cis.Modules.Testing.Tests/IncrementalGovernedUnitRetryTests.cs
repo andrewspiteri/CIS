@@ -72,7 +72,7 @@ public sealed partial class IncrementalGovernedUnitRetryTests
             Path.GetFileName(output) == "012345abcdef" ? "fedcba543210" : "012345abcdef");
         var report = fixture.Native.Full(IncrementalTestService.LocalRoot + "/sample/" + stage.ReportPath);
         var reportBytes = File.ReadAllBytes(report);
-        foreach (var damage in new[] { "executable", "filter", "disagreement", "suffix", "owner", "id" })
+        foreach (var damage in new[] { "executable", "filter", "disagreement", "suffix", "owner", "id", "null-output" })
         {
             var command = retainedCommand.ToArray();
             var executable = execution.ExecutablePath;
@@ -82,6 +82,7 @@ public sealed partial class IncrementalGovernedUnitRetryTests
                 case "filter": command[5] = "FullyQualifiedName~Different.Tests"; break;
                 case "disagreement": command[6] = "--retained-output=" + otherOutput; break;
                 case "suffix": command[3] = output + "/tamper"; break;
+                case "null-output": command[3] = null!; break;
                 default:
                     var changed = damage == "owner"
                         ? fixture.Native.Full(IncrementalTestService.LocalRoot + "/other/work/012345abcdef")

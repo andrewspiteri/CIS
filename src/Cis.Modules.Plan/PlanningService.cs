@@ -142,7 +142,8 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
         var automationReferences = _automationScanner.Scan(change.RepositoryPath);
         var built = FeatureIssuePackBuilder.Build(change.RepositoryPath, request.FeatureSpecPath, change.Id, accepted, _taskTypes,
             capabilityStatus.Selections, existing.WorkItems, automationReferences, existing.Source?.Sha256,
-            task => DefaultVerificationObligations(change.RepositoryPath, task), task => ReadImportedLists(change, task));
+            task => DefaultVerificationObligations(change.RepositoryPath, task), task => ReadImportedLists(change, task),
+            preserveApprovedCoverage: derivedOnlyRefresh);
         if (built.Pack is null)
         {
             PersistCapabilityConflicts(change, built.Conflicts);

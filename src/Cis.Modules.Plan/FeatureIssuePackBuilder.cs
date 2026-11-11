@@ -19,7 +19,8 @@ internal static partial class FeatureIssuePackBuilder
         IReadOnlyDictionary<string, IReadOnlyList<string>> automationReferences,
         string? existingSourceHash = null,
         Func<PlanWorkItem, IReadOnlyList<Cis.Abstractions.CisTaskVerificationObligation>>? defaultObligations = null,
-        Func<PlanWorkItem, ImportedTaskLists?>? readImportedLists = null)
+        Func<PlanWorkItem, ImportedTaskLists?>? readImportedLists = null,
+        bool preserveApprovedCoverage = false)
     {
         var parsed = Parse(repositoryPath, requestedPath);
         if (parsed.Spec is null)
@@ -54,7 +55,7 @@ internal static partial class FeatureIssuePackBuilder
         }
         var generatedObligations = new Dictionary<string, IReadOnlyList<Cis.Abstractions.CisTaskVerificationObligation>>(StringComparer.Ordinal);
         var items = BuildItems(spec, accepted, resolution.Definitions, existingItems, existingSourceHash,
-            defaultObligations, readImportedLists, generatedObligations, out var instanceErrors);
+            defaultObligations, readImportedLists, generatedObligations, preserveApprovedCoverage, out var instanceErrors);
         if (instanceErrors.Count > 0) return new(null, instanceErrors, []);
         var documents = items.ToDictionary(
             item => item.TaskPath!,
@@ -74,6 +75,7 @@ internal static partial class FeatureIssuePackBuilder
         Func<PlanWorkItem, IReadOnlyList<Cis.Abstractions.CisTaskVerificationObligation>>? defaultObligations,
         Func<PlanWorkItem, ImportedTaskLists?>? readImportedLists,
         IDictionary<string, IReadOnlyList<Cis.Abstractions.CisTaskVerificationObligation>> generatedObligations,
+        bool preserveApprovedCoverage,
         out IReadOnlyList<string> errors)
     {
         var allRequirements = spec.Requirements.Select(item => item.Id).ToArray();
@@ -186,7 +188,9 @@ internal static partial class FeatureIssuePackBuilder
             var id = idByIdentity[identity];
             var existing = existingByIdentity.GetValueOrDefault(identity);
             var dependencies = ResolveDependencies(definition, instance.FrontendType, instance.StoryId, applicable, idsByType, existing?.DependsOn ?? [], problems);
-            var requirementIds = InstanceRequirements(instance);
+            var requirementIds = preserveApprovedCoverage && existing is not null
+                && string.Equals(existingSourceHash, spec.Sha256, StringComparison.OrdinalIgnoreCase)
+                ? existing.RequirementIds.ToArray() : InstanceRequirements(instance);
             var impactIds = definition.Category switch
             {
                 "documentation" => Impacts(accepted, "documentation", "contract"),

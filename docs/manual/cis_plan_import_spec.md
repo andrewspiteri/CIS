@@ -3,7 +3,7 @@ title: "cis plan import-spec"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-11-04"
+last_reviewed: "2026-11-11"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-plan-import-spec
@@ -11,8 +11,12 @@ cis:
 
 # `cis plan import-spec`
 
-In a workspace authority, import is blocked unless `cis technical-intent status` reports
-Active and current.
+In a workspace authority, new plans and changed-source imports require Active,
+current technical intent. An exact unchanged-source refresh of an approved plan
+can refresh derived automation catalogues while technical intent is stale. It
+preserves accepted task coverage, contracts, statuses and approval, including
+legacy workflow coverage. Other readiness checks still apply; changes to accepted
+scope or task contracts follow their review path.
 
 Imports a canonical feature specification into an existing reviewed change and builds
 a PARR-style, complexity-bounded issue pack rather than only a summary table.

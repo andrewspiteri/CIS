@@ -243,6 +243,9 @@ public sealed partial class TechnicalIntentQuestionnaireService
     private static bool TopicMatches(string id, DocumentPassage passage, (string Content, string Heading) topic, bool technical)
         => Regex.IsMatch(passage.Text, topic.Content, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
            || IsSupportingServiceCategory(id, passage, technical)
+           || technical && id == "TI-Q-012" && Regex.IsMatch(passage.Heading,
+               @"\b(?:operations|observability|diagnostics?|telemetry)\b",
+               RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
            || Regex.IsMatch(passage.Heading, topic.Heading, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
                && Regex.IsMatch(passage.Text, @"\b(?:Rust|Go|Java|Python|TypeScript|JavaScript|Ruby|PHP|Kotlin|Swift|React|Vue|Angular|Svelte|None)\b",
                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
@@ -267,6 +270,12 @@ public sealed partial class TechnicalIntentQuestionnaireService
             match => Regex.IsMatch(match.Groups["tail"].Value,
                 @"\b(?:" + transports + @")\b\s+(?:or|versus|vs\.?)\s+(?:" + transports + @")\b",
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)) ? match.Value : string.Empty,
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        // A bounded effect on a caller's wait describes permitted behaviour,
+        // with authority/cancellation explicitly withheld. Other tentative
+        // direction in the same passage still requires a decision.
+        text = Regex.Replace(text,
+            @"\bmay\s+(?:affect|limit)\s+(?:(?:a|the)\s+)?caller['’]s\s+wait\b(?=\s+without\s+(?:gaining|granting)\b[^.!?;\r\n]*\b(?:authority|cancellation)\b)", "",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
         return Regex.IsMatch(text,
             @"\b(?:TODO|TBD|unresolved|undecided|to be decided|under consideration|proposed|recommend(?:ed|ation)?|consider using|may|could)\b|\?",

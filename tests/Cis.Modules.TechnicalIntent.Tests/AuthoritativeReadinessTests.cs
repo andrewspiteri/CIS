@@ -12,13 +12,18 @@ No user-facing UI
 The product has no frontend application or browser/mobile/desktop presentation technology. HTTP routes are health-reporting contracts inside an application host. The line above records the settled source direction. Accepted-document questionnaire derivation requires the actual approved technical baseline; the canonical no-visual-UI applicability record remains separate and governed by supported questionnaire/adoption controls.
 """;
     private const string AcceptedLibraryBusinessSurface = "The product has no visual frontend. Machine-facing Healthcheck HTTP and local-pipe reporting, the matching probe executable, consumer examples and IDE/native developer workflows do not create a web or desktop application product. [S02, S06, S07]";
+    private const string AcceptedLibraryHealthDirection = "Healthcheck retains explicit monitor criticality, policy transitions, counts/revisions, safe collection ownership and immutable detached snapshots. Snapshot capture performs no collection or failure replay. Observed exception/runtime text is projected through the existing bounded diagnostic rules; explicit caller inputs retain their own validation contract. A watchdog may affect a caller's wait without gaining health authority or forced cancellation.";
+    private const string AcceptedLibraryOperationsDirection = "Application hosts own runtime startup/shutdown, deployment, external resources, cancellation requests and recovery policy. Preserve explicit Logging flush/stop outcomes, file recovery, Type Manager immutable preparation reports and Healthcheck truthful detached facts. Retired generated receipts, campaigns and old recovery owners supply neither operational authority nor new capacity.";
 
     private static string AcceptedLibraryFactDirection => SuppliedTechnicalDirection
         .Replace("| Frontend | No frontend or browser UI is required in the current phase. |\n", "", StringComparison.Ordinal)
         .Replace("| Persistence | The primary data store is PostgreSQL. |\n", "", StringComparison.Ordinal)
         .Replace("| Models | AI and learned models are explicitly excluded from this phase. |\n", "", StringComparison.Ordinal)
+        .Replace("| Operations | Use structured privacy-safe logs, metrics, truthful readiness, and recovery runbooks. |\n", "", StringComparison.Ordinal)
         + "\n\n## Frontend technology\n\n" + AcceptedLibraryFrontendDirection
-        + "\n\n## Application model and invariants\n\n" + AcceptedLibraryStoreAndModelDirection + "\n";
+        + "\n\n## Application model and invariants\n\n" + AcceptedLibraryHealthDirection
+        + "\n\n" + AcceptedLibraryStoreAndModelDirection
+        + "\n\n## Operations, migration, and recovery intent\n\n" + AcceptedLibraryOperationsDirection + "\n";
 
     [Theory]
     [InlineData(false)]
@@ -43,7 +48,7 @@ The product has no frontend application or browser/mobile/desktop presentation t
         Assert.Equal(persistedQuestionnaire, File.Exists(questionnairePath));
         var projected = environment.Questionnaire.Initialize(environment.Authority.Path);
         Assert.True(projected.Complete, string.Join("\n", projected.Errors.Concat(projected.Warnings)));
-        foreach (var id in new[] { "TI-Q-002", "TI-Q-006", "TI-Q-015" })
+        foreach (var id in new[] { "TI-Q-002", "TI-Q-006", "TI-Q-012", "TI-Q-015" })
         {
             var fact = projected.Questions.Single(question => question.Id == id);
             Assert.Equal("Derived", fact.Status);
@@ -56,6 +61,10 @@ The product has no frontend application or browser/mobile/desktop presentation t
             Assert.NotEmpty(fact.SourceFactAuthority!.Basis!);
         }
         Assert.Contains(AcceptedLibraryStoreAndModelDirection, projected.Questions.Single(question => question.Id == "TI-Q-015").Answer, StringComparison.Ordinal);
+        var operations = projected.Questions.Single(question => question.Id == "TI-Q-012");
+        Assert.Contains(AcceptedLibraryHealthDirection, operations.Answer, StringComparison.Ordinal);
+        Assert.Contains(AcceptedLibraryOperationsDirection, operations.Answer, StringComparison.Ordinal);
+        Assert.Contains(operations.Evidence!, item => item.Contains("Operations, migration, and recovery intent", StringComparison.Ordinal));
         Assert.Contains(projected.Questions.Single(question => question.Id == "TI-Q-002").Evidence!,
             item => item.StartsWith("docs/specs/business-requirements.md:", StringComparison.Ordinal));
         Assert.Equal(acceptedSource, File.ReadAllBytes(source));
@@ -63,6 +72,42 @@ The product has no frontend application or browser/mobile/desktop presentation t
         var saved = File.ReadAllBytes(questionnairePath);
         Assert.Equal("unchanged", environment.Questionnaire.Initialize(environment.Authority.Path).Status);
         Assert.Equal(saved, File.ReadAllBytes(questionnairePath));
+    }
+
+    [Theory]
+    [InlineData(false, "Recovery may use the application owner or a separate restart controller.")]
+    [InlineData(true, "Recovery may use the application owner or a separate restart controller.")]
+    [InlineData(false, "A watchdog may affect a caller's wait without gaining health authority or forced cancellation, but the recovery owner is undecided.")]
+    [InlineData(true, "A watchdog may affect a caller's wait without gaining health authority or forced cancellation, but the recovery owner is undecided.")]
+    public void ImportedAuthority_SettledLibraryOperationsCannotHideAnUndecidedOperationalChoice(bool persistedQuestionnaire, string undecided)
+    {
+        using var environment = WorkspaceEnvironment.Create(approveBrd: true, includeImplementation: false, completeQuestionnaire: false);
+        var source = SelectTechnicalDirection(environment, AcceptedLibraryFactDirection
+            + "\n\n## Operations, migration, and recovery intent\n\n" + undecided + "\n");
+        AdoptTechnicalDirection(environment);
+        var questionnairePath = Path.Combine(environment.Authority.Path, "docs/specs/technical-intent-questionnaire.md");
+        if (persistedQuestionnaire) Assert.False(environment.Questionnaire.Initialize(environment.Authority.Path).Complete);
+        else File.Delete(questionnairePath);
+        var sourceBytes = File.ReadAllBytes(source);
+
+        var readiness = environment.Intent.Evaluate(environment.Authority.Path);
+
+        Assert.False(readiness.Ready);
+        Assert.Contains(readiness.Errors, error => error.Contains("TI-Q-012", StringComparison.Ordinal));
+        Assert.Equal(persistedQuestionnaire, File.Exists(questionnairePath));
+        var projected = environment.Questionnaire.Initialize(environment.Authority.Path);
+        Assert.False(projected.Complete);
+        var operations = projected.Questions.Single(question => question.Id == "TI-Q-012");
+        Assert.Equal("Unanswered", operations.Status);
+        Assert.Null(operations.Answer);
+        Assert.Null(operations.AnsweredBy);
+        Assert.Null(operations.AnsweredAtUtc);
+        Assert.Contains(AcceptedLibraryHealthDirection, operations.SuggestedAnswer, StringComparison.Ordinal);
+        Assert.Contains(AcceptedLibraryOperationsDirection, operations.SuggestedAnswer, StringComparison.Ordinal);
+        Assert.Contains(undecided, operations.SuggestedAnswer, StringComparison.Ordinal);
+        Assert.DoesNotContain(projected.Questions.Where(question => question.Id is "TI-Q-002" or "TI-Q-006" or "TI-Q-015"),
+            question => question.Status == "Unanswered");
+        Assert.Equal(sourceBytes, File.ReadAllBytes(source));
     }
 
     [Theory]

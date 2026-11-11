@@ -49,6 +49,11 @@ basis; agent transcription supplies no new human actor or answer time. A current
 AI requirement conflicting with that exclusion remains blocked for reconciliation.
 Genuinely missing necessary choices remain unanswered.
 
+Operations sections can supply accepted direction without a language or framework
+keyword. A bounded caller-wait permission retains its explicit authority and
+cancellation limits during derivation. Other undecided operational choices still
+require resolution, including when settled behaviour appears in the same passage.
+
 For a greenfield project, and for any existing-project choice that cannot be established safely,
 the question remains `Unanswered`. Advisory text is not an answer. The questionnaire becomes
 Complete when every question is either evidence-derived or explicitly answered by a human and its

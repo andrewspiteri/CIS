@@ -5,7 +5,8 @@ using System.Diagnostics;
 // Fault-injection fixture for the shared runner's tests; these are synthetic protocol results.
 if (args.Length < 3) return 2;
 var mode = args[0];
-var output = args[1];
+var output = args[1].StartsWith("--results-directory=", StringComparison.Ordinal)
+    ? args[1]["--results-directory=".Length..] : args[1];
 var source = args[2];
 if (mode == "unit-block-child")
 {

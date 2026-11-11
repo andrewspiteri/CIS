@@ -275,22 +275,31 @@ public sealed partial class IncrementalTestService
                 ? PathComparer.Equals(Path.GetFullPath(template[0]), Path.GetFullPath(actual[0]))
                 : StringComparer.Ordinal.Equals(template[0], actual[0])),
             "Native execution command or installed helper identity is missing or changed.");
-        string? output = null;
-        for (var index = 0; index < template.Length; index++)
-            if (template[index] is "{output}" or "{mutationConfig}")
-            {
-                var candidate = template[index] == "{output}" ? actual[index] : Path.GetDirectoryName(actual[index])!;
-                Require(Path.IsPathFullyQualified(candidate) && CisPathSafety.IsUnderRoot(Safe(input.Root, "work"), candidate)
-                    && Regex.IsMatch(Path.GetFileName(candidate), @"\A[a-f0-9]{12}\z", RegexOptions.CultureInvariant),
-                    "Native output must belong to the profile's bounded work directory.");
-                Require(output is null || PathComparer.Equals(output, candidate), "Native output placeholders disagree.");
-                output = candidate;
-            }
         var working = Safe(input.Repository, input.Profile.WorkingDirectory, true);
         var expanded = template.Select(value => value.Replace("{sourceFile}", Relative(working, Safe(input.Repository, batch.SourceFile)), StringComparison.Ordinal)
             .Replace("{testFilter}", fullTests ? input.Profile.FullTestFilter : batch.TestFilter, StringComparison.Ordinal)
-            .Replace("{output}", output ?? "{output}", StringComparison.Ordinal)
-            .Replace("{mutationConfig}", output is null ? "{mutationConfig}" : Path.Combine(output, "stryker-config.json"), StringComparison.Ordinal)).ToArray();
+            .Replace("{mutationConfig}", Path.Combine("{output}", "stryker-config.json"), StringComparison.Ordinal)).ToArray();
+        string? output = null;
+        for (var index = 0; index < expanded.Length; index++)
+        {
+            var parts = expanded[index].Split("{output}", StringSplitOptions.None);
+            var occurrences = parts.Length - 1;
+            if (occurrences == 0) continue;
+            // Retained commands carry the original work root even after its report
+            // has moved and work/log bytes have been cleaned. Each occurrence has
+            // the same length, including embedded flags, suffixes and repeated tokens.
+            var rootCharacters = actual[index].Length - parts.Sum(part => part.Length);
+            Require(rootCharacters > 0 && rootCharacters % occurrences == 0
+                && parts[0].Length + rootCharacters / occurrences <= actual[index].Length,
+                "Native execution does not match its current profile command.");
+            var candidate = actual[index].Substring(parts[0].Length, rootCharacters / occurrences);
+            Require(Path.IsPathFullyQualified(candidate) && CisPathSafety.IsUnderRoot(Safe(input.Root, "work"), candidate)
+                && Regex.IsMatch(Path.GetFileName(candidate), @"\A[a-f0-9]{12}\z", RegexOptions.CultureInvariant),
+                "Native output must belong to the profile's bounded work directory.");
+            Require(output is null || PathComparer.Equals(output, candidate), "Native output placeholders disagree.");
+            output = candidate;
+        }
+        expanded = expanded.Select(value => value.Replace("{output}", output ?? "{output}", StringComparison.Ordinal)).ToArray();
         Require(expanded.Skip(1).SequenceEqual(actual.Skip(1), StringComparer.Ordinal),
             "Native execution does not match its current profile command.");
     }

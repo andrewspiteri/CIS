@@ -10,6 +10,120 @@ namespace Cis.Modules.Testing.Tests;
 public sealed partial class IncrementalGovernedUnitRetryTests
 {
     [Theory]
+    [InlineData("{output}/nested")]
+    [InlineData("--results-directory={output}/nested")]
+    public void EmbeddedOutputKeepsAcceptedGovernedUnitEvidenceCurrentWithoutNativeReplay(string outputArgument)
+    {
+        using var fixture = new GovernedUnitFixture();
+        ConfigureEmbeddedUnitOutput(fixture, outputArgument);
+
+        var first = fixture.Run();
+
+        Assert.True(first.ExitCode == 0, string.Join("; ", first.Diagnostics));
+        Assert.True(first.ScopeComplete);
+        Assert.Equal(2, first.ExecutedUnitBatches);
+        var calls = fixture.Native.Calls();
+        Assert.Equal(2, calls.Length);
+        var state = fixture.Native.SavedState();
+        Assert.All(state.Batches.Values, batch => Assert.True(batch.Unit!.Completed));
+        var reports = state.Batches.Values.Select(batch => fixture.Native.Full(
+            IncrementalTestService.LocalRoot + "/sample/" + batch.Unit!.ReportPath)).ToDictionary(path => path, File.ReadAllBytes);
+        Assert.False(Directory.Exists(fixture.Native.Full(IncrementalTestService.LocalRoot + "/sample/work")));
+        var stateBytes = File.ReadAllBytes(fixture.StatePath);
+
+        var plan = fixture.Service.Plan(fixture.Options());
+        var status = fixture.Service.Plan(fixture.Options()); // CLI status shares this read-only currentness path.
+        var verified = fixture.Service.Verify(new(fixture.Native.Path, "profile.json") { Layer = "unit" });
+
+        Assert.True(plan.ScopeComplete);
+        Assert.All(plan.Batches, batch => Assert.True(batch.UnitCurrent));
+        Assert.Equal(0, status.PendingUnitBatches);
+        Assert.Equal(0, verified.ExitCode);
+        Assert.Equal(stateBytes, File.ReadAllBytes(fixture.StatePath));
+
+        var second = fixture.Run();
+
+        Assert.True(second.ExitCode == 0, string.Join("; ", second.Diagnostics));
+        Assert.True(second.ScopeComplete);
+        Assert.Equal(0, second.ExecutedUnitBatches);
+        Assert.Equal(2, second.ReusedUnitBatches);
+        Assert.Equal(calls, fixture.Native.Calls());
+        foreach (var report in reports) Assert.Equal(report.Value, File.ReadAllBytes(report.Key));
+        Assert.All(fixture.Work().Executions, execution => Assert.False(execution.NativeRestorationRequired));
+        Assert.Equal(0, fixture.Work().Task!.ReservedMilliseconds);
+    }
+
+    [Fact]
+    public void EmbeddedOutputStillRejectsChangedNativeCommandsAndUnownedOrInconsistentRoots()
+    {
+        using var fixture = new GovernedUnitFixture();
+        ConfigureEmbeddedUnitOutput(fixture, "{output}/nested");
+        var first = fixture.Run();
+        Assert.True(first.ExitCode == 0, string.Join("; ", first.Diagnostics));
+        var calls = fixture.Native.Calls();
+        var state = fixture.Native.SavedState();
+        var key = state.Batches.Keys.Order(StringComparer.Ordinal).First();
+        var saved = state.Batches[key];
+        var stage = saved.Unit!;
+        var execution = stage.Execution!;
+        var retainedCommand = execution.Command!;
+        var output = retainedCommand[6]["--retained-output=".Length..];
+        var otherOutput = Path.Combine(Path.GetDirectoryName(output)!,
+            Path.GetFileName(output) == "012345abcdef" ? "fedcba543210" : "012345abcdef");
+        var report = fixture.Native.Full(IncrementalTestService.LocalRoot + "/sample/" + stage.ReportPath);
+        var reportBytes = File.ReadAllBytes(report);
+        foreach (var damage in new[] { "executable", "filter", "disagreement", "suffix", "owner", "id" })
+        {
+            var command = retainedCommand.ToArray();
+            var executable = execution.ExecutablePath;
+            switch (damage)
+            {
+                case "executable": command[0] = executable = fixture.Native.Full("different-native-executable"); break;
+                case "filter": command[5] = "FullyQualifiedName~Different.Tests"; break;
+                case "disagreement": command[6] = "--retained-output=" + otherOutput; break;
+                case "suffix": command[3] = output + "/tamper"; break;
+                default:
+                    var changed = damage == "owner"
+                        ? fixture.Native.Full(IncrementalTestService.LocalRoot + "/other/work/012345abcdef")
+                        : Path.Combine(Path.GetDirectoryName(output)!, "not-a-work-id");
+                    command[3] = changed + "/nested";
+                    command[6] = "--retained-output=" + changed;
+                    break;
+            }
+            state.Batches[key] = saved with
+            { Unit = stage with { Execution = execution with { Command = command, ExecutablePath = executable } } };
+            fixture.Native.WriteState(state);
+            var stateBytes = File.ReadAllBytes(fixture.StatePath);
+
+            var plan = fixture.Service.Plan(fixture.Options());
+            var verified = fixture.Service.Verify(new(fixture.Native.Path, "profile.json") { Layer = "unit" });
+
+            Assert.Equal(1, plan.PendingUnitBatches);
+            Assert.False(plan.Batches.Single(batch => batch.Id == key).UnitCurrent);
+            Assert.Equal(4, verified.ExitCode);
+            Assert.Equal(stateBytes, File.ReadAllBytes(fixture.StatePath));
+            Assert.Equal(reportBytes, File.ReadAllBytes(report));
+            Assert.Equal(calls, fixture.Native.Calls());
+        }
+        state.Batches[key] = saved;
+        fixture.Native.WriteState(state);
+        Assert.True(fixture.Service.Plan(fixture.Options()).ScopeComplete);
+        Assert.Equal(0, fixture.Service.Verify(new(fixture.Native.Path, "profile.json") { Layer = "unit" }).ExitCode);
+        Assert.Equal(calls, fixture.Native.Calls());
+    }
+
+    private static void ConfigureEmbeddedUnitOutput(GovernedUnitFixture fixture, string outputArgument)
+    {
+        var command = fixture.Native.Profile.UnitCommand.ToArray();
+        command[3] = outputArgument;
+        fixture.Native.Save(fixture.Native.Profile with
+        {
+            UnitCommand = [.. command, "--retained-output={output}"],
+            UnitReportPath = "nested/unit.trx"
+        });
+    }
+
+    [Theory]
     [InlineData("unit", false, false)]
     [InlineData("all", false, false)]
     [InlineData("unit", true, false)]

@@ -46,7 +46,7 @@ internal sealed partial class AgentWorkLedger
         if (tree.Any(item => !item.Stopped || !item.Finalized || item.RecoveryReason is not null))
             return Result(state, change, root.Reference.TaskId, "held", false,
                 "Native work or its owned children still require stopped-process settlement before releasing storage reservations.");
-        SettleReconciledNativeStorage(change, tree, verifiedStopped: true);
+        SettleReconciledNativeStorage(state, change, tree, verifiedStopped: true);
         owner.Checkpoints.Add(new(root.Reference.LogicalAttemptId, actor.Trim(), Time(Tick()),
             new("Native execution tree reconciled", request.Evidence, owner.Hypothesis ?? "Retain the original native scope and recovery recipe.",
                 previouslyFinalized

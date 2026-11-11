@@ -3,7 +3,7 @@ title: "cis agent work"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-11-10"
+last_reviewed: "2026-11-11"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-agent-work
@@ -35,8 +35,10 @@ the ledger. Irreducible required state can still hold admission safely.
 
 Current cache metadata retains the exact native work references it still needs,
 even when a later metadata operation publishes it. A successful replacement updates
-those dependencies; failed publication keeps the previous set. Compaction preserves
-current and pending references while removing unrelated settled history.
+those dependencies; failed publication keeps the previous set. When recovery closes
+an interrupted publication, it preserves both the existing and candidate dependencies
+under the original claim until a later successful publication replaces them.
+Compaction preserves current and pending references while removing unrelated settled history.
 
 ### Story ownership and continuation
 

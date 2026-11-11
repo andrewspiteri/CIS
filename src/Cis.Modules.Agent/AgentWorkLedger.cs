@@ -499,7 +499,7 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
                 change.RestorationSpent = checked(change.RestorationSpent + Math.Min(charge, ProtectedRestoration(change)));
             }
             foreach (var item in tree) { item.Finalized = true; item.Status = item.TerminalStatus ?? item.Status; }
-            SettleReconciledNativeStorage(change, tree);
+            SettleReconciledNativeStorage(state, change, tree);
             var checkpoint = new CisAgentWorkCheckpoint(root.Status + ": " + (root.Summary ?? "Inspect retained result."), root.Evidence,
                 owner.Hypothesis ?? "Execute the current canonical task within its allocation.",
                 tree.Any(item => item.ConservativeRecovery && item.ObservedStopped is null) ? "Unknown execution duration was charged at the admitted bound, retaining observed overrun; reconciliation waiting was excluded."

@@ -79,7 +79,7 @@ internal sealed partial class AgentWorkLedger
                 throw new InvalidDataException("The old unit accounting did not finalize; keep its reservations.");
             // This releases accounting growth after controlled retirement. It does
             // not turn retirement into a historical OS stop observation or test pass.
-            SettleReconciledNativeStorage(change, tree, verifiedStopped: true);
+            SettleReconciledNativeStorage(state, change, tree, verifiedStopped: true);
             if (owner.OpenAttempt == reference.LogicalAttemptId
                 && !change.Executions.Values.Any(item => item.Reference.OwnerTaskId == owner.Id && !item.Finalized))
                 owner.OpenAttempt = null;

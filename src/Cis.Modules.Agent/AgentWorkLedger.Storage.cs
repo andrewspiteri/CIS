@@ -463,22 +463,34 @@ internal sealed partial class AgentWorkLedger
         };
     }
 
-    private static void SettleReconciledNativeStorage(Change change, IReadOnlyList<Execution> tree, bool verifiedStopped = false)
+    private static void SettleReconciledNativeStorage(Ledger state, Change change, IReadOnlyList<Execution> tree, bool verifiedStopped = false)
     {
         if (change.Storage is not { } storage || !verifiedStopped && !tree.Any(item => item.ConservativeRecovery)
             || tree.Any(item => !item.Stopped || !item.Finalized || item.RecoveryReason is not null)) return;
         var nativeReferences = tree.Where(item => item.Stage?.NativeOperation is not null).Select(item => item.Reference).ToHashSet();
         foreach (var pair in storage.Reservations.Where(pair => !pair.Value.Finalized && nativeReferences.Contains(pair.Value.Reference)).ToArray())
         {
-            storage.Reservations[pair.Key] = pair.Value with { Finalized = true };
             // Unknown-interruption diagnostics remain necessary after the process
-            // reservation is reconciled; releasing growth cannot make them eligible.
+            // reservation is reconciled; preserve both published and candidate
+            // dependencies before releasing the reservation's protection.
             foreach (var path in pair.Value.Paths)
-                if (storage.Claims.TryGetValue(path, out var claim) && !claim.Required) storage.Claims[path] = claim with
+            {
+                var pending = pair.Value.RetainedWorkReferences.GetValueOrDefault(path) ?? [];
+                if (!storage.Claims.TryGetValue(path, out var claim))
+                {
+                    if (pending.Count != 0) throw new InvalidDataException("Interrupted evidence dependencies require their original exact storage claim.");
+                    continue;
+                }
+                var retained = claim.RetainedWorkReferences.Concat(pending).Distinct().ToArray();
+                ValidateRetainedWorkReferences(state, change, claim.OwnerTaskId, retained);
+                storage.Claims[path] = claim with
                 {
                     Required = true,
-                    RequiredByExecutionId = pair.Value.Reference.ExecutionId
+                    RequiredByExecutionId = claim.Required ? claim.RequiredByExecutionId : pair.Value.Reference.ExecutionId,
+                    RetainedWorkReferences = retained
                 };
+            }
+            storage.Reservations[pair.Key] = pair.Value with { Finalized = true };
         }
     }
 

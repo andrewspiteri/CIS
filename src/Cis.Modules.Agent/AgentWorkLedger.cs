@@ -112,6 +112,7 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
         public string RootId { get; set; } = "";
         public long Started { get; set; }
         public long? Completed { get; set; }
+        public long? ObservedStopped { get; set; }
         public long Bound { get; set; }
         public string Status { get; set; } = "reserved";
         public string? TerminalStatus { get; set; }
@@ -125,6 +126,7 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
         public CisAgentWorkPreparationOwner? PreparationOwner { get; set; }
         public string? Controller { get; set; }
         public CisNativeWorkContainment? NativeContainment { get; set; }
+        public CisNativeWorkAbandonment? NativeAbandonment { get; set; }
         public CisAgentWorkStage? Stage { get; set; }
         public int? ProcessId { get; set; }
         public string? ProcessStartedAtUtc { get; set; }
@@ -435,12 +437,19 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
         });
 
     internal CisAgentWorkResult Settle(CisRepositoryContext authority, CisAgentWorkReference reference, string status, bool ownedWorkStopped,
-        string? summary = null, IReadOnlyList<string>? evidence = null, bool conservativeRecovery = false)
-        => ExecutionChange(authority, reference, (state, change, execution) =>
-            SettleCore(state, change, execution, status, ownedWorkStopped, summary, evidence, conservativeRecovery));
+        string? summary = null, IReadOnlyList<string>? evidence = null, bool conservativeRecovery = false,
+        DateTimeOffset? observedStoppedAt = null)
+    {
+        // Capture an ordinary observed stop before waiting for the transaction.
+        // Recovery without an observation uses its admitted bound, never this clock.
+        var observed = observedStoppedAt?.ToUniversalTime().ToUnixTimeMilliseconds()
+            ?? (ownedWorkStopped && !conservativeRecovery ? Tick() : (long?)null);
+        return ExecutionChange(authority, reference, (state, change, execution) =>
+            SettleCore(state, change, execution, status, ownedWorkStopped, summary, evidence, conservativeRecovery, observed));
+    }
 
     private CisAgentWorkResult SettleCore(Ledger state, Change change, Execution execution, string status, bool ownedWorkStopped,
-        string? summary, IReadOnlyList<string>? evidence, bool conservativeRecovery)
+        string? summary, IReadOnlyList<string>? evidence, bool conservativeRecovery, long? observedStoppedAt = null)
     {
         var reference = execution.Reference;
         if (execution.Finalized || execution.Stopped) return Result(state, change, reference.TaskId, "unchanged", false);
@@ -450,12 +459,20 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
             execution.Status = "uncertain";
             return Result(state, change, reference.TaskId, "held", true, execution.RecoveryReason);
         }
-        var stopped = Tick(); if (stopped < execution.Started) throw new InvalidDataException("The accounting clock moved backwards; reconcile usage before releasing capacity.");
+        var stopped = Tick();
+        if (stopped < execution.Started || observedStoppedAt is { } observed && (observed < execution.Started || observed > stopped))
+            throw new InvalidDataException("The accounting clock or stop observation is inconsistent; reconcile usage before releasing capacity.");
+        execution.ObservedStopped = observedStoppedAt;
         execution.Stopped = true; execution.Completed = stopped; execution.Status = status; execution.TerminalStatus = status; execution.Summary = summary;
         execution.NativeCancellationRequested = false;
         execution.ConservativeRecovery = conservativeRecovery;
         execution.Evidence = evidence?.ToList() ?? []; execution.RecoveryReason = null;
-        execution.Intervals[^1] = execution.Intervals[^1] with { End = stopped };
+        // Completed records when this disposition became durable. The accounting
+        // interval ends at an observed stop, or at no more than the unknown run's
+        // admitted bound. Session-to-session waiting is not execution time.
+        var accountingEnd = observedStoppedAt ?? (conservativeRecovery
+            ? Math.Min(stopped, checked(execution.Started + execution.Bound)) : stopped);
+        execution.Intervals[^1] = execution.Intervals[^1] with { End = accountingEnd };
         if (execution.Stage?.NativeOperation is not null && NativeSubtree(change, reference.ExecutionId).All(item => !item.LaunchIntent))
             foreach (var native in NativeSubtree(change, reference.ExecutionId)) native.NativeRestorationRequired = false;
         if (execution.Stage?.NativeOperation is not null && (status is "native-finished" or "Restored")
@@ -470,7 +487,7 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
         if (root.Stopped && tree.All(item => item.Stopped))
         {
             var charge = UnionMilliseconds(tree.SelectMany(item => item.Intervals).Select(interval => (interval.Start, interval.End!.Value)));
-            if (tree.Any(item => item.ConservativeRecovery)) charge = Math.Max(charge, root.Bound);
+            if (tree.Any(item => item.ConservativeRecovery && item.ObservedStopped is null)) charge = Math.Max(charge, root.Bound);
             change.Consumed = checked(change.Consumed + charge);
             var owner = change.Owners[root.Reference.OwnerTaskId]; owner.Consumed = checked(owner.Consumed + charge);
             if (root.RestorationOfExecutionId is not null)
@@ -482,7 +499,7 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
             SettleReconciledNativeStorage(change, tree);
             var checkpoint = new CisAgentWorkCheckpoint(root.Status + ": " + (root.Summary ?? "Inspect retained result."), root.Evidence,
                 owner.Hypothesis ?? "Execute the current canonical task within its allocation.",
-                tree.Any(item => item.ConservativeRecovery) ? "Usage conservatively reconciled after stopped-process verification; the full reserved bound is charged."
+                tree.Any(item => item.ConservativeRecovery && item.ObservedStopped is null) ? "Unknown execution duration was charged at the admitted bound, retaining observed overrun; reconciliation waiting was excluded."
                 : "Inspect retained result and required evidence before the next bounded action.", owner.NextAction);
             owner.Checkpoints.Add(new(root.Reference.LogicalAttemptId, "CIS measured execution", Time(stopped), checkpoint, owner.Consumed, Reserved(change, owner.Id))
             { Origin = "execution-summary" });
@@ -1311,6 +1328,9 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
                     || execution.Controller is not null && !BoundedText(execution.Controller)
                     || !change.Executions.ContainsKey(execution.RootId) || execution.Reference.ParentExecutionId is { } parent && !change.Executions.ContainsKey(parent))
                     throw new InvalidDataException("An execution reservation or inherited accounting reference is corrupt; reconcile it before execution.");
+                if (execution.ObservedStopped is { } observedStop && (observedStop < execution.Started
+                    || execution.Completed is { } completed && observedStop > completed))
+                    throw new InvalidDataException("A retained stop observation is inconsistent with its execution timing.");
                 if (execution.PreparationOwner is not null) ValidatePreparationOwner(execution.PreparationOwner);
                 if (execution.NativeRestorationRequired && (execution.Stage?.NativeOperation is null || execution.Stage.NativeRecoveryBasis is null)
                     || execution.RestorationOfExecutionId is { } originalId && (!change.Executions.TryGetValue(originalId, out var original)
@@ -1339,6 +1359,8 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
                 LaunchIntent = item.LaunchIntent,
                 PreparationOwner = item.PreparationOwner,
                 NativeContainment = item.NativeContainment,
+                NativeAbandonment = item.NativeAbandonment,
+                ObservedStoppedAtUtc = item.ObservedStopped is { } observed ? Time(observed) : null,
                 Stage = item.Stage,
                 NativeRestorationRequired = item.NativeRestorationRequired,
                 RestorationOfExecutionId = item.RestorationOfExecutionId

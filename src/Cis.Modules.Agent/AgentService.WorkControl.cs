@@ -70,8 +70,12 @@ public sealed partial class AgentService
         try
         {
             var request = ReadWorkInput<CisAgentWorkDispositionRequest>(context, inputPath);
+            if (request.DisposalBasis is not null && request.Kind != "abandon-native-unit")
+                return WorkFailure(["disposalBasis applies only to controlled disposal of interrupted unit work."]);
             if (request.Kind == "cancel-native")
                 return CancelNativeWork(context, changeId, taskId, request, actor, reason);
+            if (request.Kind == "abandon-native-unit")
+                return AbandonNativeUnit(context, changeId, taskId, request, actor, reason);
             if (request.Kind is "prepare-restart-closure" or "verify-restart-closure")
             {
                 if (!WorkId(changeId) || !WorkId(taskId))

@@ -9,7 +9,7 @@ public sealed partial class AgentService : ICisOwnedStorageController
         var diagnostics = new List<string>();
         try
         {
-            var binding = ResolveNativeBinding(repositoryPath, association, diagnostics);
+            var binding = ResolveNativeBinding(repositoryPath, association, diagnostics, retainedInspection: true);
             if (binding is null || diagnostics.Count > 0) return new("unknown", true, null, diagnostics);
             if (!binding.Required) return new("unaccounted", false, null, []);
             if (binding.Identity is null) return new("unknown", true, null, ["Resolve the canonical work owner before inspecting its finite owned storage."]);
@@ -17,6 +17,24 @@ public sealed partial class AgentService : ICisOwnedStorageController
             return _workLedger.InspectStorage(binding.Authority, binding.Identity.ChangeId, binding.Identity.TaskId, binding.Identity.AncestorTaskIds);
         }
         catch (Exception error) when (WorkException(error)) { return new("unknown", true, null, [error.Message]); }
+    }
+
+    private CisAgentWorkIdentity? RetainedStorageIdentity(CisRepositoryContext authority, string changeId,
+        string taskId, List<string> diagnostics)
+    {
+        if (!WorkId(changeId) || !WorkId(taskId))
+        { diagnostics.Add("Storage inspection needs the retained change and task identifiers."); return null; }
+        changeId = changeId.ToUpperInvariant();
+        taskId = taskId.ToUpperInvariant();
+        // Inspection follows the immutable accounting binding. A later task status,
+        // plan edit or retirement cannot turn its existing files into unknown usage.
+        var retained = _workLedger.Read(authority, changeId, taskId);
+        if (retained.Errors.Count > 0)
+        { diagnostics.AddRange(retained.Errors); return null; }
+        if (retained.Work is not { Task: not null, OwnerTaskId: { } owner } work)
+        { diagnostics.Add("This retained task has no allocated storage owner; restore its original accounting."); return null; }
+        return new(authority.RepositoryId, changeId, taskId, owner == taskId ? [] : [owner],
+            work.AcceptedOutcomeReferences);
     }
 
     public CisOwnedStorageAdmission Reserve(string repositoryPath, CisAgentWorkReference reference, string operationId,

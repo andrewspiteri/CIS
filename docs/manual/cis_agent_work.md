@@ -342,6 +342,59 @@ protecting their claimed paths. It does not charge finalized execution time agai
 or run the native command again. Missing process proof or unresolved children
 remain held; reconciliation cannot waive provenance or native correctness checks.
 
+### Retry interrupted disposable unit work
+
+An interrupted unit invocation can be retired as inconclusive after its processes
+are cleaned up or its disposable execution environment is retired. Use
+`abandon-native-unit` on the exact original root with the fresh work revision,
+authorized controller, reason and factual cleanup/retirement evidence. This follows
+the existing native invocation lock and accounting; it does not require historical
+machine custody, boot attestation or a mutation recovery command.
+
+For example, after actually retiring the old disposable executor and its shared
+resources, supply this input to `agent work disposition <change> <task>`:
+
+```json
+{
+  "kind": "abandon-native-unit",
+  "expectedRevision": "EXACT_CURRENT_REVISION",
+  "executionId": "EXACT_ORIGINAL_UNIT_ROOT",
+  "disposalBasis": "retired-environment",
+  "evidence": ["Actual retirement observation for that disposable executor and its resources"]
+}
+```
+
+Selecting a basis does not perform cleanup. The controller must first establish
+that old work cannot interfere. `process-cleanup` uses the supported complete
+process/job cleanup checks; `retired-environment` records the controller's factual
+retirement of the disposable executor. A known live driver or another active
+invocation still holds disposal. A long-lived controller can retire its own
+returned invocation without exiting. Missing historical fields stay unknown.
+Mutation or restoration work cannot use this unit-only disposition.
+
+Save the populated input as `unit-disposal.json`. Supply the actual reason through
+the command's `--reason` option:
+
+```text
+cis agent work disposition <change> <task> --input unit-disposal.json --actor "Authorized controller" --reason "Retired the identified executor and its shared resources" --format json
+```
+
+Successful disposal reports `abandoned`. It keeps the old invocation interrupted
+and inconclusive, closes its logical attempt without refunding it, settles pending
+accounting and preserves valid completed children and useful diagnostics. Unknown
+execution duration charges its admitted bound; an observed stop or real overrun is
+retained. Reconciliation waiting is not execution time. Disposal neither creates a
+test pass nor grants another allowance. Inspect the remaining time, attempts and
+storage, make any required supported task transition, then retry the ordinary
+unit-only invocation. The existing lease checks exact saved references, clears
+settled activity markers and runs only unfinished or invalidated work.
+
+Read-only storage inspection follows retained ownership even when the task is
+Blocked, retired or otherwise ineligible for another launch. That read does not
+change task state or grant execution. A failed first ledger transaction also does
+not discard an already observed native stop: finalization retries that same
+observation a bounded number of times.
+
 ### Qualify a proposed restart recovery
 
 `prepare-restart-closure` and `verify-restart-closure` are read-only preflight

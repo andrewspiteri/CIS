@@ -25,6 +25,7 @@ public sealed partial class IncrementalTestService
     private sealed record Input(string Repository, IncrementalTestProfile Profile, string ProfilePath,
         string ProfileHash, string Storage, string Root, string StatePath, string CommonIdentity)
     {
+        public string Layer { get; init; } = "all";
         public ICisNativeWorkScope? Work { get; init; }
         public ICisOwnedStorageController? OwnedStorage { get; init; }
         public CancellationToken Cancellation { get; init; }
@@ -64,7 +65,8 @@ public sealed partial class IncrementalTestService
             Command(profile.MutationCommand, true);
             Require(profile.StrykerConfigFile is not null || profile.MutationCommand.Any(value => value.Contains("{sourceFile}", StringComparison.Ordinal)), "Mutation command must use {sourceFile} or strykerConfigFile.");
             Require(profile.StrykerConfigFile is not null || profile.MutationCommand.Any(value => value.Contains("{testFilter}", StringComparison.Ordinal)), "Mutation command must use {testFilter} or strykerConfigFile.");
-            Require(profile.RecoveryCommand is not null, "Mutation requires a recoveryCommand that restores the original build.");
+            Require(options.Layer == "unit" || profile.RecoveryCommand is not null,
+                "Mutation execution requires a recoveryCommand that restores the original build. Unit-only work does not need restoration.");
             Safe(repository, profile.MutationReportPath);
             if (profile.StrykerConfigFile is not null)
             {
@@ -119,7 +121,8 @@ public sealed partial class IncrementalTestService
         };
         var storage = Safe(repository, ".cis/local/testing");
         var root = Safe(repository, LocalRoot + "/" + profile.Id);
-        return new(repository, profile, path, common.profile, storage, root, Safe(root, "state.json"), HashObject(common));
+        return new(repository, profile, path, common.profile, storage, root, Safe(root, "state.json"), HashObject(common))
+        { Layer = options.Layer };
     }
 
     private static void Command(string[]? values, bool output)

@@ -82,7 +82,16 @@ public sealed class IncrementalNativeWorkTests
     {
         using var fixture = new IncrementalTestServiceTests.Fixture();
         var initial = fixture.Run();
-        Assert.True(initial.ExitCode == 0, string.Join("; ", initial.Diagnostics));
+        var inheritedAuthorityKeys = CisNativeWorkEnvironment.Keys
+            .Where(key => !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(key)));
+        var authorityFiles = new List<string>();
+        for (var directory = new DirectoryInfo(fixture.Path); directory is not null; directory = directory.Parent)
+            foreach (var relative in new[] { CisAgentWorkPaths.Adoption, CisAgentWorkPaths.Ledger, ".cis/repository.yml", ".cis/workspace.yml" })
+                if (File.Exists(Path.Combine(directory.FullName, relative))) authorityFiles.Add(Path.Combine(directory.FullName, relative));
+        Assert.True(initial.ExitCode == 0, string.Join("; ", initial.Diagnostics)
+            + "; inherited authority keys: " + string.Join(", ", inheritedAuthorityKeys)
+            + "; authority files: " + string.Join(", ", authorityFiles)
+            + "; adopted completion: " + CisEngineeringPolicy.Read(fixture.Path)?.RequireTaskCompletion);
         var saved = fixture.SavedState();
         var unit = saved.Batches.Values.First().Unit!;
         File.AppendAllText(fixture.Full(IncrementalTestService.LocalRoot + "/sample/" + unit.ReportPath), " ");

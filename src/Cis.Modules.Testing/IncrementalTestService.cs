@@ -47,6 +47,12 @@ public sealed partial class IncrementalTestService
                 : recoveryOf is not null ? "Restored" : "native-finished", admission?.Control);
         try
         {
+            // Inspect retained invocation ownership under the same lease used for
+            // native output. A second caller must not admit work while it waits.
+            var repository = Path.GetFullPath(options.RepositoryPath);
+            var leasePath = Safe(repository, MutationRunService.LocalRoot + "/run.lock");
+            Directory.CreateDirectory(Path.GetDirectoryName(leasePath)!);
+            lease = new FileStream(leasePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             var retained = RetainedWork(options);
             recoveryOf = options.Work?.RecoveryOfExecutionId ?? retained.RecoveryOf;
             var association = options.Work is not { } requested ? retained.Association : requested with
@@ -84,11 +90,9 @@ public sealed partial class IncrementalTestService
                 Require(storage.Allowed, string.Join(" ", storage.Errors));
             }
             Directory.CreateDirectory(input.Root);
-            // Share the native build/output lease with the existing mutation command.
-            var leasePath = Safe(input.Repository, MutationRunService.LocalRoot + "/run.lock");
-            Directory.CreateDirectory(Path.GetDirectoryName(leasePath)!);
-            lease = new FileStream(leasePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             state = State(input);
+            if (retained.ClearUnitActivity)
+                state = state with { ActiveExecutionUntilUtc = null, ActiveWorkReference = null };
             state = state with
             {
                 WorkReference = admission.Reference,
@@ -299,7 +303,7 @@ public sealed partial class IncrementalTestService
         }
     }
 
-    private (CisNativeWorkOptions? Association, string? RecoveryOf, string? RecoveryBasis) RetainedWork(IncrementalTestOptions options)
+    private (CisNativeWorkOptions? Association, string? RecoveryOf, string? RecoveryBasis, bool ClearUnitActivity) RetainedWork(IncrementalTestOptions options)
     {
         var repository = Path.GetFullPath(options.RepositoryPath);
         var profilePath = Safe(repository, options.ProfilePath);
@@ -321,24 +325,41 @@ public sealed partial class IncrementalTestService
             environment = profile.Environment.OrderBy(pair => pair.Key, StringComparer.Ordinal).ToArray(),
             platform = System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier
         }) : null;
+        var ordinaryRecipe = options.Layer == "unit" ? null : recipe;
         var path = Safe(repository, LocalRoot + "/" + id + "/state.json");
-        if (!File.Exists(path)) return (null, null, recipe);
+        if (!File.Exists(path)) return (null, null, ordinaryRecipe, false);
         var state = ReadJson<IncrementalTestState>(path, 16 * 1024 * 1024);
-        if (!state.RecoveryRequired && state.ActiveExecutionUntilUtc is null)
-            Require(StateSettlementErrors(repository, state, Safe(repository, LocalRoot + "/" + id + "/latest-run.json")).Length == 0,
-                "Required native settlement remains unresolved. Reconcile the exact retained work reference before another invocation; its valid reports do not need to be rerun.");
-        if (!state.RecoveryRequired && state.ActiveExecutionUntilUtc is null && state.ActiveWorkReference is null) return (null, null, recipe);
-        Require(state.RecoveryBasis is null || state.RecoveryBasis == recipe,
-            "The retained recovery recipe changed. Inspect the original native work and obtain a bounded authorized recovery decision; a new profile cannot spend its restoration reserve.");
         var reference = state.WorkReference ?? state.ActiveWorkReference;
         var association = state.WorkAssociation ?? (reference is null ? null
             : new CisNativeWorkOptions(reference.ChangeId, reference.TaskId, AuthorityPath: state.WorkAuthorityPath));
-        return (association, reference?.ExecutionId, recipe);
+        if (!state.RecoveryRequired)
+        {
+            Require(StateSettlementErrors(repository, state, Safe(repository, LocalRoot + "/" + id + "/latest-run.json")).Length == 0,
+                "The previous unit invocation still needs settlement. Stop or retire its disposable work through its original owner before retrying; existing valid reports remain reusable.");
+            if (state.ActiveWorkReference is null && state.ActiveExecutionUntilUtc is null)
+                return (null, null, ordinaryRecipe, false);
+            if (reference is not null && association is not null)
+                Require((association.ChangeId is null || association.ChangeId == reference.ChangeId)
+                    && (association.TaskId is null || association.TaskId == reference.TaskId),
+                    "The saved unit association disagrees with its retained execution. Restore that exact owner before retrying.");
+            if (association is not null && options.Work is { } requested)
+                Require((requested.ChangeId is null || requested.ChangeId == association.ChangeId)
+                    && (requested.TaskId is null || requested.TaskId == association.TaskId)
+                    && (requested.AuthorityPath is null || association.AuthorityPath is null
+                        || PathComparer.Equals(Path.GetFullPath(requested.AuthorityPath, repository), Path.GetFullPath(association.AuthorityPath, repository))),
+                    "Retry unfinished unit work through its retained change, task and authority; a new owner does not replace the original allocation.");
+            // Unit work never instruments source. A settled retained reference is
+            // ordinary retry context, not authority to spend a mutation reserve.
+            return (association, null, ordinaryRecipe, reference is not null);
+        }
+        Require(state.RecoveryBasis is null || state.RecoveryBasis == recipe,
+            "The retained recovery recipe changed. Inspect the original native work and obtain a bounded authorized recovery decision; a new profile cannot spend its restoration reserve.");
+        return (association, reference?.ExecutionId, recipe, false);
     }
 
     private bool Unchanged(Input input, IncrementalTestBatch batch)
     {
-        var options = new IncrementalTestOptions(input.Repository, Relative(input.Repository, input.ProfilePath));
+        var options = new IncrementalTestOptions(input.Repository, Relative(input.Repository, input.ProfilePath), input.Layer);
         var now = Read(options);
         if (now.CommonIdentity != input.CommonIdentity) return false;
         var selected = Select(now, new(), false).Batches.Single(item => item.Id == batch.Id);

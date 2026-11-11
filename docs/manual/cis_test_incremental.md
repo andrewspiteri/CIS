@@ -239,6 +239,19 @@ as executable plugins.
 
 ## Bounds and recovery
 
+Ordinary unit-only interruption does not require mutation restoration. Under the
+existing native invocation lock, CIS verifies the exact saved work references.
+After their accounting is settled, it clears stale activity markers and retries
+only unfinished or invalidated unit batches, preserving current completed results.
+Live conflicting work still blocks launch, even after a displayed deadline.
+
+For a disposable legacy unit invocation with incomplete cleanup observations,
+first clean up its processes or retire its execution environment and shared
+resources, then use the controlled `abandon-native-unit` disposition described in
+[`cis agent work`](cis_agent_work.md#retry-interrupted-disposable-unit-work).
+It preserves unknown facts and charges legitimate cost; it does not manufacture a
+report or refund an attempt. The normal unit retry needs no `recoveryCommand`.
+
 ### Revalidate a compatible runner update
 
 After reviewing a testing-module update for compatibility, use `revalidate` to

@@ -32,6 +32,10 @@ public sealed record CisNativeRestartClosureQualification(string Operation, stri
     string RootExecutionId, string Revision, string AdoptionId, string TreeDigest, int ExecutionCount,
     IReadOnlyList<string> Gaps);
 
+/// <summary>Controlled disposal of interrupted unit work, not a successful native result or historical stop attestation.</summary>
+public sealed record CisNativeWorkAbandonment(string Basis, string Actor, string Reason, string RecordedAtUtc,
+    IReadOnlyList<string> Evidence);
+
 public sealed record CisNativeWorkAdmission(bool Required, string Status, string Coverage,
     CisAgentWorkReference? Reference, CisAgentWorkResult? Control, IReadOnlyList<string> Errors)
 {

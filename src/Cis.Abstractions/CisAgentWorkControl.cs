@@ -50,6 +50,7 @@ public sealed record CisAgentWorkProgressRequest(CisAgentWorkCheckpoint Checkpoi
 public sealed record CisAgentWorkDispositionRequest(string Kind, string ExpectedRevision)
 {
     public string? ExecutionId { get; init; }
+    public string? DisposalBasis { get; init; }
     public string? Hypothesis { get; init; }
     public string? NextAction { get; init; }
     public IReadOnlyList<string> Evidence { get; init; } = [];
@@ -139,6 +140,10 @@ public sealed record CisAgentWorkExecution(string ExecutionId, string TaskId, st
     public CisAgentWorkPreparationOwner? PreparationOwner { get; init; }
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public CisNativeWorkContainment? NativeContainment { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? ObservedStoppedAtUtc { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public CisNativeWorkAbandonment? NativeAbandonment { get; init; }
     public CisAgentWorkStage? Stage { get; init; }
 }
 

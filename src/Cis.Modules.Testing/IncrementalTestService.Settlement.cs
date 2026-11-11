@@ -9,6 +9,7 @@ public sealed partial class IncrementalTestService
     {
         var references = new HashSet<CisAgentWorkReference>();
         if (state.WorkReference is { } original) references.Add(original);
+        if (state.ActiveWorkReference is { } active) references.Add(active);
         if (latestPath is not null && File.Exists(latestPath))
         {
             var latest = ReadJson<IncrementalTestResult>(latestPath, 16 * 1024 * 1024);

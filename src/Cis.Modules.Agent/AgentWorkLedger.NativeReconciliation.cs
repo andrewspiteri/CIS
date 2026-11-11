@@ -21,6 +21,7 @@ internal sealed partial class AgentWorkLedger
             || saved.RootExecutionId != item.RootId || saved.Stage != item.Stage || saved.PreparationOwner != item.PreparationOwner
             || saved.LaunchIntent != item.LaunchIntent || saved.ProcessId != item.ProcessId || saved.ProcessStartedAtUtc != item.ProcessStartedAtUtc
             || saved.NativeContainment != item.NativeContainment || saved.Finalized != item.Finalized
+            || saved.ObservedStoppedAtUtc != (item.ObservedStopped is { } observed ? Time(observed) : null)
             || saved.CompletedAtUtc != (item.Completed is { } completed ? Time(completed) : null)
             || saved.NativeRestorationRequired != item.NativeRestorationRequired
             || item.Stage?.NativeOperation is null))
@@ -30,6 +31,10 @@ internal sealed partial class AgentWorkLedger
                 "The retained native execution is inside its 30-second reconciliation grace; this delay does not itself prove stopped children.");
         foreach (var execution in tree.Where(item => item.Stopped && !item.Finalized))
         {
+            // Older ordinary settlements already retained a real controller stop.
+            // Do not reinterpret it as the later reconciliation time or discard an overrun.
+            if (execution.ObservedStopped is null && !execution.ConservativeRecovery)
+                execution.ObservedStopped = execution.Completed;
             execution.RecoveryReason = null;
             execution.NativeCancellationRequested = false;
             execution.ConservativeRecovery = true;

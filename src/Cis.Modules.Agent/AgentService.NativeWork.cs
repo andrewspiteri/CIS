@@ -75,7 +75,7 @@ public sealed partial class AgentService : ICisNativeWorkController
                 return NativeHold(["The native receipt does not match its exact retained authority/owner/attempt/execution reference."]);
             var execution = stored.Value.Execution;
             var control = _workLedger.Read(authority, reference.ChangeId, reference.TaskId);
-            var verified = execution.Stage?.NativeOperation is not null && execution.CompletedAtUtc is not null && execution.LaunchIntent
+            var verified = execution.NativeAbandonment is null && execution.Stage?.NativeOperation is not null && execution.CompletedAtUtc is not null && execution.LaunchIntent
                 && execution.ProcessId is not null && execution.ProcessStartedAtUtc is not null && execution.RecoveryReason is null;
             return new(true, verified ? "verified" : "held", "Read-only durable native execution provenance; this does not qualify the native result.",
                 reference, control, verified ? [] : ["The native observation has not retained complete, safely settled launch/process provenance."])
@@ -147,7 +147,7 @@ public sealed partial class AgentService : ICisNativeWorkController
     }
 
     private NativeWorkBinding? ResolveNativeBinding(string repositoryPath, CisNativeWorkOptions? association, List<string> errors,
-        string? recoveryOfExecutionId = null, string? recoveryBasis = null)
+        string? recoveryOfExecutionId = null, string? recoveryBasis = null, bool retainedInspection = false)
     {
         var inherited = CisNativeWorkEnvironment.Read();
         association ??= new();
@@ -175,7 +175,7 @@ public sealed partial class AgentService : ICisNativeWorkController
             || parentId is not null || association.ChangeId is not null || association.TaskId is not null || recovery is not null;
         if (!required) return new(authority, null, association.Actor ?? inherited.Actor ?? "", null, false, target);
         var parent = parentId is null ? null : _workLedger.NativeExecution(authority, parentId);
-        if (parentId is not null && (parent is null || !NativeParentOwned(parent.Value.Execution)))
+        if (parentId is not null && (parent is null || !retainedInspection && !NativeParentOwned(parent.Value.Execution)))
         { errors.Add("The supplied parent is not a live, verified ancestor/controller of this native invocation. Inspect its durable ownership; an execution ID is not authority."); return null; }
         var registered = registration?.Workspace?.Repositories.Any(repository => repository.IsProductOwned
             && repository.Id == target.RepositoryId && repository.RepositoryPath.Equals(target.RepositoryPath, CisPathSafety.PlatformComparison)) == true;
@@ -191,7 +191,7 @@ public sealed partial class AgentService : ICisNativeWorkController
             if (owners.Count == 1) { changeId = owners[0].ChangeId; taskId = owners[0].TaskId; }
         }
         var actor = association.Actor ?? inherited.Actor;
-        if (changeId is null || taskId is null || string.IsNullOrWhiteSpace(actor))
+        if (changeId is null || taskId is null || !retainedInspection && string.IsNullOrWhiteSpace(actor))
         { errors.Add("Native work needs one unambiguous approved owner and controller. Supply --change <id> --task <id> --actor <controller>, then resolve the existing allocation through cis agent work status/allocate; a profile timeout is not an allocation."); return null; }
         if (recovery is not null && (changeId != recovery.Value.Reference.ChangeId || taskId != recovery.Value.Reference.TaskId))
         { errors.Add("Native recovery cannot transfer to a different change or task."); return null; }
@@ -199,12 +199,13 @@ public sealed partial class AgentService : ICisNativeWorkController
             ? new CisAgentWorkIdentity(authority.RepositoryId, original.Reference.ChangeId, original.Reference.TaskId,
                 original.Reference.OwnerTaskId == original.Reference.TaskId ? [] : [original.Reference.OwnerTaskId],
                 _workLedger.Read(authority, original.Reference.ChangeId, original.Reference.TaskId).Work?.AcceptedOutcomeReferences ?? [])
+            : retainedInspection ? RetainedStorageIdentity(authority, changeId, taskId, errors)
             : WorkIdentity(authority, changeId, taskId, errors, accountingOnly: true, nativeVerification: true);
         if (identity is null || errors.Count > 0) return null;
         if (parent is not null && (identity.ChangeId != parent.Value.Reference.ChangeId
             || identity.TaskId != parent.Value.Reference.TaskId && !identity.AncestorTaskIds.Contains(parent.Value.Reference.TaskId, StringComparer.Ordinal)))
         { errors.Add("The native association does not inherit the parent's canonical change/task owner."); return null; }
-        return new(authority, identity, actor, parentId, true, target);
+        return new(authority, identity, actor ?? "", parentId, true, target);
     }
 
     private bool NativeIsolatedTarget(CisRepositoryContext authority, CisRepositoryContext target,
@@ -253,8 +254,12 @@ public sealed partial class AgentService : ICisNativeWorkController
             && DateTimeOffset.TryParse(retained.Execution.StartedAtUtc, out var recorded) ? recorded
                 : throw new InvalidDataException("The admitted native start time could not be recovered; retain its reservation.");
         private bool launched, safelyReturned, uncertain, settled, finishAttempted;
+        private bool finishRecorded, disposed;
         private int? processId;
         private string? processStarted;
+        private DateTimeOffset? observedStoppedAt;
+        private PendingNativeFinish? pendingFinish;
+        private sealed record PendingNativeFinish(string Status, string? Summary, IReadOnlyList<string>? Evidence, bool Stopped);
         public string AuthorityPath => binding.Authority.RepositoryPath;
         public string Actor => binding.Actor;
         public CisAgentWorkReference Reference => reference;
@@ -290,7 +295,12 @@ public sealed partial class AgentService : ICisNativeWorkController
             var result = service._workLedger.AttachProcess(binding.Authority, reference, id, at, containment);
             if (result.ExitCode != 0) { MarkUncertain("Native launch intent exists but durable process attachment failed."); throw new InvalidDataException("Native process attachment failed."); }
         }
-        public void Returned(bool safelyStopped) => safelyReturned = safelyStopped;
+        public void Returned(bool safelyStopped)
+        {
+            safelyReturned = safelyStopped;
+            if (safelyStopped && !uncertain && (processId is null || OwnedProcessStopped(processId.Value, processStarted)))
+                observedStoppedAt ??= service._clock();
+        }
         public void MarkUncertain(string reason)
         {
             uncertain = true;
@@ -299,15 +309,41 @@ public sealed partial class AgentService : ICisNativeWorkController
         public CisAgentWorkResult Finish(string status, string? summary, IReadOnlyList<string>? evidence)
         {
             finishAttempted = true;
-            var stopped = !uncertain && (!launched || safelyReturned && (processId is null || OwnedProcessStopped(processId.Value, processStarted)));
-            var result = service._workLedger.Settle(binding.Authority, reference, status, stopped, summary, evidence);
+            var stopped = observedStoppedAt is not null
+                || !uncertain && (!launched || safelyReturned && (processId is null || OwnedProcessStopped(processId.Value, processStarted)));
+            if (stopped) observedStoppedAt ??= service._clock();
+            pendingFinish = new(status, summary, evidence?.ToArray(), stopped);
+            return RetainFinish(pendingFinish);
+        }
+        private CisAgentWorkResult RetainFinish(PendingNativeFinish observation)
+        {
+            var result = service._workLedger.Settle(binding.Authority, reference, observation.Status,
+                observation.Stopped, observation.Summary, observation.Evidence, observedStoppedAt: observedStoppedAt);
             settled = CisNativeWorkSettlement.Complete(result, reference);
+            finishRecorded = result.Work?.Executions.Any(execution => execution.ExecutionId == reference.ExecutionId
+                && execution.CompletedAtUtc is not null) == true;
             return result;
         }
         public void Dispose()
         {
-            if (settled || finishAttempted) return;
-            if (!launched || safelyReturned) Finish(launched ? "interrupted" : "preparation-ended", "Native cost retained at the stopped controller boundary.", []);
+            if (disposed) return;
+            disposed = true;
+            if (settled || finishRecorded) return;
+            if (finishAttempted)
+            {
+                // A failed first transaction must not discard a stop already observed
+                // by this invocation. Retry only that same terminal observation;
+                // never launch work, refresh its stop time or claim missing proof.
+                if (pendingFinish is { Stopped: true } pending)
+                    for (var attempt = 0; attempt < 3 && !finishRecorded; attempt++) RetainFinish(pending);
+                return;
+            }
+            if (!launched || safelyReturned)
+            {
+                Finish(launched ? "interrupted" : "preparation-ended", "Native cost retained at the stopped controller boundary.", []);
+                if (pendingFinish is { Stopped: true } pending)
+                    for (var attempt = 0; attempt < 3 && !finishRecorded; attempt++) RetainFinish(pending);
+            }
             else MarkUncertain("Native launch intent has no complete driver/child cleanup proof; reconcile its owned execution before releasing capacity.");
         }
     }

@@ -342,6 +342,55 @@ protecting their claimed paths. It does not charge finalized execution time agai
 or run the native command again. Missing process proof or unresolved children
 remain held; reconciliation cannot waive provenance or native correctness checks.
 
+### Qualify a proposed restart recovery
+
+`prepare-restart-closure` and `verify-restart-closure` are read-only preflight
+dispositions. They identify the exact retained native root and its whole tree, then
+report why restart closure cannot currently qualify. **There is no positive restart
+recovery verifier in this version.** Neither operation prepares a challenge or
+establishes that any process stopped. Do not restart a machine on the strength of
+their output.
+
+Supply the original authority, change/task, exact root `executionId`, fresh
+`expectedRevision`, authorized controller and reason through the existing
+`agent work disposition` command. The input uses the ordinary disposition schema:
+
+```json
+{
+  "kind": "prepare-restart-closure",
+  "expectedRevision": "EXACT_CURRENT_REVISION",
+  "executionId": "EXACT_NATIVE_ROOT_FROM_STATUS"
+}
+```
+
+Use `verify-restart-closure` to inspect the verification prerequisites. A valid
+request returns `held`, exit `4`, `applied: false`, and `nativeRestartClosure` with
+`state: "not-qualified"`, the adoption, revision, root, execution count, diagnostic
+tree digest and stable gap codes. `original-host-custody-unproven` means the retained
+launch records do not prove continuity from the original host;
+`anti-copy-rollback-unqualified` and `restart-verifier-unqualified` identify the
+remaining unsupported proof mechanisms. Verification also reports
+`challenge-not-prepared`. The digest covers the raw retained execution records and
+authority/adoption/revision. It does not hash artifact file contents and is neither
+a machine attestation nor a reusable closure receipt. Caller `evidence` is context
+only. Unknown proof or challenge fields reject under the existing strict schema.
+
+A hostname, absent or reused PID, session, uptime change, clock change or freshly
+created machine-scoped seal cannot retroactively establish the original host.
+Microsoft documents [DPAPI machine scope](https://learn.microsoft.com/en-us/windows/win32/api/dpapi/nf-dpapi-cryptprotectdata)
+and [uptime independent of clock adjustments](https://learn.microsoft.com/en-us/windows/win32/api/sysinfoapi/nf-sysinfoapi-gettickcount64);
+neither supplies historical custody or anti-clone attestation. Copied machine state
+and ambiguous VM rollback history remain insufficient. These operations therefore
+hold on every platform, including Windows, without probing original processes or
+boot state. Implementing an acceptable original-custody and restart verifier would
+require separately qualified evidence and further implementation.
+
+Preflight leaves the ledger and adoption records byte-identical. It does not change
+historical `WindowsObjectPath`, reservations, consumption, limits, attempts,
+restoration, evidence or task status. Existing admission holds and namespace-based
+reconciliation are unchanged. Missing reports remain missing; human authorization
+cannot fill the factual proof gap.
+
 ## Output and exit codes
 
 All formats expose the work owner, revision, change/task allocations, consumed/reserved/remaining capacity, restoration reserve, attempt usage, coverage, recovery state, hold reason, and next action. JSON retains execution and checkpoint history. `agent show`, run results, and their structured summaries include the available work projection. Status reads do not settle execution or alter consumption.

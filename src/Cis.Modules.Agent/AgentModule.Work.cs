@@ -69,7 +69,7 @@ public sealed partial class AgentModule
         });
         group.Subcommands.Add(progress);
 
-        var disposition = new Command("disposition", "Record a justified continuation, simplification, hold, or bounded reconciliation.");
+        var disposition = new Command("disposition", "Record a justified continuation, simplification, hold, bounded reconciliation, or read-only restart qualification.");
         var dispositionChange = new Argument<string>("change-id"); var dispositionTask = new Argument<string>("task-id");
         var dispositionInput = Required("--input"); var dispositionActor = Required("--actor"); var dispositionReason = Required("--reason");
         var dispositionRepo = Repo(); var dispositionFormat = Format();
@@ -95,12 +95,19 @@ public sealed partial class AgentModule
         {
             Console.WriteLine($"status={Safe(result.Status)};exitCode={result.ExitCode};applied={result.Applied.ToString().ToLowerInvariant()}");
             RenderWorkView(result.Work, format);
+            if (result.NativeRestartClosure is { } restart)
+                Console.WriteLine($"restartClosure={Safe(restart.State)};operation={Safe(restart.Operation)};root={Safe(restart.RootExecutionId)};revision={Safe(restart.Revision)};treeDigest={Safe(restart.TreeDigest)};executions={restart.ExecutionCount};gaps={string.Join(',', restart.Gaps.Select(Safe))}");
             foreach (var error in result.Errors) Console.WriteLine($"error={Safe(error)}");
         }
         else if (format == "human")
         {
             Console.WriteLine($"Agent work: {result.Status}");
             RenderWorkView(result.Work, format);
+            if (result.NativeRestartClosure is { } restart)
+            {
+                Console.WriteLine($"Restart closure: {restart.State}; retained tree {restart.RootExecutionId} ({restart.ExecutionCount} executions). No restart challenge or closure receipt was created.");
+                Console.WriteLine("Missing proof: " + string.Join(", ", restart.Gaps));
+            }
             foreach (var error in result.Errors) Console.WriteLine(error);
         }
         else return 2;

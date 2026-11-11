@@ -72,6 +72,14 @@ public sealed partial class AgentService
             var request = ReadWorkInput<CisAgentWorkDispositionRequest>(context, inputPath);
             if (request.Kind == "cancel-native")
                 return CancelNativeWork(context, changeId, taskId, request, actor, reason);
+            if (request.Kind is "prepare-restart-closure" or "verify-restart-closure")
+            {
+                if (!WorkId(changeId) || !WorkId(taskId))
+                    return WorkFailure(["Restart closure qualification requires canonical change/task identifiers."]);
+                var retainedIdentity = new CisAgentWorkIdentity(context.RepositoryId,
+                    changeId.ToUpperInvariant(), taskId.ToUpperInvariant(), [], []);
+                return _workLedger.QualifyNativeRestartClosure(context, retainedIdentity, request, actor, reason);
+            }
             if (request.CorrectionRelationshipId is { } relationship && request.Kind != "reconcile-story-history"
                 && _workLedger.ReadCorrections(context, relationship).Work?.CorrectionOnly == true)
                 return _workLedger.DispositionCorrection(context, relationship, request, actor, reason);

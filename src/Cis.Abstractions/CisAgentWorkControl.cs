@@ -179,5 +179,7 @@ public sealed record CisAgentWorkView(string AuthorityRepositoryId, string Chang
 
 public sealed record CisAgentWorkResult(string Status, CisAgentWorkView? Work, IReadOnlyList<string> Errors, bool Applied)
 {
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public CisNativeRestartClosureQualification? NativeRestartClosure { get; init; }
     public int ExitCode => Errors.Count > 0 || Status is "held" or "invalid" or "busy" or "missing-allocation" ? 4 : 0;
 }

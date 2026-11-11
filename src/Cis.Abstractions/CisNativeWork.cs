@@ -26,6 +26,12 @@ public sealed record CisNativeWorkContainment(string Protocol, string JobName, i
     public string? WindowsObjectPath { get; init; }
 }
 
+/// <summary>Read-only qualification of a retained native tree for restart closure proof.
+/// A diagnostic tree digest is not a prepared challenge or stopped-work receipt.</summary>
+public sealed record CisNativeRestartClosureQualification(string Operation, string State, string ExecutionId,
+    string RootExecutionId, string Revision, string AdoptionId, string TreeDigest, int ExecutionCount,
+    IReadOnlyList<string> Gaps);
+
 public sealed record CisNativeWorkAdmission(bool Required, string Status, string Coverage,
     CisAgentWorkReference? Reference, CisAgentWorkResult? Control, IReadOnlyList<string> Errors)
 {

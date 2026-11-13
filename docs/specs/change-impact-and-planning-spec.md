@@ -16,40 +16,75 @@ cis:
 ## 1. Purpose
 
 This specification defines how CIS turns a proposed outcome into reviewed impact and
-bounded, approvable work. It adapts PARR's issue-pack and dependency-ledger lessons
-without copying repository-specific implementation.
+bounded work under an explicit authorized outcome.
 
 The controlling principle is:
 
-> Humans approve product intent once; CIS may carry that exact authority through
-> deterministic, bounded derivation while stopping on uncertainty or changed scope.
+> One authorization of an outcome, scope and overall limits covers the necessary
+> tasks. CIS preserves that human decision through bounded derivation and asks only
+> for a specific material difference outside it.
 
 ## 2. Canonical dossier
 
-Each change is repository-owned Markdown beneath the configured documentation root:
+Each change lives beneath the configured documentation root at `changes/CIS-0001/`.
+Draft creation writes `proposal.md`, compact `creation-inputs.json` and append-only `events.jsonl`. It requires an
+initialized repository and exact built baseline, but no preliminary approval.
+Preparing a draft plan also grants no execution or product-baseline authority.
 
-```text
-changes/CIS-0001/
-|-- proposal.md
-|-- impact.md
-|-- decisions.md
-|-- plan.md
-|-- wireframes.md
-|-- design.md
-|-- test-cases.md
-|-- test-cases.csv
-|-- verification.md
-|-- agent-tasks/
-`-- events.jsonl
-```
+Generate other records only when their subjects apply:
 
-The Markdown documents are catalogued reviewable records. `test-cases.csv` is a
-hash-bound test-management projection and `events.jsonl` is an
-append-only audit trail. Graph queries and context packs are derived evidence.
+| Record | Subject |
+| --- | --- |
+| `authorization.json` | Actual human outcome authorization, overall limits and delegation. |
+| `plan.json`, `plan.md`, `agent-tasks/WORK-*.md` | Compact task state, derived plan view and task-specific contracts. |
+| `impact.md` | Actual impact analysis. |
+| `decisions.md` | A real unresolved or resolved decision. |
+| `wireframes.md`, `design.md` | Applicable UI behavior and design review. |
+| `test-cases.md`, `test-cases.csv` | An applicable manual-catalogue obligation and hash-bound import projection. |
+| `verification.md` | Actual checks and their evidence. |
+
+Catalogue actual Markdown records only. Accepted no-UI scope needs no visual
+templates; missing ad-hoc `feature_spec_frontend:false` metadata cannot override it.
+Missing or conflicting scope requires specific clarification. Genuine UI review
+remains required. Existing full dossiers and completed tasks remain readable without
+deleting records, removing fields or migrating their historical authority.
 
 `proposal.md` records the outcome, exact Git commit or graph build baseline, initial
-impact roots, constraints, and outcome-level acceptance criteria. A graph build is a
+impact roots, constraints, and outcome-level acceptance criteria. It binds the
+repository creation inventory in `creation-inputs.json` by path and SHA-256;
+legacy inline inventories remain readable. A graph build is a
 valid exact baseline for an unborn Git repository.
+
+Keep the authoritative outcome, shared constraints and limits concise. Task prose
+adds only its specific work, acceptance and checks and references that shared context.
+Machine state remains separate from human review text; derived views do not become
+competing descriptions of the same scope.
+
+### Outcome authorization
+
+Reuse a current applicable authorization. When it is missing, prepare the complete
+outcome, explicit scope, constraints, finite overall limits and delegation, then use
+`cis change authorize <id> --input <request.json> --reviewer <human> --reason <reason>`
+to record the actual human decision. Original reviewer, reason, decision reference
+and amendment history remain distinct from derived task/impact/plan attribution.
+
+Delegated controllers may add necessary supporting tests, documentation and in-scope
+fixes, split unfinished tasks, assign work and update ordering through
+`cis plan task add|split|update`. These operations preserve identity, history, costs
+and valid results. A generated plan hash or formatting change alone cannot revoke
+authority. Legacy approval of one exact task or plan stays within that original scope.
+
+When resource distribution is delegated, `cis agent work allocate` assigns task
+capacity inside the same authorized total. Task count, new agents, changed profiles
+and refreshes cannot reset consumption or multiply time, attempts or storage. Native
+admission, ownership, accounting and completion checks remain mandatory.
+
+Only a material difference outside the authorization, such as extra functionality,
+an incompatible contract or a larger overall allowance, needs its targeted new
+decision. Hold the affected work while unrelated work remains eligible where its
+dependencies and shared resources permit. Legitimate product, UI and publication
+decisions retain their own boundaries. Routine task completion requires no separate
+human approval after the normal checks pass.
 
 Managed dossier files and their catalog routes are excluded from the product/source
 graph identity so CIS cannot invalidate a change merely by creating its own records.
@@ -75,11 +110,12 @@ Allowed states are:
 | State | Authority | Meaning |
 | --- | --- | --- |
 | `proposed` | deterministic analyser | Requires review; not approved scope |
-| `accepted` | human command or eligible authority carry-forward | Must be covered by bounded work |
+| `accepted` | human command or eligible outcome/feature authority carry-forward | Must be covered by bounded work |
 | `rejected` | human command | Reviewed and excluded with a reason |
 | `deferred` | human command | Acknowledged but unresolved outside the approved plan |
 
-AI may later propose additional findings but may not set a human disposition.
+AI may propose additional findings but cannot invent human authority. Derived
+dispositions inside explicit authorized scope preserve their actual decision basis.
 
 When an exact, current feature specification already has explicit human approval,
 `cis plan derive` may carry that authority to deterministic findings that are neither
@@ -91,7 +127,7 @@ individual human disposition.
 ## 4. Completeness
 
 Completeness is an explicit result, not a claim that every semantic impact exists in
-the graph. Planning readiness requires:
+the graph. The retained accepted-impact planning path requires:
 
 - at least one discovered and accepted finding;
 - no proposed findings;
@@ -103,7 +139,9 @@ idempotent analysis before disposition.
 
 ## 5. Decision lifecycle
 
-Change-local decisions live in `decisions.md`. Each record contains a stable ID,
+Change-local decisions create `decisions.md` when the first actual decision exists.
+An absent never-needed record is empty; a missing previously created record is an
+error and cannot erase its gate. Each record contains a stable ID,
 category, question, at least two options, blocking/advisory authority, required-before
 gate, lifecycle state, resolution, human rationale, evidence, and optional promoted
 ADR path.
@@ -124,14 +162,16 @@ originating change provenance, and links the change-local record to the ADR.
 
 ## 6. Bounded planning
 
-`cis plan build` consumes accepted findings only. Every generated work item contains:
+`cis plan build` prepares drafts and derives tasks from explicit outcome authority.
+The retained accepted-impact route consumes accepted findings. Every generated work
+item contains:
 
 - one bounded objective;
 - a `low`, `medium`, or `high` complexity classification;
-- accepted impact IDs;
+- explicit authorized scope references or accepted impact IDs;
 - feature-requirement IDs when the work originates in an imported feature specification;
 - dependency IDs;
-- acceptance criteria;
+- task-specific acceptance criteria;
 - proportionate deterministic validation; and
 - explicit status.
 
@@ -232,8 +272,9 @@ High-complexity work is never left as a directly executable task. It becomes a
 `decomposed` high-complexity parent with at least two low- or medium-complexity child
 tasks. Parent and child records preserve requirement and accepted-impact coverage.
 
-The `plan.md` table is a dependency and status ledger, not the complete task contract.
-Every generated row links to a catalogued `agent-tasks/WORK-NNN.md` document containing:
+The `plan.md` view is a dependency and status ledger. Every generated row links to a
+catalogued `agent-tasks/WORK-NNN.md` contract. Outcome-derived tasks reference shared
+scope and limits instead of repeating them. Retained feature task contracts contain:
 
 - objective and bounded required changes extracted from relevant specification sections;
 - explicit non-goals and prohibited scope;
@@ -268,8 +309,9 @@ assurance. Generated task documents may evolve with execution evidence after pla
 approval, but their stable identity, source provenance, scope, and dependency fields
 remain managed.
 
-Every imported feature also generates `test-cases.md` and `test-cases.csv` from one
-deterministic case model. Each functional requirement has one stable manual-test ID,
+An imported feature with an applicable manual-catalogue obligation generates
+`test-cases.md` and `test-cases.csv` from one deterministic case model. Each covered
+functional requirement has one stable manual-test ID,
 preconditions, numbered steps, exact expected result, priority/type, requirement
 reference, and frontend classification. Markdown records the source feature digest and
 the exact CSV hash. Manual execution results remain in `verification.md`.
@@ -288,8 +330,8 @@ Plan validation fails when:
   `public`, `customer`, or `backoffice`, or an affected type lacks its matched chain;
 - unauthenticated endpoint scope lacks any required `PUBLIC-ENDPOINT-CACHE` task or
   task-document obligation;
-- `verification.md` is absent;
-- either manual-test artifact is absent, stale, incomplete, or hash-inconsistent;
+- required verification evidence is absent;
+- an applicable manual-test artifact is absent, stale, incomplete, or hash-inconsistent;
 - acceptance criteria or validation is absent;
 - outcome-level acceptance criteria remain TODO after any eligible approved-feature
   carry-forward;
@@ -297,23 +339,31 @@ Plan validation fails when:
 - impact review is incomplete or truncated; or
 - no bounded work exists.
 
-`cis plan approve` records new explicit human plan authority and cannot approve an
-invalid plan. `cis plan derive` may instead reuse the exact current feature authority;
+Outcome-derived plans retain their existing authority through authorized task
+organization and refresh. `cis plan approve` remains the explicit exact-plan path
+where that new human decision is actually required and cannot approve an invalid
+plan. `cis plan derive` may instead reuse the exact current feature authority;
 it never creates a reviewer or rationale and cannot bypass an exceptional finding.
-An approved plan cannot be silently rebuilt.
+An approved legacy exact plan cannot be silently rebuilt or treated as general delegation.
 
 ## 8. Idempotency and audit
 
 Recreating identical analysis or plan content does not create different identities.
 Disposition, analysis, decision creation/resolution/deferral/promotion, plan build,
-approval, lifecycle creation, and closure append events. Commands never commit, push,
-execute agents, or mark implementation complete.
+approval, lifecycle creation, and closure append events. Drafting, analysis and
+authorization do not execute agents or establish completion. Task completion uses
+its normal checked transition. These commands never commit or push repository changes.
 
 ## 9. Initial acceptance scenarios
 
-- A change is created against an exact baseline with a complete catalogued dossier.
+- A change draft is created against an exact baseline with only applicable records catalogued.
+- One authorized outcome with several tasks retains one human decision; task organization and delegated allocation stay within its original total.
+- Adding supporting work, splitting an unfinished task and refreshing state preserve identity, consumed costs and compatible results.
+- A 100-task metadata case requires no task-count approval growth and cannot multiply aggregate capacity; it does not launch 100 workers.
+- A real scope or budget expansion needs its specific decision without erasing completed work or holding unrelated eligible tasks.
+- Accepted no-UI work creates no visual/manual templates unless a real manual obligation exists; genuine UI retains its review gate.
 - Exact graph roots produce evidence-backed proposed findings.
-- Planning is blocked while findings remain proposed or deferred.
+- Accepted-impact planning is blocked while required findings remain proposed or deferred.
 - Human disposition survives deterministic re-analysis.
 - Every accepted finding is represented by validated bounded work.
 - Open decisions block approval.

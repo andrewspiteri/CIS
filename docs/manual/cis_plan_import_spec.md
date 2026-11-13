@@ -20,6 +20,8 @@ scope or task contracts follow their review path.
 
 Imports a canonical feature specification into an existing reviewed change and builds
 a PARR-style, complexity-bounded issue pack rather than only a summary table.
+This page describes the retained feature-import path. For controller-managed tasks
+under shared outcome authority, use the [outcome planning path](cis_plan_build.md).
 
 For a current CIS-managed feature with explicit human approval, prefer
 `cis plan derive`. It atomically adopts eligible deterministic impacts, imports and
@@ -74,10 +76,13 @@ structured requirement evidence; words in exclusions or descriptive section head
 do not make a task applicable. Credential names such as `API key` are not themselves
 API-contract evidence.
 
-The command requires planning-ready, human-reviewed impact findings. It writes the
+The command requires planning-ready impact findings with a recorded authority basis. It writes the
 dependency ledger to `plan.md` and durable Markdown tasks for the justified owned outcomes under
-`agent-tasks/`. It also generates `test-cases.md` for human review and
-`test-cases.csv` for import into TestRail or another test-management system.
+`agent-tasks/`. Where an actual manual-catalogue obligation applies, it also generates
+`test-cases.md` for human review and `test-cases.csv` for test-management import.
+Accepted no-UI scope creates no visual templates; unresolved or conflicting scope
+requires clarification. Applicable outcome authority may cover necessary supporting
+work, while the exact-feature derivation path retains its existing provenance and gates.
 Keep documentation, native verification, independent review and completion checks
 inside implementation tasks unless a separate owned outcome, handoff or approval
 boundary warrants another task. A small backend change can have one implementation
@@ -210,7 +215,7 @@ the revised import before changing files. Restore the previously recorded source
 re-import it unchanged to establish that information, then apply the revised source.
 Retrieve that version from repository history or the retained original, checking it
 against the source path and digest in `plan.md`.
-Plan approval remains explicit human authority. `cis plan approve` records new authority;
+On this exact-feature path, plan approval remains explicit human authority. `cis plan approve` records new authority when it is needed;
 `cis plan derive` reuses current feature authority with exact digest provenance and does
 not invent or infer approval.
 

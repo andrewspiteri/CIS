@@ -36,7 +36,7 @@ public sealed partial class DeliveryWorkflowTests
 
             | ID | Surface | Requirement | Acceptance criteria |
             | --- | --- | --- | --- |
-            | VALUE-001 | backend | Replace the current value directly. | The previous value is returned exactly. |
+            | VALUE-001 | backend | Replace the current value directly. | The previous value is returned exactly. Its manual test catalogue retains stable case identities and automated coverage references. |
             | GUIDE-001 | documentation | Publish a separately owned operator guide. | The named maintainer accepts the guide. |
             | REVIEW-001 | assurance | Publish a separately owned independent assurance report. | The independent reviewer records findings and dispositions. |
             """);

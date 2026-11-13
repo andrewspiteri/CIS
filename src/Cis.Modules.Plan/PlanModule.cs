@@ -98,9 +98,53 @@ public sealed class PlanModule : ICisModule
             return result.ExitCode;
         });
         task.Subcommands.Add(transition);
+        task.Subcommands.Add(CreateOutcomeTaskCommand(service, "add"));
+        task.Subcommands.Add(CreateOutcomeTaskCommand(service, "split"));
+        task.Subcommands.Add(CreateOutcomeTaskCommand(service, "update"));
         task.Subcommands.Add(CreateCompletionContextCommand(service));
         task.Subcommands.Add(CreateTaskMigrationCommand(service));
         return task;
+    }
+
+    private static Command CreateOutcomeTaskCommand(PlanningService service, string operation)
+    {
+        var command = new Command(operation, "Organize task-specific work under the existing outcome authorization.");
+        var change = new Argument<string>("change-id");
+        var task = new Argument<string>("task-id");
+        var input = new Option<string>("--input") { Required = true, Description = "JSON task definitions, referencing accepted scope IDs." };
+        var actor = new Option<string>("--actor") { Required = true };
+        var reason = new Option<string>("--reason") { Required = true };
+        var repo = new Option<string>("--repo") { DefaultValueFactory = _ => Directory.GetCurrentDirectory() };
+        var format = new Option<string>("--format") { DefaultValueFactory = _ => "human" };
+        command.Arguments.Add(change);
+        if (operation != "add") command.Arguments.Add(task);
+        foreach (var option in new Option[] { input, actor, reason, repo, format }) command.Options.Add(option);
+        command.SetAction(parse =>
+        {
+            try
+            {
+                var repository = Path.GetFullPath(parse.GetValue(repo)!);
+                if (!CisPathSafety.TryResolveUnderRoot(repository, parse.GetValue(input)!, out var path)
+                    || CisPathSafety.ContainsReparsePoint(repository, path) || !File.Exists(path)
+                    || new FileInfo(path).Length > 4 * 1024 * 1024)
+                    throw new InvalidDataException("Task proposals must be bounded unlinked JSON files inside the repository.");
+                using var json = JsonDocument.Parse(File.ReadAllText(path));
+                var list = json.RootElement.ValueKind == JsonValueKind.Array ? json.RootElement : json.RootElement.GetProperty("tasks");
+                var definitions = list.Deserialize<OutcomeTaskDefinition[]>(JsonOptions)
+                    ?? throw new InvalidDataException("Supply task definitions.");
+                var result = service.OrganizeOutcomeTasks(new(repository, parse.GetValue(change)!, definitions,
+                    parse.GetValue(actor)!, parse.GetValue(reason)!, operation == "add" ? null : parse.GetValue(task)), operation);
+                Render(result, parse.GetValue(format)!);
+                return result.ExitCode;
+            }
+            catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException or KeyNotFoundException)
+            {
+                var result = new PlanResult("invalid", parse.GetValue(change), null, [], null, [error.Message], false);
+                Render(result, parse.GetValue(format)!);
+                return result.ExitCode;
+            }
+        });
+        return command;
     }
 
     private static Command CreateCompletionContextCommand(PlanningService service)
@@ -255,6 +299,14 @@ public sealed class PlanModule : ICisModule
             Required = true,
             Description = "Repository-relative Markdown feature specification path.",
         };
+        var scope = new Option<string[]>("--scope")
+        {
+            Arity = ArgumentArity.ZeroOrMore,
+            AllowMultipleArgumentsPerToken = true,
+            Description = "Explicit authorized scope IDs for tasks derived under an outcome authorization.",
+        };
+        var actor = new Option<string>("--actor") { Description = "Delegated controller deriving tasks under an outcome authorization." };
+        var reason = new Option<string>("--reason") { Description = "Reason these feature tasks deliver the accepted outcome." };
         var repo = new Option<string>("--repo")
         {
             DefaultValueFactory = _ => Directory.GetCurrentDirectory(),
@@ -267,6 +319,9 @@ public sealed class PlanModule : ICisModule
         };
         command.Arguments.Add(id);
         command.Options.Add(file);
+        command.Options.Add(scope);
+        command.Options.Add(actor);
+        command.Options.Add(reason);
         command.Options.Add(repo);
         command.Options.Add(format);
         command.SetAction(parseResult =>
@@ -274,7 +329,12 @@ public sealed class PlanModule : ICisModule
             var result = service.ImportSpec(new FeatureSpecImportRequest(
                 parseResult.GetValue(repo) ?? Directory.GetCurrentDirectory(),
                 parseResult.GetValue(id) ?? string.Empty,
-                parseResult.GetValue(file) ?? string.Empty));
+                parseResult.GetValue(file) ?? string.Empty)
+            {
+                AuthorizationScopeIds = parseResult.GetValue(scope) ?? [],
+                Actor = parseResult.GetValue(actor),
+                Reason = parseResult.GetValue(reason),
+            });
             Render(result, parseResult.GetValue(format) is "json" or "agent"
                 ? parseResult.GetValue(format)!
                 : "human");

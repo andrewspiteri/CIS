@@ -1,0 +1,54 @@
+{
+  "authorizationId": "change-impact-studio:CIS-0003:outcome:31963480b64948f6b8a22478a3e12905",
+  "actor": "Codex",
+  "workItems": [
+    {
+      "id": "WORK-001",
+      "category": "implementation",
+      "complexity": "medium",
+      "parentId": null,
+      "taskPath": "agent-tasks/WORK-001.md",
+      "title": "Shared outcome authority and proportionate planning",
+      "requirementIds": [],
+      "impactIds": [],
+      "dependsOn": [],
+      "acceptanceCriteria": "Deliver the shared outcome and its applicable checks.",
+      "validation": "Build the affected component and run its connected checks.",
+      "status": "ReadyForReview",
+      "taskTypeKey": "core.legacy",
+      "taskTypeVersion": "1.0",
+      "approvalGate": "none",
+      "targets": [],
+      "decisionIds": [],
+      "negativeCriteria": [],
+      "requiredOutputs": [],
+      "frontendType": null,
+      "storyId": null,
+      "instanceKey": "outcome:9b44a9852b07400981b43930bc24cace",
+      "workOwnerTaskId": null,
+      "authorizationScopeIds": [
+        "workflow"
+      ],
+      "authorizationScopeBasis": "sha256:ef1044d5de4988469534693e3024c89d524f8ec02b4a15694dc96ad2c3033daa",
+      "workPaths": [],
+      "assignee": "Codex",
+      "verificationObligations": [
+        {
+          "id": "task-contract",
+          "criteria": [
+            "Deliver the shared outcome and its applicable checks."
+          ],
+          "description": "Build the affected component and run its connected checks.",
+          "evidenceRoute": "review",
+          "evidenceExpectations": [
+            "Build the affected component and run its connected checks."
+          ],
+          "sharedGateIds": [],
+          "basisReferences": []
+        }
+      ],
+      "contractErrors": []
+    }
+  ],
+  "source": null
+}

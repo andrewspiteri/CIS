@@ -187,6 +187,12 @@ public static class EngineeringCompletionReview
         var content = ContractBody(taskDocument ?? "");
         var projection = JsonSerializer.SerializeToNode(task with { Status = "" }, JsonOptions)!.AsObject();
         projection.Remove("contractErrors");
+        if (task.AuthorizationScopeIds.Count == 0 && task.AuthorizationScopeBasis is null)
+        {
+            // Outcome-only fields were absent from retained exact-task contracts.
+            foreach (var field in new[] { "authorizationScopeIds", "authorizationScopeBasis", "workPaths", "assignee" })
+                projection.Remove(field);
+        }
         if (task.StoryId is null) projection.Remove("storyId");
         if (task.InstanceKey is null) projection.Remove("instanceKey");
         if (task.WorkOwnerTaskId is null) projection.Remove("workOwnerTaskId");

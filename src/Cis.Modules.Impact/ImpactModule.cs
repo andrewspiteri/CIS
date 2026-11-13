@@ -118,20 +118,35 @@ public sealed class ImpactModule : ICisModule
 
     private static Command CreateDisposition(string commandName, string state, ImpactAnalysisService service)
     {
-        var command = new Command(commandName, $"Record explicit human {state} disposition for one finding.");
+        var command = new Command(commandName, $"Record {state} disposition using explicit human authority or eligible outcome derivation.");
         var changeId = new Argument<string>("change-id");
         var findingId = new Argument<string>("finding-id");
         var reason = new Option<string>("--reason") { Required = true, Description = "Required review rationale." };
+        var actor = new Option<string?>("--actor") { Description = "Actual delegated controller deriving an in-scope acceptance." };
+        var scopes = new Option<string[]>("--scope") { Arity = ArgumentArity.ZeroOrMore, AllowMultipleArgumentsPerToken = true,
+            Description = "Explicit authorized scope ID. Repeat for each selected scope." };
         var repo = RepositoryOption();
         var format = FormatOption();
         command.Arguments.Add(changeId);
         command.Arguments.Add(findingId);
         command.Options.Add(reason);
+        command.Options.Add(actor);
+        command.Options.Add(scopes);
         command.Options.Add(repo);
         command.Options.Add(format);
         command.SetAction(parseResult =>
         {
-            var result = service.Disposition(
+            var derived = !string.IsNullOrWhiteSpace(parseResult.GetValue(actor)) || (parseResult.GetValue(scopes)?.Length ?? 0) > 0;
+            var result = derived && state != "accepted"
+                ? new ImpactResult("invalid", parseResult.GetValue(changeId), null, [], null,
+                    ["ERROR: Outcome controller derivation accepts in-scope findings; preserve other explicit decision routes."], false)
+                : derived ? service.DispositionUnderOutcome(
+                    parseResult.GetValue(repo) ?? Directory.GetCurrentDirectory(),
+                    parseResult.GetValue(changeId) ?? string.Empty,
+                    parseResult.GetValue(findingId) ?? string.Empty,
+                    parseResult.GetValue(actor) ?? string.Empty, parseResult.GetValue(scopes) ?? [],
+                    parseResult.GetValue(reason) ?? string.Empty)
+                : service.Disposition(
                 parseResult.GetValue(repo) ?? Directory.GetCurrentDirectory(),
                 parseResult.GetValue(changeId) ?? string.Empty,
                 parseResult.GetValue(findingId) ?? string.Empty,

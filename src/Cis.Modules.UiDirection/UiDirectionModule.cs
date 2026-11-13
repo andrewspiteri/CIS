@@ -20,6 +20,7 @@ public sealed class UiDirectionModule : ICisModule
         services.AddSingleton<UiDirectionQuestionnaireService>();
         services.AddSingleton<UiDirectionService>();
         services.AddSingleton<IChangeReadinessCheck>(provider => provider.GetRequiredService<UiDirectionService>());
+        services.AddSingleton<IChangeDocumentApplicabilitySource>(provider => provider.GetRequiredService<UiDirectionService>());
     }
 
     public void RegisterCommands(ICisCommandRegistry commands, IServiceProvider services)

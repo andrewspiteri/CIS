@@ -218,12 +218,12 @@ public sealed partial class ExecutionModulesTests
     {
         using var repository = ExecutionRepository.Create();
         var command = OperatingSystem.IsWindows()
-            ? "cmd.exe /d /s /c \"echo token=diagnostic-secret & ping 127.0.0.1 -n 4 >nul\""
-            : "/bin/sh -c \"echo token=diagnostic-secret; sleep 3\"";
+            ? "powershell.exe -NoProfile -NonInteractive -Command \"Write-Output 'token=diagnostic-secret'; Start-Sleep -Seconds 6\""
+            : "/bin/sh -c \"echo token=diagnostic-secret; sleep 6\"";
         repository.Write("docs/cis/workflows/check.md", $"""
             | Step | Command | Depends on | Continue on failure | Timeout seconds |
             |---|---|---|---|---:|
-            | slow | {command} | - | no | 1 |
+            | slow | {command} | - | no | 3 |
             """);
         var service = new WorkflowService(new CisRepositoryContextResolver(), Clock);
         var running = Task.Run(() => service.Run(repository.Path, "check", "RUN-LIVE-LOG"));
@@ -423,7 +423,7 @@ public sealed partial class ExecutionModulesTests
             # Proposal
             """);
         repository.Write("docs/cis/changes/CIS-0001/plan.md", "---\nstatus: Approved\n---\n# Plan\n");
-        repository.Write("docs/cis/changes/CIS-0001/design.md", "---\napproval_status: Approved\n---\n# Design\n");
+        repository.Write("docs/cis/changes/CIS-0001/design.md", "---\napproval_status: Approved\ngate_status: Approved\n---\n# Design\n");
         repository.Write("docs/cis/changes/CIS-0001/verification.md", "---\nstatus: Draft\n---\n# Verification\n| Task ID | Check | Command or artifact | Result | Notes |\n|---|---|---|---|---|\n| WORK-001 | tests | `dotnet test` | Passed | exact fixture |\n");
         repository.Write("docs/cis/changes/CIS-0001/agent-tasks/WORK-001.md", "---\ntask_status: Complete\n---\n# Work\nTarget `src/example.txt`\n");
         repository.Write("src/example.txt", "changed\n");
@@ -531,7 +531,7 @@ public sealed partial class ExecutionModulesTests
             # Proposal
             """);
         repository.Write("docs/cis/changes/CIS-0003/plan.md", "---\nstatus: Approved\nfeature_spec_frontend: true\n---\n# Plan\n");
-        repository.Write("docs/cis/changes/CIS-0003/design.md", "---\napproval_status: Approved\n---\n# Design\n");
+        repository.Write("docs/cis/changes/CIS-0003/design.md", "---\napproval_status: Approved\ngate_status: Approved\n---\n# Design\n");
         repository.Write("docs/cis/changes/CIS-0003/verification.md", "---\nstatus: Draft\n---\n# Verification\n| Task ID | Check | Command or artifact | Result | Notes |\n|---|---|---|---|---|\n| WORK-180 | sweep | `cis verify validate` | Passed | exact fixture |\n");
         repository.Write("docs/cis/changes/CIS-0003/agent-tasks/WORK-000.md", "---\r\ntask_status: Decomposed\r\ncategory: coordination\r\n---\r\n# Coordination\r\n");
         repository.Write("docs/cis/changes/CIS-0003/agent-tasks/WORK-010.md", "---\r\ntask_status: Approved\r\ncategory: wireframe\r\n---\r\n# Wireframe\r\n");

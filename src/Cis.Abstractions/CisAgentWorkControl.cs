@@ -25,6 +25,9 @@ public sealed record CisAgentWorkAllocationRequest(long ChangeSeconds, int Chang
 {
     public IReadOnlyList<string> Controllers { get; init; } = [];
     public CisOwnedStoragePolicy? Storage { get; init; }
+    /// <summary>Canonical outcome provenance, derived and verified by the owning controller.</summary>
+    public string? AuthorizationId { get; init; }
+    public string? AuthorizationDigest { get; init; }
 }
 
 /// <summary>An explicit original-authority decision replacing an existing task time ceiling.</summary>
@@ -165,6 +168,9 @@ public sealed record CisAgentWorkView(string AuthorityRepositoryId, string Chang
     IReadOnlyList<CisAgentWorkCheckpointRecord> Checkpoints)
 {
     public IReadOnlyList<CisAgentWorkTaskTimeAmendment> TaskTimeAmendments { get; init; } = [];
+    public string? OutcomeAuthorizationId { get; init; }
+    public string? OriginalAuthorizationDigest { get; init; }
+    public string? AllocationAuthorizationDigest { get; init; }
     public IReadOnlyList<string> AcceptedOutcomeReferences { get; init; } = [];
     public string? Hypothesis { get; init; }
     public string? ExpectedResult { get; init; }

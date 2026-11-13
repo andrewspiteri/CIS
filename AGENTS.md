@@ -39,8 +39,17 @@
 - Use `.github/skills/cis-govern-technical-intent/SKILL.md` for supplied technical direction, authorised answers and technical-intent governance. Preserve required BRD approval and downstream adoption controls.
 - Treat the authority repository's product-scoped technical intent as distinct from participant repository intent documents. Dependency technology is integration context, not inferred product direction.
 - Agents may draft direction and options, but must not resolve or defer `TI-DEC-*` choices or approve technical intent without explicit human identity and rationale.
-- `cis change create`, `cis plan build`, and `cis plan import-spec` require Active, current technical intent in a workspace authority.
+- Draft `cis change create` and `cis plan build` prepare reviewable work without preliminary approval. Canonical product adoption, feature imports and execution retain their applicable readiness checks; preparing a draft grants none of those approvals.
 - Rebuild the workspace graph after technical-intent approval.
+
+## Outcome authorization and planning
+
+- Reuse current authority for the agreed outcome, explicit scope, constraints and overall limits. When it is missing, prepare the complete proposal and finite limits, then record the actual human decision with `cis change authorize <id> --input <request.json> --reviewer <human> --reason <reason>`.
+- Under delegated authority, use `cis plan task add|split|update` to organize necessary implementation, supporting tests, documentation and in-scope fixes. Derived tasks reference the shared outcome; keep only their specific work and acceptance details in task prose. Preserve original human attribution and task history.
+- Distribute capacity through `cis agent work allocate` within the same authorized total. New tasks, agents, profiles and plan hashes cannot reset costs or create more allowance. A controller distribution needs no fresh human decision when the delegation covers it.
+- Ask only for the specific scope, contract or overall-limit difference that exceeds existing authority. Keep unrelated work eligible where its dependencies and shared resources permit. Legacy approval of an exact task or plan remains limited to that original scope.
+- Generate and catalogue only applicable records. Accepted no-UI work needs no visual templates; manual catalogues require an actual obligation, and separate decision/design records require an actual subject. Missing or conflicting applicability needs clarification. Preserve real UI, publication and other independent decisions.
+- Complete tasks through normal checks and lifecycle transitions under the existing authority. Reuse valid results when their material basis is unchanged; administrative refreshes alone require neither approval nor replay.
 
 ## File routing
 

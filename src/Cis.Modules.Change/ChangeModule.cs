@@ -31,6 +31,7 @@ public sealed class ChangeModule : ICisModule
         command.Subcommands.Add(CreateShowCommand(store));
         command.Subcommands.Add(CreateStatusCommand(store));
         command.Subcommands.Add(CreateRebaselineCommand(store));
+        command.Subcommands.Add(CreateAuthorizeCommand(store));
         command.Subcommands.Add(CreateCloseCommand(store));
         commands.Add(command);
     }
@@ -72,6 +73,37 @@ public sealed class ChangeModule : ICisModule
         return command;
     }
 
+    private static Command CreateAuthorizeCommand(ChangeDossierStore store)
+    {
+        var command = new Command("authorize", "Record one human authorization of an outcome, explicit scope, overall limits and task delegation.");
+        var id = new Argument<string>("change-id");
+        var input = new Option<string>("--input") { Required = true, Description = "Repository-relative JSON outcome, scope, limits and delegation proposal." };
+        var reviewer = new Option<string>("--reviewer") { Required = true, Description = "Actual human authority for this decision." };
+        var reason = new Option<string>("--reason") { Required = true, Description = "Reason for this exact authorization or material amendment." };
+        var repo = RepositoryOption();
+        var format = FormatOption();
+        command.Arguments.Add(id);
+        foreach (var option in new Option[] { input, reviewer, reason, repo, format }) command.Options.Add(option);
+        command.SetAction(parse =>
+        {
+            ChangeResult result;
+            try
+            {
+                var repository = Path.GetFullPath(parse.GetValue(repo) ?? Directory.GetCurrentDirectory());
+                if (!CisPathSafety.TryResolveUnderRoot(repository, parse.GetValue(input) ?? string.Empty, out var path)
+                    || CisPathSafety.ContainsReparsePoint(repository, path))
+                    throw new InvalidDataException("The authorization proposal must be a bounded unlinked file in this repository.");
+                result = store.Authorize(new(repository, parse.GetValue(id) ?? string.Empty,
+                    CisOutcomeAuthority.ReadRequest(path), parse.GetValue(reviewer) ?? string.Empty, parse.GetValue(reason) ?? string.Empty));
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException)
+            { result = new("invalid", null, [], [error.Message], false); }
+            Render(result, Format(parse.GetValue(format)));
+            return result.ExitCode;
+        });
+        return command;
+    }
+
     private static Command CreateListCommand(ChangeDossierStore store)
     {
         var command = new Command("list", "List change dossiers.");
@@ -106,10 +138,16 @@ public sealed class ChangeModule : ICisModule
         command.SetAction(parseResult =>
         {
             var changeId = parseResult.GetValue(id) ?? string.Empty;
-            var change = store.Read(parseResult.GetValue(repo) ?? Directory.GetCurrentDirectory(), changeId);
-            var result = change is null
+            var repository = parseResult.GetValue(repo) ?? Directory.GetCurrentDirectory();
+            var change = store.Read(repository, changeId);
+            ChangeResult result = change is null
                 ? new ChangeResult("not-found", null, [], [$"Change dossier was not found: {changeId}"], false)
                 : new ChangeResult("found", change, [change], [], false);
+            if (change is not null)
+            {
+                try { result = result with { Authorization = store.ReadAuthorization(repository, change.Id) }; }
+                catch (InvalidDataException error) { result = result with { Status = "invalid", Errors = [error.Message] }; }
+            }
             Render(result, Format(parseResult.GetValue(format)));
             return result.ExitCode;
         });
@@ -200,6 +238,8 @@ public sealed class ChangeModule : ICisModule
             {
                 Console.WriteLine($"change={change.Id};status={change.Status};baseline={change.Baseline};path={change.RelativePath};title={OneLine(change.Title)}");
             }
+            if (result.Authorization is { } authorization)
+                Console.WriteLine($"authorization={OneLine(authorization.Id)};decision={OneLine(authorization.Request.DecisionReference)};reviewer={OneLine(authorization.Reviewer)};digest={authorization.Digest};visualUiDerived={authorization.VisualUiDerivedFromAcceptedSource.ToString().ToLowerInvariant()}");
 
             foreach (var error in result.Errors)
             {
@@ -215,6 +255,13 @@ public sealed class ChangeModule : ICisModule
             Console.WriteLine($"{change.Id} [{change.Status}] {change.Title}");
             Console.WriteLine($"  Baseline: {change.BaselineKind}:{change.Baseline}");
             Console.WriteLine($"  Path: {change.RelativePath}");
+        }
+        if (result.Authorization is { } authority)
+        {
+            Console.WriteLine($"Outcome authorization: {authority.Id}");
+            Console.WriteLine($"  Human decision: {authority.Request.DecisionReference}; reviewer: {authority.Reviewer}");
+            Console.WriteLine($"  Overall limits: {authority.Request.Seconds} seconds; {authority.Request.Attempts} attempts; {authority.Request.Storage.MaximumBytes} owned bytes.");
+            if (authority.VisualUiDerivedFromAcceptedSource) Console.WriteLine("  Visual UI applicability comes from accepted source direction, without a separate human answer.");
         }
 
         foreach (var error in result.Errors)

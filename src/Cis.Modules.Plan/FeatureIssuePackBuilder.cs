@@ -20,7 +20,8 @@ internal static partial class FeatureIssuePackBuilder
         string? existingSourceHash = null,
         Func<PlanWorkItem, IReadOnlyList<Cis.Abstractions.CisTaskVerificationObligation>>? defaultObligations = null,
         Func<PlanWorkItem, ImportedTaskLists?>? readImportedLists = null,
-        bool preserveApprovedCoverage = false)
+        bool preserveApprovedCoverage = false,
+        IReadOnlyList<string>? reservedTaskIds = null)
     {
         var parsed = Parse(repositoryPath, requestedPath);
         if (parsed.Spec is null)
@@ -55,7 +56,7 @@ internal static partial class FeatureIssuePackBuilder
         }
         var generatedObligations = new Dictionary<string, IReadOnlyList<Cis.Abstractions.CisTaskVerificationObligation>>(StringComparer.Ordinal);
         var items = BuildItems(spec, accepted, resolution.Definitions, existingItems, existingSourceHash,
-            defaultObligations, readImportedLists, generatedObligations, preserveApprovedCoverage, out var instanceErrors);
+            defaultObligations, readImportedLists, generatedObligations, preserveApprovedCoverage, reservedTaskIds, out var instanceErrors);
         if (instanceErrors.Count > 0) return new(null, instanceErrors, []);
         var documents = items.ToDictionary(
             item => item.TaskPath!,
@@ -76,6 +77,7 @@ internal static partial class FeatureIssuePackBuilder
         Func<PlanWorkItem, ImportedTaskLists?>? readImportedLists,
         IDictionary<string, IReadOnlyList<Cis.Abstractions.CisTaskVerificationObligation>> generatedObligations,
         bool preserveApprovedCoverage,
+        IReadOnlyList<string>? reservedTaskIds,
         out IReadOnlyList<string> errors)
     {
         var allRequirements = spec.Requirements.Select(item => item.Id).ToArray();
@@ -142,6 +144,7 @@ internal static partial class FeatureIssuePackBuilder
         var orderCounts = instances.GroupBy(instance => instance.Definition.Order)
             .ToDictionary(group => group.Key, group => group.Count());
         var reservedIds = existingItems.Select(item => item.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        reservedIds.UnionWith(reservedTaskIds ?? []);
         var reservedKeys = existingItems.Where(item => item.InstanceKey is not null).Select(item => item.InstanceKey!).ToHashSet(StringComparer.Ordinal);
         var idByIdentity = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var keyByIdentity = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
@@ -206,31 +209,7 @@ internal static partial class FeatureIssuePackBuilder
             if (existing is not null && priorLists is null && existingSourceHash is not null && existingSourceHash != spec.Sha256)
                 problems.Add($"Task {existing.Id} has no retained imported-list baseline for the revised source. Retain its authored contract and re-import the exact previously recorded source to establish its generated lists before applying this revision.");
             if (existingSourceHash is null && priorLists is null) priorLists = new([], []);
-            var acceptance = spec.PublicEndpoints && PublicEndpointPolicyCategory(definition.Category)
-                ? definition.AcceptanceCriteria + " " + PublicEndpointAcceptance(definition.Category)
-                : definition.AcceptanceCriteria;
-            var validation = spec.PublicEndpoints && PublicEndpointPolicyCategory(definition.Category)
-                ? definition.Validation + " " + PublicEndpointValidation(definition.Category)
-                : definition.Validation;
-            if (instance.StoryId is not null || embedded.Count > 0)
-            {
-                acceptance += " " + string.Join(" ", spec.Requirements.Where(requirement => requirementIds.Contains(requirement.Id)).Select(requirement => requirement.AcceptanceCriteria));
-                if (instance.StoryId is not null) validation = $"For story {instance.StoryId}: {validation}";
-            }
-            if (embedded.Count > 0)
-            {
-                acceptance += " " + string.Join(" ", embedded.Select(EmbeddedAcceptance));
-                validation += " " + string.Join(" ", embedded.Select(EmbeddedValidation));
-                if (spec.PublicEndpoints)
-                {
-                    acceptance += " " + PublicEndpointAcceptance("verification");
-                    validation += " " + PublicEndpointValidation("verification") + " " + PublicEndpointValidation("assurance");
-                }
-            }
-            if (!spec.Frontend && definition.Category == "verification")
-                validation = validation.Replace("browser journeys, ", string.Empty, StringComparison.OrdinalIgnoreCase);
-            if (definition.Key == "core.verification" && RequiresTestCatalogue(spec))
-                validation += " Maintain required catalogue TC-* traceability into recognized automated tests.";
+            var (acceptance, validation) = GeneratedTaskContract(spec, definition, instance.StoryId, requirementIds, embedded);
             var item = new PlanWorkItem(
                 id,
                 definition.Category,
@@ -330,6 +309,12 @@ internal static partial class FeatureIssuePackBuilder
                 outputs = outputs.Concat(RequiredOutputs("verification").Where(output => output.StartsWith("test-cases.", StringComparison.Ordinal))).ToArray();
         }
         return new(outputs.Select(output => storyId is null ? output : $"{storyId}: {output}").ToArray(), negative);
+    }
+
+    internal static bool RequiresTestCatalogue(string repositoryPath, string requestedPath)
+    {
+        var parsed = Parse(repositoryPath, requestedPath);
+        return parsed.Spec is null || RequiresTestCatalogue(parsed.Spec);
     }
 
     private static bool RequiresTestCatalogue(FeatureSpec spec)
@@ -469,7 +454,54 @@ internal static partial class FeatureIssuePackBuilder
         { BasisReferences = task.RequirementIds, SharedGateIds = native ? nativeGates : [] }];
     }
 
-    private static bool SameObligation(Cis.Abstractions.CisTaskVerificationObligation left,
+    internal static PlanWorkItem RefreshTaskProtocol(string repositoryPath, PlanSource source, PlanWorkItem task,
+        Cis.Abstractions.CisTaskTypeDefinition definition, IReadOnlyList<PlanWorkItem> workItems,
+        Func<PlanWorkItem, IReadOnlyList<Cis.Abstractions.CisTaskVerificationObligation>> defaultObligations)
+    {
+        var parsed = Parse(repositoryPath, source.Path);
+        if (parsed.Spec is not { } spec) throw new InvalidDataException(string.Join("; ", parsed.Errors));
+        if (!string.Equals(spec.Sha256, source.Sha256, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("Reconcile the changed feature source before migrating its retained task contract.");
+        var embedded = EmbeddedRoles(task.Category, workItems.Select(item => item.Id == task.Id ? task.Category : item.Category));
+        var (acceptance, validation) = GeneratedTaskContract(spec, definition, task.StoryId, task.RequirementIds, embedded);
+        var refreshed = task with { AcceptanceCriteria = acceptance, Validation = validation };
+        return refreshed with
+        {
+            VerificationObligations = defaultObligations(refreshed).Concat(EmbeddedObligations(spec, refreshed, embedded)).ToArray()
+        };
+    }
+
+    private static (string Acceptance, string Validation) GeneratedTaskContract(FeatureSpec spec,
+        Cis.Abstractions.CisTaskTypeDefinition definition, string? storyId, IReadOnlyList<string> requirementIds,
+        IReadOnlyList<string> embedded)
+    {
+        var acceptance = spec.PublicEndpoints && PublicEndpointPolicyCategory(definition.Category)
+            ? definition.AcceptanceCriteria + " " + PublicEndpointAcceptance(definition.Category) : definition.AcceptanceCriteria;
+        var validation = spec.PublicEndpoints && PublicEndpointPolicyCategory(definition.Category)
+            ? definition.Validation + " " + PublicEndpointValidation(definition.Category) : definition.Validation;
+        if (storyId is not null || embedded.Count > 0)
+        {
+            acceptance += " " + string.Join(" ", spec.Requirements.Where(requirement => requirementIds.Contains(requirement.Id)).Select(requirement => requirement.AcceptanceCriteria));
+            if (storyId is not null) validation = $"For story {storyId}: {validation}";
+        }
+        if (embedded.Count > 0)
+        {
+            acceptance += " " + string.Join(" ", embedded.Select(EmbeddedAcceptance));
+            validation += " " + string.Join(" ", embedded.Select(EmbeddedValidation));
+            if (spec.PublicEndpoints)
+            {
+                acceptance += " " + PublicEndpointAcceptance("verification");
+                validation += " " + PublicEndpointValidation("verification") + " " + PublicEndpointValidation("assurance");
+            }
+        }
+        if (!spec.Frontend && definition.Category == "verification")
+            validation = validation.Replace("browser journeys, ", string.Empty, StringComparison.OrdinalIgnoreCase);
+        if (definition.Key == "core.verification" && RequiresTestCatalogue(spec))
+            validation += " Maintain required catalogue TC-* traceability into recognized automated tests.";
+        return (acceptance, validation);
+    }
+
+    internal static bool SameObligation(Cis.Abstractions.CisTaskVerificationObligation left,
         Cis.Abstractions.CisTaskVerificationObligation right)
         => left.Id == right.Id && left.Description == right.Description && left.EvidenceRoute == right.EvidenceRoute
             && left.Criteria.SequenceEqual(right.Criteria, StringComparer.Ordinal)

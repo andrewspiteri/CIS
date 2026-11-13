@@ -130,10 +130,23 @@ public sealed partial class VerifyService
             }
         }
         ValidateFeatureAuthority(context, plan, planText, findings);
-        var designRequired = !Regex.IsMatch(planText, @"(?im)^feature_spec_frontend:\s*false\s*$");
-        if (designRequired && File.Exists(design) && File.ReadAllText(design).Contains("approval_status:", StringComparison.OrdinalIgnoreCase)
-            && !Regex.IsMatch(File.ReadAllText(design), @"(?im)^approval_status:\s*Approved\s*$"))
-            findings.Add(new("error", "CIS-VERIFY-DESIGN", "Design approval is not complete.", Relative(context, design)));
+        var frontendFlag = Regex.Match(planText, @"(?im)^feature_spec_frontend:\s*(?<value>true|false)\s*$");
+        bool? featureVisualUi = frontendFlag.Success ? frontendFlag.Groups["value"].Value.Equals("true", StringComparison.OrdinalIgnoreCase) : null;
+        var applicability = _changes.DocumentApplicability(dossier, featureVisualUi);
+        foreach (var error in applicability.Errors)
+            findings.Add(new("error", "CIS-VERIFY-APPLICABILITY", error, Relative(context, plan)));
+        var designText = File.Exists(design) ? File.ReadAllText(design) : string.Empty;
+        var designRequired = applicability.VisualUi;
+        if (!designRequired.HasValue && !_changes.IsProportionate(dossier)
+            && Regex.IsMatch(designText, @"(?im)^approval_status:\s*Approved\s*$"))
+            designRequired = true;
+        if (!designRequired.HasValue && applicability.Errors.Count == 0)
+            findings.Add(new("error", "CIS-VERIFY-APPLICABILITY",
+                "Clarify whether the authorized outcome includes visual UI; no applicable approved scope establishes that decision.", Relative(context, plan)));
+        if (designRequired == true && (CisPathSafety.ContainsReparsePoint(context.RepositoryPath, design)
+            || !string.Equals(CisFrontMatter.Read(designText, "approval_status"), "Approved", StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(CisFrontMatter.Read(designText, "gate_status"), "Approved", StringComparison.OrdinalIgnoreCase)))
+            findings.Add(new("error", "CIS-VERIFY-DESIGN", "Visual UI work requires a completed design approval.", Relative(context, design)));
         var taskDir = Path.Combine(dir, "agent-tasks");
         var tasks = Directory.Exists(taskDir) ? Directory.EnumerateFiles(taskDir, "*.md") : [];
         foreach (var task in tasks.Where(x => !HasVerificationDisposition(File.ReadAllText(x))))

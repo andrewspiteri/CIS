@@ -27,6 +27,10 @@ public sealed record PlanWorkItem(
     public string? StoryId { get; init; }
     public string? InstanceKey { get; init; }
     public string? WorkOwnerTaskId { get; init; }
+    public IReadOnlyList<string> AuthorizationScopeIds { get; init; } = [];
+    public string? AuthorizationScopeBasis { get; init; }
+    public IReadOnlyList<string> WorkPaths { get; init; } = [];
+    public string? Assignee { get; init; }
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public IReadOnlyList<string>? AcceptanceCriteriaItems { get; init; }
     public IReadOnlyList<CisTaskVerificationObligation> VerificationObligations { get; init; } = [];
@@ -34,6 +38,20 @@ public sealed record PlanWorkItem(
     [System.Text.Json.Serialization.JsonIgnore]
     internal string? UnresolvedManifestRow { get; init; }
 }
+
+/// <summary>Task-specific work under a shared outcome; shared constraints and limits stay in its authorization.</summary>
+public sealed record OutcomeTaskDefinition(string Title, IReadOnlyList<string> ScopeIds,
+    string AcceptanceCriteria, string Validation)
+{
+    public IReadOnlyList<string> Paths { get; init; } = [];
+    public IReadOnlyList<string> DependsOn { get; init; } = [];
+    public string Complexity { get; init; } = "medium";
+    public string Category { get; init; } = "implementation";
+    public string? Assignee { get; init; }
+}
+
+public sealed record OutcomeTaskRequest(string RepositoryPath, string ChangeId,
+    IReadOnlyList<OutcomeTaskDefinition> Tasks, string Actor, string Reason, string? TaskId = null);
 
 public sealed record PlanSource(
     string Path,
@@ -51,7 +69,12 @@ public sealed record PlanSource(
 public sealed record FeatureSpecImportRequest(
     string RepositoryPath,
     string ChangeId,
-    string FeatureSpecPath);
+    string FeatureSpecPath)
+{
+    public IReadOnlyList<string> AuthorizationScopeIds { get; init; } = [];
+    public string? Actor { get; init; }
+    public string? Reason { get; init; }
+}
 
 public sealed record PlanTaskTransitionRequest(
     string RepositoryPath,

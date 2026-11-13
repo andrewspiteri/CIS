@@ -72,6 +72,9 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
         public string StorageReference { get; set; } = "";
         public string Actor { get; set; } = "";
         public string Reason { get; set; } = "";
+        public string? AuthorizationId { get; set; }
+        public string? AuthorizationDigest { get; set; }
+        public string? OriginalAuthorizationDigest { get; set; }
         public List<string> Controllers { get; set; } = [];
         public Dictionary<string, Owner> Owners { get; set; } = new(StringComparer.Ordinal);
         public Dictionary<string, string> Bindings { get; set; } = new(StringComparer.Ordinal);
@@ -84,7 +87,12 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
     private sealed record HistoricalCharge(string RelationshipId, string OwnerTaskId, long Milliseconds,
         string Actor, string Reason, string RecordedAtUtc);
     private sealed record AllocationAudit(string Actor, string Reason, string RecordedAtUtc,
-        IReadOnlyList<CisAgentWorkTaskAllocation> Tasks);
+        IReadOnlyList<CisAgentWorkTaskAllocation> Tasks)
+    {
+        public string? AuthorizationId { get; init; }
+        public string? AuthorizationDigest { get; init; }
+        public string? AuthorizedBy { get; init; }
+    }
     private sealed class Owner
     {
         public string Id { get; set; } = "";
@@ -141,7 +149,7 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
     private sealed record Interval(long Start, long? End);
 
     internal CisAgentWorkResult Read(CisRepositoryContext authority, string changeId, string? taskId = null, int? reflectionWindowSeconds = null,
-        CisAgentWorkStage? stage = null)
+        CisAgentWorkStage? stage = null, CisAgentWorkIdentity? identity = null)
     {
         try
         {
@@ -162,9 +170,19 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
                 if (state.Changes.TryGetValue(changeId, out var projectedChange))
                     foreach (var owner in projectedChange.Owners.Values) owner.ReflectionWindowMilliseconds = checked((long)window * 1000);
             }
-            return state.Changes.TryGetValue(changeId, out var change) ? Result(state, change, taskId, "status", false, stage: stage)
-                : Result(state, new() { Id = changeId }, null, "missing-allocation", false) with
+            if (!state.Changes.TryGetValue(changeId, out var change))
+                return Result(state, new() { Id = changeId }, null, "missing-allocation", false) with
                 { Errors = ["This change has no owning allocation. Supply its allocation using the current accounting revision."] };
+            if (identity is not null)
+            {
+                ValidateIdentity(authority, changeId, identity);
+                if (taskId != identity.TaskId) throw new InvalidDataException("The projected task must match its canonical accounting identity.");
+                var inherited = FindOwner(change, identity);
+                // Load returned this read's private snapshot. Projecting an existing
+                // ancestor never persists a binding, changes limits or grants capacity.
+                if (inherited is not null) change.Bindings[identity.TaskId] = inherited.Id;
+            }
+            return Result(state, change, taskId, "status", false, stage: stage);
         }
         catch (Exception error) when (Recoverable(error)) { return Failure(error); }
     }
@@ -177,6 +195,17 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
             Text(request.StorageCeilingReference, "Storage ceiling reference");
             if (request.Tasks is null || request.Tasks.Count is < 1 or > 1000 || request.Tasks.Select(item => item.TaskId).Distinct(StringComparer.Ordinal).Count() != request.Tasks.Count)
                 throw new InvalidDataException("Supply one bounded allocation for each distinct canonical task owner.");
+            var outcome = ReadAllocationAuthority(authority, changeId, request, actor);
+            if (outcome is not null)
+                request = request with
+                {
+                    ChangeSeconds = outcome.Request.Seconds, ChangeAttempts = outcome.Request.Attempts,
+                    RestorationSeconds = outcome.Request.RestorationSeconds,
+                    AuthorizationId = outcome.Id, AuthorizationDigest = outcome.Digest,
+                    Controllers = outcome.Request.Controllers,
+                    Tasks = outcome.Request.DistributeResources
+                        ? request.Tasks.Select(task => task with { Fixed = false, AllowRedistribution = true }).ToArray() : request.Tasks
+                };
             if (state is null)
             {
                 if (hasHistoricalWorkReferences) throw new InvalidDataException("Historical runs reference adopted work accounting. Restore its missing state; a fresh baseline cannot erase consumption.");
@@ -202,21 +231,34 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
                     Restoration = Milliseconds(request.RestorationSeconds),
                     DecisionReference = request.DecisionReference,
                     StorageReference = request.StorageCeilingReference,
-                    Actor = actor.Trim(),
-                    Reason = reason.Trim(),
-                    Controllers = (request.Controllers ?? []).Append(actor.Trim()).Distinct(StringComparer.Ordinal).ToList()
+                    Actor = outcome?.Reviewer ?? actor.Trim(),
+                    Reason = outcome?.Reason ?? reason.Trim(),
+                    Controllers = (request.Controllers ?? []).Append(actor.Trim()).Append(outcome?.Reviewer ?? actor.Trim()).Distinct(StringComparer.Ordinal).ToList(),
+                    AuthorizationId = outcome?.Id,
+                    AuthorizationDigest = outcome?.Digest,
+                    OriginalAuthorizationDigest = outcome?.Digest
                 };
                 if (change.Restoration > change.Milliseconds) throw new InvalidDataException("Change restoration capacity must fit its fixed allocation.");
                 state.Changes[changeId] = change;
             }
             else
             {
-                Authorize(change!, actor);
-                if (Milliseconds(request.ChangeSeconds) != change!.Milliseconds || request.ChangeAttempts != change.Attempts
-                    || Milliseconds(request.RestorationSeconds) != change.Restoration)
-                    throw new InvalidDataException("Ordinary allocation cannot increase or reset the fixed containing-change allowance or its restoration reserve.");
-                if (request.DecisionReference != change.DecisionReference || request.StorageCeilingReference != change.StorageReference)
-                    throw new InvalidDataException("Retain the owning allocation and storage authority references; ordinary redistribution does not replace them.");
+                if (outcome is null) Authorize(change!, actor);
+                if (outcome is not null)
+                {
+                    RefreshOutcomeStorage(authority, state, change!, outcome, request);
+                    RefreshOutcomeLimits(change!, outcome, request);
+                }
+                else
+                {
+                    if (change!.AuthorizationId is not null)
+                        throw new InvalidDataException("Restore the canonical outcome authorization before distributing its retained allocation.");
+                    if (Milliseconds(request.ChangeSeconds) != change.Milliseconds || request.ChangeAttempts != change.Attempts
+                        || Milliseconds(request.RestorationSeconds) != change.Restoration)
+                        throw new InvalidDataException("Ordinary allocation cannot increase or reset the fixed containing-change allowance or its restoration reserve.");
+                    if (request.DecisionReference != change.DecisionReference || request.StorageCeilingReference != change.StorageReference)
+                        throw new InvalidDataException("Retain the owning allocation and storage authority references; ordinary redistribution does not replace them.");
+                }
             }
             ApplyStorageAllocation(authority, state, change!, request.Storage, actor, isNew);
             var canonical = tasks.ToDictionary(item => item.TaskId, StringComparer.Ordinal);
@@ -250,11 +292,11 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
                 {
                     if (!isNew)
                     {
-                        if (actor.Trim() != change.Actor)
+                        if (outcome is null && actor.Trim() != change.Actor)
                             throw new InvalidDataException("Only the original allocation authority may assign previously unallocated outer capacity to a new canonical root task.");
                         addedMilliseconds = checked(addedMilliseconds + milliseconds); addedAttempts += attempts;
-                        if (addedMilliseconds > Math.Max(0, change.Milliseconds - change.Restoration - oldTotal)
-                            || addedAttempts > Math.Max(0, change.Attempts - oldAttempts))
+                        if (outcome is null && (addedMilliseconds > Math.Max(0, change.Milliseconds - change.Restoration - oldTotal)
+                            || addedAttempts > Math.Max(0, change.Attempts - oldAttempts)))
                             throw new InvalidDataException("The new root allocation exceeds previously unallocated containing-change time or attempts; fixed limits and restoration capacity remain unchanged.");
                     }
                     owner = new()
@@ -271,10 +313,12 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
                 }
                 change.Bindings[allocation.TaskId] = owner.Id;
             }
-            if (!isNew && (change.Owners.Values.Sum(item => item.Milliseconds) > oldTotal + addedMilliseconds
+            if (outcome is not null) ValidateOutcomeDistribution(change);
+            if (outcome is null && !isNew && (change.Owners.Values.Sum(item => item.Milliseconds) > oldTotal + addedMilliseconds
                 || change.Owners.Values.Sum(item => (long)item.Attempts) > oldAttempts + addedAttempts))
                 throw new InvalidDataException("Delegated redistribution cannot increase the original task allocation pool.");
-            change.AllocationHistory.Add(new(actor.Trim(), reason.Trim(), Time(Tick()), request.Tasks));
+            change.AllocationHistory.Add(new(actor.Trim(), reason.Trim(), Time(Tick()), request.Tasks)
+            { AuthorizationId = outcome?.Id, AuthorizationDigest = outcome?.Digest, AuthorizedBy = outcome?.Reviewer });
             return (state, Result(state, change, null, "allocated", true));
         });
 
@@ -289,6 +333,7 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
             if (state is null) throw new InvalidDataException("Direct task execution requires an authorized owning work allocation; no unlimited baseline was substituted.");
             ValidateIdentity(authority, identity.ChangeId, identity); Text(executionId, "Execution identity");
             var change = ChangeFor(state, identity.ChangeId); var owner = FindOwner(change, identity) ?? throw new InvalidDataException("No task or allocated canonical ancestor owns this task's work allowance.");
+            ValidateBoundOutcome(authority, change, controller);
             if (controller is not null) Authorize(change, controller);
             if (stage?.NativeOperation is not null && !NativeLedgerMaintenance(stage, restorationOfExecutionId)
                 && JsonSerializer.SerializeToUtf8Bytes(state, LedgerJson).Length >= NativeAdmissionLedgerBytes)
@@ -1317,6 +1362,7 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
                     || !change.Owners.ContainsKey(pair.Value.OwnerTaskId)))
                 throw new InvalidDataException("A containing-change accounting record is corrupt; restore it without replenishing capacity.");
             ValidateStorageState(authority, state, change);
+            ValidateOutcomeState(change);
             foreach (var (ownerId, owner) in change.Owners)
                 if (owner is null || owner.Id != ownerId || owner.Milliseconds < 0 || owner.Attempts < 1 || owner.Consumed < 0 || owner.UsedAttempts < 0 || owner.CompactedCheckpointCount < 0
                     || owner.Restoration < 0 || owner.Restoration > owner.Milliseconds || owner.RestorationSpent < 0 || owner.RestorationSpent > owner.Restoration
@@ -1385,6 +1431,9 @@ internal sealed partial class AgentWorkLedger(Func<DateTimeOffset>? clock = null
             executions, owner?.Checkpoints ?? change.Owners.Values.SelectMany(item => item.Checkpoints).ToList())
         {
             TaskTimeAmendments = change.TaskTimeAmendments.Where(item => owner is null || item.OwnerTaskId == owner.Id).ToArray(),
+            OutcomeAuthorizationId = change.AuthorizationId,
+            OriginalAuthorizationDigest = change.OriginalAuthorizationDigest,
+            AllocationAuthorizationDigest = change.AuthorizationDigest,
             AcceptedOutcomeReferences = owner?.Outcomes ?? [],
             Hypothesis = owner?.Hypothesis,
             ExpectedResult = owner?.ExpectedResult,

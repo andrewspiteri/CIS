@@ -116,9 +116,10 @@ public sealed partial class DeliveryWorkflowTests
                 const string specPath = "docs/cis/specs/search-feature-spec.md";
                 Authority.Write(specPath, File.ReadAllText(Path.Combine(Authority.Path, specPath))
                     .Replace("status: Draft", "status: Draft\ntargets: [first, second]", StringComparison.Ordinal)
-                    .Replace("| backend |", "| documentation |", StringComparison.Ordinal));
+                    .TrimEnd()
+                    + "\n| GUIDE-001 | documentation | Publish a separately owned operator guide. | The named maintainer accepts the guide's usage and failure instructions. |\n");
                 var imported = services.Plans.ImportSpec(new(Authority.Path, Change.Id, specPath));
-                Assert.Empty(imported.Errors);
+                Assert.True(imported.ExitCode == 0, string.Join("; ", imported.Errors.Concat(imported.Validation?.Errors ?? [])));
                 Task = Assert.Single(imported.WorkItems, item => item.Category == "documentation");
                 var started = services.Plans.TransitionTask(new(Authority.Path, Change.Id, Task.Id, "InProgress", "Fixture", "Exercise participant closure."));
                 Assert.Empty(started.Errors);

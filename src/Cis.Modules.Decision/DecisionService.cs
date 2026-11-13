@@ -267,6 +267,16 @@ public sealed partial class DecisionService
         var path = _changes.DossierFile(change, "decisions.md");
         if (!File.Exists(path))
         {
+            if (_changes.IsProportionate(change))
+            {
+                var context = _resolver.Resolve(change.RepositoryPath).Context;
+                var recorded = context is null || File.ReadAllText(context.CatalogPath)
+                    .Contains($"path: {change.RelativePath}/decisions.md", StringComparison.Ordinal);
+                var events = _changes.DossierFile(change, "events.jsonl");
+                if (!recorded && File.Exists(events) && !File.ReadLines(events)
+                    .Any(line => line.Contains("\"type\":\"decision-created\"", StringComparison.Ordinal)))
+                    return new DecisionReadResult([], 0, 0, []);
+            }
             return new DecisionReadResult([], 0, 0, ["Decision document is missing."]);
         }
 
@@ -319,6 +329,7 @@ public sealed partial class DecisionService
         }
 
         File.WriteAllText(_changes.DossierFile(change, "decisions.md"), builder.ToString());
+        _changes.RegisterExistingDocuments(change);
     }
 
     private static DecisionRecord? Parse(string line)

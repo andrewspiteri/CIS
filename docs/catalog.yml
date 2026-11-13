@@ -2662,3 +2662,23 @@ documents:
     type: command-reference
     status: active
     authority: canonical
+  - id: change-impact-studio:change:cis-0003:proposal
+    path: docs/changes/CIS-0003/proposal.md
+    type: change-proposal
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:change:cis-0003:task:work-001
+    path: docs/changes/CIS-0003/agent-tasks/WORK-001.md
+    type: agent-task
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:change:cis-0003:plan
+    path: docs/changes/CIS-0003/plan.md
+    type: delivery-plan
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:change:cis-0003:verification
+    path: docs/changes/CIS-0003/verification.md
+    type: verification-record
+    status: draft
+    authority: canonical

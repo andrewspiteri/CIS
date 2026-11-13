@@ -24,6 +24,11 @@ specified feature is Active, current, and linked to the supplied path and digest
 uses the original human reviewer and rationale as provenance; the command does not
 create or infer new human authority.
 
+Existing outcome authorization remains another supported source of authority for
+its explicit scope and delegated task organization. Use the [outcome planning
+commands](cis_plan_build.md) for those supporting tasks; no separate exact-plan
+approval is required solely because their generated plan changes.
+
 Derivation is atomic. It accepts eligible deterministic findings, imports the feature,
 validates the complete task pack, and records plan approval against the approved feature
 digest. If any step fails, impact dispositions and generated plan files are restored to

@@ -15,10 +15,16 @@ Validates accepted-impact coverage, work-item identity, complexity, required
 decomposition of high work, parent and dependency existence, dependency cycles,
 acceptance criteria, validation, outcome criteria, and unresolved decisions.
 
-Imported feature plans additionally require every catalogued task document and its
+Outcome-derived plans additionally check explicit authorized scope, delegation and
+retained task identity. Shared context is referenced; task-specific work and checks
+remain reviewable. Administrative refreshes alone do not revoke outcome authority.
+An uncovered scope or limit difference needs a targeted decision.
+
+Imported feature plans require every applicable catalogued task document and its
 mandatory sections, the design dependency chain and `design.md` for frontend scope,
-the feature requirement provenance set, `test-cases.md`, its synchronized
-`test-cases.csv` projection, and `verification.md`. Manual-test validation checks the
+the feature requirement provenance set and durable verification evidence. An applicable
+manual-catalogue obligation requires `test-cases.md` and its synchronized
+`test-cases.csv` projection. Manual-test validation checks the
 source feature path/digest, one stable case per requirement, portable CSV header,
 requirement coverage, and the CSV hash recorded by the Markdown catalogue. CIS resolves the
 recorded feature-specification path inside the repository and compares its current
@@ -28,6 +34,11 @@ invalid even if its front matter still says `Approved`.
 `Pending` automation is valid during planning. Automated-test completeness is a final
 delivery concern enforced by `cis verify validate`, after implementation has had the
 opportunity to create the mapped tests.
+
+Accepted no-UI scope needs no visual template or approval. Missing ad-hoc feature
+metadata does not override that scope. Missing or conflicting applicability requires
+specific clarification; genuine UI and other independent review gates remain required.
+Historical full dossiers and completed task records remain readable.
 
 Coordination, documentation, verification, assurance and final-sweep tasks are
 optional separately owned deliverables. Their checks remain in implementation

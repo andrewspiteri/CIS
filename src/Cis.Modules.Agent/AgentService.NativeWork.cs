@@ -245,7 +245,8 @@ public sealed partial class AgentService : ICisNativeWorkController
     }
 
     private CisAgentWorkResult ReadNativeControl(NativeWorkBinding binding)
-        => _workLedger.Read(binding.Authority, binding.Identity!.ChangeId, binding.Identity.TaskId, RuntimeCeiling(binding.Authority));
+        => _workLedger.Read(binding.Authority, binding.Identity!.ChangeId, binding.Identity.TaskId, RuntimeCeiling(binding.Authority),
+            identity: binding.Identity);
 
     private sealed class NativeWorkScope(AgentService service, NativeWorkBinding binding,
         CisAgentWorkReference reference, int seconds, CisAgentWorkStage stage) : ICisNativeWorkScope

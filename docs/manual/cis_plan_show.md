@@ -21,6 +21,11 @@ The command is read-only and reports objectives, complexity, parent/child decomp
 feature-requirement and impact coverage, dependencies, acceptance criteria, validation,
 task status, and imported feature-specification provenance.
 
+For outcome-derived work, inspect the shared authorization reference and its original
+human attribution separately from controller-authored task changes. Open the shared
+outcome for scope, constraints and total limits, then each task for its specific work
+and acceptance. A derived view never claims that the human reviewed every task.
+
 For imported feature plans, every row includes its durable `agent-tasks/WORK-NNN.md`
 path. Open that document for full scope, exclusions, evidence, gates, acceptance
 checklists, targeted validation, completion evidence, and deferral state.

@@ -188,6 +188,8 @@ public sealed partial class PlanningService
             }
             applied |= RetireObsoleteTasks(change, previous, selected, null, () => applied = true);
             applied |= WriteIfChanged(planPath, planContent);
+            EnsureOutcomeVerification(change);
+            _changes.RegisterExistingDocuments(change);
             applied |= RegisterTaskCatalogEntries(change, selected);
             if (applied)
                 _changes.AppendEvent(change, "plan-built", new Dictionary<string, string>

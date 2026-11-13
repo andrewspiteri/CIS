@@ -62,7 +62,9 @@ Gather affected components, contracts, risks, acceptance criteria, available too
 7. After evidence stabilizes, run `cis verify diff`. Confirm the snapshot names every
    planned repository, includes tracked and untracked changes, and is non-empty.
    Then run `cis verify validate`.
-8. Only on explicit human acceptance use `cis verify finalize --reviewer <human> --reason <rationale>`.
+8. Complete individual tasks through their normal checked lifecycle under existing authority; do not ask for a separate human approval of each completion. Final dossier acceptance remains distinct: only on explicit human acceptance use `cis verify finalize --reviewer <human> --reason <rationale>`.
+
+Apply gates to their actual subjects. Accepted no-UI scope requires no visual templates or design approval; missing ad-hoc feature metadata does not reverse that decision. Manual catalogue checks require an applicable obligation. Missing or conflicting scope needs specific clarification. Preserve genuine UI review and other independent gates, historical records and compatible results; a bookkeeping refresh alone requires no replay.
 
 ## Output Expectations
 

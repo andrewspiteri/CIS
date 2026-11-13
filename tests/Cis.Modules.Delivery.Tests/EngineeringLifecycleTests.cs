@@ -15,8 +15,10 @@ public sealed partial class DeliveryWorkflowTests
         var services = CreateServices(engineering: true);
         var change = PrepareSearchChange(repository, services);
         var spec = Path.Combine(repository.Path, "docs/cis/specs/search-feature-spec.md");
-        File.WriteAllText(spec, File.ReadAllText(spec).Replace("| backend |", "| documentation |", StringComparison.Ordinal));
+        File.WriteAllText(spec, File.ReadAllText(spec).TrimEnd()
+            + "\n| GUIDE-001 | documentation | Publish a separately owned operator guide. | The named maintainer accepts the guide's usage and failure instructions. |\n");
         var imported = services.Plans.ImportSpec(new(repository.Path, change.Id, "docs/cis/specs/search-feature-spec.md"));
+        Assert.True(imported.ExitCode == 0, string.Join("; ", imported.Errors.Concat(imported.Validation?.Errors ?? [])));
         var task = Assert.Single(imported.WorkItems, item => item.Category == "documentation");
         var transition = new PlanTaskTransitionRequest(repository.Path, change.Id, task.Id, "Complete", "fixture-actor", "Exercise completion contract.");
         Assert.Equal(0, services.Plans.TransitionTask(transition with { Status = "InProgress" }).ExitCode);

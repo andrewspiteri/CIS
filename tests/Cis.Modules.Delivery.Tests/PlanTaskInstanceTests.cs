@@ -48,7 +48,8 @@ public sealed partial class DeliveryWorkflowTests
         var imported = services.Plans.ImportSpec(new(repository.Path, change.Id, source));
         Assert.True(imported.ExitCode == 0, string.Join("; ", imported.Errors.Concat(imported.Validation?.Errors ?? [])));
         var task = Assert.Single(imported.WorkItems, item => item.TaskTypeKey == "parr.search.legacy");
-        Assert.Equal("review", Assert.Single(task.VerificationObligations).EvidenceRoute);
+        Assert.Equal("review", AssertEmbeddedTaskProtocol(task).EvidenceRoute);
+        Assert.All(task.VerificationObligations, obligation => Assert.Empty(obligation.SharedGateIds));
         var explicitNative = new CisFeatureStoryTask(task.Id, task.Title, task.Title, [], [], [task.AcceptanceCriteria], [])
         {
             Category = task.Category,
@@ -59,7 +60,9 @@ public sealed partial class DeliveryWorkflowTests
         Assert.Equal(0, services.Plans.SelectCapability(new(repository.Path, "parr.search", "parr.search.projection", ["parr.search.legacy"], "architect", "Select the compatible provider.")).ExitCode);
         var migrated = services.Plans.MigrateTaskType(new(repository.Path, change.Id, task.Id, "parr.search.projection", "architect", "Retain the instance while changing provider type."));
         Assert.True(migrated.ExitCode == 0, string.Join("; ", migrated.Errors.Concat(migrated.Validation?.Errors ?? [])));
-        Assert.Equal("review", Assert.Single(migrated.WorkItems.Single(item => item.Id == task.Id).VerificationObligations).EvidenceRoute);
+        var migratedTask = Assert.Single(migrated.WorkItems, item => item.Id == task.Id);
+        Assert.Equal("review", AssertEmbeddedTaskProtocol(migratedTask).EvidenceRoute);
+        Assert.All(migratedTask.VerificationObligations, obligation => Assert.Empty(obligation.SharedGateIds));
     }
 
     [Fact]
@@ -185,11 +188,13 @@ public sealed partial class DeliveryWorkflowTests
         Assert.Contains("Existing order status is returned unchanged.", status.AcceptanceCriteria, StringComparison.Ordinal);
         Assert.DoesNotContain("retains all entries", status.AcceptanceCriteria, StringComparison.Ordinal);
         Assert.All(status.RequiredOutputs!, output => Assert.StartsWith("order-status:", output, StringComparison.Ordinal));
-        Assert.Equal(status.AcceptanceCriteria, Assert.Single(Assert.Single(status.VerificationObligations).Criteria));
+        Assert.Equal(status.AcceptanceCriteria, Assert.Single(AssertEmbeddedTaskProtocol(status).Criteria));
+        AssertEmbeddedTaskProtocol(history);
         var security = Assert.Single(imported.WorkItems, item => item.Category == "security");
         Assert.Contains(security.Id, status.DependsOn);
         Assert.Contains(security.Id, history.DependsOn);
-        Assert.Contains(imported.WorkItems.Single(item => item.Category == "documentation").Id, security.DependsOn);
+        Assert.DoesNotContain(imported.WorkItems, item => item.Category == "documentation");
+        AssertEmbeddedTaskProtocol(security);
         var linked = new CisFeatureStoryTask(status.Id, status.Title, status.Title, [], [], [status.AcceptanceCriteria], status.DependsOn)
         {
             Category = status.Category,
@@ -214,7 +219,7 @@ public sealed partial class DeliveryWorkflowTests
             Category = "frontend",
             TaskTypeKey = "core.frontend.implementation",
             FrontendType = "customer"
-        }), error => error.Contains("Global design gate", StringComparison.Ordinal));
+        }), error => error.Contains("design approval record", StringComparison.Ordinal));
         Assert.NotEmpty(services.Plans.ValidateStoryTaskGate(repository.Path, linked with { ApprovalGate = "global-design-approval" }));
         Assert.NotEmpty(services.Plans.ValidateStoryTaskGate(repository.Path, linked with { ChangeId = "CIS-9999" }));
 
@@ -406,7 +411,7 @@ public sealed partial class DeliveryWorkflowTests
         Assert.Contains(CreateServices().Plans.CompletionContext(repository.Path, change.Id, history.Id).Errors,
             error => error.Contains(history.Id, StringComparison.Ordinal));
         var untouchedTaskDocument = File.ReadAllBytes(historyPath);
-        var unrelated = imported.WorkItems.Single(item => item.Category == "documentation");
+        var unrelated = imported.WorkItems.Single(item => item.Category == "security");
         var moved = CreateServices().Plans.TransitionTask(new(repository.Path, change.Id, unrelated.Id, "InProgress", "Controller", "Continue an unrelated fully resolved task."));
         Assert.True(moved.Applied, string.Join("; ", moved.Errors));
         Assert.Contains(unresolvedRow, File.ReadAllLines(planPath));
@@ -614,5 +619,30 @@ public sealed partial class DeliveryWorkflowTests
                 + $"| SEARCH-001 |{scope} backend | Build current search behavior with existing visibility permissions. | Search retains current results. |\n"
                 + $"| SEARCH-002 |{scope} backend | Build prior search behavior with existing visibility permissions. | Search retains prior results. |\n");
         }
+    }
+
+    private static CisTaskVerificationObligation AssertEmbeddedTaskProtocol(PlanWorkItem task)
+    {
+        Assert.Equal(new[] { "task-completion", "task-contract", "task-documentation", "task-independent-review" },
+            task.VerificationObligations.Select(obligation => obligation.Id).Order(StringComparer.Ordinal));
+        Assert.All(task.VerificationObligations, obligation =>
+        {
+            Assert.Equal(task.AcceptanceCriteria, Assert.Single(obligation.Criteria));
+            Assert.Equal(task.RequirementIds, obligation.BasisReferences);
+            Assert.False(string.IsNullOrWhiteSpace(obligation.Description));
+            Assert.NotEmpty(obligation.EvidenceExpectations);
+        });
+        Assert.Contains("Affected documentation or no-change rationale",
+            Assert.Single(task.VerificationObligations, obligation => obligation.Id == "task-documentation").EvidenceExpectations);
+        Assert.Contains("Independent review findings and disposition",
+            Assert.Single(task.VerificationObligations, obligation => obligation.Id == "task-independent-review").EvidenceExpectations);
+        Assert.Contains("Completion record and remaining obligations",
+            Assert.Single(task.VerificationObligations, obligation => obligation.Id == "task-completion").EvidenceExpectations);
+        Assert.All(task.VerificationObligations.Where(obligation => obligation.Id != "task-contract"), obligation =>
+        {
+            Assert.Equal("review", obligation.EvidenceRoute);
+            Assert.Empty(obligation.SharedGateIds);
+        });
+        return Assert.Single(task.VerificationObligations, obligation => obligation.Id == "task-contract");
     }
 }

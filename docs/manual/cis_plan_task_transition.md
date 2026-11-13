@@ -22,6 +22,10 @@ Complete, Cancelled, and Decomposed. Invalid transitions fail. Completion requir
 resolved checklists and evidence. For UI-bearing plans, all downstream work is blocked
 until `design.md` has `gate_status: Approved`. Every transition appends an audit event.
 Routine transitions preserve the plan's approval attribution and authored sections.
+Outcome-authorized tasks complete under that same authority after their required
+checks; each completion needs no additional human approval. Reuse compatible results
+when their material basis is unchanged. A scope or budget exception remains a specific
+hold, and genuine UI/publication decisions retain their separate authority.
 They update the selected task's existing approval-table and execution-row status cells,
 and its task-document lifecycle field, without regenerating the whole plan.
 Completion also snapshots sanitized CLI-usage counts, failures, possible token savings,

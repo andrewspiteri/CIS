@@ -9,7 +9,14 @@ public sealed record ChangeCreateRequest(
     string Title,
     string Outcome,
     IReadOnlyList<ChangeRoot> Roots,
-    string? RequestedId = null);
+    string? RequestedId = null)
+{
+    // Proposed structured scope only; creation never records human authorization.
+    public CisOutcomeAuthorizationRequest? OutcomeAuthorization { get; init; }
+}
+
+public sealed record ChangeOutcomeAuthorizationRequest(string RepositoryPath, string ChangeId,
+    CisOutcomeAuthorizationRequest Authorization, string Reviewer, string Reason);
 
 public sealed record ChangeRebaselineRequest(
     string RepositoryPath,
@@ -50,5 +57,6 @@ public sealed record ChangeResult(
     IReadOnlyList<string> Errors,
     bool Applied)
 {
+    public CisOutcomeAuthorization? Authorization { get; init; }
     public int ExitCode => Errors.Count > 0 ? 2 : 0;
 }

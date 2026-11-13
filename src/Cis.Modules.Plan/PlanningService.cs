@@ -63,6 +63,12 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
 
     public PlanResult Build(string repositoryPath, string changeId)
     {
+        var proposed = _changes.Read(repositoryPath, changeId);
+        if (proposed is not null && (_changes.IsProportionate(proposed) || File.Exists(OutcomePlanPath(proposed)))
+            && (File.Exists(OutcomePlanPath(proposed)) || OutcomeAuthority(proposed) is not null
+                || !_impacts.ReadImpact(proposed).Findings.Any(item => item.State == "accepted"))
+            && (File.Exists(OutcomePlanPath(proposed)) || ReadPlan(proposed).WorkItems.Count == 0))
+            return BuildOutcomePlan(proposed);
         var readinessErrors = EvaluateReadiness(repositoryPath);
         if (readinessErrors.Count > 0)
             return Error(changeId, readinessErrors.ToArray());
@@ -106,6 +112,14 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
             return Error(request.ChangeId, $"Change dossier was not found: {request.ChangeId}");
         }
 
+        if (OutcomeAuthority(change) is not null) return ImportOutcomeSpec(change, request, ignoredReadinessCheck);
+        if (File.Exists(OutcomePlanPath(change)))
+            return ImportDraftOutcomeSpec(change, () => ImportLegacySpec(change, request, ignoredReadinessCheck));
+        return ImportLegacySpec(change, request, ignoredReadinessCheck);
+    }
+
+    private PlanResult ImportLegacySpec(ChangeDossier change, FeatureSpecImportRequest request, string? ignoredReadinessCheck)
+    {
         var existing = ReadPlan(change);
         if (existing.WorkItems.Any(item => item.ContractErrors.Count > 0))
             return new("invalid", change.Id, existing.Status, existing.WorkItems, null, existing.WorkItems.SelectMany(item => item.ContractErrors).ToArray(), false, existing.Source);
@@ -179,8 +193,15 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
         }
         var path = _changes.DossierFile(change, "plan.md");
         var applied = !derivedOnlyRefresh && WriteIfChanged(path, content);
-        applied |= WriteIfChanged(_changes.DossierFile(change, "test-cases.md"), pack.ManualTestCasesMarkdown);
-        applied |= WriteIfChanged(_changes.DossierFile(change, "test-cases.csv"), pack.ManualTestCasesCsv);
+        var manualCatalogue = _changes.DocumentApplicability(change, source.FrontendChanges,
+            FeatureIssuePackBuilder.RequiresTestCatalogue(change.RepositoryPath, source.Path)).ManualTestCatalogue;
+        var applicableErrors = _changes.EnsureApplicableDocuments(change, source.FrontendChanges, manualCatalogue);
+        if (applicableErrors.Count > 0) return Error(change.Id, applicableErrors.ToArray());
+        if (manualCatalogue)
+        {
+            applied |= WriteIfChanged(_changes.DossierFile(change, "test-cases.md"), pack.ManualTestCasesMarkdown);
+            applied |= WriteIfChanged(_changes.DossierFile(change, "test-cases.csv"), pack.ManualTestCasesCsv);
+        }
         var taskRoot = Path.Combine(Path.GetDirectoryName(path)!, "agent-tasks");
         Directory.CreateDirectory(taskRoot);
         foreach (var task in pack.TaskDocuments)
@@ -196,7 +217,9 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
         }
         applied |= RetireObsoleteTasks(change, existing.WorkItems, workItems, source);
         applied |= RegisterFeatureSpecCatalogEntry(change, source);
-        applied |= RegisterManualTestCasesCatalogEntry(change);
+        if (manualCatalogue) applied |= RegisterManualTestCasesCatalogEntry(change);
+        EnsureOutcomeVerification(change);
+        _changes.RegisterExistingDocuments(change);
         applied |= RegisterTaskCatalogEntries(change, workItems);
         if (applied)
         {
@@ -379,6 +402,15 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
         var item = plan.WorkItems.FirstOrDefault(candidate => candidate.Id.Equals(request.TaskId, StringComparison.OrdinalIgnoreCase));
         if (item is null) return Error(change.Id, $"Task was not found: {request.TaskId}");
         if (item.ContractErrors.Count > 0) return Error(change.Id, item.ContractErrors.ToArray());
+        if (File.Exists(OutcomePlanPath(change)))
+        {
+            var authority = OutcomeAuthority(change);
+            if (authority is null || !authority.Request.OrganizeTasks || !CisOutcomeAuthority.IsController(authority, request.Reviewer))
+                return Error(change.Id, "Task-type organization requires the outcome's delegated controller and its existing capability selection.");
+            try { _ = ReadTaskDigest(change.RepositoryPath, change.Id, item.Id); }
+            catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
+            { return Error(change.Id, error.Message); }
+        }
         if (item.TaskTypeKey.StartsWith("core.", StringComparison.OrdinalIgnoreCase))
             return Error(change.Id, $"Core task types are non-replaceable: {item.TaskTypeKey}");
         var target = _taskTypes.Find(request.TargetTypeKey);
@@ -437,10 +469,26 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
             ApprovalGate = target.ApprovalGate,
             VerificationObligations = [],
         };
-        migrated = migrated with { VerificationObligations = DefaultVerificationObligations(change.RepositoryPath, migrated) };
+        (PlanWorkItem Task, IReadOnlyList<CisTaskVerificationObligation> Baseline) migration;
+        try { migration = PrepareTaskTypeMigration(change, plan.Source, plan.WorkItems, item, migrated, target); migrated = migration.Task; }
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
+        { return Error(change.Id, error.Message); }
         var updatedItems = plan.WorkItems.Select(candidate => candidate.Id == item.Id ? migrated : candidate).ToArray();
+        if (File.Exists(OutcomePlanPath(change)))
+        {
+            var selected = ValidateOutcomePlan(change, updatedItems, OutcomeAuthority(change),
+                new HashSet<string>([item.Id], StringComparer.Ordinal));
+            if (!selected.Valid) return Error(change.Id, selected.Errors.ToArray());
+        }
         var planPath = _changes.DossierFile(change, "plan.md");
-        File.WriteAllText(planPath, RenderPlan(change, "Draft", updatedItems, plan.Source));
+        if (File.Exists(OutcomePlanPath(change)))
+        {
+            var authority = OutcomeAuthority(change);
+            if (authority is null || !authority.Request.OrganizeTasks || !CisOutcomeAuthority.IsController(authority, request.Reviewer))
+                return Error(change.Id, "Task-type organization requires the outcome's delegated controller and its existing capability selection.");
+            WriteOutcomePlan(change, new(authority.Id, request.Reviewer, updatedItems, plan.Source));
+        }
+        else File.WriteAllText(planPath, RenderPlan(change, "Draft", updatedItems, plan.Source));
         if (item.TaskPath is null) return Error(change.Id, "Task-type migration requires a durable task document.");
         var taskPath = Path.Combine(Path.GetDirectoryName(planPath)!, item.TaskPath.Replace('/', Path.DirectorySeparatorChar));
         var task = File.ReadAllText(taskPath);
@@ -463,13 +511,14 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
             $"# {item.Id}: {target.Title}", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
         var currentContract = "## Current task-type contract\n\n" +
             $"Provider: `{target.ProviderKey}`. Capability: `{target.CapabilityKey}`. Type: `{target.Key}` version `{target.Version}`.\n\n" +
-            $"- [ ] Acceptance: {target.AcceptanceCriteria}\n" +
-            $"- [ ] Validation: {target.Validation}\n";
+            $"- [ ] Acceptance: {migrated.AcceptanceCriteria}\n" +
+            $"- [ ] Validation: {migrated.Validation}\n";
         task = ReplaceMarkdownSection(task, "## Current task-type contract", currentContract);
         var verification = "## Acceptance verification\n\n" + string.Join("\n", migrated.VerificationObligations.Select(obligation =>
             $"- `{obligation.Id}` ({obligation.EvidenceRoute}): {obligation.Description} Criteria: {string.Join("; ", obligation.Criteria)} Evidence: {string.Join("; ", obligation.EvidenceExpectations)}")) + "\n";
         task = ReplaceMarkdownSection(task, "## Acceptance verification", verification);
         task = AppendMigrationHistory(task, item, target, request.Reviewer.Trim(), request.Rationale.Trim());
+        task = StampMigratedProtocolBaseline(task, migration.Baseline);
         File.WriteAllText(taskPath, task);
         _changes.AppendEvent(change, "task-type-migrated", new Dictionary<string, string>
         {
@@ -481,8 +530,11 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
             ["actor"] = request.Reviewer.Trim(),
             ["reason"] = request.Rationale.Trim(),
         });
-        var validation = ValidateInternal(change, updatedItems, "Draft", plan.Source);
-        return new PlanResult("task-type-migrated", change.Id, "Draft", updatedItems, validation, [], true, plan.Source);
+        var overallStatus = File.Exists(OutcomePlanPath(change)) ? "Approved" : "Draft";
+        var validation = File.Exists(OutcomePlanPath(change))
+            ? ValidateOutcomePlan(change, updatedItems, OutcomeAuthority(change), new HashSet<string>([item.Id], StringComparer.Ordinal))
+            : ValidateInternal(change, updatedItems, overallStatus, plan.Source);
+        return new PlanResult("task-type-migrated", change.Id, overallStatus, updatedItems, validation, [], true, plan.Source);
     }
 
     public PlanResult Validate(string repositoryPath, string changeId)
@@ -519,6 +571,15 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
         if (string.IsNullOrWhiteSpace(reviewer) || string.IsNullOrWhiteSpace(rationale))
         {
             return Error(change.Id, "Plan approval requires reviewer identity and rationale.");
+        }
+
+        if (File.Exists(OutcomePlanPath(change)))
+        {
+            var authority = OutcomeAuthority(change);
+            if (authority is null)
+                return Error(change.Id, "Prepare and authorize the complete outcome, scope and overall limits with `cis change authorize`; this draft grants no task execution authority.");
+            var retained = ReadPlan(change);
+            return OutcomeResult(change, retained.WorkItems, authority, "authorization-reused", false);
         }
 
         var plan = ReadPlan(change);
@@ -596,14 +657,30 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
         if (string.IsNullOrWhiteSpace(request.Actor) || string.IsNullOrWhiteSpace(request.Reason))
             return Error(change.Id, "Task transitions require actor and reason.");
         var plan = ReadPlan(change);
-        var sourceCurrencyErrors = ValidateSourceCurrency(change, plan.Source);
-        if (sourceCurrencyErrors.Count > 0)
-            return Error(change.Id, sourceCurrencyErrors.ToArray());
+        var outcomeAuthority = File.Exists(OutcomePlanPath(change)) ? OutcomeAuthority(change) : null;
+        if (File.Exists(OutcomePlanPath(change)) && (outcomeAuthority is null || !outcomeAuthority.Request.OrganizeTasks
+            || !CisOutcomeAuthority.IsController(outcomeAuthority, request.Actor)))
+            return Error(change.Id, "Task lifecycle changes require the outcome's delegated controller; preserve its existing human authorization.");
         var item = plan.WorkItems.FirstOrDefault(candidate => candidate.Id.Equals(request.TaskId, StringComparison.OrdinalIgnoreCase));
         if (item is null) return Error(change.Id, $"Task was not found: {request.TaskId}");
         if (item.ContractErrors.Count > 0) return Error(change.Id, item.ContractErrors.ToArray());
+        var sourceCurrencyErrors = outcomeAuthority is null || item.RequirementIds.Count > 0
+            ? ValidateSourceCurrency(change, plan.Source) : [];
+        if (sourceCurrencyErrors.Count > 0)
+            return Error(change.Id, sourceCurrencyErrors.ToArray());
         var target = CanonicalTaskStatus(request.Status);
         if (target is null) return Error(change.Id, $"Unsupported task status: {request.Status}");
+        if (outcomeAuthority is not null && target is "Approved" or "InProgress" or "Complete")
+        {
+            var readiness = EvaluateReadiness(change.RepositoryPath);
+            if (readiness.Count > 0) return Error(change.Id, readiness.ToArray());
+        }
+        if (outcomeAuthority is not null)
+        {
+            var selected = ValidateOutcomePlan(change, plan.WorkItems, outcomeAuthority,
+                new HashSet<string>([item.Id], StringComparer.Ordinal));
+            if (!selected.Valid) return Error(change.Id, selected.Errors.ToArray());
+        }
         if (target == "Complete")
         {
             var closingErrors = ReviewEngineeringCompletion(change, item);
@@ -615,7 +692,7 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
         if (!AllowedTransition(current, target))
             return Error(change.Id, $"Invalid task transition: {current} -> {target}");
 
-        if (plan.Source?.FrontendChanges == true && item.Category is not ("coordination" or "wireframe" or "design")
+        if ((plan.Source?.FrontendChanges == true || outcomeAuthority?.Request.VisualUi == true) && item.Category is not ("coordination" or "wireframe" or "design")
             && target is "ReadyForReview" or "Approved" or "InProgress" or "Complete")
         {
             var gateErrors = ValidateCanonicalTaskGate(change, plan.Source, item, completing: target == "Complete");
@@ -672,6 +749,19 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
         }
 
         var updatedItems = plan.WorkItems.Select(candidate => candidate.Id == item.Id ? candidate with { Status = target } : candidate).ToArray();
+        if (File.Exists(OutcomePlanPath(change)))
+        {
+            if (target == "Complete" && updatedItems.Any(child => child.ParentId == item.Id && !PlanTaskDispositionPolicy.IsTerminal(child.Status, child.Category)))
+                return Error(change.Id, "Complete the split children before completing their retained parent.");
+            var authority = OutcomeAuthority(change);
+            if (authority is null) return Error(change.Id, "The outcome authorization is missing.");
+            WriteOutcomePlan(change, new(authority.Id, request.Actor, updatedItems, plan.Source));
+            SetOutcomeTaskStatus(change, updatedItems.Single(candidate => candidate.Id == item.Id));
+            if (target == "Complete") SnapshotToolUsage(change, item, Path.Combine(Path.GetDirectoryName(OutcomePlanPath(change))!, item.TaskPath!));
+            _changes.AppendEvent(change, "task-status-changed", new Dictionary<string, string>
+            { ["taskId"] = item.Id, ["from"] = current, ["to"] = target, ["actor"] = request.Actor, ["reason"] = request.Reason });
+            return OutcomeResult(change, updatedItems, authority, "task-transitioned", true, new HashSet<string>([item.Id], StringComparer.Ordinal));
+        }
         var planPath = _changes.DossierFile(change, "plan.md");
         string updatedPlan;
         try { updatedPlan = UpdatePlanTaskStatus(File.ReadAllText(planPath), item.Id, target); }
@@ -751,6 +841,21 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
         var task = ReadPlan(change).WorkItems.FirstOrDefault(item => item.Id == taskId)
             ?? throw new InvalidDataException("Plan task was not found for task review.");
         if (task.ContractErrors.Count > 0) throw new InvalidDataException(string.Join("; ", task.ContractErrors));
+        if (File.Exists(OutcomePlanPath(change)))
+        {
+            var authority = OutcomeAuthority(change) ?? throw new InvalidDataException("The outcome authorization is missing.");
+            if (task.AuthorizationScopeIds.Count == 0 || task.AuthorizationScopeIds.Except(authority.Request.Scope.Select(scope => scope.Id)).Any()
+                || task.AuthorizationScopeBasis != CisOutcomeAuthority.ScopeBasis(authority, task.AuthorizationScopeIds))
+                throw new InvalidDataException("The selected task's scope requires targeted authorization.");
+            var digest = OutcomeTaskDigest(task);
+            if (task.RequirementIds.Count > 0 && ReadPlan(change).Source is { } source)
+            {
+                var currency = ValidateSourceCurrency(change, source);
+                if (currency.Count > 0) throw new InvalidDataException(string.Join("; ", currency));
+                digest += ":" + source.Sha256;
+            }
+            return digest;
+        }
         return EngineeringCompletionReview.TaskDigest(task, ReadTaskContract(change, task));
     }
 
@@ -843,15 +948,16 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
             return [$"Task {task.Id} uses unresolved approval gate '{task.ApprovalGate}'; retain its existing authority and resolve that gate before continuation."];
         if (completing && task.ApprovalGate == "human-final-acceptance" && CanonicalStatus(task.Status) != "Complete")
             return [$"Task {task.Id} requires its existing canonical final acceptance before linked story completion."];
-        var requiresDesign = (source?.FrontendChanges == true || task.Category == "frontend") && task.Category is not ("coordination" or "wireframe" or "design")
+        var requiresDesign = (source?.FrontendChanges == true || OutcomeAuthority(change)?.Request.VisualUi == true || task.Category == "frontend") && task.Category is not ("coordination" or "wireframe" or "design")
             || completing && task.ApprovalGate == "global-design-approval";
         if (!requiresDesign) return [];
         var path = _changes.DossierFile(change, "design.md");
         if (!File.Exists(path) || CisPathSafety.ContainsReparsePoint(change.RepositoryPath, path))
             return ["The canonical design approval record is missing or unsafe; retain the global design hold."];
         var design = File.ReadAllText(path);
-        var gate = Regex.Match(design, @"(?m)^gate_status:\s*(?<value>.*)$").Groups["value"].Value.Trim();
-        return gate.Equals("Approved", StringComparison.OrdinalIgnoreCase) ? []
+        var gate = CisFrontMatter.Read(design, "gate_status") ?? "Missing";
+        return gate.Equals("Approved", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(CisFrontMatter.Read(design, "approval_status"), "Approved", StringComparison.OrdinalIgnoreCase) ? []
             : [$"Global design gate is {gate}; downstream task work is blocked until explicit design approval."];
     }
 
@@ -994,6 +1100,7 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
         string status,
         PlanSource? source = null)
     {
+        if (File.Exists(OutcomePlanPath(change))) return ValidateOutcomePlan(change, workItems, OutcomeAuthority(change));
         var errors = new List<string>();
         var warnings = new List<string>();
         var impact = _impacts.ReadImpact(change);
@@ -1254,6 +1361,10 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
 
     private void ValidateManualTestCaseArtifacts(ChangeDossier change, PlanSource source, ICollection<string> errors)
     {
+        var applicability = _changes.DocumentApplicability(change, source.FrontendChanges,
+            FeatureIssuePackBuilder.RequiresTestCatalogue(change.RepositoryPath, source.Path));
+        foreach (var error in applicability.Errors) errors.Add(error);
+        if (!applicability.ManualTestCatalogue) return;
         var markdownPath = _changes.DossierFile(change, "test-cases.md");
         var csvPath = _changes.DossierFile(change, "test-cases.csv");
         if (!File.Exists(markdownPath))
@@ -1299,6 +1410,11 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
     {
         var change = _changes.Read(repositoryPath, changeId);
         if (change is null) return [$"Change dossier was not found: {changeId}"];
+        var source = ReadPlan(change).Source;
+        var applicability = _changes.DocumentApplicability(change, source?.FrontendChanges,
+            source is not null ? FeatureIssuePackBuilder.RequiresTestCatalogue(repositoryPath, source.Path) : null);
+        if (applicability.Errors.Count > 0) return applicability.Errors;
+        if ((source is not null || _changes.IsProportionate(change)) && !applicability.ManualTestCatalogue) return [];
         var markdownPath = _changes.DossierFile(change, "test-cases.md");
         if (!File.Exists(markdownPath)) return ["Automated-test traceability requires test-cases.md."];
 
@@ -1786,6 +1902,7 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
 
     private PlanDocument ReadPlan(ChangeDossier change)
     {
+        if (ReadOutcomePlan(change) is { } outcomePlan) return outcomePlan;
         var path = _changes.DossierFile(change, "plan.md");
         if (!File.Exists(path))
         {

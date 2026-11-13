@@ -19,7 +19,14 @@ public sealed record ImpactFinding(
     string Confidence,
     string Evidence,
     string Rationale,
-    string ReviewReason);
+    string ReviewReason)
+{
+    public ImpactOutcomeDisposition? OutcomeDisposition { get; init; }
+}
+
+public sealed record ImpactOutcomeDisposition(string AuthorizationId, string AuthorizationDigest,
+    IReadOnlyList<string> ScopeIds, string ScopeBasis, string Reviewer, string DecisionReference,
+    string Actor, string Reason, IReadOnlyList<string> Paths);
 
 public sealed record ImpactCompleteness(
     int Total,

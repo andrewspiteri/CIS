@@ -144,12 +144,26 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
     private readonly ICisObservedReferencePreparer? _observedReferencePreparer;
     private readonly ICisTextGenerationService? _textGeneration;
     private readonly ICisEngineeringTaskContractReader? _taskContracts;
+    private readonly IReadOnlyList<IChangeReadinessCheck> _readinessChecks;
     private readonly AgentWorkLedger _workLedger;
     private readonly ConcurrentDictionary<string, (long Length, long Count)> _eventSequences = new(
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
 
     public AgentService(ICisRepositoryContextResolver resolver, Func<DateTimeOffset>? clock = null)
         : this(resolver, [], null, clock) { }
+    // Retain the original constructor signature for already compiled module callers.
+    public AgentService(ICisRepositoryContextResolver resolver, IEnumerable<ICisAgentProvider> providers,
+        ICisWorkspaceRegistry? workspaceRegistry, Func<DateTimeOffset>? clock,
+        IEnumerable<ICisSourceEvidenceRegistrar>? sourceEvidenceRegistrars,
+        ICisBrdSourceEvidenceReconciler? sourceEvidenceReconciler,
+        IEnumerable<ICisProductDefinitionAuthority>? productDefinitionAuthorities,
+        ICisTechnicalIntentDraftPreparer? technicalIntentDraftPreparer,
+        ICisObservedReferencePreparer? observedReferencePreparer,
+        ICisSolutionDesignDrafts? solutionDesignDrafts, ICisTextGenerationService? textGeneration,
+        ICisEngineeringTaskContractReader? taskContracts)
+        : this(resolver, providers, workspaceRegistry, clock, sourceEvidenceRegistrars, sourceEvidenceReconciler,
+            productDefinitionAuthorities, technicalIntentDraftPreparer, observedReferencePreparer, solutionDesignDrafts,
+            textGeneration, taskContracts, null) { }
     public AgentService(ICisRepositoryContextResolver resolver, IEnumerable<ICisAgentProvider> providers,
         ICisWorkspaceRegistry? workspaceRegistry = null, Func<DateTimeOffset>? clock = null,
         IEnumerable<ICisSourceEvidenceRegistrar>? sourceEvidenceRegistrars = null,
@@ -158,7 +172,8 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         ICisTechnicalIntentDraftPreparer? technicalIntentDraftPreparer = null,
         ICisObservedReferencePreparer? observedReferencePreparer = null,
         ICisSolutionDesignDrafts? solutionDesignDrafts = null, ICisTextGenerationService? textGeneration = null,
-        ICisEngineeringTaskContractReader? taskContracts = null)
+        ICisEngineeringTaskContractReader? taskContracts = null,
+        IEnumerable<IChangeReadinessCheck>? readinessChecks = null)
     {
         _resolver = resolver;
         _providers = providers.OrderBy(item => item.Descriptor.Id, StringComparer.Ordinal).ToArray();
@@ -171,6 +186,7 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         _solutionDesignDrafts = solutionDesignDrafts;
         _textGeneration = textGeneration;
         _taskContracts = taskContracts;
+        _readinessChecks = (readinessChecks ?? []).ToArray();
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
         _workLedger = new AgentWorkLedger(_clock);
     }
@@ -268,7 +284,7 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         if (diagnostics.Count > 0) return New(context, "blocked", diagnostics: diagnostics);
         var target = ResolveTarget(context, taskText, targetRepositoryId, diagnostics); if (target is null || diagnostics.Count > 0) return New(context, "invalid-target", diagnostics: diagnostics);
         var selectedTransport = transport ?? provider.Descriptor.Transports[0]; var runId = NewRunId();
-        using var work = AdmitWork(context, changeId, taskId, runId + ":1", timeoutSeconds, parentExecutionId, logicalAttemptId, diagnostics, out var admissionView);
+        using var work = AdmitWork(context, changeId, taskId, runId + ":1", timeoutSeconds, parentExecutionId, logicalAttemptId, diagnostics, out var admissionView, actor);
         if (diagnostics.Count > 0) return New(context, "held", diagnostics: diagnostics) with { Work = admissionView };
         AgentResult ExecuteAdmitted()
         {
@@ -290,7 +306,8 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
                     inputDigest = CisExecutionIdentity.CaptureIfAdopted(new(working.Value.Path, target.Id, target.DocumentationRoot,
                         Path.Combine(working.Value.Path, target.DocumentationRoot), Path.Combine(working.Value.Path, target.DocumentationRoot, "catalog.yml")));
                     authorityInputDigest = target.Id != context.RepositoryId && inputDigest is not null ? CisExecutionIdentity.Capture(context) : null;
-                    authorityDossierDigest = authorityInputDigest is null ? null : CisTaskAuthorityContext.Capture(context, changeId);
+                    authorityDossierDigest = authorityInputDigest is null && CisOutcomeAuthority.Read(context, changeId) is null
+                        ? null : CaptureSelectedTaskAuthority(context, changeId, taskId);
                 }
                 catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
                 {
@@ -850,12 +867,12 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
             diagnostics.Add("ERROR: The retained agent envelope expired; prepare a new run instead of resuming.");
         if (envelope is not null && !AuthorityArtifactsCurrent(context, envelope))
             diagnostics.Add("ERROR: Bound authority context is missing, changed or stale; prepare a new run instead of resuming.");
-        if (view.Manifest.AuthorityInputDigest is { } authorityDigest)
+        if (view.Manifest.AuthorityInputDigest is not null || view.Manifest.AuthorityDossierDigest is not null)
         {
             try
             {
-                if (CisExecutionIdentity.Capture(context) != authorityDigest
-                    || CisTaskAuthorityContext.Capture(context, view.Manifest.ChangeId) != view.Manifest.AuthorityDossierDigest)
+                if (view.Manifest.AuthorityInputDigest is { } authorityDigest && CisExecutionIdentity.Capture(context) != authorityDigest
+                    || CaptureSelectedTaskAuthority(context, view.Manifest.ChangeId, view.Manifest.TaskId) != view.Manifest.AuthorityDossierDigest)
                     diagnostics.Add("ERROR: Authority execution inputs changed; prepare a new run instead of resuming.");
             }
             catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException)
@@ -868,7 +885,7 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         var directTask = IsDirectWorkRun(view.Manifest, envelope!);
         using var work = directTask ? AdmitWork(context, view.Manifest.ChangeId, view.Manifest.TaskId,
             runId + ":" + (view.Manifest.Attempt + 1).ToString(System.Globalization.CultureInfo.InvariantCulture) + ":" + Guid.NewGuid().ToString("N"),
-            requestedTimeout, null, null, diagnostics, out _) : null;
+            requestedTimeout, null, null, diagnostics, out _, actor) : null;
         if (diagnostics.Count > 0) return New(context, "held", envelope, run: view, diagnostics: diagnostics);
         AgentResult ExecuteAdmittedResume()
         {
@@ -1362,12 +1379,13 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
                 diagnostics.Add("ERROR: Bound authority context changed during execution; the result cannot establish current evidence.");
                 finalState = CisAgentRunStates.InvalidEvidence;
             }
-            if (finalState == CisAgentRunStates.Succeeded && currentManifest.AuthorityInputDigest is { } authorityDigest)
+            if (finalState == CisAgentRunStates.Succeeded
+                && (currentManifest.AuthorityInputDigest is not null || currentManifest.AuthorityDossierDigest is not null))
             {
                 try
                 {
-                    if (CisExecutionIdentity.Capture(context) != authorityDigest
-                        || CisTaskAuthorityContext.Capture(context, currentManifest.ChangeId) != currentManifest.AuthorityDossierDigest)
+                    if (currentManifest.AuthorityInputDigest is { } authorityDigest && CisExecutionIdentity.Capture(context) != authorityDigest
+                        || CaptureSelectedTaskAuthority(context, currentManifest.ChangeId, currentManifest.TaskId) != currentManifest.AuthorityDossierDigest)
                     {
                         diagnostics.Add("ERROR: Authority execution inputs changed during the participant run.");
                         finalState = CisAgentRunStates.InvalidEvidence;
@@ -1448,11 +1466,21 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         var participant = target is not null && target != context.RepositoryId;
         var selectionDigest = participant ? AuthorityDocumentSelectionDigest(context) : null;
         var relative = Relative(context.RepositoryPath, taskPath); var artifacts = new List<string> { relative };
+        var outcome = CisOutcomeAuthority.Read(context, changeId);
+        if (outcome is not null)
+        {
+            artifacts.Add(Relative(context.RepositoryPath, CisOutcomeAuthority.Path(context, changeId)));
+            foreach (var candidate in new[] { "proposal.md", "decisions.md" }.Concat(outcome.Request.VisualUi == true ? ["design.md"] : Array.Empty<string>()))
+            {
+                var path = Path.Combine(context.DocumentationPath, "changes", changeId, candidate);
+                if (File.Exists(path)) artifacts.Add(Relative(context.RepositoryPath, path));
+            }
+        }
         foreach (var candidate in new[] { "proposal.md", "impact.md", "plan.md", "design.md", "decisions.md", "test-cases.md", "test-cases.csv", "verification.md" })
-        { var path = Path.Combine(context.DocumentationPath, "changes", changeId, candidate); if (File.Exists(path)) artifacts.Add(Relative(context.RepositoryPath, path)); }
+        { var path = Path.Combine(context.DocumentationPath, "changes", changeId, candidate); if (outcome is null && File.Exists(path)) artifacts.Add(Relative(context.RepositoryPath, path)); }
         var planPath = Path.Combine(context.DocumentationPath, "changes", changeId, "plan.md");
         var planBytes = 0;
-        if (File.Exists(planPath) && FrontMatter(ReadAuthorityArtifact(context, Relative(context.RepositoryPath, planPath), ref planBytes).Content, "feature_spec_path") is { } feature
+        if (outcome is null && File.Exists(planPath) && FrontMatter(ReadAuthorityArtifact(context, Relative(context.RepositoryPath, planPath), ref planBytes).Content, "feature_spec_path") is { } feature
             && CisPathSafety.TryResolveUnderRoot(context.RepositoryPath, feature, out var featurePath) && File.Exists(featurePath))
             artifacts.Add(Relative(context.RepositoryPath, featurePath));
         foreach (var candidate in new[]
@@ -1475,7 +1503,7 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         var scopeDigest = participant ? null : Sha(string.Join("\n", artifacts.Select(path => path + ":" + DigestOptional(Path.Combine(context.RepositoryPath, path.Replace('/', Path.DirectorySeparatorChar))))));
         var digest = Sha(taskText); var id = $"{context.RepositoryId}:{changeId}:{taskId}:{digest[..12]}";
         return new(target is null ? 1 : 2, id, context.RepositoryId, changeId, taskId, provider, relative, digest, UtcNow(), taskText, artifacts,
-            ["Canonical Markdown remains authoritative.", "Do not infer approvals or completion.", "Return a structured final JSON object; do not edit CIS lifecycle evidence directly."],
+            [outcome is null ? "Canonical Markdown remains authoritative." : "The canonical outcome authorization and task state govern this derived task view.", "Do not infer approvals or completion.", "Return a structured final JSON object; do not edit CIS lifecycle evidence directly."],
             target, revision.Revision, revision.Digest, mode, permission, scopeDigest, _clock().AddHours(24).ToUniversalTime().ToString("O"),
             AuthoritySelectionDigest: selectionDigest);
     }
@@ -2529,6 +2557,11 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
     private void ValidateTaskEligibility(CisRepositoryContext context, string changeId, string taskText, List<string> diagnostics,
         IReadOnlyDictionary<string, AgentAuthorityArtifact>? snapshots = null, bool accountingOnly = false, bool nativeVerification = false)
     {
+        if (CisOutcomeAuthority.Read(context, changeId) is { } outcome)
+        {
+            ValidateOutcomeTaskEligibility(context, outcome, taskText, diagnostics, accountingOnly, nativeVerification);
+            return;
+        }
         var total = 0;
         AgentAuthorityArtifact Read(string path)
         {

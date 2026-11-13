@@ -31,7 +31,7 @@ public sealed partial class DeliveryWorkflowTests
         => Assert.Equal(expected, PlanTaskDispositionPolicy.IsTerminal(status, category));
 
     [Fact]
-    public void ChangeAndPlanBuild_BlockWhenApplicableReadinessCheckFails()
+    public void ChangeAndPlanDrafts_PrepareWithoutGrantingCanonicalApproval()
     {
         using var repository = TemporaryRepository.Create();
         var resolver = new CisRepositoryContextResolver();
@@ -40,13 +40,13 @@ public sealed partial class DeliveryWorkflowTests
 
         var create = changes.Create(new ChangeCreateRequest(
             repository.Path,
-            "Blocked change",
+            "Draft change",
             "The governed outcome is delivered.",
             []));
 
-        Assert.NotEqual(0, create.ExitCode);
-        Assert.Contains(create.Errors, error => error.Contains("technical-intent", StringComparison.Ordinal));
-        Assert.False(Directory.Exists(Path.Combine(repository.Path, "docs", "cis", "changes", "CIS-0001")));
+        Assert.Equal(0, create.ExitCode);
+        var change = Assert.IsType<ChangeDossier>(create.Change);
+        Assert.Equal("Proposed", change.Status);
 
         var services = CreateServices();
         var plans = new PlanningService(
@@ -55,13 +55,14 @@ public sealed partial class DeliveryWorkflowTests
             services.Decisions,
             resolver,
             readinessChecks: [check]);
-        var plan = plans.Build(repository.Path, "CIS-9999");
-        Assert.NotEqual(0, plan.ExitCode);
-        Assert.Contains(plan.Errors, error => error.Contains("technical-intent", StringComparison.Ordinal));
+        var plan = plans.Build(repository.Path, change.Id);
+        Assert.Equal(0, plan.ExitCode);
+        Assert.Equal("Draft", plan.PlanStatus);
+        Assert.NotEqual(0, plans.Approve(repository.Path, change.Id).ExitCode);
     }
 
     [Fact]
-    public void ChangeCreate_WritesCompleteCatalogedDossierAgainstExactGraphBaseline()
+    public void ChangeCreate_WritesMinimalCatalogedDraftAgainstExactGraphBaseline()
     {
         using var repository = TemporaryRepository.Create();
         var services = CreateServices();
@@ -77,18 +78,18 @@ public sealed partial class DeliveryWorkflowTests
         var change = Assert.IsType<ChangeDossier>(result.Change);
         Assert.Equal("CIS-0001", change.Id);
         Assert.StartsWith("sha256:", change.GraphBuildId, StringComparison.Ordinal);
-        foreach (var file in new[] { "proposal.md", "impact.md", "decisions.md", "plan.md", "wireframes.md", "design.md", "test-cases.md", "test-cases.csv", "verification.md", "events.jsonl" })
+        foreach (var file in new[] { "proposal.md", "creation-inputs.json", "events.jsonl" })
         {
             Assert.True(File.Exists(services.Changes.DossierFile(change, file)));
         }
 
         var catalog = File.ReadAllText(Path.Combine(repository.Path, "docs", "cis", "catalog.yml"));
         Assert.Contains("changes/CIS-0001/proposal.md", catalog, StringComparison.Ordinal);
-        Assert.Contains("changes/CIS-0001/plan.md", catalog, StringComparison.Ordinal);
-        Assert.Contains("changes/CIS-0001/verification.md", catalog, StringComparison.Ordinal);
-        Assert.Contains("changes/CIS-0001/design.md", catalog, StringComparison.Ordinal);
-        Assert.Contains("changes/CIS-0001/wireframes.md", catalog, StringComparison.Ordinal);
-        Assert.Contains("changes/CIS-0001/test-cases.md", catalog, StringComparison.Ordinal);
+        foreach (var file in new[] { "impact.md", "decisions.md", "plan.md", "wireframes.md", "design.md", "test-cases.md", "test-cases.csv", "verification.md" })
+        {
+            Assert.False(File.Exists(services.Changes.DossierFile(change, file)));
+            Assert.DoesNotContain("changes/CIS-0001/" + file, catalog, StringComparison.Ordinal);
+        }
         Assert.True(Directory.Exists(Path.Combine(Path.GetDirectoryName(
             services.Changes.DossierFile(change, "plan.md"))!, "agent-tasks")));
         Assert.Equal(0, services.DocsValidation.Validate(repository.Path, strict: false).ExitCode);
@@ -319,7 +320,8 @@ status: Active
         Assert.NotEmpty(analysis.Findings);
         Assert.True(analysis.Completeness!.Proposed > 0);
         Assert.False(analysis.Completeness.PlanReady);
-        Assert.NotEqual(0, services.Plans.Build(repository.Path, change.Id).ExitCode);
+        // Draft preparation is allowed. Retain the explicit accepted-impact route
+        // here instead of creating an outcome-derived plan before review.
 
         foreach (var finding in analysis.Findings)
         {
@@ -521,7 +523,7 @@ status: Draft
 
 | ID | Surface | Requirement | Acceptance criteria |
 | --- | --- | --- | --- |
-| REVIEW-001 | backend | An eligible order can be approved once. | A repeated approval is idempotent and preserves the approved state. |
+| REVIEW-001 | backend | An eligible order can be approved once. | A repeated approval is idempotent and preserves the approved state. Its manual test catalogue retains stable case identities and automated coverage references. |
 """);
         repository.Write("node_modules/example/order.test.ts", "test('TC-REVIEW-001-001 vendor copy', () => {});");
 
@@ -897,6 +899,7 @@ change is required.
             "Add order list",
             "Backoffice users can inspect orders in a consistent application shell.",
             [new ChangeRoot("orders-api", "component")])).Change);
+        Assert.Empty(services.Changes.EnsureApplicableDocuments(change, visualUi: true));
         var wireframePath = services.Changes.DossierFile(change, "wireframes.md");
         File.WriteAllText(wireframePath, """
 ---
@@ -1094,6 +1097,7 @@ feature_spec_sha256: "{featureSha}"
         var source = Assert.IsType<ChangeDossier>(services.Changes.Create(new ChangeCreateRequest(
             repository.Path, "Source design", "The approved source state is available.",
             [new ChangeRoot("todo-web", "component")])).Change);
+        Assert.Empty(services.Changes.EnsureApplicableDocuments(source, visualUi: true));
         WriteDesignWireframes(services.Changes.DossierFile(source, "wireframes.md"), source.Id,
             ("CUS-SOURCE", "customer"));
         Assert.Equal(0, services.Designs.Scaffold(new DesignScaffoldRequest(
@@ -1105,6 +1109,7 @@ feature_spec_sha256: "{featureSha}"
         var target = Assert.IsType<ChangeDossier>(services.Changes.Create(new ChangeCreateRequest(
             repository.Path, "Coverage design", "Existing visuals are reused and only the gap is rendered.",
             [new ChangeRoot("todo-web", "component")])).Change);
+        Assert.Empty(services.Changes.EnsureApplicableDocuments(target, visualUi: true));
         WriteDesignWireframes(services.Changes.DossierFile(target, "wireframes.md"), target.Id,
             ("CUS-REUSED", "customer"), ("PUB-NEW", "public"));
         var reuseRequest = new DesignReuseRequest(repository.Path, target.Id, source.Id,
@@ -1519,7 +1524,7 @@ status: Draft
         var result = services.Plans.ImportSpec(new FeatureSpecImportRequest(
             repository.Path, change.Id, "docs/cis/specs/public-cache.md"));
 
-        Assert.True(result.ExitCode == 0, string.Join(Environment.NewLine, result.Errors));
+        Assert.True(result.ExitCode == 0, string.Join(Environment.NewLine, result.Errors.Concat(result.Validation?.Errors ?? [])));
         Assert.False(result.Source!.FrontendChanges);
         Assert.True(result.Source.PublicEndpoints);
         Assert.DoesNotContain(result.WorkItems, item => item.Category is "wireframe" or "design" or "frontend");
@@ -2290,6 +2295,24 @@ status: Draft
         Assert.Equal(2, implicitMigration.ExitCode);
         Assert.Equal("migration-required", implicitMigration.Status);
         Assert.Contains(implicitMigration.Errors, error => error.Contains("migrate-type", StringComparison.Ordinal));
+        var originalTask = File.ReadAllBytes(taskPath);
+        var authored = new CisTaskVerificationObligation("authored-search-boundary", [legacy.AcceptanceCriteria],
+            "Retain the specifically reviewed original provider contract.", "review", ["The original accepted search boundary."])
+            { BasisReferences = legacy.RequirementIds };
+        File.WriteAllText(taskPath, System.Text.RegularExpressions.Regex.Replace(File.ReadAllText(taskPath),
+            @"(?m)^verification_obligations:.*$", _ => "verification_obligations: "
+                + JsonSerializer.Serialize(legacy.VerificationObligations.Append(authored).ToArray())));
+        var dossier = Path.GetDirectoryName(Path.GetDirectoryName(taskPath)!)!;
+        var protectedContract = SnapshotOutcomeDossier(dossier);
+        var authoredHeld = services.Plans.MigrateTaskType(new TaskTypeMigrationRequest(
+            repository.Path, change.Id, legacy.Id, "parr.search.projection", "architect",
+            "An incompatible authored criterion must be preserved rather than replaced by generated defaults."));
+        Assert.NotEqual(0, authoredHeld.ExitCode);
+        Assert.False(authoredHeld.Applied);
+        Assert.Contains(authoredHeld.Errors, error => error.Contains("authored", StringComparison.Ordinal));
+        AssertOutcomeDossierUnchanged(protectedContract, dossier);
+        // Restore the positive fixture after checking the separate authored-contract hold.
+        File.WriteAllBytes(taskPath, originalTask);
         var migrated = services.Plans.MigrateTaskType(new TaskTypeMigrationRequest(
             repository.Path, change.Id, legacy.Id, "parr.search.projection", "architect",
             "Move the existing task without losing review evidence."));
@@ -2300,9 +2323,9 @@ status: Draft
         Assert.Equal("parr.search.projection", current.TaskTypeKey);
         Assert.Equal("2.0", current.TaskTypeVersion);
         Assert.Equal("Draft", current.Status);
-        Assert.Equal(current.AcceptanceCriteria, Assert.Single(Assert.Single(current.VerificationObligations).Criteria));
+        Assert.Equal(current.AcceptanceCriteria, Assert.Single(AssertEmbeddedTaskProtocol(current).Criteria));
         var reloaded = Assert.Single(CreateServices(taskTypes: registry).Plans.Show(repository.Path, change.Id).WorkItems, item => item.Id == legacy.Id);
-        Assert.Equal(current.AcceptanceCriteria, Assert.Single(Assert.Single(reloaded.VerificationObligations).Criteria));
+        Assert.Equal(current.AcceptanceCriteria, Assert.Single(AssertEmbeddedTaskProtocol(reloaded).Criteria));
         Assert.Equal(legacy.InstanceKey, reloaded.InstanceKey);
         var content = File.ReadAllText(taskPath);
         Assert.Contains(humanEvidence, content, StringComparison.Ordinal);
@@ -2317,7 +2340,11 @@ status: Draft
         var repeated = services.Plans.ImportSpec(new FeatureSpecImportRequest(
             repository.Path, change.Id, "docs/cis/specs/search-feature-spec.md"));
         Assert.True(repeated.ExitCode == 0, string.Join("; ", repeated.Errors.Concat(repeated.Validation?.Errors ?? [])));
-        Assert.Single(repeated.WorkItems, item => item.TaskTypeKey == "parr.search.projection");
+        var retained = Assert.Single(repeated.WorkItems, item => item.TaskTypeKey == "parr.search.projection");
+        Assert.Equal(legacy.Id, retained.Id);
+        Assert.Equal(legacy.InstanceKey, retained.InstanceKey);
+        Assert.Equal(JsonSerializer.Serialize(current.VerificationObligations), JsonSerializer.Serialize(retained.VerificationObligations));
+        AssertEmbeddedTaskProtocol(retained);
         var reconciled = File.ReadAllText(taskPath);
         Assert.Contains(humanEvidence, reconciled, StringComparison.Ordinal);
         Assert.Contains("example.test/issues/42", reconciled, StringComparison.Ordinal);

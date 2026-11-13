@@ -45,6 +45,7 @@ public sealed class ImpactAnalysisService
         }
 
         var prior = ReadImpact(change);
+        if (prior.Errors.Count > 0) return Error(change.Id, string.Join("; ", prior.Errors));
         var diagnostics = new List<string>();
         var allFindings = new Dictionary<string, ImpactFinding>(StringComparer.Ordinal);
         var truncated = false;
@@ -130,6 +131,7 @@ public sealed class ImpactAnalysisService
         }
 
         var document = ReadImpact(change);
+        if (document.Errors.Count > 0) return Error(change.Id, string.Join("; ", document.Errors));
         var findings = string.IsNullOrWhiteSpace(state)
             ? document.Findings
             : document.Findings.Where(item => string.Equals(item.State, state, StringComparison.OrdinalIgnoreCase)).ToArray();
@@ -160,6 +162,7 @@ public sealed class ImpactAnalysisService
         }
 
         var document = ReadImpact(change);
+        if (document.Errors.Count > 0) return Error(change.Id, string.Join("; ", document.Errors));
         var index = document.Findings.ToList().FindIndex(item => item.Id == findingId);
         if (index < 0)
         {
@@ -167,7 +170,7 @@ public sealed class ImpactAnalysisService
         }
 
         var findings = document.Findings.ToArray();
-        findings[index] = findings[index] with { State = state, ReviewReason = Clean(reason) };
+        findings[index] = findings[index] with { State = state, ReviewReason = Clean(reason), OutcomeDisposition = null };
         WriteImpact(change, findings, document.Truncated);
         _changes.AppendEvent(change, $"impact-{state}", new Dictionary<string, string>
         {
@@ -175,6 +178,75 @@ public sealed class ImpactAnalysisService
             ["reason"] = Clean(reason),
         });
         return new ImpactResult(state, change.Id, change.GraphBuildId, findings, CalculateCompleteness(findings, document.Truncated), [], true);
+    }
+
+    public ImpactResult DispositionUnderOutcome(string repositoryPath, string changeId, string findingId,
+        string actor, IReadOnlyList<string> scopeIds, string reason)
+    {
+        try
+        {
+            var change = _changes.Read(repositoryPath, changeId);
+            if (change is null) return Error(changeId, "The change dossier was not found.");
+            var authorization = _changes.ReadAuthorization(repositoryPath, changeId);
+            if (authorization is null || !authorization.Request.OrganizeTasks || !CisOutcomeAuthority.IsController(authorization, actor))
+                return Error(changeId, "The actor needs delegated task-organization authority under the existing outcome.");
+            if (scopeIds is not { Count: > 0 } || string.IsNullOrWhiteSpace(reason))
+                return Error(changeId, "Supply explicit authorized scope IDs and the controller's disposition reason.");
+            var basis = CisOutcomeAuthority.ScopeBasis(authorization, scopeIds);
+            var document = ReadImpact(change);
+            if (document.Errors.Count > 0) return Error(changeId, string.Join("; ", document.Errors));
+            var finding = document.Findings.SingleOrDefault(item => item.Id == findingId);
+            if (finding is null) return Error(changeId, "The impact finding was not found.");
+            if (finding.State is "rejected" or "deferred")
+                return Error(changeId, "Preserve the existing rejected/deferred decision; resolve that specific difference before deriving acceptance.");
+            var graph = _graph.Find(repositoryPath, new(finding.Target, null, null, null, null, 1000));
+            var nodes = graph.Nodes.Where(node => node.Key == finding.Target).ToArray();
+            if (graph.ExitCode != 0 || graph.Truncated || graph.Freshness != "fresh"
+                || graph.Build?.Id != change.GraphBuildId || nodes.Length != 1)
+                return Error(changeId, "Derived impact acceptance requires the exact fresh target and retained graph baseline.");
+            var node = nodes[0];
+            if (node.RepositoryId != graph.Build!.RepositoryId || node.Kind == "repository")
+                return Error(changeId, "Clarify repository-wide or foreign impact scope explicitly; a repository-profile location grants no source scope.");
+            string[] paths = node.Kind == "component"
+                ? node.Properties.TryGetValue("root", out var root) ? new[] { root } : []
+                : node.Locations.Select(location => location.Path).Distinct(StringComparer.Ordinal).ToArray();
+            paths = paths.Select(path => path.Replace('\\', '/').TrimEnd('/')).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+            var scopes = authorization.Request.Scope.Where(scope => scopeIds.Contains(scope.Id, StringComparer.Ordinal)).ToArray();
+            if (paths.Length == 0 || paths.Any(path => !CisPathSafety.TryResolveUnderRoot(repositoryPath, path, out var absolute, allowRoot: true)
+                || CisPathSafety.ContainsReparsePoint(repositoryPath, absolute)
+                || !scopes.SelectMany(scope => scope.Paths).Any(prefix => Covered(path, prefix))))
+                return Error(changeId, "The finding has missing or out-of-scope concrete paths; present that specific scope difference for a decision.");
+            if (finding.State == "accepted")
+                return new("unchanged", change.Id, change.GraphBuildId, document.Findings,
+                    CalculateCompleteness(document.Findings, document.Truncated), [], false);
+            var provenance = new ImpactOutcomeDisposition(authorization.Id, authorization.Digest,
+                scopeIds.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray(), basis,
+                authorization.Reviewer, authorization.Request.DecisionReference, actor.Trim(), reason.Trim(), paths);
+            var findings = document.Findings.Select(item => item.Id == findingId ? item with
+            {
+                State = "accepted", OutcomeDisposition = provenance,
+                ReviewReason = Clean($"Derived under outcome {authorization.Id} by {actor.Trim()}: {reason}")
+            } : item).ToArray();
+            WriteImpact(change, findings, document.Truncated);
+            _changes.AppendEvent(change, "impact-derived", new Dictionary<string, string>
+            {
+                ["findingId"] = findingId, ["authorizationId"] = authorization.Id,
+                ["authorizationDigest"] = authorization.Digest, ["reviewer"] = authorization.Reviewer,
+                ["decisionReference"] = authorization.Request.DecisionReference, ["actor"] = actor.Trim(),
+                ["scopeIds"] = JsonSerializer.Serialize(provenance.ScopeIds), ["scopeBasis"] = basis, ["reason"] = reason.Trim()
+            });
+            return new("derived", change.Id, change.GraphBuildId, findings,
+                CalculateCompleteness(findings, document.Truncated), [], true);
+
+            bool Covered(string path, string prefix)
+            {
+                path = path.Replace('\\', '/').TrimEnd('/');
+                prefix = prefix.Replace('\\', '/').TrimEnd('/');
+                return prefix == "." || path.Equals(prefix, StringComparison.Ordinal) || path.StartsWith(prefix + "/", StringComparison.Ordinal);
+            }
+        }
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException or ArgumentException)
+        { return Error(changeId, error.Message); }
     }
 
     public ImpactResult CarryForwardApprovedFeature(
@@ -190,6 +262,7 @@ public sealed class ImpactAnalysisService
             return Error(changeId, $"Change dossier was not found: {changeId}");
 
         var document = ReadImpact(change);
+        if (document.Errors.Count > 0) return Error(change.Id, string.Join("; ", document.Errors));
         if (document.Findings.Count == 0)
             return Error(change.Id, "Impact analysis must run before approved feature authority can carry forward.");
         if (document.Truncated)
@@ -234,6 +307,7 @@ public sealed class ImpactAnalysisService
         }
 
         var document = ReadImpact(change);
+        if (document.Errors.Count > 0) return Error(change.Id, string.Join("; ", document.Errors));
         return new ImpactResult(
             "assessed",
             change.Id,
@@ -260,7 +334,51 @@ public sealed class ImpactAnalysisService
             .Where(item => item is not null)
             .Cast<ImpactFinding>()
             .ToArray();
-        return new ImpactDocument(findings, truncated);
+        try
+        {
+            const string prefix = "outcome_dispositions: ";
+            var encoded = lines.SingleOrDefault(line => line.StartsWith(prefix, StringComparison.Ordinal));
+            var provenance = encoded is null ? new Dictionary<string, ImpactOutcomeDisposition>()
+                : JsonSerializer.Deserialize<Dictionary<string, ImpactOutcomeDisposition>>(encoded[prefix.Length..])
+                    ?? throw new JsonException("Missing impact derivation provenance.");
+            if (provenance.Keys.Except(findings.Select(item => item.Id), StringComparer.Ordinal).Any()
+                || provenance.Values.Any(value => value is null || string.IsNullOrWhiteSpace(value.AuthorizationId)
+                    || string.IsNullOrWhiteSpace(value.AuthorizationDigest) || string.IsNullOrWhiteSpace(value.ScopeBasis)
+                    || string.IsNullOrWhiteSpace(value.Reviewer) || string.IsNullOrWhiteSpace(value.DecisionReference)
+                    || string.IsNullOrWhiteSpace(value.Actor) || string.IsNullOrWhiteSpace(value.Reason)
+                    || value.ScopeIds is not { Count: > 0 } || value.Paths is not { Count: > 0 }))
+                throw new JsonException("Invalid impact derivation provenance.");
+            if (findings.Any(item => item.ReviewReason.StartsWith("Derived under outcome ", StringComparison.Ordinal) && !provenance.ContainsKey(item.Id)))
+                throw new JsonException("Retain the original impact derivation provenance.");
+            if (provenance.Count > 0)
+            {
+                var authorization = _changes.ReadAuthorization(change.RepositoryPath, change.Id)
+                    ?? throw new JsonException("Retain the outcome authorization for these derived findings.");
+                foreach (var value in provenance.Values)
+                {
+                    var request = value.AuthorizationDigest == authorization.Digest ? authorization.Request
+                        : authorization.History.SingleOrDefault(revision => revision.Digest == value.AuthorizationDigest)?.Request;
+                    if (request is null || value.AuthorizationId != authorization.Id || value.Reviewer != authorization.Reviewer
+                        || value.DecisionReference != request.DecisionReference)
+                        throw new JsonException("Impact derivation differs from its actual retained authorization revision.");
+                    var revision = authorization with { Request = request, Digest = value.AuthorizationDigest };
+                    if (!request.OrganizeTasks || !CisOutcomeAuthority.IsController(revision, value.Actor)
+                        || CisOutcomeAuthority.ScopeBasis(revision, value.ScopeIds) != value.ScopeBasis)
+                        throw new JsonException("Impact derivation differs from its authorized controller or selected scope.");
+                    var prefixes = request.Scope.Where(scope => value.ScopeIds.Contains(scope.Id, StringComparer.Ordinal))
+                        .SelectMany(scope => scope.Paths).ToArray();
+                    if (value.Paths.Any(path => !CisPathSafety.TryResolveUnderRoot(change.RepositoryPath, path, out var absolute, allowRoot: true)
+                        || CisPathSafety.ContainsReparsePoint(change.RepositoryPath, absolute)
+                        || !prefixes.Any(prefix => prefix == "." || path.Equals(prefix, StringComparison.Ordinal)
+                            || path.StartsWith(prefix + "/", StringComparison.Ordinal))))
+                        throw new JsonException("Retained impact paths differ from their authorized scope.");
+                }
+            }
+            return new ImpactDocument(findings.Select(item => provenance.TryGetValue(item.Id, out var value)
+                ? item with { OutcomeDisposition = value } : item).ToArray(), truncated);
+        }
+        catch (Exception error) when (error is JsonException or InvalidOperationException or IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException)
+        { return new([], true) { Errors = ["Impact derivation provenance is invalid: " + error.Message] }; }
     }
 
     public static ImpactCompleteness CalculateCompleteness(IReadOnlyList<ImpactFinding> findings, bool truncated)
@@ -455,6 +573,7 @@ public sealed class ImpactAnalysisService
             {
                 State = existing.State,
                 ReviewReason = existing.ReviewReason,
+                OutcomeDisposition = existing.OutcomeDisposition,
             }
             : finding;
     }
@@ -473,12 +592,15 @@ public sealed class ImpactAnalysisService
         builder.AppendLine($"change_id: {change.Id}");
         builder.AppendLine($"graph_build_id: {JsonSerializer.Serialize(change.GraphBuildId)}");
         builder.AppendLine($"analysis_truncated: {truncated.ToString().ToLowerInvariant()}");
-        builder.AppendLine("authority: human-reviewed");
+        builder.AppendLine(findings.Any(item => item.OutcomeDisposition is not null) ? "authority: outcome-derived" : "authority: human-reviewed");
+        var provenance = findings.Where(item => item.OutcomeDisposition is not null)
+            .ToDictionary(item => item.Id, item => item.OutcomeDisposition, StringComparer.Ordinal);
+        if (provenance.Count > 0) builder.AppendLine("outcome_dispositions: " + JsonSerializer.Serialize(provenance));
         builder.AppendLine("---");
         builder.AppendLine();
         builder.AppendLine("# Impact analysis");
         builder.AppendLine();
-        builder.AppendLine("Deterministic findings are proposals until explicitly accepted, rejected, or deferred by a human.");
+        builder.AppendLine("Findings remain proposals until a recorded human decision or eligible derivation supplies their disposition. Derived rows retain original authority separately from the controller action.");
         builder.AppendLine();
         builder.AppendLine("## Findings");
         builder.AppendLine();
@@ -500,6 +622,7 @@ public sealed class ImpactAnalysisService
         builder.AppendLine($"- Deferred: {completeness.Deferred}");
         builder.AppendLine($"- Traversal truncated: {completeness.Truncated.ToString().ToLowerInvariant()}");
         File.WriteAllText(_changes.DossierFile(change, "impact.md"), builder.ToString());
+        _changes.RegisterExistingDocuments(change);
     }
 
     private static ImpactFinding? ParseFinding(string line)
@@ -540,4 +663,7 @@ public sealed class ImpactAnalysisService
         => new("invalid", changeId, null, [], null, [$"ERROR: {message}"], false);
 }
 
-public sealed record ImpactDocument(IReadOnlyList<ImpactFinding> Findings, bool Truncated);
+public sealed record ImpactDocument(IReadOnlyList<ImpactFinding> Findings, bool Truncated)
+{
+    public IReadOnlyList<string> Errors { get; init; } = [];
+}

@@ -10,6 +10,7 @@ namespace Cis.Modules.Change;
 
 public sealed partial class ChangeDossierStore
 {
+    private const string CreationInputsFileName = "creation-inputs.json";
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -19,17 +20,21 @@ public sealed partial class ChangeDossierStore
     private readonly Func<DateTimeOffset> _clock;
     private readonly IReadOnlyList<IChangeReadinessCheck> _readinessChecks;
     private readonly ICisWorkspaceRegistry? _workspaceRegistry;
+    private readonly IReadOnlyList<IChangeDocumentApplicabilitySource> _documentApplicabilitySources;
 
     public ChangeDossierStore(
         ICisRepositoryContextResolver resolver,
         Func<DateTimeOffset>? clock = null,
         IEnumerable<IChangeReadinessCheck>? readinessChecks = null,
-        ICisWorkspaceRegistry? workspaceRegistry = null)
+        ICisWorkspaceRegistry? workspaceRegistry = null,
+        IEnumerable<IChangeDocumentApplicabilitySource>? documentApplicabilitySources = null)
     {
         _resolver = resolver;
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
         _readinessChecks = (readinessChecks ?? []).ToArray();
         _workspaceRegistry = workspaceRegistry;
+        _documentApplicabilitySources = (documentApplicabilitySources
+            ?? _readinessChecks.OfType<IChangeDocumentApplicabilitySource>()).ToArray();
     }
 
     public ChangeResult Create(ChangeCreateRequest request)
@@ -43,17 +48,6 @@ public sealed partial class ChangeDossierStore
         if (string.IsNullOrWhiteSpace(request.Title) || string.IsNullOrWhiteSpace(request.Outcome))
         {
             return Failure(["Title and outcome are required."]);
-        }
-
-        var readinessErrors = _readinessChecks
-            .Select(check => check.Evaluate(resolution.Context.RepositoryPath))
-            .Where(result => result.Applicable && !result.Ready)
-            .SelectMany(result => result.Errors.Select(error => $"[{result.Check}] {error}"))
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
-        if (readinessErrors.Length > 0)
-        {
-            return Failure(readinessErrors);
         }
 
         var context = resolution.Context;
@@ -107,15 +101,8 @@ public sealed partial class ChangeDossierStore
         Directory.CreateDirectory(dossierPath);
         Directory.CreateDirectory(Path.Combine(dossierPath, "agent-tasks"));
         Directory.CreateDirectory(Path.Combine(dossierPath, "assets"));
+        WriteNew(Path.Combine(dossierPath, CreationInputsFileName), JsonSerializer.Serialize(change.RepositoryBaselines ?? []));
         WriteNew(Path.Combine(dossierPath, "proposal.md"), RenderProposal(change));
-        WriteNew(Path.Combine(dossierPath, "impact.md"), RenderEmptyImpact(change));
-        WriteNew(Path.Combine(dossierPath, "decisions.md"), RenderEmptyDecisions(change));
-        WriteNew(Path.Combine(dossierPath, "plan.md"), RenderEmptyPlan(change));
-        WriteNew(Path.Combine(dossierPath, "wireframes.md"), RenderEmptyWireframes(change));
-        WriteNew(Path.Combine(dossierPath, "design.md"), RenderEmptyDesign(change));
-        WriteNew(Path.Combine(dossierPath, "test-cases.md"), RenderEmptyManualTestCases(change));
-        WriteNew(Path.Combine(dossierPath, "test-cases.csv"), RenderEmptyManualTestCasesCsv());
-        WriteNew(Path.Combine(dossierPath, "verification.md"), RenderEmptyVerification(change));
         WriteNew(Path.Combine(dossierPath, "events.jsonl"), string.Empty);
         AppendEvent(change, "change-created", new Dictionary<string, string>
         {
@@ -125,6 +112,67 @@ public sealed partial class ChangeDossierStore
         });
         RegisterCatalogEntries(context, change);
         return new ChangeResult("created", change, [change], [], Applied: true);
+    }
+
+    public bool IsProportionate(ChangeDossier change)
+        => ReadFrontMatter(AbsoluteDossierFile(change, "proposal.md"))
+            .TryGetValue("record_format", out var format) && format == "proportionate";
+
+    public void RegisterExistingDocuments(ChangeDossier change)
+    {
+        var context = _resolver.Resolve(change.RepositoryPath).Context;
+        if (context is not null) RegisterCatalogEntries(context, change);
+    }
+
+    public ChangeDocumentApplicability DocumentApplicability(ChangeDossier change,
+        bool? visualUi = null, bool? manualTestCatalogue = null, bool supersedesAuthorization = false)
+    {
+        var context = _resolver.Resolve(change.RepositoryPath).Context;
+        CisOutcomeAuthorization? authority;
+        try { authority = context is null || supersedesAuthorization ? null : CisOutcomeAuthority.Read(context, change.Id); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException)
+        { return new(null, false, [$"Cannot establish document applicability from the retained outcome authorization: {error.Message}"]); }
+        var declaredVisualUi = authority?.Request.VisualUi;
+        var conflictsWithAuthority = visualUi.HasValue && declaredVisualUi.HasValue && visualUi != declaredVisualUi;
+        visualUi ??= authority?.Request.VisualUi;
+        manualTestCatalogue = manualTestCatalogue == true || authority?.Request.ManualTestCatalogue == true;
+        var sources = _documentApplicabilitySources.Select(source => source.DocumentApplicability(change.RepositoryPath))
+            .Where(source => source.Applicable).ToArray();
+        List<string> errors = visualUi == false ? [] : sources.SelectMany(source => source.Errors).ToList();
+        if (conflictsWithAuthority)
+            errors.Add("Clarify visual UI applicability that conflicts with the authorized outcome before continuing.");
+        var values = sources.Where(source => source.VisualUi.HasValue).Select(source => source.VisualUi!.Value).Distinct().ToArray();
+        if (values.Length > 1)
+            errors.Add("Clarify conflicting approved visual UI applicability sources before continuing.");
+        if (visualUi == true && values.Contains(false))
+            errors.Add("The declared visual UI outcome conflicts with accepted no-UI scope. Review that scope change explicitly.");
+        return new(visualUi ?? (values.Length == 1 ? values[0] : null), manualTestCatalogue ?? false,
+            errors.Distinct(StringComparer.Ordinal).ToArray());
+    }
+
+    public IReadOnlyList<string> EnsureApplicableDocuments(ChangeDossier change,
+        bool? visualUi = null, bool? manualTestCatalogue = null)
+    {
+        var applicability = DocumentApplicability(change, visualUi, manualTestCatalogue);
+        if (applicability.Errors.Count > 0) return applicability.Errors;
+        if (applicability.VisualUi == true)
+        {
+            Ensure("wireframes.md", RenderEmptyWireframes(change));
+            Ensure("design.md", RenderEmptyDesign(change));
+        }
+        if (applicability.ManualTestCatalogue)
+        {
+            Ensure("test-cases.md", RenderEmptyManualTestCases(change));
+            Ensure("test-cases.csv", RenderEmptyManualTestCasesCsv());
+        }
+        RegisterExistingDocuments(change);
+        return [];
+
+        void Ensure(string name, string content)
+        {
+            var path = AbsoluteDossierFile(change, name);
+            if (!File.Exists(path)) WriteNew(path, content);
+        }
     }
 
     public ChangeResult List(string repositoryPath)
@@ -191,7 +239,22 @@ public sealed partial class ChangeDossierStore
         }
 
         var repositoryBaselines = Array.Empty<ChangeRepositoryBaseline>();
-        if (metadata.TryGetValue("repository_baselines", out var baselinesJson))
+        if (metadata.TryGetValue("repository_baselines_path", out var inputsPath))
+        {
+            try
+            {
+                if (inputsPath != CreationInputsFileName
+                    || !metadata.TryGetValue("repository_baselines_sha256", out var expectedDigest)) return null;
+                var path = Path.Combine(Path.GetDirectoryName(proposalPath)!, CreationInputsFileName);
+                if (CisPathSafety.ContainsReparsePoint(resolution.Context.RepositoryPath, path)) return null;
+                var bytes = File.ReadAllBytes(path);
+                if (CreationInputsDigest(bytes) != expectedDigest) return null;
+                repositoryBaselines = JsonSerializer.Deserialize<ChangeRepositoryBaseline[]>(bytes, JsonOptions) ?? [];
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException)
+            { return null; }
+        }
+        else if (metadata.TryGetValue("repository_baselines", out var baselinesJson))
         {
             try
             {
@@ -294,10 +357,13 @@ public sealed partial class ChangeDossierStore
         proposal = ReplaceFrontMatterValue(proposal, "baseline_kind", baselineKind);
         proposal = ReplaceFrontMatterValue(proposal, "baseline", baseline);
         proposal = ReplaceFrontMatterValue(proposal, "graph_build_id", manifest.BuildId);
-        proposal = ReplaceFrontMatterValue(
-            proposal,
-            "repository_baselines",
-            JsonSerializer.Serialize(repositoryBaselines));
+        if (ReadFrontMatter(proposalPath).ContainsKey("repository_baselines_path"))
+        {
+            var content = JsonSerializer.Serialize(repositoryBaselines);
+            File.WriteAllText(AbsoluteDossierFile(change, CreationInputsFileName), content, new UTF8Encoding(false));
+            proposal = ReplaceFrontMatterValue(proposal, "repository_baselines_sha256", CreationInputsDigest(Encoding.UTF8.GetBytes(content)));
+        }
+        else proposal = ReplaceFrontMatterValue(proposal, "repository_baselines", JsonSerializer.Serialize(repositoryBaselines));
         File.WriteAllText(proposalPath, proposal);
 
         var updated = change with
@@ -400,6 +466,7 @@ public sealed partial class ChangeDossierStore
         builder.AppendLine("---");
         builder.AppendLine($"title: {Yaml(change.Title)}");
         builder.AppendLine("type: change-proposal");
+        builder.AppendLine("record_format: proportionate");
         builder.AppendLine($"status: {change.Status}");
         builder.AppendLine($"change_id: {change.Id}");
         builder.AppendLine($"outcome: {Yaml(change.Outcome)}");
@@ -407,8 +474,9 @@ public sealed partial class ChangeDossierStore
         builder.AppendLine($"baseline: {Yaml(change.Baseline)}");
         builder.AppendLine($"graph_build_id: {Yaml(change.GraphBuildId)}");
         builder.AppendLine($"impact_roots: {Yaml(rootsJson)}");
-        builder.AppendLine($"repository_baselines: {Yaml(JsonSerializer.Serialize(change.RepositoryBaselines ?? []))}");
-        builder.AppendLine("authority: human-reviewed");
+        builder.AppendLine($"repository_baselines_path: {CreationInputsFileName}");
+        builder.AppendLine($"repository_baselines_sha256: {Yaml(CreationInputsDigest(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(change.RepositoryBaselines ?? []))))}");
+        builder.AppendLine("authority: proposed");
         builder.AppendLine("---");
         builder.AppendLine();
         builder.AppendLine($"# {change.Id}: {change.Title}");
@@ -434,8 +502,8 @@ public sealed partial class ChangeDossierStore
         builder.AppendLine();
         builder.AppendLine("## Constraints");
         builder.AppendLine();
-        builder.AppendLine("- Human authority is required for impact disposition and plan approval; `cis plan derive` may carry forward an exact current feature approval without requesting it again.");
-        builder.AppendLine("- Scope expansion must be recorded as a new finding or decision.");
+        builder.AppendLine("- Necessary tasks and supporting work derive from the recorded outcome authorization.");
+        builder.AppendLine("- Changes outside its scope or overall limits require a specific decision.");
         builder.AppendLine();
         builder.AppendLine("## Acceptance criteria");
         builder.AppendLine();
@@ -804,6 +872,7 @@ Rejected PNG files are removed. Preserve their manifest hashes and review eviden
             ("verification.md", "verification-record", "verification"),
         })
         {
+            if (!File.Exists(AbsoluteDossierFile(change, file))) continue;
             var stableId = $"{context.RepositoryId}:change:{change.Id.ToLowerInvariant()}:{suffix}";
             if (catalog.Contains($"id: {stableId}", StringComparison.Ordinal))
             {
@@ -864,6 +933,9 @@ Rejected PNG files are removed. Preserve their manifest hashes and review eviden
             fileName);
 
     private static string Yaml(string value) => JsonSerializer.Serialize(value);
+
+    private static string CreationInputsDigest(byte[] bytes)
+        => "sha256:" + Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
 
     private static string Unquote(string value)
     {

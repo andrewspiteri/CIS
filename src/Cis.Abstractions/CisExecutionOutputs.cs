@@ -6,7 +6,7 @@ namespace Cis.Abstractions;
 internal sealed class CisExecutionOutputs
 {
     private static readonly HashSet<string> Names = new(StringComparer.OrdinalIgnoreCase)
-    { "bin", "obj", "node_modules", ".next", ".nuxt", ".stryker-tmp", "TestResults", "coverage", "artifacts", "dist", ".vs", ".idea", "__pycache__", ".venv" };
+    { "bin", "obj", "node_modules", ".next", ".nuxt", ".stryker-tmp", "TestResults", "coverage", "artifacts", ".artifacts", ".codex-tmp", "dist", ".vs", ".idea", "__pycache__", ".venv" };
     private readonly HashSet<string>? _gitInputDirectories;
 
     internal CisExecutionOutputs(string root)

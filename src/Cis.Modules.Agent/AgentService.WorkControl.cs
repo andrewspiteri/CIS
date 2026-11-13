@@ -19,10 +19,20 @@ public sealed partial class AgentService
         if (context is null) return WorkFailure(diagnostics);
         try
         {
+            var outcome = CisOutcomeAuthority.Read(context, changeId);
             var requiresAdoption = !WorkRequired(context) && !RegisteredParticipantWorkRequired(context) && !_workLedger.HasCorrectionHistory(context);
-            if (requiresAdoption && !adoptAccounting)
+            if (requiresAdoption && !adoptAccounting && outcome is null)
                 return WorkFailure(["Work allocation requires applicable adopted controls, retained story correction history, or explicit --adopt-accounting for authorized accounting-only first use. A provider profile alone does not opt a minimal repository into accounting."]);
             var request = ReadWorkInput<CisAgentWorkAllocationRequest>(context, inputPath);
+            if (outcome is not null)
+                request = request with
+                {
+                    Storage = request.Storage ?? outcome.Request.Storage,
+                    DecisionReference = string.IsNullOrWhiteSpace(request.DecisionReference) ? outcome.Request.DecisionReference : request.DecisionReference,
+                    StorageCeilingReference = string.IsNullOrWhiteSpace(request.StorageCeilingReference) ? outcome.Id + ":storage" : request.StorageCeilingReference,
+                    AuthorizationId = request.AuthorizationId ?? outcome.Id,
+                    AuthorizationDigest = request.AuthorizationDigest ?? outcome.Digest
+                };
             if (requiresAdoption && request.Storage is null)
                 return WorkFailure(["Accounting-only first use requires a finite Storage policy with MaximumBytes and explicit owned Roots; a storage-ceiling reference alone grants no capacity."]);
             if (request.Tasks is null || request.Tasks.Count is < 1 or > 1000)
@@ -144,6 +154,7 @@ public sealed partial class AgentService
 
     private bool WorkRequired(CisRepositoryContext context)
         => CisEngineeringPolicy.Read(context.RepositoryPath)?.RequireTaskCompletion == true
+            || HasOutcomeAuthorization(context)
             || _workLedger.HasGovernedState(context)
             || ReadRunManifests(context).Any(run => run.Work is not null);
 
@@ -322,7 +333,7 @@ public sealed partial class AgentService
         var identity = binding.Identity ?? throw new InvalidDataException("Story accounting requires its canonical owner.");
         return _workLedger.Read(binding.Authority, identity.ChangeId, identity.TaskId,
             binding.MaximumRunSeconds, new("story-task", binding.RelationshipId, "orchestration", binding.Authority.RepositoryId)
-            { ContractDigest = binding.ContractDigest });
+            { ContractDigest = binding.ContractDigest }, identity);
     }
 
     private WorkExecutionScope? AdmitStoryRoot(StoryWorkBinding binding, string executionId, List<string> diagnostics)
@@ -478,9 +489,16 @@ public sealed partial class AgentService
         var task = ReadAuthorityArtifact(context, Relative(context.RepositoryPath, taskPath), ref bytes).Content;
         ValidateTaskEligibility(context, changeId, task, diagnostics, accountingOnly: accountingOnly, nativeVerification: nativeVerification);
         var canonicalTask = (FrontMatter(task, "task_id") ?? Path.GetFileNameWithoutExtension(taskPath)).ToUpperInvariant();
+        var outcome = CisOutcomeAuthority.Read(context, changeId);
+        string? ParentOf(string content)
+        {
+            if (outcome is null) return FrontMatter(content, "parent_id");
+            var item = ReadOutcomeTask(context, outcome, FrontMatter(content, "task_id")!);
+            return item.TryGetProperty("parentId", out var parent) ? parent.GetString() : null;
+        }
         var parents = new List<string>(); var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { canonicalTask };
         var current = task;
-        while (FrontMatter(current, "parent_id") is { } parent && parent is not ("none" or "None" or "-" or "null"))
+        while (ParentOf(current) is { } parent && parent is not ("none" or "None" or "-" or "null" or ""))
         {
             if (!WorkId(parent) || !seen.Add(parent) || parents.Count >= 32) throw new InvalidDataException("Canonical task ancestry is unsafe, cyclic or over the 32-parent bound.");
             var parentPath = Find(parent) ?? throw new InvalidDataException("Canonical accounting parent task is missing: " + parent);
@@ -495,7 +513,7 @@ public sealed partial class AgentService
 
     private WorkExecutionScope? AdmitWork(CisRepositoryContext context, string changeId, string taskId,
         string executionId, int timeoutSeconds, string? parentExecutionId, string? logicalAttemptId, List<string> diagnostics,
-        out CisAgentWorkView? admissionView)
+        out CisAgentWorkView? admissionView, string? actor = null)
     {
         admissionView = null;
         try
@@ -504,7 +522,7 @@ public sealed partial class AgentService
             var identity = WorkIdentity(context, changeId, taskId, diagnostics);
             if (identity is null || diagnostics.Count > 0) return null;
             var admission = _workLedger.Admit(context, identity, executionId, timeoutSeconds, RuntimeCeiling(context), parentExecutionId, logicalAttemptId,
-                CapturePreparationOwner());
+                CapturePreparationOwner(), controller: CisOutcomeAuthority.Read(context, changeId) is null ? null : actor);
             admissionView = admission.Result.Work;
             if (!admission.Admitted) { WorkDiagnostics(admission.Result, diagnostics); return null; }
             return new(this, context, admission.Reference!, admission.TimeoutSeconds, diagnostics);
@@ -560,7 +578,17 @@ public sealed partial class AgentService
 
     private CisAgentWorkResult ReadCurrentWork(CisRepositoryContext context, string changeId, string? taskId)
     {
-        try { return _workLedger.Read(context, changeId, taskId, RuntimeCeiling(context)); }
+        try
+        {
+            var result = _workLedger.Read(context, changeId, taskId, RuntimeCeiling(context));
+            if (taskId is null || result.Work is not { OwnerTaskId: null }) return result;
+            var diagnostics = new List<string>();
+            CisAgentWorkIdentity? identity;
+            try { identity = WorkIdentity(context, changeId, taskId, diagnostics, accountingOnly: true); }
+            catch (Exception error) when (WorkException(error)) { return result; }
+            return identity is null || diagnostics.Count > 0 ? result
+                : _workLedger.Read(context, changeId, taskId, RuntimeCeiling(context), identity: identity);
+        }
         catch (Exception error) when (WorkException(error))
         {
             var retained = _workLedger.Read(context, changeId, taskId);

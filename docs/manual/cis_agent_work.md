@@ -13,9 +13,31 @@ cis:
 
 Allocate the work allowed for a change and its logical tasks, inspect consumption, and record a bounded continuation through the headless CLI. Starting a new run, changing providers, or resuming a run does not restore spent work.
 
+## Reuse outcome authority
+
+Read the shared authorization recorded by [`cis change authorize`](cis_change_create.md#authorize-the-outcome-once).
+Where it delegates resource distribution, its controller allocates task capacity
+within the same overall time, attempt and storage limits using the existing
+`agent work allocate` command. This is a controller distribution under the original
+human decision; each new or split task needs no separate human approval.
+
+The request binds the current authorization and ledger revision. Shared storage and
+decision references may come from that authorization. Keep honest task ownership,
+consumption, reservations, restoration reserves and attempt history. Adding tasks or
+switching agents/profiles never resets costs or creates another containing allowance.
+An actual overall-limit increase requires its specific new human decision; unrelated
+work remains eligible within its own dependencies and remaining shared capacity.
+Legacy fixed-task allocations retain their original limits and amendment rules.
+
+With delegated outcome distribution, CIS uses the authorized containing limits and
+controllers and treats task entries as redistributable distributions. The sum of
+task capacity must still fit that shared allowance after protected costs and
+reservations. Increasing a task distribution within it is controller work; increasing
+the overall grant requires an amended outcome decision before allocation.
+
 ## Scope and authority
 
-Direct `agent run`, direct-task `agent resume` and governed story stages require work accounting under applicable adopted engineering defaults (`requireTaskCompletion: true`) or existing authority-owned accounting. Story control applies when the authority or a linked owned target has adopted it; an unconfigured target does not exempt the shared work. An exact registered owned participant's controls permit allocation at an authority that has no engineering quality policy. Retained story correction history also permits an authorized finite allocation against existing approved canonical work. A fresh minimal authority can explicitly adopt accounting alone with `agent work allocate --adopt-accounting`, using that same approved canonical ownership and an authorized finite allocation.
+Direct `agent run`, direct-task `agent resume` and governed story stages require work accounting under applicable outcome authority, adopted engineering defaults (`requireTaskCompletion: true`) or existing authority-owned accounting. Story control applies when the authority or a linked owned target has adopted it; an unconfigured target does not exempt the shared work. An exact registered owned participant's controls permit allocation at an authority that has no engineering quality policy. Retained story correction history also permits an authorized finite allocation against existing approved canonical work. Without outcome authority or another adopted route, a fresh minimal authority can explicitly adopt accounting alone with `agent work allocate --adopt-accounting`, using that same approved canonical ownership and an authorized finite allocation.
 
 Establishing that allocation adopts work accounting across the authority: every supported direct-task and story route then needs its canonical owner and applicable finite allocation, including sibling tasks with no correction history or engineering quality policy. Allocating one task grants no capacity to another. This adopts work accounting, not engineering quality policy, and grants no plan, design or completion approval. A provider profile alone does not adopt accounting. Authorities without adopted accounting or applicable engineering defaults retain their existing non-adopted execution boundaries. Product-document authoring and import operations retain their dedicated flows.
 
@@ -88,10 +110,11 @@ The first allocation supplies:
 | `storageCeilingReference` | Existing storage policy/decision reference shared by the containing work. Native and artifact expansion also require its finite `storage` policy. |
 | `storage` | Finite `maximumBytes`, declared owned `roots`, optional `restorationBytes` within that ceiling, and delegated `cleanupControllers`. It is allocation authority, not a test-profile limit. |
 | `controllers` | Identities delegated to operate this allocation. |
+| `authorizationId`, `authorizationDigest` | Current shared outcome binding when applicable; omitted values are filled from its canonical record. |
 | `acknowledgeHistoricalUnknown` | Explicit acknowledgment required for the initial unmeasured historical baseline. |
 | `expectedRevision` | Omit on initial allocation; supply the current revision on updates. |
 
-Updates preserve consumption, reservations, restoration capacity, history, and fixed limits. Delegated redistribution must fit the unchanged outer allowance. The original allocation authority may grant an eligible new root task capacity from the change's unallocated time and logical attempts without altering existing fixed task caps. This does not depend on permission to redistribute another owner's allowance, and it does not clear that owner's holds. A new filename, task decomposition, provider, profile, or source fingerprint cannot create another allowance for the same containing work.
+Updates preserve consumption, reservations, restoration capacity, history, and applicable fixed limits. Delegated redistribution must fit the authorized outer allowance. Under legacy fixed-task authority, only the original allocation authority may grant an eligible new root task capacity from unallocated time and logical attempts without altering existing fixed caps. Under delegated outcome authority, the authorized controller distributes that capacity. Neither route clears another owner's holds. A new filename, task decomposition, provider, profile, or source fingerprint cannot create another allowance for the same containing work.
 
 An ordinary update cannot reduce a task's protected restoration reserve, even when `fixed` is `false` and `allowRedistribution` is `true`. Repeat the existing `restorationSeconds` when updating that task. A lower value, including an omitted field that defaults to zero while a nonzero reserve exists, is rejected with an actionable error. Transfer only unreserved capacity; task consumption, active reservations, and the containing-change reserve remain protected.
 

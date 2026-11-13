@@ -7,7 +7,7 @@ using Cis.Modules.Repository;
 
 namespace Cis.Modules.UiDirection;
 
-public sealed class UiDirectionService : IChangeReadinessCheck
+public sealed class UiDirectionService : IChangeReadinessCheck, IChangeDocumentApplicabilitySource
 {
     private const string ManagedStart = "<!-- cis:ui-direction-managed:start -->";
     private const string ManagedEnd = "<!-- cis:ui-direction-managed:end -->";
@@ -94,6 +94,18 @@ public sealed class UiDirectionService : IChangeReadinessCheck
             .Append("An Active, current high-level UI direction is required. Run `cis ui-direction status`.")
             .Distinct(StringComparer.Ordinal).ToArray();
         return new ChangeReadinessResult("ui-direction", true, ready, errors);
+    }
+
+    public ChangeDocumentApplicabilitySource DocumentApplicability(string repositoryPath)
+    {
+        if (!File.Exists(Path.Combine(Path.GetFullPath(repositoryPath), ".cis", "workspace.yml")))
+            return new(false, null, []);
+        var result = Status(repositoryPath);
+        if (result.Validation is not { Valid: true, Current: true, EffectiveStatus: "Active" })
+            return new(true, null, result.Errors.Concat(result.Validation?.Errors ?? [])
+                .Append("Clarify visual UI applicability using the current, approved high-level UI direction.")
+                .Distinct(StringComparer.Ordinal).ToArray());
+        return new(true, _questionnaire.Status(repositoryPath).UiRequired, []);
     }
 
     private UiDirectionResult ValidateInternal(string workspacePath, string operation, bool applied)

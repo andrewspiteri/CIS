@@ -22,7 +22,8 @@ Establish intent
     → build repository context
     → review likely impact
     → resolve decisions
-    → approve bounded work
+    → authorize the outcome, scope and overall limits
+    → organize and allocate bounded tasks under that authority
     → prepare or run bounded human/agent execution
     → compare actual change with approved scope
     → accept completion
@@ -30,12 +31,16 @@ Establish intent
 ```
 
 Canonical meaning remains in repository-owned Markdown and structured files. Local
-indexes, graphs, workflow state, caches, model output, and diagnostic analysis remain
-derived. Graphs and indexes can be rebuilt; retain native results, transcripts and receipts
-while they support verification or review. Rebuilding context does not recreate a past run.
+indexes, graphs, caches, model output and diagnostic analysis remain derived. Work
+accounting, reservations, settlement and recovery records preserve execution history;
+they are not disposable caches. Retain native results, transcripts, receipts and the
+references they require while they support verification or review. Rebuilding context
+does not recreate a past run or its accounting.
 
 > AI and coding agents may discover, propose, analyse, draft, and implement. Humans
-> confirm meaning, resolve material decisions, accept risk, and accept completion.
+> confirm meaning, resolve material decisions, accept risk, and authorize outcomes.
+> A delegated controller organizes and completes in-scope tasks through the required
+> checks within the same shared limits. Formal change acceptance remains a human decision.
 
 CIS complements Git, GitHub, Jira, editors, coding agents, and CI/CD. It does not
 replace them or silently perform commits, pushes, merges, releases, or approvals.
@@ -275,13 +280,54 @@ Import a repository owned by another product with `--participation dependency` a
 explicit `producer`, `consumer`, or `bidirectional` relationship. Its contracts and
 components can inform technical intent, but its implementation is governed by its own
 product workspace. The authority repository owns this product's business requirements
-and technical intent. Those documents must be current and approved before governed
-product changes can be planned.
+and technical intent. Draft change and plan preparation grants no execution approval;
+governed product work must satisfy its applicable approved-baseline checks.
 
 Continue with the [workspace initialization](docs/manual/cis_workspace_init.md),
 [repository import](docs/manual/cis_repo_import.md), and
 [business requirements governance](docs/specs/business-requirements-governance-spec.md)
 documentation.
+
+### 2.5. Authorizing and organizing an outcome
+
+Prepare a draft [change](docs/manual/cis_change_create.md) and
+[plan](docs/manual/cis_plan_build.md) without claiming execution approval. Reuse an
+applicable outcome authorization. When it is missing, prepare the complete outcome,
+explicit scope, constraints and finite overall time, attempt and storage limits,
+then record the actual human decision:
+
+```powershell
+cis change authorize CIS-0001 --input outcome-request.json `
+  --reviewer "Actual human reviewer" --reason "Authorized outcome and limits"
+```
+
+The [authorization reference](docs/manual/cis_change_create.md#authorize-the-outcome-once)
+describes the request fields and delegation. Within that delegation, the controller
+uses [`cis plan task add|split|update`](docs/manual/cis_plan_build.md#organize-authorized-tasks)
+for implementation, supporting tests, documentation and in-scope corrections, and
+[`cis agent work allocate`](docs/manual/cis_agent_work.md) to distribute the shared
+allowance. Each new or split task needs no separate human approval when the existing
+delegation covers it. New tasks, agents and profiles cannot reset spent work or add
+another containing allowance.
+
+A newly generated seed still needs concrete observable acceptance and targeted
+validation before execution; authorization alone does not resolve its planning
+placeholders. Previously accepted legacy contracts remain compatible across ordinary
+pause and resume when their scope and authority are unchanged. Required checks and
+[lifecycle transitions](docs/manual/cis_plan_task_transition.md) still govern completion.
+
+Ask for a targeted decision when scope, constraints or overall limits exceed existing
+authority. Legacy accepted-impact and exact-plan approvals retain their original
+boundaries, and product, UI, permission, publication and formal final-acceptance gates
+still apply.
+
+Reuse valid results while their material inputs and required settlement references
+remain current. Administrative refreshes alone require neither approval nor another
+native test run. Use incremental
+[`plan`, `status` and `verify`](docs/manual/cis_test_incremental.md) for read-only
+inspection; they do not launch native tests. Preserve required evidence and protected
+accounting when cleaning generated output. These current-development instructions do
+not establish a new published release.
 
 ## 3. What CIS generates inside a repository
 
@@ -295,7 +341,7 @@ contains:
 │   ├── workspace.yml                 # workspace authority or participant registry, when used
 │   ├── starter-manifest.yml
 │   ├── .gitignore
-│   └── local/                        # local caches and retained run evidence
+│   └── local/                        # caches, protected accounting and retained evidence
 │       ├── api/
 │       ├── feedback/
 │       ├── graph/
@@ -321,12 +367,13 @@ The important boundary is:
 
 - Canonical documentation, configuration, decisions, plans, and acceptance evidence are
   reviewable repository files.
-- `.cis/local/` contains rebuildable indexes, graphs and caches alongside native results,
-  run transcripts and execution receipts. Preserve evidence while it supports verification;
-  refreshing context cannot recreate a past execution. Retain durable product decisions and
-  acceptance records in canonical documentation.
-- Generated or discovered documents remain in their declared lifecycle state until a
-  human reviews them.
+- `.cis/local/` contains rebuildable indexes, graphs and caches alongside protected work
+  ledgers, reservations, settlement/recovery records, native results, run transcripts and
+  execution receipts. Use supported cleanup; deleting accounting files cannot reset spent
+  work. Preserve the references current results require. Retain durable product decisions
+  and acceptance records in canonical documentation.
+- Generated or discovered documents retain their declared lifecycle and applicable
+  review gates; generation alone grants no approval.
 - Initialization is idempotent and collision-aware. It preserves divergent human edits
   rather than silently replacing them.
 
@@ -448,6 +495,8 @@ Use these entry points rather than browsing every Markdown file:
 | Eight-page product-definition journey and consolidated activation | [High-level product-definition wizard](docs/specs/high-level-product-definition-wizard-spec.md) |
 | Feature intake, definition, design, delivery review, and implementation reconciliation | [`cis brd feature intake`](docs/manual/cis_brd_feature_intake.md) and [feature-wizard status](docs/manual/cis_brd_feature_wizard_status.md) |
 | Command syntax and behavior | [Command manual](docs/manual/README.md) |
+| Authorize an outcome and organize its tasks | [Outcome authorization](docs/manual/cis_change_create.md#authorize-the-outcome-once), [planning](docs/manual/cis_plan_build.md) and [shared work accounting](docs/manual/cis_agent_work.md) |
+| Inspect or reuse retained native results | [Incremental testing](docs/manual/cis_test_incremental.md) |
 | Normative engineering rules | [`docs/standards/`](docs/standards/) and the [conformance matrix](docs/references/standards-conformance-matrix.md) |
 | Current inventories and profiles | [References index](docs/references/README.md) |
 | Product completion state | [Implementation roadmap](docs/specs/implementation-roadmap.md) |
@@ -476,8 +525,8 @@ For a product feature described by a prepared BRD, begin with
 pages, reconcile proposed delivery stories with existing owned implementation, and record
 the final feature-definition review. This records review of the proposed definition; it
 does not create or approve the feature specification, approve the product backlog,
-authorize implementation, or approve a release. Complete those gates before deriving
-bounded work.
+authorize implementation, or approve a release. Use the applicable feature adoption,
+planning and execution gates; draft preparation alone grants none of that authority.
 
 For a bounded engineering change that does not start from a feature BRD, create a dossier
 directly:
@@ -498,9 +547,11 @@ cis plan build CIS-0001
 cis plan validate CIS-0001
 ```
 
-Impact findings begin as proposals. Human reviewers disposition impact and resolve
-blocking decisions before plan approval. Executors produce candidate changes; CIS then
-compares independently observed Git and validation evidence with the approved scope.
+These commands prepare reviewable context and a draft plan; they grant no execution
+authority. Continue with [outcome authorization and task organization](#25-authorizing-and-organizing-an-outcome).
+The retained accepted-impact route instead requires human disposition and its existing
+exact-plan approval. Executors produce candidate changes; CIS compares independently
+observed Git and validation evidence with the authorized scope.
 
 See [Change impact and bounded planning](docs/specs/change-impact-and-planning-spec.md)
 for the complete lifecycle.

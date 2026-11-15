@@ -3,7 +3,7 @@ title: "CIS Command Manual"
 type: navigation
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-10-09"
+last_reviewed: "2026-11-15"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:root
@@ -15,6 +15,32 @@ For a new Windows .NET/C# project, follow the [trial guide](../../planning/engin
 For current package identity and scoped qualification, read the [readiness record](../../planning/engineering-defaults-trial-readiness.md).
 Initialize local examples with [repo init](cis_repo_init.md), inspect [completion context](cis_plan_task_completion_context.md),
 and use [verify finalize](cis_verify_finalize.md) for the standard final-sweep/coordination closure.
+
+## Choose the current work route
+
+Prepare a draft [change](cis_change_create.md) and [plan](cis_plan_build.md) without
+claiming execution approval. Reuse applicable outcome authority, or record the actual
+human decision through [outcome authorization](cis_change_create.md#authorize-the-outcome-once).
+Its scope, constraints, overall limits and delegation govern subsequent work.
+
+Within that delegation, use [task add, split and update](cis_plan_build.md#organize-authorized-tasks)
+and [work allocation](cis_agent_work.md) to organize and resource necessary tasks.
+Supporting tests, documentation and in-scope fixes share the same allowance; task
+count and administrative plan changes do not create approval questions or reset costs.
+New generated seeds need observable acceptance and targeted validation before
+execution. Existing accepted contracts retain ordinary pause/resume compatibility
+when their scope and authority remain unchanged.
+
+[Task transitions](cis_plan_task_transition.md) enforce required checks and completion
+under applicable authority. Legacy exact-plan approvals retain their original scope;
+material scope or overall-limit changes and independent product, UI, publication
+and final-acceptance decisions keep their specific gates.
+
+For retained native evidence, [incremental testing](cis_test_incremental.md) provides
+read-only `plan`, `status` and `verify` operations. Reuse current results without
+launching native tests again merely for an administrative refresh. Preserve the
+[work ledger and settlement references](cis_agent_work.md#scope-and-authority) they
+require; rebuilding disposable graphs or indexes cannot recreate execution history.
 
 ## Visual Studio Code
 

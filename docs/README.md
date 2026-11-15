@@ -3,7 +3,7 @@ title: "Change Impact Studio Documentation"
 type: navigation
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-10-09"
+last_reviewed: "2026-11-15"
 review_cadence: on documentation structure change
 cis:
   stable_id: change-impact-studio:docs:root
@@ -26,9 +26,24 @@ Reader entry points:
 - [`../README.md`](../README.md) — build, run, initialize, and find the right documentation
 - [`articles/README.md`](articles/README.md) — published and planned articles about CIS and engineering governance
 - [`manual/README.md`](manual/README.md) — command reference organized by module
+- [Outcome authorization](manual/cis_change_create.md#authorize-the-outcome-once), [task organization](manual/cis_plan_build.md) and [shared work accounting](manual/cis_agent_work.md) — authorize scope and overall limits once, then organize necessary work within delegated authority
+- [Task lifecycle](manual/cis_plan_task_transition.md) and [incremental results](manual/cis_test_incremental.md) — complete required checks and reuse compatible evidence without resetting accounting
 - [`specs/product-intent-spec.md`](specs/product-intent-spec.md) — current product purpose, scope, principles, requirements, and success measures
 - [`specs/system-context-spec.md`](specs/system-context-spec.md) — product boundary, actors, external systems, and authority flow
 - [`specs/technical-intent-spec.md`](specs/technical-intent-spec.md) — implementation principles, trust boundaries, and quality attributes
+
+For current development, the outcome workflow distinguishes draft preparation,
+human authorization, controller task organization and checked completion. New
+generated seeds need concrete acceptance and validation before execution. Unchanged
+accepted work retains its contracts, history and authority through ordinary pause
+and resume. Material scope or overall-limit changes and independent product, UI,
+publication and final-acceptance decisions retain their own review boundaries.
+
+Graphs and indexes are rebuildable. Protected work accounting, settlement/recovery
+records and native evidence needed by current results must survive cleanup; use
+supported retention operations. Read-only incremental plan/status/verification
+inspect retained results without launching their native tests. These development
+updates do not establish a new published release or complete a qualification gate.
 
 Canonical starting points:
 

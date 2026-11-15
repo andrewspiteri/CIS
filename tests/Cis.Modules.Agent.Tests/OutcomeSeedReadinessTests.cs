@@ -134,11 +134,14 @@ public sealed partial class AgentExecutionTests
     }
 
     [Theory]
-    [InlineData("Draft", false)]
-    [InlineData("Approved", true)]
-    [InlineData("ReadyForReview", true)]
-    [InlineData("Complete", true)]
-    public void OutcomeSeed_RecognizesUnfinishedPriorSeedWithoutMigratingAcceptedHistoricalContracts(string status, bool usable)
+    [InlineData("Draft")]
+    [InlineData("Approved")]
+    [InlineData("InProgress")]
+    [InlineData("ReadyForReview")]
+    [InlineData("Blocked")]
+    [InlineData("Deferred")]
+    [InlineData("Complete")]
+    public void OutcomeSeed_PreMarkerContractsRemainCompatibleWithoutMigration(string status)
     {
         using var fixture = new OutcomeParticipantFixture(concreteCriteria: false);
         var seed = Assert.Single(fixture.Planner.Show(fixture.Authority.Path, OutcomeParticipantFixture.Change).WorkItems);
@@ -157,20 +160,8 @@ public sealed partial class AgentExecutionTests
         var ledgerBytes = File.ReadAllBytes(ledgerPath);
         var authority = fixture.ReadChange("authorization.json");
         Assert.Equal(0, fixture.Planner.Build(fixture.Authority.Path, OutcomeParticipantFixture.Change).ExitCode);
-        if (usable) Assert.False(string.IsNullOrWhiteSpace(fixture.Planner.ReadTaskDigest(fixture.Authority.Path, OutcomeParticipantFixture.Change, seed.Id)));
-        else
-        {
-            Assert.Throws<InvalidDataException>(() => fixture.Planner.ReadTaskDigest(fixture.Authority.Path, OutcomeParticipantFixture.Change, seed.Id));
-            var partial = fixture.Planner.OrganizeOutcomeTasks(new(fixture.Authority.Path, OutcomeParticipantFixture.Change,
-                [new(seed.Title, ["main"], seed.AcceptanceCriteria, "Inspect the participant controller's retained completion evidence.")],
-                OutcomeParticipantFixture.Actor, "A partial update must not disguise the remaining known acceptance placeholder.", seed.Id), "update");
-            Assert.Equal(0, partial.ExitCode);
-            var held = fixture.Planner.TransitionTask(new(fixture.Authority.Path, OutcomeParticipantFixture.Change, seed.Id,
-                "InProgress", OutcomeParticipantFixture.Actor, "The remaining known placeholder is still unresolved."));
-            Assert.False(held.Applied);
-            Assert.Contains(held.Errors, message => message.Contains("planning placeholders", StringComparison.Ordinal));
-        }
-        if (usable) Assert.Equal(taskBytes, File.ReadAllBytes(taskPath));
+        Assert.False(string.IsNullOrWhiteSpace(fixture.Planner.ReadTaskDigest(fixture.Authority.Path, OutcomeParticipantFixture.Change, seed.Id)));
+        Assert.Equal(taskBytes, File.ReadAllBytes(taskPath));
         Assert.Equal(ledgerBytes, File.ReadAllBytes(ledgerPath));
         Assert.Equal(authority, fixture.ReadChange("authorization.json"));
     }
@@ -218,16 +209,17 @@ public sealed partial class AgentExecutionTests
     }
 
     [Theory]
-    [InlineData("Blocked")]
-    [InlineData("Deferred")]
-    public void OutcomeSeed_OldStartedPlaceholderContractCannotBeRewrittenAndCanResolveThroughRetainedChildren(string disposition)
+    [InlineData("Blocked", "outcome:started-before-seed-readiness")]
+    [InlineData("Deferred", "outcome:started-before-seed-readiness")]
+    [InlineData("Blocked", CisOutcomeTaskReadiness.DraftSeedInstance)]
+    [InlineData("Deferred", CisOutcomeTaskReadiness.DraftSeedInstance)]
+    public void OutcomeSeed_OldStartedContractResumesUnchangedAfterNormalPause(string disposition, string originalInstance)
     {
         using var fixture = new OutcomeParticipantFixture(concreteCriteria: false);
         var seed = Assert.Single(fixture.Planner.Show(fixture.Authority.Path, OutcomeParticipantFixture.Change).WorkItems);
         var dossier = Path.Combine(fixture.Authority.Path, fixture.Context.DocumentationRoot, "changes", OutcomeParticipantFixture.Change);
         var planPath = Path.Combine(dossier, "plan.json");
         var taskPath = Path.Combine(dossier, seed.TaskPath!);
-        const string originalInstance = "outcome:started-before-seed-readiness";
         var retained = JsonNode.Parse(File.ReadAllBytes(planPath))!;
         retained["workItems"]![0]!["instanceKey"] = originalInstance;
         retained["workItems"]![0]!["status"] = "InProgress";
@@ -236,22 +228,30 @@ public sealed partial class AgentExecutionTests
             .Replace("task_status: Draft", "task_status: InProgress", StringComparison.Ordinal));
         var provider = new FakeProvider();
         var controller = fixture.Service(provider, withContractReader: false);
+        var originalTask = Assert.Single(fixture.Planner.Show(fixture.Authority.Path, OutcomeParticipantFixture.Change).WorkItems);
+        var originalContract = fixture.Planner.ReadTaskDigest(fixture.Authority.Path, OutcomeParticipantFixture.Change, seed.Id);
+        var originalTaskBytes = File.ReadAllBytes(taskPath);
         var accepted = fixture.Run(controller);
         Assert.True(accepted.ExitCode == 0, string.Join("; ", accepted.Diagnostics));
         Assert.Equal(1, provider.ExecuteCalls);
-        var acceptedManifestPath = Path.Combine(fixture.Authority.Path, AgentService.RootPath, "runs", accepted.Run!.Manifest.RunId, "manifest.json");
+        var acceptedDirectory = Path.Combine(fixture.Authority.Path, AgentService.RootPath, "runs", accepted.Run!.Manifest.RunId);
+        var acceptedManifestPath = Path.Combine(acceptedDirectory, "manifest.json");
         var acceptedManifest = File.ReadAllBytes(acceptedManifestPath);
+        var resultPath = Path.Combine(acceptedDirectory, "result.json");
+        var acceptedResult = File.ReadAllBytes(resultPath);
         var envelope = File.ReadAllBytes(fixture.EnvelopePath);
+        var ledgerPath = Path.Combine(fixture.Authority.Path, CisAgentWorkPaths.Ledger);
+        var ledger = File.ReadAllBytes(ledgerPath);
+        var authority = fixture.ReadChange("authorization.json");
         Assert.Equal(0, fixture.Planner.TransitionTask(new(fixture.Authority.Path, OutcomeParticipantFixture.Change, seed.Id,
-            "Blocked", OutcomeParticipantFixture.Actor, "Retain the old started contract while resolving its next action.")).ExitCode);
+            "Blocked", OutcomeParticipantFixture.Actor, "Pause the accepted old task without changing its contract.")).ExitCode);
         if (disposition == "Deferred")
             Assert.Equal(0, fixture.Planner.TransitionTask(new(fixture.Authority.Path, OutcomeParticipantFixture.Change, seed.Id,
                 "Deferred", OutcomeParticipantFixture.Actor, "Postpone the old contract without replacing its accepted evidence.")).ExitCode);
         var taskBytes = File.ReadAllBytes(taskPath);
         var planBytes = File.ReadAllBytes(planPath);
-        var ledgerPath = Path.Combine(fixture.Authority.Path, CisAgentWorkPaths.Ledger);
-        var ledger = File.ReadAllBytes(ledgerPath);
-        var authority = fixture.ReadChange("authorization.json");
+        Assert.Equal(ledger, File.ReadAllBytes(ledgerPath));
+        Assert.Equal(originalContract, fixture.Planner.ReadTaskDigest(fixture.Authority.Path, OutcomeParticipantFixture.Change, seed.Id));
         OutcomeTaskDefinition Definition(string title) => new(title, ["main"],
             "The selected participant preserves its accepted observation.", "Review the selected observation through its existing controller.");
 
@@ -263,26 +263,20 @@ public sealed partial class AgentExecutionTests
         Assert.Contains(denied.Errors, message => message.Contains("started task", StringComparison.Ordinal));
         Assert.Equal(taskBytes, File.ReadAllBytes(taskPath));
         Assert.Equal(planBytes, File.ReadAllBytes(planPath));
-        var split = fixture.Planner.OrganizeOutcomeTasks(new(fixture.Authority.Path, OutcomeParticipantFixture.Change,
-            [Definition("First current replacement observation"), Definition("Second current replacement observation")],
-            OutcomeParticipantFixture.Actor, "Preserve started history and derive concrete children under the same owner.", seed.Id), "split");
-        Assert.True(split.ExitCode == 0, string.Join("; ", split.Errors.Concat(split.Validation?.Errors ?? [])));
-        var parent = Assert.Single(split.WorkItems, task => task.Id == seed.Id);
-        Assert.Equal("Decomposed", parent.Status);
-        Assert.Equal(originalInstance, parent.InstanceKey);
-        Assert.Equal(seed.AcceptanceCriteria, parent.AcceptanceCriteria);
-        Assert.Equal(seed.Validation, parent.Validation);
-        var children = split.WorkItems.Where(task => task.ParentId == seed.Id).ToArray();
-        Assert.Equal(2, children.Length);
-        Assert.All(children, child => Assert.Equal(seed.Id, child.WorkOwnerTaskId));
-        Assert.Equal(0, fixture.Planner.TransitionTask(new(fixture.Authority.Path, OutcomeParticipantFixture.Change, children[0].Id,
-            "InProgress", OutcomeParticipantFixture.Actor, "Continue only the concrete current replacement child.")).ExitCode);
+        var resumed = fixture.Planner.TransitionTask(new(fixture.Authority.Path, OutcomeParticipantFixture.Change, seed.Id,
+            "InProgress", OutcomeParticipantFixture.Actor, "Resume the unchanged accepted original task through its normal lifecycle."));
+        Assert.True(resumed.ExitCode == 0, string.Join("; ", resumed.Errors.Concat(resumed.Validation?.Errors ?? [])));
+        var resumedTask = Assert.Single(resumed.WorkItems);
+        Assert.Equal(JsonSerializer.Serialize(originalTask), JsonSerializer.Serialize(resumedTask));
+        Assert.Equal(originalContract, fixture.Planner.ReadTaskDigest(fixture.Authority.Path, OutcomeParticipantFixture.Change, seed.Id));
+        Assert.Equal(originalTaskBytes, File.ReadAllBytes(taskPath));
         Assert.True(fixture.Planner.Validate(fixture.Authority.Path, OutcomeParticipantFixture.Change).Validation!.Valid);
-        var inspection = controller.Inspect(fixture.Authority.Path, new(OutcomeParticipantFixture.Change, children[0].Id,
+        var inspection = controller.Inspect(fixture.Authority.Path, new(OutcomeParticipantFixture.Change, seed.Id,
             AuthorityPath: fixture.Authority.Path, Actor: OutcomeParticipantFixture.Actor));
         Assert.Empty(inspection.Errors);
         Assert.Equal(ledger, File.ReadAllBytes(ledgerPath));
         Assert.Equal(acceptedManifest, File.ReadAllBytes(acceptedManifestPath));
+        Assert.Equal(acceptedResult, File.ReadAllBytes(resultPath));
         Assert.Equal(envelope, File.ReadAllBytes(fixture.EnvelopePath));
         Assert.Equal(authority, fixture.ReadChange("authorization.json"));
         Assert.Equal(1, provider.ExecuteCalls);

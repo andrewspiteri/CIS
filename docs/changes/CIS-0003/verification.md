@@ -133,3 +133,41 @@ checkpoint and stale/mismatched security evidence remain the separate CIS-0003 c
 An aggregate final verification also sees WORK-002's new review checkpoint; neither
 checkpoint is represented as formal completion or acceptance. No allowance was added,
 and no CISLIB state or consumer result changed.
+
+## Accepted-work pause/resume compatibility — 2026-11-15
+
+The missed ordinary promise was an already successful older task pausing and then
+resuming unchanged. The previous regression executed that task, paused it and proved
+that replacement children could be created. It did not resume the original task.
+Consequently the check missed that mutable Blocked/Deferred status revoked readiness
+for the same accepted contract. This escaped the reviewed handoff, which remained
+ReadyForReview rather than formally accepted.
+
+Only the explicit `outcome:seed:` marker now establishes new unresolved-seed provenance.
+Older identifiers, including `outcome:initial`, do not establish that work was never
+accepted. Their criteria are not retrospectively reclassified from a pause status;
+existing scope, lifecycle and accounting checks still apply. New marked-seed denial,
+concrete update and split-container behavior remain intact.
+
+The existing old-started-task regression now covers Blocked/Deferred with both older
+identifier shapes, resumes the unchanged original through the normal transition,
+and checks its contract digest, single identity, authority, producer manifest/result,
+envelope and ledger bytes. Native admission inspection checks the next operation's
+eligibility without another provider launch. Shared-predicate consumers were reviewed
+across Plan transitions/digests/story gates and Agent direct/native/currentness paths.
+
+The earlier snapshot limitation remains outside this focused correction. The observed
+failure was `UnauthorizedAccessException` during `File.Move(temp, path, true)` in
+`VerifyService.Write`, both normally and outside the sandbox. The underlying denial
+reason and retained snapshot's currentness were not established. The post-commit
+snapshot refresh was unperformed; it is not passing formal verification evidence.
+Existing review checkpoints and security closeout remain separate, and CISLIB is unchanged.
+
+Focused verification passed: all four pause variants fail with the reviewed predicate
+at the paused contract lookup; with the correction, all 18 seed/compatibility cases
+and five existing amendment cases pass. These retain the new-seed denial and concrete
+update checks and confirm that actual scope changes still hold affected work. Strict
+documentation validation passes, and the independent source review has no required
+finding. Unchanged wider checks are reused; the shared helper's callers were inspected
+directly. Ordinary reports remain in `pause-compatibility/` under the existing local
+artifact root. The same grant, allocation and prior accounting remain in effect.

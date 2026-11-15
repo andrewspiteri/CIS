@@ -11,11 +11,9 @@ public static class CisOutcomeTaskReadiness
     public static string? UnresolvedSeed(string? instanceKey, string? status, string? acceptance, string? validation,
         bool retainedContainer = false)
     {
-        var knownPlaceholder = acceptance?.Trim() == SeedAcceptance || validation?.Trim() == SeedValidation;
-        var marked = instanceKey?.StartsWith(SeedInstancePrefix, StringComparison.Ordinal) == true
-            || instanceKey == DraftSeedInstance && string.Equals(status, "Draft", StringComparison.OrdinalIgnoreCase)
-            || instanceKey?.StartsWith("outcome:", StringComparison.Ordinal) == true
-                && status is "Draft" or "Blocked" or "Deferred" && knownPlaceholder;
+        // Only the explicit new-seed marker proves unresolved planning provenance.
+        // Older contracts remain compatible when an ordinary pause changes status.
+        var marked = instanceKey?.StartsWith(SeedInstancePrefix, StringComparison.Ordinal) == true;
         // A proved split parent retains its accounting identity and children's
         // acceptance; it is not an unresolved executable leaf.
         if (!marked || retainedContainer && status is "Decomposed" or "Complete") return null;

@@ -50,19 +50,6 @@ public sealed partial class IncrementalTestService
             .Select(pair => new { name = (string)pair.Key, value = (string?)pair.Value }).ToArray());
     }
 
-    // Compatibility lookup only: reproduce the immediately preceding material
-    // contract, which omitted the fixed session list but still hashed agent
-    // transport namespaces. A matching old result is not assigned today's basis.
-    private static string AmbientEnvironmentIdentityBeforeReuseCorrection(IncrementalTestProfile profile, DictionaryEntry[]? inherited = null)
-    {
-        var omitted = SessionEnvironmentNames.Concat(profile.Environment.Keys)
-            .Concat(CisNativeWorkEnvironment.Keys).Concat(["TEMP", "TMP", "TMPDIR"]).ToHashSet(PathComparer);
-        return HashObject((inherited ?? Environment.GetEnvironmentVariables().Cast<DictionaryEntry>().ToArray())
-            .Where(pair => !omitted.Contains((string)pair.Key))
-            .OrderBy(pair => (string)pair.Key, StringComparer.Ordinal)
-            .Select(pair => new { name = (string)pair.Key, value = (string?)pair.Value }).ToArray());
-    }
-
     // The compact comparison basis retains names and digests, never inherited or
     // declared values. Use the same selection as the actual material identity.
     private static Dictionary<string, string> MaterialEnvironmentDigests(IncrementalTestProfile profile, DictionaryEntry[]? inherited = null)

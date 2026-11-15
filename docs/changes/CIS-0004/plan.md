@@ -13,4 +13,4 @@ Derived under `change-impact-studio:CIS-0004:outcome:113100ae46a445b3926678b8345
 
 | Task | Work | Status | Depends on |
 | --- | --- | --- | --- |
-| WORK-001 | [Preserve native saved-result reuse through continuation and integrate the verified correction](agent-tasks/WORK-001.md) | InProgress |  |
+| WORK-001 | [Preserve native saved-result reuse through continuation and integrate the verified correction](agent-tasks/WORK-001.md) | Blocked |  |

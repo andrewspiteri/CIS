@@ -79,3 +79,38 @@ affected checks passed; the pre-existing SDK was preserved.
 The one independent review has resolved its source findings and inspected these
 native results. Exact committed-build integration and the consumer dispositions
 are the remaining part of this same outcome.
+
+## Final compatibility correction and consumer boundary
+
+The review also rejected reconstructing old fingerprints with raw transport
+environment values that corrected execution removes. The compatibility candidate
+now uses today's canonical execution identity. Two focused native cases passed
+on both Windows and Ubuntu: an unsafe old raw-environment fingerprint is held,
+while a genuine explicit override remains compatible. Diagnostic facts additionally
+capture the exact declared-environment arrangement and selected mutation template
+already used by the fingerprint. Three affected Windows cases passed; no new
+invalidation dependency was introduced. Missing older diagnostic fields remain
+honestly unavailable. All required source findings from this one review are
+resolved; unchanged earlier checks remain retained.
+
+The exact committed development build was installed and every distribution file
+was verified. Read-only unit-layer plan/verification inspected all seven original
+CISLIB profiles. Each remains held with `input-detail-unavailable`; no original
+fingerprint, report, contract, approval, limit, cost or attempt was changed. The
+four original owner objects and all seven original state/report files still
+match the before-integration snapshot exactly.
+
+The one permitted fresh two-case diagnostic attempt reached build output but
+produced no test report. Its process result was uncertain; original same-host
+controller/driver absence and exact retained Windows-job closure were then
+verified. The existing reconciliation command settled only this new tree,
+conservatively charging 600 seconds and preserving one used attempt, with zero
+reservation or recovery hold. It was not restarted. This is **not** a passing
+consumer baseline or proof of post-closeout consumer reuse.
+
+Engine behavior is verified by the composed native continuation on both hosts;
+practical CISLIB proof remains unperformed. CIS/CIS-0004 and the new CISLIB/CIS-0005
+supporting task are Blocked on the explicit one-execution limit. The existing
+CISLIB continuation record contains one concrete, unapplied proposal for an
+additional two-case execution within unchanged shared totals. No full regression,
+coverage, mutation, performance, release or main-merge campaign was added.

@@ -29,8 +29,6 @@ public sealed partial class IncrementalTestService
         public string Layer { get; init; } = "all";
         public string UnitIdentity { get; init; } = "";
         public string MutationIdentity { get; init; } = "";
-        public string? PreviousUnitIdentity { get; init; }
-        public string? PreviousMutationIdentity { get; init; }
         public Dictionary<string, string> NativeEnvironmentOverrides { get; init; } = new(PathComparer);
         public Dictionary<string, string> MaterialEnvironmentDigests { get; init; } = new(PathComparer);
         public IncrementalInputFact[] MaterialFacts { get; init; } = [];
@@ -48,11 +46,6 @@ public sealed partial class IncrementalTestService
 
     private static Input Read(IncrementalTestOptions options, string? previousTestingProducer = null, string? previousHelperProducer = null,
         bool legacySessionEnvironment = false, string? environmentIdentity = null)
-        => ReadCaptured(options, previousTestingProducer, previousHelperProducer, legacySessionEnvironment, environmentIdentity);
-
-    private static Input ReadCaptured(IncrementalTestOptions options, string? previousTestingProducer = null, string? previousHelperProducer = null,
-        bool legacySessionEnvironment = false, string? environmentIdentity = null, bool previousAmbientIdentity = false,
-        DictionaryEntry[]? inheritedEnvironment = null)
     {
         Require(options.Layer is "unit" or "mutation" or "all", "Layer must be unit, mutation, or all.");
         Require(options.MaximumBatches is >= 1 and <= 512 && options.MaximumSeconds is >= 1 and <= 3600,
@@ -129,7 +122,10 @@ public sealed partial class IncrementalTestService
                 "Each native command must use an absolute executable included in toolFiles.");
         var configurationHashes = profile.ConfigFiles.ToDictionary(file => file, file => HashFile(Safe(repository, file)), StringComparer.Ordinal);
         var toolHashes = tools.ToDictionary(file => file, HashFile, PathComparer);
-        var environment = inheritedEnvironment ?? Environment.GetEnvironmentVariables().Cast<DictionaryEntry>().ToArray();
+        var environment = Environment.GetEnvironmentVariables().Cast<DictionaryEntry>().ToArray();
+        var declared = profile.Environment.OrderBy(pair => pair.Key, StringComparer.Ordinal).ToArray();
+        var selectedMutationConfiguration = profile.StrykerConfigFile is null ? null
+            : Relative(repository, Safe(repository, profile.StrykerConfigFile));
         var profileHash = HashFile(path);
         var legacyIdentity = previousTestingProducer is not null || previousHelperProducer is not null;
         string commonIdentity;
@@ -153,12 +149,8 @@ public sealed partial class IncrementalTestService
         else
         {
             var working = Relative(repository, Safe(repository, profile.WorkingDirectory, true));
-            var declared = profile.Environment.OrderBy(pair => pair.Key, StringComparer.Ordinal).ToArray();
-            var ambient = environmentIdentity ?? (previousAmbientIdentity ? AmbientEnvironmentIdentityBeforeReuseCorrection(profile, environment)
-                : CapturedEnvironmentIdentity(profile, false, true, environment));
+            var ambient = environmentIdentity ?? CapturedEnvironmentIdentity(profile, false, true, environment);
             var platform = System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier;
-            var selectedMutationConfiguration = profile.StrykerConfigFile is null ? null
-                : Relative(repository, Safe(repository, profile.StrykerConfigFile));
             unitIdentity = HashObject(new
             {
                 contract = CisIncrementalResultContract.Version,
@@ -197,18 +189,15 @@ public sealed partial class IncrementalTestService
         var storage = Safe(repository, ".cis/local/testing");
         var root = Safe(repository, LocalRoot + "/" + profile.Id);
         var materialEnvironment = MaterialEnvironmentDigests(profile, environment);
-        var previous = !legacyIdentity && environmentIdentity is null && !previousAmbientIdentity
-            ? ReadCaptured(options, previousAmbientIdentity: true, inheritedEnvironment: environment) : null;
         return new(repository, profile, path, profileHash, storage, root, Safe(root, "state.json"), commonIdentity)
         {
             Layer = options.Layer,
             UnitIdentity = unitIdentity,
             MutationIdentity = mutationIdentity,
-            PreviousUnitIdentity = previous?.UnitIdentity,
-            PreviousMutationIdentity = previous?.MutationIdentity,
             NativeEnvironmentOverrides = NativeEnvironment(profile, Safe(repository, profile.WorkingDirectory, true), environment),
             MaterialEnvironmentDigests = materialEnvironment,
-            MaterialFacts = ProfileMaterialFacts(repository, profile, path, tools, materialEnvironment, configurationHashes, toolHashes),
+            MaterialFacts = ProfileMaterialFacts(repository, profile, path, tools, materialEnvironment, configurationHashes, toolHashes,
+                declared, selectedMutationConfiguration),
             LegacyIdentity = legacyIdentity,
             LegacyTestingProducer = previousTestingProducer,
             LegacyHelperProducer = previousHelperProducer

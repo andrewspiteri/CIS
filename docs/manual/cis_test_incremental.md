@@ -197,7 +197,10 @@ material dependencies.
 A compatible older result remains reusable without this breakdown. CIS can check
 an exact preceding fingerprint against the current facts while keeping the saved
 fingerprint, report and native execution provenance. It does not attach today's
-breakdown to an older execution. When an older fingerprint no longer matches and
+breakdown to an older execution. Compatibility uses the same canonical environment
+as execution: a formerly material inherited transport value cannot supply a
+matching old result after that value is normalized away. Explicit profile
+overrides remain material. When an older fingerprint no longer matches and
 its original inputs are unavailable, the reason is `input-detail-unavailable`;
 the passing report alone cannot establish its applicability to today's inputs.
 

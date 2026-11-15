@@ -184,6 +184,39 @@ public sealed class IncrementalEnvironmentTests
         var state = fixture.SavedState();
         Assert.Contains(state.InputFacts.Values, fact => fact.Category == "environment" && fact.Input == name);
         Assert.DoesNotContain(value, JsonSerializer.Serialize(state), StringComparison.Ordinal);
+        var originalProfile = fixture.Profile;
+        fixture.Save(originalProfile with { Environment = new() { [name] = value } });
+        var declared = fixture.Plan("unit");
+        Assert.Equal(2, declared.PendingUnitBatches);
+        Assert.All(declared.Batches, batch =>
+        {
+            Assert.Contains(batch.UnitReasons, reason => reason.Category == "configuration"
+                && reason.Input == "declared-environment" && reason.Change == "changed");
+            Assert.DoesNotContain(batch.UnitReasons, reason => reason.Category == "environment" && reason.Input == name);
+        });
+        fixture.Save(originalProfile);
+        Assert.Equal(0, fixture.Run("unit").ExecutedUnitBatches);
+        Assert.Equal(calls, fixture.Calls());
+
+        // A preceding diagnostic format did not retain this fixed profile fact.
+        // Its absence is unknown history, never evidence of a newly added input.
+        var omitted = state.InputFacts.Where(pair => pair.Value.Origin == "profile"
+            && pair.Value.Category == "configuration" && pair.Value.Input == "declared-environment")
+            .Select(pair => pair.Key).ToHashSet(StringComparer.Ordinal);
+        foreach (var basis in state.InputBases.Keys.ToArray())
+            state.InputBases[basis] = state.InputBases[basis].Where(id => !omitted.Contains(id)).ToArray();
+        foreach (var id in omitted) state.InputFacts.Remove(id);
+        fixture.WriteState(state);
+        fixture.Save(originalProfile with { Environment = new() { [name] = value } });
+        var historical = fixture.Plan("unit");
+        Assert.All(historical.Batches, batch =>
+        {
+            Assert.Contains(batch.UnitReasons, reason => reason.Category == "input-detail-unavailable"
+                && reason.Input == "declared-environment");
+            Assert.DoesNotContain(batch.UnitReasons, reason => reason.Input == "declared-environment" && reason.Change == "added");
+        });
+        fixture.Save(originalProfile);
+        Assert.Equal(0, fixture.Plan("unit").PendingUnitBatches);
         Environment.SetEnvironmentVariable(name, null);
 
         var plan = fixture.Plan("unit");

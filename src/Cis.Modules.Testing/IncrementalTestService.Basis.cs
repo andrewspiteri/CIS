@@ -7,18 +7,21 @@ public sealed partial class IncrementalTestService
 {
     private static IncrementalInputFact[] ProfileMaterialFacts(string repository, IncrementalTestProfile profile,
         string profilePath, string[] tools, IReadOnlyDictionary<string, string> environmentDigests,
-        IReadOnlyDictionary<string, string> configurationHashes, IReadOnlyDictionary<string, string> toolHashes)
+        IReadOnlyDictionary<string, string> configurationHashes, IReadOnlyDictionary<string, string> toolHashes,
+        KeyValuePair<string, string>[] declaredEnvironment, string? selectedMutationConfiguration)
     {
         var facts = new List<IncrementalInputFact>();
         void Value(string category, string name, object? value, bool mutationOnly = false)
             => facts.Add(new(category, name, HashObject(value)) { Origin = "profile", MutationOnly = mutationOnly });
         Value("configuration", "working-directory", Relative(repository, Safe(repository, profile.WorkingDirectory, true)));
         Value("configuration", "unit-command", profile.UnitCommand);
+        Value("configuration", "declared-environment", declaredEnvironment);
         Value("configuration", "unit-report", new { reportPath = Relative(repository, Safe(repository, profile.UnitReportPath)), profile.UnitResultFormat });
         Value("selection", "full-test-filter", profile.FullTestFilter);
         Value("platform", "runtime-identifier", RuntimeInformation.RuntimeIdentifier);
         Value("configuration", "mutation:command", profile.MutationCommand, true);
         Value("configuration", "mutation:recovery", profile.RecoveryCommand, true);
+        Value("configuration", "mutation:selected-configuration", selectedMutationConfiguration, true);
         Value("configuration", "mutation:assessment", new { profile.MutationReportPath, profile.CanarySourceFile,
             profile.MinimumCanaryKills, profile.BreakThreshold, profile.RerunAdditionalTimeoutMilliseconds }, true);
         if (UnitRendersMutationConfiguration(profile))
@@ -91,6 +94,12 @@ public sealed partial class IncrementalTestService
                 var before = previous.GetValueOrDefault(key);
                 var after = next.GetValueOrDefault(key);
                 if (before?.Sha256 == after?.Sha256) continue;
+                if (before is null && after is { Category: "configuration", Origin: "profile",
+                    Input: "declared-environment" or "mutation:selected-configuration" })
+                {
+                    reasons.Add(new("input-detail-unavailable", key.Input, "The retained input basis predates this profile detail."));
+                    continue;
+                }
                 reasons.Add(new(key.Category, key.Input, before is null ? "added" : after is null ? "removed" : "changed"));
             }
         }

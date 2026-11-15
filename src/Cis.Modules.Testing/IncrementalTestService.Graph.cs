@@ -129,16 +129,17 @@ public sealed partial class IncrementalTestService
                     unitHashes.ToDictionary(item => item.file, item => item.hash, PathComparer));
                 mutationBasis = MaterialBasis(input, source, tests, filter, mutationInputs, mutationEdges, true,
                     mutationHashes.ToDictionary(item => item.file, item => item.hash, PathComparer));
-                if (materialDependencies.Length != dependencies.Length || input.PreviousUnitIdentity != input.UnitIdentity
-                    || input.PreviousMutationIdentity != input.MutationIdentity)
+                if (materialDependencies.Length != dependencies.Length)
                 {
                     // Compatibility checks reconstruct the previous algorithm from
-                    // today's complete inputs. They never rewrite a retained result
-                    // or invent the missing historical breakdown.
+                    // today's complete inputs and canonical execution environment.
+                    // An older raw transport environment is not equivalent to the
+                    // environment now delivered to native commands. These checks
+                    // never rewrite a result or invent its missing input breakdown.
                     var previousUnitInputs = dependencies.Where(file => UnitDependencyInput(input, file, explicitUnitInputs)).ToArray();
                     previousUnit = HashObject(new
                     {
-                        UnitIdentity = input.PreviousUnitIdentity ?? input.UnitIdentity, source, tests, filter,
+                        input.UnitIdentity, source, tests, filter,
                         inputHashes = previousUnitInputs.Select(file => new { file, hash = HashFile(Safe(input.Repository, file)) }).ToArray(),
                         relevantEdges = previousUnitInputs.SelectMany(file => forward.GetValueOrDefault(file, [])
                             .Where(target => UnitDependencyInput(input, target, explicitUnitInputs)).Select(target => file + "->" + target))
@@ -147,7 +148,7 @@ public sealed partial class IncrementalTestService
                     var previousMutationInputs = dependencies.Where(file => !PathComparer.Equals(Safe(input.Repository, file), input.ProfilePath)).ToArray();
                     previousMutation = HashObject(new
                     {
-                        MutationIdentity = input.PreviousMutationIdentity ?? input.MutationIdentity, unit = previousUnit, source, tests, filter,
+                        input.MutationIdentity, unit = previousUnit, source, tests, filter,
                         inputHashes = previousMutationInputs.Select(file => new { file, hash = HashFile(Safe(input.Repository, file)) }).ToArray(),
                         relevantEdges = previousMutationInputs.SelectMany(file => forward.GetValueOrDefault(file, [])
                             .Where(target => !PathComparer.Equals(Safe(input.Repository, target), input.ProfilePath)).Select(target => file + "->" + target))

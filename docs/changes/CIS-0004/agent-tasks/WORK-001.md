@@ -2,7 +2,7 @@
 title: "WORK-001 Preserve native saved-result reuse through continuation and integrate the verified correction"
 type: agent-task
 status: Draft
-task_status: InProgress
+task_status: Blocked
 task_id: WORK-001
 parent_id: none
 category: implementation

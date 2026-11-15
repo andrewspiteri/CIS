@@ -37,10 +37,11 @@ No roots declared. Supply roots to `cis impact analyse`.
 
 ## Authorized outcome and limits
 
-Derived from [the canonical authorization](authorization.json), decision `CIS-INCREMENTAL-REUSE-2026-11-15`, recorded for Andrew Spiteri. Tasks reference this shared context; their organization is not a separate human review.
+Derived from [the canonical authorization](authorization.json), decision `CIS-INCREMENTAL-REUSE-2026-11-15:AUTHORIZED-CONTINUATION-81f75ebb:SCOPE-PRESERVATION`, recorded for Andrew Spiteri. Tasks reference this shared context; their organization is not a separate human review.
 
 Reuse unchanged passing native results through ordinary closeout and new sessions, with precise material invalidation and safe CISLIB development-tool integration
 
+- `consumer-continuation`: Approved exception to the original one-execution restriction: one additional execution of the same two CISLIB diagnostic cases under new CISLIB/CIS-0005/WORK-002, at most 540 seconds within remaining consumer 600 seconds. Preserve the inconclusive attempt. CIS supporting owner one attempt plus consumer two attempts remain within shared 7,200 seconds / three attempts / 180 included restoration seconds. Paths: `docs/changes/CIS-0004`.
 - `reuse`: AC-1 normal CLI/native continuation zero-repeat; AC-2 selective explained invalidation; AC-3 captured compact material basis; AC-4 compatible retained results; AC-5 exact verified development build and read-only CISLIB profile dispositions, at most one fresh historical baseline under new ownership. Paths: `docs/changes/CIS-0004`, `docs/manual/cis_test_incremental.md`, `src`, `tests`.
 
 - At most one fresh specifically noncurrent historical CISLIB profile; never reopen old owners.

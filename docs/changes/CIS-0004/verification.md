@@ -114,3 +114,52 @@ supporting task are Blocked on the explicit one-execution limit. The existing
 CISLIB continuation record contains one concrete, unapplied proposal for an
 additional two-case execution within unchanged shared totals. No full regression,
 coverage, mutation, performance, release or main-merge campaign was added.
+
+## Authorized consumer continuation
+
+Andrew Spiteri approved the exact additional-execution proposal published in
+CISLIB commit `81f75ebb`. The original task scope and history were preserved;
+the exception is separate supporting scope. The CIS supporting attempt
+distribution is now one, and the consumer has two within the unchanged shared
+7,200-second / three-attempt / 180-second-restoration maximum.
+
+The exact installed `2b916962` build executed only the approved same two
+diagnostic cases under new CISLIB/CIS-0005/WORK-002: **2 passed, 0 failed,
+0 skipped**, one unit batch, admitted report, settled 211,151 ms / one attempt,
+zero reservation and no recovery hold. The inconclusive consumer WORK-001 keeps
+its 600,000 ms / one attempt and is Deferred. All three shared attempts remain
+counted. No accepted original profile was rerun.
+
+After ordinary closeout commit `97d625bb`, real graph refresh and fresh
+processes, unit plan/status report current scope with zero pending batches;
+verification returns `verified`, exit 0. The report, executed unit record and
+prior native costs are unchanged; no additional native process launched. All
+four original consumer owners retain their contracts, costs, attempts, limits
+and checkpoint facts, and all seven original reports/states remain unchanged.
+Native serialization changed timestamp formatting to UTC, preserving instants.
+The historical profiles still lack their original input detail; this passing
+new baseline does not silently migrate them.
+
+The first concurrent plan reader included a settlement warning despite current
+scope; status, verification and a sequential plan were clean. A short exclusive
+ledger-lock wait explains a possible transient inspection failure in source;
+the specific exception was not captured. Defer this concurrent-inspection
+diagnostic issue without another test or source-repair campaign.
+
+The consumer proof removes the previous one-execution hold. Required source
+findings from the existing independent review are resolved. The parent task
+returns to ReadyForReview; its existing engineering completion receipt and
+applicable formal closeout gates remain separate from this observed reuse proof.
+No main merge, release or broader qualification was performed.
+
+Final checked consumer completion commit
+[`099a25f2`](https://github.com/andrewspiteri/CISLIB/commit/099a25f202935d14ee4c396abd51ebbff6c1e4f1)
+was followed by another real graph refresh and three sequential fresh CLI
+processes. Plan/status have zero pending unit batches and no invalidation reasons;
+verification is `verified`, exit 0. The unit record and report remain unchanged,
+with one total native launch, zero repeat launches and the same 211,151 ms / one
+attempt. WORK-002 is Complete, its attempt is closed, and no successor is queued.
+The old supporting attempt is closed without refund and remains Deferred.
+Strict documentation validation passes in both repositories with zero warnings
+or errors. The existing independent reviewer confirmed the accepted result,
+settlement and preservation; this was not another review stage.

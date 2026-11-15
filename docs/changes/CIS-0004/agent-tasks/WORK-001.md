@@ -2,7 +2,7 @@
 title: "WORK-001 Preserve native saved-result reuse through continuation and integrate the verified correction"
 type: agent-task
 status: Draft
-task_status: Blocked
+task_status: ReadyForReview
 task_id: WORK-001
 parent_id: none
 category: implementation
@@ -29,13 +29,15 @@ Preserve native saved-result reuse through continuation and integrate the verifi
 
 ## Acceptance criteria
 
-- [ ] AC-1 through AC-5 in the outcome scope: normal CLI/native closeout and new-session reuse launches zero tests; genuine selective input changes give precise reasons from compact executed facts; compatible older records remain usable; exact corrected build integrates without replaying accepted CISLIB work.
+- [x] AC-1 through AC-5 in the outcome scope: normal CLI/native closeout and new-session reuse launches zero tests; genuine selective input changes give precise reasons from compact executed facts; compatible older records remain usable; exact corrected build integrates without replaying accepted CISLIB work.
 
 ## Targeted validation
 
-- [ ] Focused existing native Windows/Linux tests; actual CLI continuation with unchanged report and accounting; one independent review; exact committed build; explicit unit-only read-only CISLIB dispositions and optional single fresh historical profile within shared grant.
+- [x] Focused existing native Windows/Linux tests; actual CLI continuation with unchanged report and accounting; one independent review; exact committed build; explicit unit-only read-only CISLIB dispositions and optional single fresh historical profile within shared grant.
 
 ## Completion evidence
 
 | Check | Result | Evidence |
 | --- | --- | --- |
+| Focused correction and review | Affected Windows/Ubuntu native checks passed; required source findings resolved | [Verification](../verification.md) |
+| Practical consumer integration | Authorized 2/0/0 pass settled; post-closeout fresh unit plan/status/verify current, zero repeat launches; original work preserved | [Consumer continuation](https://github.com/andrewspiteri/CISLIB/blob/099a25f202935d14ee4c396abd51ebbff6c1e4f1/planning/cis/cleanup-disposition.md#authorized-diagnostic-continuation) |

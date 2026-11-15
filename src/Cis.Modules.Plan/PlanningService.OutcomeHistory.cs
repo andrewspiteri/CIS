@@ -5,6 +5,14 @@ namespace Cis.Modules.Plan;
 
 public sealed partial class PlanningService
 {
+    private static string? OutcomeSeedReadiness(PlanWorkItem task, IReadOnlyList<PlanWorkItem> items, string? target = null)
+    {
+        var container = task.Complexity == "high" && items.Count(item => item.ParentId == task.Id) >= 2;
+        return CisOutcomeTaskReadiness.UnresolvedSeed(task.InstanceKey, task.Status, task.AcceptanceCriteria, task.Validation, container)
+            ?? (target is null ? null : CisOutcomeTaskReadiness.UnresolvedSeed(task.InstanceKey, target,
+                task.AcceptanceCriteria, task.Validation, container));
+    }
+
     private static bool OutcomeRetainsHistoricalAuthority(PlanWorkItem task)
         => CanonicalStatus(task.Status) is "Complete" or "Cancelled" or "Deferred" or "Decomposed"
             || PlanTaskDispositionPolicy.IsTerminal(task.Status, task.Category);

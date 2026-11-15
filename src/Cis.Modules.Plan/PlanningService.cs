@@ -677,6 +677,9 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
             var readiness = EvaluateReadiness(change.RepositoryPath);
             if (readiness.Count > 0) return Error(change.Id, readiness.ToArray());
         }
+        if (outcomeAuthority is not null && target is "ReadyForReview" or "Approved" or "InProgress" or "Complete"
+            && OutcomeSeedReadiness(item, plan.WorkItems, target) is { } seed)
+            return Error(change.Id, seed);
         if (outcomeAuthority is not null)
         {
             var selected = historicalDisposition
@@ -846,12 +849,15 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
     {
         var change = _changes.Read(repositoryPath, changeId)
             ?? throw new InvalidDataException("Change dossier was not found for task review.");
-        var task = ReadPlan(change).WorkItems.FirstOrDefault(item => item.Id == taskId)
+        var plan = ReadPlan(change);
+        var task = plan.WorkItems.FirstOrDefault(item => item.Id == taskId)
             ?? throw new InvalidDataException("Plan task was not found for task review.");
         if (task.ContractErrors.Count > 0) throw new InvalidDataException(string.Join("; ", task.ContractErrors));
         if (File.Exists(OutcomePlanPath(change)))
         {
             var authority = OutcomeAuthority(change) ?? throw new InvalidDataException("The outcome authorization is missing.");
+            if (OutcomeSeedReadiness(task, plan.WorkItems) is { } seed)
+                throw new InvalidDataException(seed);
             if (OutcomeTaskValidationAuthority(authority, task, allowHistorical: false) is null)
                 throw new InvalidDataException("The selected task's scope requires targeted authorization.");
             var digest = OutcomeTaskDigest(task);
@@ -930,6 +936,9 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
             if (owners.Length != 1) return [$"Task {task.Id} cannot resolve its exact canonical owner {task.WorkOwnerTaskId} in {task.ChangeId}."];
             var owner = owners[0];
             if (owner.ContractErrors.Count > 0) return owner.ContractErrors;
+            if (File.Exists(OutcomePlanPath(change))
+                && OutcomeSeedReadiness(owner, plan.WorkItems) is { } seed)
+                return [seed];
             if (gate != "none" && (owner.TaskTypeKey != task.TaskTypeKey || owner.TaskTypeVersion != task.TaskTypeVersion || owner.Category != task.Category || owner.ApprovalGate != gate))
                 return [$"Task {task.Id} has a different type/category/approval contract from canonical owner {owner.Id}; reassess that exact link before execution or completion."];
             var errors = ValidateSourceCurrency(change, plan.Source).ToList();

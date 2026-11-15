@@ -83,6 +83,7 @@ public sealed partial class AgentExecutionTests
             Assert.Contains("WORK-090", request.Prompt);
             Assert.Contains("canonical code-quality standard", request.Prompt);
             Assert.Contains("excluded responsibilities", request.Prompt);
+            Assert.Contains(".github/skills/cis-validate-completion/SKILL.md", request.Prompt);
         }
         };
         var service = new AgentService(new CisRepositoryContextResolver(), [provider], textGeneration: new StoryExecutionModels());

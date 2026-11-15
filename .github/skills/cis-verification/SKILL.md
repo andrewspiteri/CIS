@@ -17,6 +17,11 @@ Use before implementation planning, after meaningful changes, and before handoff
 
 Gather affected components, contracts, risks, acceptance criteria, available tooling, and required assurance independence.
 
+Derive the planned checks from accepted behavior using the [promised-workflow checks](../cis-validate-completion/SKILL.md#promised-workflow-checks).
+Cover the actual operation, preserved state and legitimate next operation before
+relying on implementation tests. Use that same existing review/verification record
+for precise evidence limits and any defect that escaped a reviewed handoff.
+
 ## Workflow
 
 1. Run `cis test inventory` and `cis test validate --strict`; reconcile the canonical suite profile before execution.

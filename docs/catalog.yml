@@ -2682,3 +2682,8 @@ documents:
     type: verification-record
     status: draft
     authority: canonical
+  - id: change-impact-studio:change:cis-0003:task:work-002
+    path: docs/changes/CIS-0003/agent-tasks/WORK-002.md
+    type: agent-task
+    status: draft
+    authority: canonical

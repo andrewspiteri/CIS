@@ -31,16 +31,26 @@ No roots declared. Supply roots to `cis impact analyse`.
 
 ## Acceptance criteria
 
-- Deliver the authorized outcome and its task-specific acceptance criteria within the shared constraints and limits.
+The current follow-up makes an accepted request usable as concrete implementation,
+verification and review work. It uses the existing outcome authority and finite
+allowance; the earlier contracts and the separate dossier closeout remain intact.
+
+- **AC-1 — Draft and readiness:** creating and inspecting an authorized or unapproved draft succeeds. CIS's unresolved generated seed cannot enter implementation, review or completion; its hold tells the controller to supply observable acceptance and validation through the existing task update or split operation.
+- **AC-2 — Supported continuation:** the controller supplies concise criteria for the accepted behavior through the task workflow, then proceeds through the applicable normal lifecycle under the same human authorization and unchanged overall allowance.
+- **AC-3 — Preservation and isolation:** legacy approved/completed contracts, historical results, costs and attempts remain unchanged. An unresolved seed holds only that unfinished task; independent concrete work remains eligible. Both corrected amendment workflows remain valid.
+- **AC-4 — Actual agent context:** supplied instructions, skills and representative worker/reviewer context agree on outcome versus legacy authority, canonical state versus derived views, protected accounting/recovery state and refresh of affected material inputs.
+- **AC-5 — Promised operation:** the existing review derives checks from the accepted request, inspects relevant callers and state consumers, and checks required denial plus legitimate resolution and continuation. It asks for a short explanation when a required defect escaped a reviewed handoff; internal review fixes remain distinct. The existing record links the actual checks, including the retained amendment and participant cases.
+- **AC-6 — Honest handoff:** the correction is independently reviewed, focused checks pass and the development branch is pushed. The report states exact remaining limitations and separately retains CIS-0003's completion/security closeout status. CISLIB's completed state is preserved without replaying its tests; main merge, release and further product work remain separate.
 
 <!-- cis:outcome-view -->
 
 ## Authorized outcome and limits
 
-Derived from [the canonical authorization](authorization.json), decision `CIS-OUTCOME-WORKFLOW-CORRECTION-2026-11-13`, recorded for Andrew Spiteri. Tasks reference this shared context; their organization is not a separate human review.
+Derived from [the canonical authorization](authorization.json), decision `CIS-REQUEST-WORKFLOW-FOLLOWUP-2026-11-15`, recorded for Andrew Spiteri. Tasks reference this shared context; their organization is not a separate human review.
 
 One authorization carries planning and execution of the agreed CIS correction through task organization and ordinary refresh.
 
+- `applied-instructions`: Correct the execution, delivery and change instructions explicitly named in the accepted request-to-review follow-up. Paths: `.github/instructions`.
 - `workflow`: Implement and verify the requested shared outcome authorization, bounded accounting, proportionate records, applicable gates, guidance and review; push only the development branch. Paths: `.github/skills`, `AGENTS.md`, `docs`, `src`, `tests`.
 
 - No CISLIB consumer execution or alteration of live CISLIB state.

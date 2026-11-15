@@ -240,13 +240,13 @@ public sealed partial class AgentExecutionTests
         private AgentRepository Participant { get; } = AgentRepository.Create();
         private CisRepositoryContextResolver Resolver { get; } = new();
         private ChangeDossierStore Changes { get; }
-        private PlanningService Planner { get; }
+        public PlanningService Planner { get; }
         public CisRepositoryContext Context { get; }
         public string TaskId { get; }
         public string EnvelopePath => Path.Combine(Authority.Path, AgentService.RootPath, "envelopes", Change, TaskId + ".json");
         private string TaskPath { get; }
 
-        public OutcomeParticipantFixture()
+        public OutcomeParticipantFixture(bool concreteCriteria = true, bool authorizeBeforeBuild = true)
         {
             ConfigureParticipantTask(Authority, Participant);
             Authority.Write("src/X.cs", "class X { }");
@@ -264,22 +264,44 @@ public sealed partial class AgentExecutionTests
                 300, 8, 30, storage, [Actor], true, true, false, false, "fixture:participant-outcome");
             var created = Changes.Create(new(Authority.Path, "Neutral participant behavior", request.Outcome, [], Change) { OutcomeAuthorization = request });
             Assert.True(created.ExitCode == 0, string.Join("; ", created.Errors));
-            var authorized = Changes.Authorize(new(Authority.Path, Change, request, "Maintainer", "One synthetic bounded outcome decision."));
-            Assert.True(authorized.ExitCode == 0, string.Join("; ", authorized.Errors));
+            if (authorizeBeforeBuild) Authorize();
             Planner = new PlanningService(Changes, new ImpactAnalysisService(Changes, new GraphQueryService(Resolver)),
-                new DecisionService(Changes, Resolver), Resolver);
+                new DecisionService(Changes, Resolver), Resolver, workspaceRegistry: new WorkspaceRegistry(Resolver));
             var plan = Planner.Build(Authority.Path, Change);
             Assert.True(plan.ExitCode == 0, string.Join("; ", plan.Errors));
+            if (!authorizeBeforeBuild)
+            {
+                Assert.Equal("Draft", plan.PlanStatus);
+                Assert.StartsWith(CisOutcomeTaskReadiness.SeedInstancePrefix, Assert.Single(plan.WorkItems).InstanceKey);
+                Authorize();
+                plan = Planner.Build(Authority.Path, Change);
+                Assert.True(plan.ExitCode == 0, string.Join("; ", plan.Errors));
+            }
             var task = Assert.Single(plan.WorkItems);
             TaskId = task.Id;
             TaskPath = Path.Combine(Context.DocumentationRoot, "changes", Change, task.TaskPath!);
-            var started = Planner.TransitionTask(new(Authority.Path, Change, TaskId, "InProgress", Actor, "Start the selected participant behavior."));
-            Assert.True(started.ExitCode == 0, string.Join("; ", started.Errors));
+            if (concreteCriteria)
+            {
+                var specified = Planner.OrganizeOutcomeTasks(new(Authority.Path, Change,
+                    [new("Retain the selected participant behavior", ["main"],
+                        "The participant completes its selected behavior while unrelated approved scope can change.",
+                        "Exercise participant completion and resume with retained original authority snapshots.")],
+                    Actor, "Supply concrete acceptance before starting the participant task.", TaskId), "update");
+                Assert.True(specified.ExitCode == 0, string.Join("; ", specified.Errors));
+                var started = Planner.TransitionTask(new(Authority.Path, Change, TaskId, "InProgress", Actor, "Start the selected participant behavior."));
+                Assert.True(started.ExitCode == 0, string.Join("; ", started.Errors));
+            }
             var allocation = new CisAgentWorkAllocationRequest(300, 8, 30, [new(TaskId, 240, 6, 30)],
                 request.DecisionReference, "fixture:participant-storage", AcknowledgeHistoricalUnknown: true) { Storage = storage, Controllers = [Actor] };
             var allocated = Service(new FakeProvider()).AllocateWork(Authority.Path, Change,
                 WriteWorkInput(Authority, "participant-allocation.json", allocation), Actor, "Distribute resources under the same bounded outcome.");
             Assert.True(allocated.ExitCode == 0, string.Join("; ", allocated.Errors));
+
+            void Authorize()
+            {
+                var authorized = Changes.Authorize(new(Authority.Path, Change, request, "Maintainer", "One synthetic bounded outcome decision."));
+                Assert.True(authorized.ExitCode == 0, string.Join("; ", authorized.Errors));
+            }
         }
 
         public AgentService Service(ICisAgentProvider provider, bool withContractReader = true)

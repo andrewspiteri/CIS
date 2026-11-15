@@ -62,6 +62,13 @@ public sealed partial class AgentExecutionTests
         Assert.True(allocated.ExitCode == 0, string.Join("; ", allocated.Errors));
         Assert.Equal(evaluations, readiness.Evaluations);
 
+        var specified = planner.OrganizeOutcomeTasks(new(repository.Path, "CIS-0001",
+            [new("Retain the neutral readiness behavior", ["example"],
+                "The neutral source retains its accepted behavior when readiness is current.",
+                "Inspect real direct and native admission before any provider or test launch.")],
+            actor, "Supply concrete task criteria under the existing outcome and allocation.", task.Id), "update");
+        Assert.True(specified.ExitCode == 0, string.Join("; ", specified.Errors));
+        task = Assert.Single(specified.WorkItems);
         // The task was eligible earlier, but the canonical product prerequisite subsequently became stale.
         readiness.Ready = true;
         var started = planner.TransitionTask(new(repository.Path, "CIS-0001", task.Id, "InProgress", actor, "Start while product prerequisites are current."));

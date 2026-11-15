@@ -31,6 +31,14 @@ and its task-document lifecycle field, without regenerating the whole plan.
 Completion also snapshots sanitized CLI-usage counts, failures, possible token savings,
 and a ledger digest into the task and `verification.md` when local usage exists.
 
+A newly generated unresolved outcome seed is draft planning context. Authorization
+alone does not make its generic acceptance and validation ready for implementation,
+review or completion. The delegated controller supplies observable accepted criteria
+and targeted validation through `cis plan task update`, referencing shared acceptance
+and adding only task-specific behavior. In-scope clarification needs no new human
+approval or increased allowance. Unrelated eligible tasks and existing approved or
+completed legacy contracts retain their authority and history.
+
 Repositories that adopt `.cis/engineering-defaults.json` schema 1 also require current
 closing evidence at `verification/<task-id>.json` in the change dossier. Prepare its
 required-gate inventory using [`cis plan task completion-context`](cis_plan_task_completion_context.md).

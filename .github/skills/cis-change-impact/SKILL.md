@@ -1,6 +1,6 @@
 ---
 name: cis-change-impact
-description: Orchestrate CIS change preparation from exact-baseline dossier creation through graph context, reviewed impact, decisions, and validated bounded planning. Use for features, fixes, refactors, dependency/configuration/schema/API/workflow changes, or any request that must be assessed before implementation.
+description: Prepare bounded CIS changes using existing outcome or feature authority where applicable, with exact baselines, relevant graph/impact assessment, decisions and planning. Preserve legacy review routes when no reusable authority covers the work.
 ---
 
 # CIS Change Impact
@@ -10,13 +10,14 @@ description: Orchestrate CIS change preparation from exact-baseline dossier crea
 1. Read `.cis/repository.yml`, the repository profile, catalog, and applicable specifications.
 2. Use `cis-graph-context` to ensure a fresh graph and identify exact roots.
 3. Use `cis-change-dossier` to create or inspect the exact-baseline change record.
-4. Use `cis-impact-review` to analyse and present findings for human disposition.
+4. Use `cis-impact-review` where impact assessment is needed. Reuse current outcome or exact feature authority for covered findings; present only unresolved material differences for a targeted human decision. Preserve required legacy dispositions.
 5. Use `cis-decision-review` for unresolved blocking or advisory questions.
-6. Use `cis-bounded-planning` to build and validate work after impact review.
+6. Use `cis-bounded-planning` to build and validate work under applicable authority and readiness. Draft creation and inspection remain possible before authorization; preparing a draft grants no execution authority.
 7. Recheck planned versus actual scope with `cis-validate-completion` before closure.
 
 ## Guardrails
 
-Never infer finding disposition, decision resolution, plan approval, completion,
-or closure. Run authority-changing commands only after the user explicitly
-authorizes the exact record and rationale.
+Never invent finding disposition, decision resolution, human approval or final
+acceptance. Derive in-scope task organization and resource distribution only under
+the actual delegation and unchanged overall limits. Record a human decision only
+when explicitly authorized with its real identity and rationale.

@@ -87,7 +87,8 @@ public sealed partial class AgentExecutionTests
         repository.Write(".cis/engineering-defaults.json", "{\"schemaVersion\":1,\"requireTaskCompletion\":true,\"additionalGates\":[]}");
         var task = new PlanWorkItem("WORK-090", "documentation", "low", null, null, "Review the task", [], [], [], "Verified behavior", "Native tests", "InProgress");
         var contracts = new MutableTaskContract { Digest = EngineeringCompletionReview.TaskDigest(task) };
-        var service = new AgentService(new CisRepositoryContextResolver(), [new FakeProvider()],
+        var provider = new FakeProvider();
+        var service = new AgentService(new CisRepositoryContextResolver(), [provider],
             clock: Clock, taskContracts: contracts);
         AllocateWorkFixture(repository, service);
         var result = service.Run(repository.Path, "CIS-0001", "WORK-090", "fake", CisAgentRunModes.Review,
@@ -95,6 +96,7 @@ public sealed partial class AgentExecutionTests
             TestContext.Current.CancellationToken);
         Assert.Equal(0, result.ExitCode);
         Assert.Equal(EngineeringCompletionReview.TaskDigest(task), result.Run!.Manifest.TaskContractDigest);
+        Assert.Contains(".github/skills/cis-validate-completion/SKILL.md", provider.LastRequest!.Prompt);
         Assert.Equal(2, result.Run.Result!.SchemaVersion);
         Assert.Equal(CisAgentRunStates.Succeeded, result.Run.Result.Status);
         Assert.Equal("ready", result.Run.Result.Review!.Recommendation);

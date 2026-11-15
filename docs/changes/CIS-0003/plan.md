@@ -14,3 +14,4 @@ Derived under `change-impact-studio:CIS-0003:outcome:31963480b64948f6b8a22478a3e
 | Task | Work | Status | Depends on |
 | --- | --- | --- | --- |
 | WORK-001 | [Shared outcome authority and proportionate planning](agent-tasks/WORK-001.md) | ReadyForReview |  |
+| WORK-002 | [Concrete request, readiness and promised workflow checks](agent-tasks/WORK-002.md) | ReadyForReview |  |

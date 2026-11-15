@@ -48,6 +48,60 @@
         }
       ],
       "contractErrors": []
+    },
+    {
+      "id": "WORK-002",
+      "category": "implementation",
+      "complexity": "medium",
+      "parentId": null,
+      "taskPath": "agent-tasks/WORK-002.md",
+      "title": "Concrete request, readiness and promised workflow checks",
+      "requirementIds": [],
+      "impactIds": [],
+      "dependsOn": [],
+      "acceptanceCriteria": "Meet shared proposal AC-1 through AC-6: generated seed holds resolve through concrete controller criteria; real worker/reviewer context preserves the same authority and checks the promised operation and continuation.",
+      "validation": "Exercise supported Plan and Agent readiness/continuation paths and representative generated context; run affected .NET regressions and strict docs/skill checks, reuse unchanged amendment results, and obtain the existing focused independent review.",
+      "status": "ReadyForReview",
+      "taskTypeKey": "core.legacy",
+      "taskTypeVersion": "1.0",
+      "approvalGate": "none",
+      "targets": [],
+      "decisionIds": [],
+      "negativeCriteria": [],
+      "requiredOutputs": [],
+      "frontendType": null,
+      "storyId": null,
+      "instanceKey": "outcome:b8b5f8972f254fe797cd7186bbb54fe4",
+      "workOwnerTaskId": null,
+      "authorizationScopeIds": [
+        "workflow",
+        "applied-instructions"
+      ],
+      "authorizationScopeBasis": "sha256:dd5fc0e4baf06d16ef16611a7279ea651754436b6e565e3df31fafc2fec3ae6b",
+      "workPaths": [
+        "src",
+        "tests",
+        "docs",
+        ".github/skills",
+        ".github/instructions"
+      ],
+      "assignee": "Codex",
+      "verificationObligations": [
+        {
+          "id": "task-contract",
+          "criteria": [
+            "Meet shared proposal AC-1 through AC-6: generated seed holds resolve through concrete controller criteria; real worker/reviewer context preserves the same authority and checks the promised operation and continuation."
+          ],
+          "description": "Exercise supported Plan and Agent readiness/continuation paths and representative generated context; run affected .NET regressions and strict docs/skill checks, reuse unchanged amendment results, and obtain the existing focused independent review.",
+          "evidenceRoute": "review",
+          "evidenceExpectations": [
+            "Exercise supported Plan and Agent readiness/continuation paths and representative generated context; run affected .NET regressions and strict docs/skill checks, reuse unchanged amendment results, and obtain the existing focused independent review."
+          ],
+          "sharedGateIds": [],
+          "basisReferences": []
+        }
+      ],
+      "contractErrors": []
     }
   ],
   "source": null

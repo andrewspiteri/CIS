@@ -4,6 +4,29 @@ namespace Cis.Modules.Agent;
 
 public sealed partial class AgentService
 {
+    // Shared runtime excerpt of cis-validate-completion's promised-workflow rule.
+    // BuildPrompt supplies it to direct workers, engineering review and story stages.
+    private const string TaskWorkflowChecks = """
+
+        Apply the promised-workflow checks in .github/skills/cis-validate-completion/SKILL.md.
+        Derive expected behavior and checks from the accepted outcome and concrete acceptance before
+        relying on the implementation's tests. Check the user's actual operation, the existing state
+        it must preserve and the next operation that must remain possible. Trace relevant callers and
+        consumers; for shared state inspect writers, readers, validators and terminal/recovery paths.
+        Use supported service/controller entry points when helper tests cannot establish the promise,
+        and cover alternate paths with materially different semantics. Check required denial AND
+        legitimate resolution and continuation of holds, amendments or recovery. Do not mock away
+        the changed rule or infer representative inputs from fixture names. State exactly what the
+        checks establish and leave unverified, with concise acceptance/path/check links in the existing
+        review record. Keep one proportionate independent review; required corrections stay within
+        it, optional advice creates no compulsory work, and correction-round limits are ceilings.
+        For a required defect escaping a reviewed handoff, use the existing correction/verification
+        record to explain the missed ordinary scenario, why the old check missed it and what now
+        covers the cause; inspect adjacent consumers and continuation. Internal review fixes are
+        normal corrections, and ReadyForReview is distinct from formal acceptance or release.
+
+        """;
+
     private static bool IsEngineeringReview(AgentRunManifest manifest)
         => manifest.Mode == CisAgentRunModes.Review && manifest.InputDigest is not null;
 
@@ -37,7 +60,9 @@ public sealed partial class AgentService
         A blocked verdict, missing evidence, provider permission failure or ordinary correctable defect
         alone does not create such a question. True requires required disposition and blocked verdict;
         omit it or use false for other findings. This flag cannot grant approval or waive a reserved gate.
-        Missing or stale required evidence remains a hold; human task completion is a separate gate.
+        Missing or stale required evidence remains a hold. Checked CIS task completion is separate
+        from review; outcome-authorized completion needs no extra human decision. Preserve actual
+        reserved stakeholder and final-acceptance decisions.
 
         Examine the actual changed source and meaningful callers before judging necessity; organization,
         field presence, file counts and passing tests do not establish a sound or necessary design.

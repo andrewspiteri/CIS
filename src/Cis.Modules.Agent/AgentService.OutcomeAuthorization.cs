@@ -13,7 +13,8 @@ public sealed partial class AgentService
             && Directory.EnumerateDirectories(changes).Any(change => File.Exists(Path.Combine(change, "authorization.json")));
     }
 
-    private static JsonElement ReadOutcomeTask(CisRepositoryContext context, CisOutcomeAuthorization authorization, string taskId)
+    private static JsonElement ReadOutcomeTask(CisRepositoryContext context, CisOutcomeAuthorization authorization, string taskId,
+        bool requireReadiness = false)
     {
         var path = Path.Combine(context.DocumentationPath, "changes", authorization.ChangeId, "plan.json");
         if (!CisPathSafety.TryResolveUnderRoot(context.RepositoryPath, Relative(context.RepositoryPath, path), out var resolved)
@@ -31,6 +32,14 @@ public sealed partial class AgentService
         var matches = items.EnumerateArray().Where(item => item.ValueKind == JsonValueKind.Object && item.TryGetProperty("id", out var id)
             && string.Equals(id.GetString(), taskId, StringComparison.OrdinalIgnoreCase)).ToArray();
         if (matches.Length != 1) throw new InvalidDataException("The selected canonical outcome task is missing or ambiguous: " + taskId);
+        if (requireReadiness)
+        {
+            var task = matches[0];
+            var container = task.TryGetProperty("complexity", out var complexity) && complexity.GetString() == "high"
+                && items.EnumerateArray().Count(item => item.ValueKind == JsonValueKind.Object && item.TryGetProperty("parentId", out var parent)
+                    && parent.ValueKind == JsonValueKind.String && parent.GetString() == taskId) >= 2;
+            ValidateOutcomeTaskReadiness(task, container);
+        }
         return matches[0].Clone();
     }
 
@@ -76,7 +85,7 @@ public sealed partial class AgentService
         }
         var taskId = Header(taskText, "task_id");
         if (taskId is null) { diagnostics.Add("ERROR: A derived task needs its canonical task identity."); return; }
-        var task = ReadOutcomeTask(context, authorization, taskId);
+        var task = ReadOutcomeTask(context, authorization, taskId, requireReadiness: !accountingOnly || nativeVerification);
         ValidateOutcomeTaskScope(authorization, task);
         foreach (var (header, field) in new[] { ("task_type", "taskTypeKey"), ("task_type_version", "taskTypeVersion"),
             ("parent_id", "parentId"), ("work_owner_task_id", "workOwnerTaskId"), ("instance_key", "instanceKey") })
@@ -91,7 +100,9 @@ public sealed partial class AgentService
             || !recordedScopes.Order(StringComparer.Ordinal).SequenceEqual(OutcomeTaskScopes(task).Order(StringComparer.Ordinal), StringComparer.Ordinal))
             throw new InvalidDataException("The derived task's outcome/scope references conflict with its canonical contract.");
         if (!accountingOnly || nativeVerification)
+        {
             _taskContracts?.ReadTaskDigest(context.RepositoryPath, authorization.ChangeId, taskId);
+        }
         var status = task.TryGetProperty("status", out var state) ? state.GetString() : null;
         if (!accountingOnly && status is not ("Ready" or "Approved" or "InProgress"))
             diagnostics.Add($"ERROR: Direct execution requires an Approved or InProgress task; current status is '{status}'.");
@@ -121,7 +132,7 @@ public sealed partial class AgentService
     {
         var authorization = CisOutcomeAuthority.Read(context, changeId);
         if (authorization is null) return CisTaskAuthorityContext.Capture(context, changeId);
-        var task = ReadOutcomeTask(context, authorization, taskId);
+        var task = ReadOutcomeTask(context, authorization, taskId, requireReadiness: true);
         ValidateOutcomeTaskScope(authorization, task);
         var digest = _taskContracts?.ReadTaskDigest(context.RepositoryPath, changeId, taskId);
         if (digest is null)
@@ -132,5 +143,14 @@ public sealed partial class AgentService
         }
         var gates = CisTaskAuthorityContext.Capture(context, changeId);
         return Sha(authorization.Id + "\n" + CisOutcomeAuthority.ScopeBasis(authorization, OutcomeTaskScopes(task)) + "\n" + digest + "\n" + gates);
+    }
+
+    private static void ValidateOutcomeTaskReadiness(JsonElement task, bool retainedContainer)
+    {
+        static string? Text(JsonElement item, string field)
+            => item.TryGetProperty(field, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+        if (CisOutcomeTaskReadiness.UnresolvedSeed(Text(task, "instanceKey"), Text(task, "status"),
+            Text(task, "acceptanceCriteria"), Text(task, "validation"), retainedContainer) is { } seed)
+            throw new InvalidDataException(seed);
     }
 }

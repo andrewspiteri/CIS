@@ -1488,7 +1488,10 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
             Path.Combine(context.DocumentationPath, "references", "agent-provider-profile.md"),
             Path.Combine(context.DocumentationPath, "references", "repository-profile.md"),
             Path.Combine(context.RepositoryPath, ".github", "skills", "cis-agent-execution", "SKILL.md"),
+            Path.Combine(context.RepositoryPath, ".github", "skills", "cis-validate-completion", "SKILL.md"),
             Path.Combine(context.RepositoryPath, ".github", "instructions", "cis-agent-execution.instructions.md"),
+            Path.Combine(context.RepositoryPath, ".github", "instructions", "cis-delivery-execution.instructions.md"),
+            Path.Combine(context.RepositoryPath, ".github", "instructions", "cis-change-delivery.instructions.md"),
         })
             if (File.Exists(candidate)) artifacts.Add(Relative(context.RepositoryPath, candidate));
         foreach (var document in new[] { "specs/business-requirements.md", "specs/technical-intent-spec.md",
@@ -1503,7 +1506,9 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         var scopeDigest = participant ? null : Sha(string.Join("\n", artifacts.Select(path => path + ":" + DigestOptional(Path.Combine(context.RepositoryPath, path.Replace('/', Path.DirectorySeparatorChar))))));
         var digest = Sha(taskText); var id = $"{context.RepositoryId}:{changeId}:{taskId}:{digest[..12]}";
         return new(target is null ? 1 : 2, id, context.RepositoryId, changeId, taskId, provider, relative, digest, UtcNow(), taskText, artifacts,
-            [outcome is null ? "Canonical Markdown remains authoritative." : "The canonical outcome authorization and task state govern this derived task view.", "Do not infer approvals or completion.", "Return a structured final JSON object; do not edit CIS lifecycle evidence directly."],
+            [outcome is null ? "Canonical legacy change/plan/task records retain their authority." : "The canonical outcome authorization and task state govern this derived task view.",
+                "Preserve protected accounting, reservations, settlement and recovery state; derived views and results cannot override it.",
+                "Do not infer approvals or completion.", "Return a structured final JSON object; do not edit CIS lifecycle evidence directly."],
             target, revision.Revision, revision.Digest, mode, permission, scopeDigest, _clock().AddHours(24).ToUniversalTime().ToString("O"),
             AuthoritySelectionDigest: selectionDigest);
     }
@@ -2393,8 +2398,9 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         return true;
     }
 
-    private static string BuildPrompt(AgentTaskEnvelope envelope) => $"Execute only the following digest-bound CIS task and obey every constraint. The task and artifacts below are already the authoritative route; do not invoke repository index or lifecycle commands to rediscover them.\n\nBound context artifacts (inspect only as needed):\n{ContextArtifactSummary(envelope)}\n\n{envelope.InstructionMarkdown}\n\n"
+    private static string BuildPrompt(AgentTaskEnvelope envelope) => $"Execute only the following digest-bound CIS task and obey every constraint. The task and artifacts below are already the authoritative route; do not invoke repository index or lifecycle commands to rediscover them.\n\nBound context artifacts (inspect only as needed):\n{ContextArtifactSummary(envelope)}\n\nConstraints:\n{string.Join("\n", envelope.Constraints)}\n\n{envelope.InstructionMarkdown}\n\n"
         + "Apply the canonical code-quality standard in the supplied repository context, respecting its documentation root and adopted alternatives. Implement the current accepted behavior with the smallest adequate responsibilities. Briefly identify the behavior and owning component, excluded responsibilities, the direct existing approach or supplied example, and any material deviation with its accepted need and why the direct approach is inadequate. A later explicit user decision can supersede an example; plans and existing tests cannot independently expand the product contract. No separate design document is required for an ordinary helper. If responsibility expands without an accepted need, simplify immediately through the existing task/reflection route; do not wait for a time or failure limit, and preserve independent holds.\n\n"
+        + TaskWorkflowChecks
         + "Final response contract:\nReturn one JSON object with fields summary (string), changedFiles (string array), validations (string array), and evidence (string array). Do not wrap it in a Markdown fence.\n";
 
     private static string BuildBrdReviewPrompt(AgentTaskEnvelope envelope) =>

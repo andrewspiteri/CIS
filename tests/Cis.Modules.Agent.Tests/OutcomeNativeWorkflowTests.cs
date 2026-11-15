@@ -47,7 +47,12 @@ public sealed partial class AgentExecutionTests
             new DecisionService(changes, resolver), resolver);
         var built = planner.Build(repository.Path, "CIS-0001");
         Assert.True(built.ExitCode == 0, string.Join("; ", built.Errors));
-        var first = Assert.Single(built.WorkItems);
+        var seed = Assert.Single(built.WorkItems);
+        var specified = planner.OrganizeOutcomeTasks(new(repository.Path, "CIS-0001",
+            [Definition("Verify and retain the accepted X behavior", "X")], actor,
+            "Supply the accepted native behavior and its actual check before execution.", seed.Id), "update");
+        Assert.True(specified.ExitCode == 0, string.Join("; ", specified.Errors));
+        var first = Assert.Single(specified.WorkItems);
         var exampleDirectory = Path.Combine(context.DocumentationPath, "changes/CIS-0001");
         var exampleFiles = Directory.GetFiles(exampleDirectory, "*", SearchOption.AllDirectories);
         var humanFiles = exampleFiles.Where(path => path.EndsWith(".md", StringComparison.Ordinal)).ToArray();

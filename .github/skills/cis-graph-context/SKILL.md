@@ -13,4 +13,4 @@ description: Build, validate, search, traverse, trace, and package the CIS repos
 6. Treat C# invocation arguments as privacy-safe shapes, and `dataflow` as intraprocedural call ordering only. Inspect canonical source before making semantic or runtime claims.
 7. Report graph schema/build, freshness, compiler capabilities, diagnostics, truncation, roots, and omitted evidence.
 
-Do not edit `.cis/local/`, imply complete semantic coverage, include proposed edges silently, or replace canonical Markdown with graph output.
+Use supported commands for local state; never hand-edit protected accounting or recovery records or present graph output as canonical authority. Do not imply complete semantic coverage or include proposed edges silently. Canonical outcome/task state and existing legacy authorities retain their roles; compatible graph evidence remains reusable while its material inputs match.

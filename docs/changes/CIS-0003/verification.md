@@ -66,3 +66,70 @@ and honest external-bootstrap accounting limitation remain unchanged.
 CISLIB was inspected read-only at `b9a66340`: its checkout is clean, its existing
 completed work remains unchanged and its current plan queues no successor. No CISLIB
 consumer test or live-state update ran in this pass.
+
+## Request-to-review follow-up — 2026-11-15
+
+WORK-002 uses shared proposal AC-1–AC-6, recorded before implementation. The current
+request explicitly adds the named applied instructions to scope; native authorization
+records that path addition on the same grant while preserving the original workflow
+scope and history. Controller redistribution keeps the same 14,400 seconds, 12 attempts,
+600 protected restoration seconds and storage ceiling: each owner has 7,200 seconds
+and six attempts, with the original 600-second reserve retained on WORK-001. Consumption,
+attempts and reservations are preserved. External bootstrap checks retain the earlier
+historical-unknown limitation; no unmeasured work is represented as settled native cost.
+
+The promised-workflow rule is now canonical in `cis-validate-completion`. Its runtime
+excerpt reaches direct workers, engineering reviewers and story stages through the
+shared prompt builder. Participant context also carries the actual skill and applied
+instruction snapshots. It asks for acceptance-derived checks of the user's operation,
+preserved state and next operation, including relevant writers/readers/validators and
+supported denial, resolution and continuation. One existing independent review handles
+required corrections; optional advice and correction ceilings create no extra stages.
+
+### Why the earlier reviewed handoff missed the defects
+
+The amendment handoff was declared ReadyForReview, without formal dossier acceptance.
+Its ordinary scope-amendment scenario needed completed history, disposition of unfinished
+work and a current replacement. The earlier regression checked rejection and unrelated
+eligibility but stopped before resolving affected work. `OutcomeAmendmentLifecycleTests`
+and the composed native accounting case now follow that continuation and preserve history.
+
+The participant scenario needed successful completion and interrupted-run resume after
+an unrelated amendment. The native result-reuse fixture exercised another execution
+route and did not establish the participant snapshot checks. `ParticipantOutcomeAuthorityTests`
+now exercise both actual participant paths, relevant writers/readers and retained approval
+evidence. The canonical review rule explicitly asks which alternate consumers the chosen
+fixture leaves unverified.
+
+The current request also exposes the seed/context gaps left by that handoff. Its checked
+generic seed could stand in for observable acceptance because authorization and field
+presence were treated as readiness. The new seed regressions exercise draft, hold,
+controller-supplied criteria and normal continuation through the actual services. The
+wording review covered central guidance and manuals while obsolete auto-applied clauses
+still reached agents. The participant context regression now binds the actual five
+guidance sources; shared story and engineering prompt callers are checked as well.
+Issues caught during this pass's internal review, including deferral and split-container
+edges, are ordinary internal corrections rather than additional escaped handoffs.
+
+| Follow-up check | Result | Actual paths and scope |
+| --- | --- | --- |
+| AC-1–AC-3: concrete readiness and preservation | Passed | `OutcomeSeed_` service/controller cases cover draft before/after authorization, direct/native/story denial, concrete update and supported lifecycle, deferral, split completion, and old started/approved/completed contracts. Original authorization, reports and accounting are retained. |
+| AC-4–AC-5: supplied context and review | Passed | `RequestWorkflow_` binds and delivers the actual five guidance sources in both participant modes. Existing story and engineering-review cases inspect their real provider requests. The linked-story modular path also checks readiness without an optional Plan reader. This establishes context delivery and service readiness, not model compliance or a new product qualification. |
+| Affected Agent checks | Passed | 74 distinct cases across the focused outcome/request-context/story/engineering run and targeted rechecks; compatible unaffected passing results are reused. The final seed variants pass through ReadyForReview → InProgress → Complete, following the existing lifecycle. |
+| Affected Delivery checks | Passed | 36 outcome, linked-task, legacy completion and approved-refresh cases. The retained amendment/native and participant regressions remain valid; unrelated earlier qualification results are reused. |
+| Guidance and independent review | Passed | 535 documents and 53 skills pass strict validation; deterministic no-LLM audit reports no duplicate, overlap or conflict. One independent source review has no required finding; a separate reader check resolved two authority-wording ambiguities. |
+
+The new fixture checks first assumed that inspection returned validation, omitted the
+workspace registry needed for real completion, and attempted an unsupported direct
+ReadyForReview → Complete transition. The fixtures now use the actual validation API,
+normal service composition and supported transition sequence; product completion gates
+were preserved. Ordinary first outcomes and rechecks remain in the existing local
+`request-workflow/` artifact directory. No broad mutation, performance or model campaign ran.
+Routing-card refresh was unavailable because no local text provider was selectable;
+actual source inspection supplied review context, with no remote fallback.
+
+WORK-002 is ReadyForReview at the requested handoff. WORK-001's prior ReadyForReview
+checkpoint and stale/mismatched security evidence remain the separate CIS-0003 closeout.
+An aggregate final verification also sees WORK-002's new review checkpoint; neither
+checkpoint is represented as formal completion or acceptance. No allowance was added,
+and no CISLIB state or consumer result changed.

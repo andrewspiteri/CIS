@@ -55,8 +55,17 @@ public sealed partial class AgentService
                 errors.AddRange(_taskContracts?.ValidateTaskType(authority, work.Task.TaskTypeKey!, work.Task.TaskTypeVersion!, work.Task.Category!)
                     ?? ["Story task type validation is unavailable; load the existing planning task-type provider."]);
             if (_taskContracts is not null) errors.AddRange(_taskContracts.ValidateStoryTaskGate(authority, work.ForCanonicalGate()));
-            else if (!string.IsNullOrWhiteSpace(work.Task.ApprovalGate) && !work.Task.ApprovalGate.Equals("none", StringComparison.OrdinalIgnoreCase))
-                errors.Add($"Task {work.Task.Id} requires approval gate '{work.Task.ApprovalGate}'; its existing approval authority is unavailable.");
+            else
+            {
+                if (!string.IsNullOrWhiteSpace(work.Task.ApprovalGate) && !work.Task.ApprovalGate.Equals("none", StringComparison.OrdinalIgnoreCase))
+                    errors.Add($"Task {work.Task.Id} requires approval gate '{work.Task.ApprovalGate}'; its existing approval authority is unavailable.");
+                var canonical = work.ForCanonicalGate();
+                var authorityPath = _workspaceRegistry?.Resolve(work.WorkspacePath).Workspace?.AuthorityRepository?.RepositoryPath ?? authority;
+                if (canonical.ChangeId is { } changeId && canonical.WorkOwnerTaskId is { } owner
+                    && _resolver.Resolve(authorityPath).Context is { } context
+                    && CisOutcomeAuthority.Read(context, changeId) is { } outcome)
+                    _ = ReadOutcomeTask(context, outcome, owner, requireReadiness: true);
+            }
             return errors;
         }
         catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException or ArgumentException)
@@ -400,7 +409,7 @@ public sealed partial class AgentService
                         + $"Inspect git diff {candidate.Baseline} HEAD for repository {candidate.Repository.Id}. The complete candidate diffs across repositories are supplied inline or through the indexed evidence files below; read them to check integration claims, not just the implementation summaries. "
                         + TaskReviewInstructions()
                         + "Recommend revise for correctable work; blocked only when a necessary human decision, missing authorized evidence or permission prevents further work. "
-                        + "Human confirmation of task completion is a separate later gate: do not require it before reviewing the deliverable, or ask an agent to fabricate it. Explicit stakeholder decisions remain human gates. "
+                        + "Checked CIS task completion is a separate later gate: do not require it before reviewing the deliverable or fabricate it. Outcome-authorized completion needs no extra human decision; explicit stakeholder and final-acceptance decisions remain human gates. "
                         + "Require checks appropriate to the approved task, not runtime changes or live-data access outside its scope. Only recommend ready when the work meets its criteria."
                         + " For investigation or planning tasks, distinguish existing integration points from proposed new locations and unresolved decisions. Missing future implementation is not itself a defect; still enforce any explicit criterion to identify ownership or planned entry points."
                         + StoryCorrectionDirectionInstruction(activeCorrection ?? interruptedCorrection, reviewing: true)

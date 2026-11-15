@@ -33,13 +33,16 @@ public sealed partial class PlanningService
             {
                 var scope = authority?.Request.Scope.Select(item => item.Id).ToArray() ?? [];
                 items = [NewOutcomeTask(change, "WORK-001", new(change.Title, scope,
-                    "Deliver the shared outcome and its applicable checks.", "Build the affected component and run its connected checks."), authority)];
+                    CisOutcomeTaskReadiness.SeedAcceptance, CisOutcomeTaskReadiness.SeedValidation), authority) with
+                { InstanceKey = CisOutcomeTaskReadiness.SeedInstancePrefix + Guid.NewGuid().ToString("N") }];
             }
             else if (authority is not null)
             {
                 // Only the unapproved generated whole-outcome seed may acquire its first scope binding.
                 items = items.Select(item => item.AuthorizationScopeIds.Count == 0
-                    && item.InstanceKey == "outcome:initial" && item.Status == "Draft"
+                    && (item.InstanceKey == CisOutcomeTaskReadiness.DraftSeedInstance
+                        || item.InstanceKey?.StartsWith(CisOutcomeTaskReadiness.SeedInstancePrefix, StringComparison.Ordinal) == true)
+                    && item.Status == "Draft"
                     ? item with { AuthorizationScopeIds = authority.Request.Scope.Select(scope => scope.Id).ToArray(),
                         AuthorizationScopeBasis = CisOutcomeAuthority.ScopeBasis(authority, authority.Request.Scope.Select(scope => scope.Id).ToArray()) }
                     : item).ToArray();
@@ -104,7 +107,10 @@ public sealed partial class PlanningService
                 || target!.AuthorizationScopeIds.Except(added.SelectMany(item => item.AuthorizationScopeIds)).Any()))
                 return Error(change.Id, "Split children must preserve and cover their retained parent's authorized scope; add separate supporting work for another scope.");
             var metadataOnlyUpdate = operation == "update" && OutcomeTaskDigest(target!) == OutcomeTaskDigest(added[0]);
-            if (operation == "update" && target!.Status != "Draft" && !metadataOnlyUpdate)
+            var unresolvedSeedUpdate = operation == "update" && CanonicalStatus(target!.Status) is "Blocked" or "Deferred"
+                && target.InstanceKey?.StartsWith(CisOutcomeTaskReadiness.SeedInstancePrefix, StringComparison.Ordinal) == true
+                && CisOutcomeTaskReadiness.UnresolvedSeed(target.InstanceKey, target.Status, target.AcceptanceCriteria, target.Validation) is not null;
+            if (operation == "update" && target!.Status != "Draft" && !metadataOnlyUpdate && !unresolvedSeedUpdate)
                 return Error(change.Id, "Preserve the started task's executable contract and history; add supporting work or split the unfinished task instead.");
             if (operation == "update") added[0] = added[0] with { Status = target!.Status };
             if (operation == "update") current.RemoveAll(item => item.Id == target!.Id);
@@ -294,6 +300,12 @@ public sealed partial class PlanningService
         {
             if (selected is not null && !selected.Contains(task.Id)) continue;
             errors.AddRange(task.ContractErrors);
+            if (CanonicalStatus(task.Status) is not ("Cancelled" or "Deferred")
+                && OutcomeSeedReadiness(task, items) is { } seed)
+            {
+                if (CanonicalStatus(task.Status) is "Draft" or "Blocked") warnings.Add(task.Id + ": " + seed);
+                else errors.Add(task.Id + ": " + seed);
+            }
             if (authority is null) { warnings.Add(task.Id + ": proposed; outcome authorization is not yet recorded."); continue; }
             var taskAuthority = OutcomeTaskValidationAuthority(authority, task, allowHistorical);
             if (taskAuthority is null)

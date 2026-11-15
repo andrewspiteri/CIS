@@ -21,6 +21,17 @@ $info.CreateNoWindow = $true
 $info.RedirectStandardOutput = $true
 $info.RedirectStandardError = $true
 foreach ($argument in $command.Arguments) { $info.ArgumentList.Add([string]$argument) }
+if ($command.ContainsKey('ClearEnvironmentPrefixes') -and $null -ne $command.ClearEnvironmentPrefixes) {
+    $comparison = if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+    foreach ($name in @($info.Environment.Keys)) {
+        foreach ($prefix in $command.ClearEnvironmentPrefixes) {
+            if ($name.StartsWith([string]$prefix, $comparison)) {
+                [void]$info.Environment.Remove($name)
+                break
+            }
+        }
+    }
+}
 if ($command.ContainsKey('Environment') -and $null -ne $command.Environment) {
     foreach ($entry in $command.Environment.GetEnumerator()) {
         $info.Environment[[string]$entry.Key] = [string]$entry.Value

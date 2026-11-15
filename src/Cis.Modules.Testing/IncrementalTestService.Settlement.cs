@@ -5,7 +5,8 @@ namespace Cis.Modules.Testing;
 
 public sealed partial class IncrementalTestService
 {
-    private string[] StateSettlementErrors(string repository, IncrementalTestState state, string? latestPath = null)
+    private string[] StateSettlementErrors(string repository, IncrementalTestState state, string? latestPath = null,
+        CisAgentWorkReference? currentInvocation = null)
     {
         var references = new HashSet<CisAgentWorkReference>();
         if (state.WorkReference is { } original) references.Add(original);
@@ -17,6 +18,9 @@ public sealed partial class IncrementalTestService
         }
         foreach (var reference in references)
         {
+            // An admitted caller is still publishing its own result. Retained
+            // roots remain independently inspectable; this root finishes below.
+            if (reference == currentInvocation) continue;
             var result = _nativeWork?.InspectSettlement(state.WorkAuthorityPath ?? repository, reference);
             var errors = result is null ? ["The retained native owner settlement cannot be inspected; use the composed authority service."]
                 : MutationRunService.SettlementErrors(result, reference);
@@ -31,7 +35,12 @@ public sealed partial class IncrementalTestService
             Status = "settlement-required",
             ExitCode = 4,
             ScopeComplete = false,
-            Diagnostics = result.Diagnostics.Concat(errors).Distinct(StringComparer.Ordinal).ToArray()
+            Diagnostics = result.Diagnostics.Concat(errors).Distinct(StringComparer.Ordinal).ToArray(),
+            Batches = result.Batches.Select(batch => batch with
+            {
+                UnitReasons = batch.UnitReasons.Append(new("unsettled-execution", "original-work-reference",
+                    "Reconcile the original execution reference.")).Distinct().ToArray()
+            }).ToArray()
         };
 
     private static IncrementalTestResult FinishIncrementalResult(Input? input, IncrementalTestState? state,

@@ -9,6 +9,7 @@ public sealed partial class IncrementalTestService
     /// <summary>Recheck current native evidence and return a bounded receipt without executing or saving work.</summary>
     public IncrementalEvidenceResult Verify(IncrementalEvidenceOptions options)
     {
+        var reasons = new Dictionary<string, IncrementalReuseReason[]>(StringComparer.Ordinal);
         try
         {
             Require(options.RefinementProfilePaths is null or { Length: <= 32 }, "At most 32 explicit rerun profiles are supported.");
@@ -21,11 +22,19 @@ public sealed partial class IncrementalTestService
             // Existing native invocations use this lease. Verification never creates a cache or lock file.
             using var lease = File.Exists(leasePath) ? new FileStream(leasePath, FileMode.Open, FileAccess.Read, FileShare.None) : null;
             var state = State(input);
-            Require(StateSettlementErrors(input.Repository, state, Safe(input.Root, "latest-run.json")).Length == 0,
+            var settlementErrors = StateSettlementErrors(input.Repository, state, Safe(input.Root, "latest-run.json"));
+            if (settlementErrors.Length > 0)
+                reasons["execution"] = [new("unsettled-execution", "original-work-reference", "Reconcile the original execution reference.")];
+            Require(settlementErrors.Length == 0,
                 "Required native accounting remains unsettled; reconcile its original work reference before verification.");
             Require(!state.RecoveryRequired && state.ActiveExecutionUntilUtc is null,
                 "Native work or baseline recovery remains active.");
             var selection = Select(input, state, false);
+            foreach (var batch in selection.Batches)
+            {
+                var pending = batch.UnitReasons.Concat(wantMutation ? batch.MutationReasons : []).ToArray();
+                if (pending.Length > 0) reasons[batch.SourceFile] = pending;
+            }
             Require(selection.Batches.All(batch => batch.UnitCurrent && (!wantMutation || batch.MutationCurrent)),
                 "Every declared source requires completed current unit and configured mutation evidence.");
             var sources = new List<(Input Input, IncrementalTestState State, Selection Selection, string StateHash)>
@@ -194,7 +203,7 @@ public sealed partial class IncrementalTestService
         catch (Exception error) when (Expected(error) || error is KeyNotFoundException or FormatException)
         {
             // Do not echo native command arguments, profile environment values or report contents into exported diagnostics.
-            return new("verification-failed", 4) { Diagnostics = [VerificationDiagnostic(error)] };
+            return new("verification-failed", 4) { Diagnostics = [VerificationDiagnostic(error)], ReuseReasons = reasons };
         }
     }
 

@@ -242,6 +242,9 @@ public sealed partial class TestingModule : ICisModule
                 Console.WriteLine(FormattableString.Invariant($"Raw score: {raw.Score:F6}% ({raw.Killed}/{raw.Denominator}); effective score: {effective.Score:F6}% ({effective.Killed}/{effective.Denominator})."));
             foreach (var diagnostic in result.Diagnostics) Console.WriteLine(diagnostic);
         }
+        if (format != "json")
+            foreach (var pair in result.ReuseReasons)
+                RenderReuseReasons(pair.Key, "evidence", pair.Value, format == "agent");
         return result.ExitCode;
     }
 
@@ -292,7 +295,22 @@ public sealed partial class TestingModule : ICisModule
             foreach (var diagnostic in result.Diagnostics) Console.WriteLine(diagnostic);
             Console.WriteLine("Development feedback only; release qualification remains separate.");
         }
+        if (format != "json")
+            foreach (var batch in result.Batches)
+            {
+                RenderReuseReasons(batch.SourceFile, "unit", batch.UnitReasons, format == "agent");
+                if (result.Layer != "unit") RenderReuseReasons(batch.SourceFile, "mutation", batch.MutationReasons, format == "agent");
+            }
         return result.ExitCode;
+    }
+
+    private static void RenderReuseReasons(string source, string layer, IEnumerable<IncrementalReuseReason> reasons, bool agent)
+    {
+        static string SafeReason(string text) => text.Replace(';', ',').Replace('\r', ' ').Replace('\n', ' ');
+        foreach (var reason in reasons)
+            Console.WriteLine(agent
+                ? $"reuseReason={SafeReason(reason.Category)};source={SafeReason(source)};layer={layer};input={SafeReason(reason.Input)};change={SafeReason(reason.Change)}"
+                : $"{source} ({layer}): {reason.Category}; {reason.Input}: {reason.Change}.");
     }
 
     private static int RunMutation(MutationRunOptions options, string format, IServiceProvider services)

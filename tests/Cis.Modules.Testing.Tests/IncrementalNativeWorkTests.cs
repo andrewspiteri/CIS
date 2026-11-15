@@ -20,6 +20,8 @@ public sealed class IncrementalNativeWorkTests
         var result = service.Run(options, 0, TestContext.Current.CancellationToken);
 
         Assert.Equal("settlement-required", result.Status); Assert.Equal(4, result.ExitCode); Assert.False(result.ScopeComplete);
+        Assert.NotEmpty(result.Batches);
+        Assert.Contains(result.Batches.SelectMany(batch => batch.UnitReasons), reason => reason.Category == "unsettled-execution");
         Assert.True(authority.SettlementFailures > 0);
         Assert.Contains(result.Diagnostics, message => message.Contains("settlement", StringComparison.Ordinal));
         var state = fixture.SavedState();
@@ -34,7 +36,22 @@ public sealed class IncrementalNativeWorkTests
             report => File.ReadAllBytes(fixture.Full(IncrementalTestService.LocalRoot + "/sample/" + report.ReportPath)));
         using var latest = JsonDocument.Parse(File.ReadAllBytes(fixture.Full(IncrementalTestService.LocalRoot + "/sample/latest-run.json")));
         Assert.Equal("settlement-required", latest.RootElement.GetProperty("status").GetString());
-        Assert.Equal("settlement-required", service.Plan(options).Status);
+        var retainedLatest = latest.RootElement.Deserialize<IncrementalTestResult>(new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        Assert.Contains(retainedLatest.Batches.SelectMany(batch => batch.UnitReasons), reason => reason.Category == "unsettled-execution");
+        var statePath = fixture.Full(IncrementalTestService.LocalRoot + "/sample/state.json");
+        var retainedStateBytes = File.ReadAllBytes(statePath);
+        var plan = service.Plan(options);
+        Assert.Equal("settlement-required", plan.Status);
+        foreach (var batch in plan.Batches.Where(batch => state.Batches.GetValueOrDefault(batch.Id)?.Unit is not null))
+        {
+            Assert.Contains(batch.UnitReasons, reason => reason.Category == "unsettled-execution");
+            Assert.DoesNotContain(batch.UnitReasons, reason => reason.Category == "execution-validation");
+        }
+        var verified = service.Verify(new(fixture.Path, "profile.json") { Layer = "unit" });
+        Assert.Equal(4, verified.ExitCode);
+        Assert.Contains(verified.ReuseReasons.SelectMany(pair => pair.Value), reason => reason.Category == "unsettled-execution");
+        Assert.DoesNotContain(verified.ReuseReasons.SelectMany(pair => pair.Value), reason => reason.Category == "execution-validation");
+        Assert.Equal(retainedStateBytes, File.ReadAllBytes(statePath));
         var calls = fixture.Calls();
         Assert.Equal(4, service.Run(options, 0, TestContext.Current.CancellationToken).ExitCode);
         Assert.Equal(calls, fixture.Calls());

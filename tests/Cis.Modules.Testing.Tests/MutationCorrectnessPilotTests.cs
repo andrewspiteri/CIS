@@ -262,6 +262,7 @@ public sealed partial class MutationRunServiceTests
         var shell = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator)
             .Select(directory => Path.Combine(directory.Trim('"'), "pwsh" + (OperatingSystem.IsWindows() ? ".exe" : "")))
             .First(File.Exists);
+        shell = File.ResolveLinkTarget(shell, returnFinalTarget: true)?.FullName ?? shell;
         var baseline = new[] { dotnet, nativeFixture, "unit", "{output}", "subject.cs" };
         fixture.Write("pilot-native.json", "{}");
         var mutation = fixture.Command("Killed", marker: marker,

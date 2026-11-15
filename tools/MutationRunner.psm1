@@ -144,6 +144,7 @@ function Invoke-BoundedMutationProcess {
         [ValidateRange(1, [long]::MaxValue)][long]$MaximumRetainedBytes = 1073741824,
         [ValidateRange(0, [long]::MaxValue)][long]$MinimumFreeBytes = 1073741824,
         [Collections.IDictionary]$Environment = @{},
+        [string[]]$ClearEnvironmentPrefixes = @(),
         [string]$ScratchRoot,
         [string]$CancellationPath,
         [string]$SessionRecordPath,
@@ -231,7 +232,7 @@ function Invoke-BoundedMutationProcess {
         [void][Reflection.Assembly]::Load([IO.File]::ReadAllBytes([IO.Path]::GetFullPath($library)))
         $inputPath = Join-Path $RunRoot 'worker-input.json'
         $gatePath = Join-Path $RunRoot ('launch-' + [guid]::NewGuid().ToString('N') + '.gate')
-        [IO.File]::WriteAllText($inputPath, (@{ FilePath = $FilePath; Arguments = @($Arguments); WorkingDirectory = $WorkingDirectory; Environment = $Environment } | ConvertTo-Json -Depth 4))
+        [IO.File]::WriteAllText($inputPath, (@{ FilePath = $FilePath; Arguments = @($Arguments); WorkingDirectory = $WorkingDirectory; Environment = $Environment; ClearEnvironmentPrefixes = @($ClearEnvironmentPrefixes) } | ConvertTo-Json -Depth 4))
         $worker = Join-Path $PSScriptRoot 'MutationWorker.ps1'
         $workerArguments = @((Get-Process -Id $PID).Path,
             '-NoProfile', '-NonInteractive', '-File', $worker, '-InputPath', $inputPath, '-GatePath', $gatePath)

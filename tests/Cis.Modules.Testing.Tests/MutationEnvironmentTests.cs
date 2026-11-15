@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Cis.Abstractions;
 using Xunit;
@@ -10,13 +11,31 @@ public sealed partial class MutationRunServiceTests
     public void NativeLaunchesShareCanonicalSessionEnvironmentWithoutChangingDeclaredIdentity()
     {
         const string name = "SSH_CLIENT";
-        var previous = new[] { name }.Concat(CisNativeWorkEnvironment.Keys)
+        var sessionNames = new[] { name, "CODEX_SESSION_ID", "BROWSER_USE_ACCESS_SYNTHETIC_TRANSPORT" };
+        var previous = sessionNames.Append("PSModulePath").Concat(CisNativeWorkEnvironment.Keys)
             .ToDictionary(key => key, Environment.GetEnvironmentVariable);
         try
         {
-            Environment.SetEnvironmentVariable(name, "ignored-ambient-session-one");
+            foreach (var sessionName in sessionNames) Environment.SetEnvironmentVariable(sessionName, "ignored-ambient-session-one");
             using var fixture = new Target();
-            fixture.Write(".cis/environment-probe.json", JsonSerializer.Serialize(new[] { name }));
+            var inheritedModulePath = fixture.Full("synthetic-inherited-modules");
+            Environment.SetEnvironmentVariable("PSModulePath", inheritedModulePath);
+            fixture.Write(".cis/environment-probe.json", JsonSerializer.Serialize(sessionNames.Append("PSModulePath")));
+            // PowerShell, when it is the actual target, expands its own module
+            // path at startup. Compare it with one direct target startup, while
+            // .NET targets must receive the exact captured controller value.
+            var shell = new ProcessStartInfo(fixture.Profile.Command[0])
+            { WorkingDirectory = fixture.Path, UseShellExecute = false, CreateNoWindow = true };
+            foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-Command", "[Environment]::GetEnvironmentVariable('PSModulePath')" })
+                shell.ArgumentList.Add(argument);
+            shell.Environment["PSModulePath"] = inheritedModulePath;
+            var directShell = CisProcessSafety.Run(shell, TimeSpan.FromSeconds(10), 8192,
+                cancellationToken: TestContext.Current.CancellationToken);
+            Assert.False(directShell.TimedOut);
+            Assert.False(directShell.OutputTruncated);
+            Assert.True(directShell.SafelyStopped);
+            Assert.Equal(0, directShell.ExitCode);
+            var shellModulePath = directShell.StandardOutput.TrimEnd('\r', '\n');
             var profile = PrepareQualification(fixture);
             var declaredProfile = File.ReadAllBytes(fixture.Full("profile.json"));
             var result = fixture.Run("qualification");
@@ -26,8 +45,13 @@ public sealed partial class MutationRunServiceTests
             NativeEnvironmentProbe[] Captures() => File.ReadAllLines(fixture.Full(".cis/environment-launches.jsonl"))
                 .Select(line => JsonSerializer.Deserialize<NativeEnvironmentProbe>(line, Target.Json)!).ToArray();
             var observed = Captures();
-            Assert.All(observed, launch => Assert.True(string.IsNullOrEmpty(launch.Values[name]),
-                "Ignored session input reached native " + launch.Kind + "/" + launch.Output));
+            Assert.All(observed, launch =>
+            {
+                Assert.All(sessionNames, sessionName => Assert.True(string.IsNullOrEmpty(launch.Values[sessionName]),
+                    "Ignored session input reached native " + launch.Kind + "/" + launch.Output));
+                Assert.Equal(launch.Kind is "unit" or "recovery" ? inheritedModulePath : shellModulePath,
+                    launch.Values["PSModulePath"]);
+            });
             Assert.Contains(observed, launch => launch.Output == "baseline" && launch.Kind == "unit");
             Assert.Contains(observed, launch => launch.Output == "postflight" && launch.Kind == "unit");
             Assert.Contains(observed, launch => launch.Output == "restoration" && launch.Kind == "recovery");
@@ -35,7 +59,7 @@ public sealed partial class MutationRunServiceTests
             Assert.Contains(observed, launch => launch.Output == result.RunId && launch.Kind == "mutation");
             Assert.Contains(observed, launch => launch.Output == result.Canary!.RunId && launch.Kind == "canary");
             var currentReport = File.ReadAllBytes(fixture.Latest);
-            Environment.SetEnvironmentVariable(name, "ignored-ambient-session-two");
+            foreach (var sessionName in sessionNames) Environment.SetEnvironmentVariable(sessionName, "ignored-ambient-session-two");
             var reused = MutationRunService.InspectCorrectnessPilot(fixture.Path, "representative.json");
             Assert.True(reused.Ready, JsonSerializer.Serialize(reused, Target.Json));
             Assert.Equal(result.Pilot!.BasisSha256, reused.BasisSha256);

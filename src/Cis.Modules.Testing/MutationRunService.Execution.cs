@@ -179,6 +179,7 @@ public sealed partial class MutationRunService
                 maximumRunBytes = profile.MaxRunBytes,
                 maximumRetainedBytes = profile.MaxRetainedBytes,
                 minimumFreeBytes = profile.MinFreeBytes,
+                clearEnvironmentPrefixes = IncrementalTestService.NativeSessionEnvironmentPrefixes,
                 environment,
             });
             WriteRequest();
@@ -212,6 +213,7 @@ public sealed partial class MutationRunService
                     MaximumOperationBytes = [long]$request.maximumOperationBytes
                     MaximumRunBytes = [long]$request.maximumRunBytes; MaximumRetainedBytes = [long]$request.maximumRetainedBytes
                     MinimumFreeBytes = [long]$request.minimumFreeBytes
+                    ClearEnvironmentPrefixes = [string[]]$request.clearEnvironmentPrefixes
                     Environment = $request.environment
                 }
                 $result = Invoke-BoundedMutationProcess @arguments

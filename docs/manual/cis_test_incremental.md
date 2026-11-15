@@ -3,7 +3,7 @@ title: "cis test incremental"
 type: command-reference
 status: Draft
 owner: "Andrew Spiteri"
-last_reviewed: "2026-11-07"
+last_reviewed: "2026-11-15"
 review_cadence: on incremental execution contract change
 cis:
   stable_id: change-impact-studio:manual:cis-test-incremental
@@ -112,8 +112,9 @@ Work owner, attempt, parent and run IDs are invocation coordinates, not material
 test inputs. The five `CIS_WORK_*` authority variables above do not invalidate
 compatible evidence and cannot be supplied through profile `environment`.
 Validated invocation context still reaches actual native launches. Unchanged graph
-rebuilds and unrelated documentation do not rerun tests. Relevant code, tests,
-dependencies, native configuration, tools and producer interpretation still do.
+rebuilds, commits and ordinary task closeout do not require another native launch
+when the material inputs remain unchanged. Relevant code, tests, dependencies,
+native configuration, tools and result interpretation still apply.
 
 SSH connection identifiers and shell session bookkeeping do not invalidate saved
 results. CIS omits `SSH_CLIENT`, `SSH_CONNECTION`, `SSH_TTY`, `XDG_SESSION_ID`,
@@ -126,8 +127,13 @@ overrides them. Inherited values are hashed, never saved in reports.
 Ambient `TEMP`, `TMP` and `TMPDIR` are also excluded because the native executor
 replaces them with its owned temporary directory. Explicit profile values remain
 material and are honored by execution.
-`CODEX_TOOL_CALL_ID` and `CODEX_APP_TOOLS_PIPE_PATH` are also canonicalized to empty
-as invocation bookkeeping; explicitly declared profile overrides remain material.
+Agent transport variables whose names begin with `CODEX_` or
+`BROWSER_USE_ACCESS_` are omitted from identity and removed before native launch.
+This covers a new transport key appearing in a later session as well as a changed
+value. A profile can explicitly declare a required value; that override reaches
+execution and remains material. `PSModulePath` remains material. CIS passes the
+captured inherited value to the target instead of allowing its PowerShell driver
+to add module paths between identity capture and native execution.
 
 A fresh, complete graph without extraction errors or warnings is required. Refresh
 it after source or test changes. Each declared production file is one batch. CIS
@@ -145,7 +151,14 @@ For C# files, class names from the graph produce a VSTest filter intersected wit
 that it already covers. Nested-only fixtures retain their own predicates. When
 the graph cannot narrow that selection, or the filter exceeds 32,768 characters,
 CIS uses the full
-configured filter and hashes all graph inputs. Other languages use this full-filter
+configured filter and conservatively includes graph inputs that may affect native
+execution. Catalogued documents, graph authority/catalogue files and generated
+local metadata do not become native inputs merely by entering that inventory.
+Declared source, test, configuration and tool inputs, positive native graph
+dependencies, and paths referenced by commands or declared environment values
+remain material. Unknown build/configuration inputs remain included. A document
+consumed by a test or packaged with its product belongs in the declared input
+inventory, even when it is also catalogued. Other languages use this full-filter
 path; language-specific narrow filters are not inferred.
 
 The graph supplies static candidates, not measured runtime coverage or proof of
@@ -173,6 +186,47 @@ result checks, including native execution facts and the retained report's hash a
 parsed counts. Keep the current native report and compact input/result metadata.
 Deleting that report makes its result noncurrent. `verify --layer unit` verifies
 accepted unit scope even when the profile also describes mutation work.
+
+New accepted results retain a compact breakdown of the inputs used for their
+fingerprint. The state deduplicates facts and keeps only bases referenced by its
+retained stages. Facts contain input names and hashes, without source contents or
+environment values. CIS records profile-byte hashes, producer assembly hashes
+and graph build IDs separately as provenance; those observations do not become additional
+material dependencies.
+
+A compatible older result remains reusable without this breakdown. CIS can check
+an exact preceding fingerprint against the current facts while keeping the saved
+fingerprint, report and native execution provenance. It does not attach today's
+breakdown to an older execution. When an older fingerprint no longer matches and
+its original inputs are unavailable, the reason is `input-detail-unavailable`;
+the passing report alone cannot establish its applicability to today's inputs.
+
+### Understand a pending batch
+
+`plan`, `status`, `run` and `verify` use the same currentness checks. Human and
+agent output identify the source batch, stage, reason category, affected input and
+change. JSON exposes `unitReasons` and `mutationReasons` on batches;
+verification exposes `reuseReasons` by source. Input comparisons distinguish
+`added`, `removed` and `changed` facts.
+
+| Reason category | What needs attention |
+| --- | --- |
+| `source`, `test`, `dependency` | The named file entered, left or changed in the selected native inputs. |
+| `selection` | The source, test/filter selection or dependency relationships changed. |
+| `configuration`, `tool`, `platform`, `environment` | A named effective setting, tool, host platform or environment input changed. Values remain private. |
+| `report-missing`, `report-altered`, `report-invalid` | The retained native report is absent, differs from its accepted hash or cannot be read. |
+| `incompatible-assessment`, `incomplete-result` | The saved assessment contract or completion does not satisfy the current checks. |
+| `unsettled-execution` | The original execution still needs legitimate accounting settlement. |
+| `execution-validation` | Native command, counts or execution evidence does not validate. |
+| `result-missing` | No saved stage is available. |
+| `input-detail-unavailable` | No executed breakdown was retained for this historical result; the exact compatibility checks still apply. |
+
+Read-only inspection does not repair state or run tests. Restore an unintended
+input change and inspect again; a still-retained matching result can become
+current again. When a relevant change is intended, run only the pending scope
+under its existing authority. Use the settlement route above for unsettled
+execution. New diagnostics do not relax report integrity, healthy nonempty native
+counts, command validation, completion or accounting requirements.
 
 Native build commands must compile the declared inputs. After restoring files
 with timestamps older than existing build outputs, run a clean or forced baseline

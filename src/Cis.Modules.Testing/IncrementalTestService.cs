@@ -210,7 +210,8 @@ public sealed partial class IncrementalTestService
                     var execution = Execute(input, batch, input.Profile.UnitCommand, output,
                         Seconds(input, options, watch, reserve), ref state);
                     var unchanged = Unchanged(input, batch);
-                    var result = Assess(input, batch, false, output, execution, unchanged);
+                    var result = Assess(input, batch, false, output, execution, unchanged) with
+                        { InputBasisId = RetainBasis(state, batch.UnitInputs) };
                     executedUnit++;
                     saved = saved with { Unit = result, Mutation = result.Completed ? mutation : null };
                     state.Batches[batch.Id] = saved;
@@ -228,7 +229,8 @@ public sealed partial class IncrementalTestService
                 var nativeOutput = Work(input);
                 var native = Execute(input, batch, input.Profile.MutationCommand!, nativeOutput,
                     Seconds(input, options, watch, reserve, nativeTimeoutSeconds > 0 ? nativeTimeoutSeconds : null), ref state);
-                var assessed = Assess(input, batch, true, nativeOutput, native, Unchanged(input, batch, mutation: true));
+                var assessed = Assess(input, batch, true, nativeOutput, native, Unchanged(input, batch, mutation: true)) with
+                    { InputBasisId = RetainBasis(state, batch.MutationInputs) };
                 executedMutation++;
                 rerunMutations.Add(batch.Id);
                 // A crash between native completion and recovery cannot publish a reusable mutation result.
@@ -250,7 +252,7 @@ public sealed partial class IncrementalTestService
                 if (!assessed.Completed || input.SettlementErrors.Count > 0)
                 { diagnostics.AddRange(assessed.Diagnostics); failed = true; break; }
             }
-            var final = Select(Read(options), state, false);
+            var final = Select(Read(options) with { Work = work }, state, false);
             var resultSummary = Summarize(input, options, final, state, failed ? cancellationToken.IsCancellationRequested ? "cancelled" : "failed" : "completed", failed ? 4 : 0) with
             {
                 ExecutedUnitBatches = executedUnit,
@@ -363,8 +365,9 @@ public sealed partial class IncrementalTestService
         var now = Read(options);
         if ((mutation ? now.MutationIdentity != input.MutationIdentity : now.UnitIdentity != input.UnitIdentity)) return false;
         var selected = Select(now, new(), false).Batches.Single(item => item.Id == batch.Id);
-        return selected.UnitFingerprint == batch.UnitFingerprint
-            && (!mutation || selected.MutationFingerprint == batch.MutationFingerprint);
+        return (selected.CanonicalUnitFingerprint ?? selected.UnitFingerprint) == (batch.CanonicalUnitFingerprint ?? batch.UnitFingerprint)
+            && (!mutation || (selected.CanonicalMutationFingerprint ?? selected.MutationFingerprint)
+                == (batch.CanonicalMutationFingerprint ?? batch.MutationFingerprint));
     }
 
     private static int Seconds(Input input, IncrementalTestOptions options, Stopwatch watch, int reserve, int? nativeOverride = null)
@@ -410,7 +413,7 @@ public sealed partial class IncrementalTestService
         var expanded = command.Select(value => value.Replace("{sourceFile}", Relative(working, Safe(input.Repository, batch.SourceFile)), StringComparison.Ordinal)
             .Replace("{testFilter}", fullTests ? input.Profile.FullTestFilter : batch.TestFilter, StringComparison.Ordinal)
             .Replace("{mutationConfig}", mutationConfig ?? "", StringComparison.Ordinal)).ToArray();
-        limits = limits with { Environment = NativeEnvironment(input.Profile, working) };
+        limits = limits with { Environment = input.NativeEnvironmentOverrides };
         var execution = MutationRunService.Execute(input.Repository, output, input.Storage, limits, expanded, work, input.Cancellation,
             input.OwnedStorage, input.ActiveStorage, input.WorkController) with
         { SettlementReference = input.Work?.Reference, WorkAuthorityPath = work?.AuthorityPath };

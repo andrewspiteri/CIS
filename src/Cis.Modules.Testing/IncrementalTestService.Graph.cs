@@ -41,6 +41,7 @@ public sealed partial class IncrementalTestService
         var represented = paths.Values.SelectMany(value => value).ToHashSet(PathComparer);
         var allInputs = snapshot.Manifest!.Inputs.Select(item => item.Path)
             .Concat(profile.SourceFiles).Concat(profile.TestFiles).Distinct(PathComparer).Order(StringComparer.Ordinal).ToArray();
+        var graphOnly = GraphOnlyInputs(input, snapshot, paths);
         var result = new List<IncrementalTestBatch>();
         foreach (var source in profile.SourceFiles.OrderBy(file => !PathComparer.Equals(file, profile.CanarySourceFile)).ThenBy(file => file, StringComparer.Ordinal))
         {
@@ -70,6 +71,10 @@ public sealed partial class IncrementalTestService
                 .Order(StringComparer.Ordinal).ToArray();
             string unit;
             string mutation;
+            string? previousUnit = null;
+            string? previousMutation = null;
+            IncrementalInputFact[] unitBasis = [];
+            IncrementalInputFact[] mutationBasis = [];
             if (input.LegacyIdentity)
             {
                 var identity = HashObject(new
@@ -93,15 +98,19 @@ public sealed partial class IncrementalTestService
                 // evidence. Only unrelated fallback inventory can be discarded.
                 var explicitUnitInputs = Closure(tests.Append(source), forward)
                     .Select(file => Safe(input.Repository, file)).ToHashSet(PathComparer);
-                var unitInputs = dependencies.Where(file => UnitDependencyInput(input, file, explicitUnitInputs)).ToArray();
+                var materialDependencies = dependencies.Where(file => !graphOnly.Contains(file)
+                    || explicitUnitInputs.Contains(Safe(input.Repository, file))).ToArray();
+                var unitInputs = materialDependencies.Where(file => UnitDependencyInput(input, file, explicitUnitInputs)).ToArray();
                 var unitHashes = unitInputs.Select(file => new { file, hash = HashFile(Safe(input.Repository, file)) }).ToArray();
                 var unitEdges = unitInputs.SelectMany(file => forward.GetValueOrDefault(file, [])
-                    .Where(target => UnitDependencyInput(input, target, explicitUnitInputs)).Select(target => file + "->" + target))
+                    .Where(target => (!graphOnly.Contains(target) || explicitUnitInputs.Contains(Safe(input.Repository, target)))
+                        && UnitDependencyInput(input, target, explicitUnitInputs)).Select(target => file + "->" + target))
                     .Order(StringComparer.Ordinal).ToArray();
-                var mutationInputs = dependencies.Where(file => !PathComparer.Equals(Safe(input.Repository, file), input.ProfilePath)).ToArray();
+                var mutationInputs = materialDependencies.Where(file => !PathComparer.Equals(Safe(input.Repository, file), input.ProfilePath)).ToArray();
                 var mutationHashes = mutationInputs.Select(file => new { file, hash = HashFile(Safe(input.Repository, file)) }).ToArray();
                 var mutationEdges = mutationInputs.SelectMany(file => forward.GetValueOrDefault(file, [])
-                    .Where(target => !PathComparer.Equals(Safe(input.Repository, target), input.ProfilePath)).Select(target => file + "->" + target))
+                    .Where(target => (!graphOnly.Contains(target) || explicitUnitInputs.Contains(Safe(input.Repository, target)))
+                        && !PathComparer.Equals(Safe(input.Repository, target), input.ProfilePath)).Select(target => file + "->" + target))
                     .Order(StringComparer.Ordinal).ToArray();
                 // The effective closure, filter and file contents carry selection.
                 // Producer and extractor build coordinates are provenance only.
@@ -116,14 +125,87 @@ public sealed partial class IncrementalTestService
                     inputHashes = mutationHashes,
                     relevantEdges = mutationEdges
                 });
+                unitBasis = MaterialBasis(input, source, tests, filter, unitInputs, unitEdges, false,
+                    unitHashes.ToDictionary(item => item.file, item => item.hash, PathComparer));
+                mutationBasis = MaterialBasis(input, source, tests, filter, mutationInputs, mutationEdges, true,
+                    mutationHashes.ToDictionary(item => item.file, item => item.hash, PathComparer));
+                if (materialDependencies.Length != dependencies.Length || input.PreviousUnitIdentity != input.UnitIdentity
+                    || input.PreviousMutationIdentity != input.MutationIdentity)
+                {
+                    // Compatibility checks reconstruct the previous algorithm from
+                    // today's complete inputs. They never rewrite a retained result
+                    // or invent the missing historical breakdown.
+                    var previousUnitInputs = dependencies.Where(file => UnitDependencyInput(input, file, explicitUnitInputs)).ToArray();
+                    previousUnit = HashObject(new
+                    {
+                        UnitIdentity = input.PreviousUnitIdentity ?? input.UnitIdentity, source, tests, filter,
+                        inputHashes = previousUnitInputs.Select(file => new { file, hash = HashFile(Safe(input.Repository, file)) }).ToArray(),
+                        relevantEdges = previousUnitInputs.SelectMany(file => forward.GetValueOrDefault(file, [])
+                            .Where(target => UnitDependencyInput(input, target, explicitUnitInputs)).Select(target => file + "->" + target))
+                            .Order(StringComparer.Ordinal).ToArray()
+                    });
+                    var previousMutationInputs = dependencies.Where(file => !PathComparer.Equals(Safe(input.Repository, file), input.ProfilePath)).ToArray();
+                    previousMutation = HashObject(new
+                    {
+                        MutationIdentity = input.PreviousMutationIdentity ?? input.MutationIdentity, unit = previousUnit, source, tests, filter,
+                        inputHashes = previousMutationInputs.Select(file => new { file, hash = HashFile(Safe(input.Repository, file)) }).ToArray(),
+                        relevantEdges = previousMutationInputs.SelectMany(file => forward.GetValueOrDefault(file, [])
+                            .Where(target => !PathComparer.Equals(Safe(input.Repository, target), input.ProfilePath)).Select(target => file + "->" + target))
+                            .Order(StringComparer.Ordinal).ToArray()
+                    });
+                }
+                dependencies = materialDependencies;
             }
             var id = "file-" + HashObject(source)[..20];
+            var canonicalUnit = unit;
+            var canonicalMutation = mutation;
             state.Batches.TryGetValue(id, out var prior);
+            if (!force && prior?.Unit?.InputBasisId is null && previousUnit is not null
+                && Current(input, source, prior?.Unit, previousUnit, false, filter)) unit = previousUnit;
+            if (!force && prior?.Mutation?.InputBasisId is null && previousMutation is not null
+                && Current(input, source, prior?.Mutation, previousMutation, true, filter)) mutation = previousMutation;
+            var unitCurrent = !force && Current(input, source, prior?.Unit, unit, false, filter);
+            var mutationCurrent = !force && profile.MutationCommand is not null && Current(input, source, prior?.Mutation, mutation, true, filter);
             result.Add(new(id, source, narrow ? "graph" : "all-tests", tests, filter, unit, mutation,
-                !force && Current(input, source, prior?.Unit, unit, false, filter),
-                !force && profile.MutationCommand is not null && Current(input, source, prior?.Mutation, mutation, true, filter), dependencies));
+                unitCurrent, mutationCurrent, dependencies)
+            {
+                UnitInputs = unitBasis, MutationInputs = mutationBasis,
+                CanonicalUnitFingerprint = canonicalUnit, CanonicalMutationFingerprint = canonicalMutation,
+                UnitReasons = ExplainReuse(input, state, prior?.Unit, unitBasis, unitCurrent, false),
+                MutationReasons = ExplainReuse(input, state, prior?.Mutation, mutationBasis, mutationCurrent, true)
+            });
         }
         return new(snapshot, result.ToArray());
+    }
+
+    private static HashSet<string> GraphOnlyInputs(Input input, CisGraphSnapshotReadResult snapshot,
+        IReadOnlyDictionary<string, string[]> paths)
+    {
+        var graph = snapshot.Graph!;
+        var protectedInputs = input.Profile.SourceFiles.Concat(input.Profile.TestFiles).Concat(input.Profile.ConfigFiles)
+            .Concat(input.Profile.ToolFiles).Select(file => Path.GetFullPath(file, input.Repository)).ToHashSet(PathComparer);
+        // A catalogued document may also be a real test fixture or package input.
+        // Positive native evidence and explicit profile consumption take precedence.
+        protectedInputs.UnionWith(graph.Nodes.Where(node => node.Kind is "source-file" or "symbol" or "test" or "dependency")
+            .SelectMany(node => paths[node.Key]).Select(file => Safe(input.Repository, file)));
+        var graphOnly = graph.Nodes.Where(node => node.Kind == "document").SelectMany(node => paths[node.Key])
+            .Concat(snapshot.Manifest!.Inputs.Select(item => item.Path).Where(path => path.Replace('\\', '/')
+                .StartsWith(".cis/local/", StringComparison.OrdinalIgnoreCase)))
+            .Concat([".cis/repository.yml", snapshot.Manifest.DocumentationRoot.TrimEnd('/', '\\') + "/catalog.yml"])
+            .Where(file => !protectedInputs.Contains(Path.GetFullPath(file, input.Repository))
+                && !ProfileReferencesInput(input, file)).ToHashSet(PathComparer);
+        return graphOnly;
+    }
+
+    private static bool ProfileReferencesInput(Input input, string relative)
+    {
+        var file = Safe(input.Repository, relative);
+        var working = Safe(input.Repository, input.Profile.WorkingDirectory, true);
+        var references = new[] { relative, Relative(input.Repository, file), Relative(working, file), file, Path.GetFileName(file) }
+            .Select(value => value.Replace('\\', '/')).Where(value => value.Length > 0).Distinct(PathComparer).ToArray();
+        return new[] { input.Profile.UnitCommand, input.Profile.MutationCommand, input.Profile.RecoveryCommand }
+            .Where(command => command is not null).SelectMany(command => command!).Concat(input.Profile.Environment.Values)
+            .Any(value => references.Any(reference => value.Replace('\\', '/').Contains(reference, CisPathSafety.PlatformComparison)));
     }
 
     private static IEnumerable<CisGraphLocation> DependencyLocations(CisGraphNode node)

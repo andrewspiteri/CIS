@@ -3,7 +3,7 @@ title: "cis agent run"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-11-06"
+last_reviewed: "2026-11-15"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-agent-run
@@ -43,7 +43,13 @@ Execute one eligible task through a selected provider in the foreground.
 cis agent run <change-id> <task-id> --provider <id> --mode <plan|implement|review> --permission <read-only|workspace-write> --actor <identity> [--target <repository-id>] [--transport <name>] [--timeout-seconds <seconds>] [--parent-execution <execution-id>] [--logical-attempt <attempt-id>] [--approve-requests] [--allow-command <command>] [--repo <path>] [--format <human|json|agent>]
 ```
 
-The command requires accepted impacts, an approved current plan, and a Ready or InProgress task. An approved design pack is required for downstream frontend work; coordination, wireframe, and visual-design preparation remain eligible because they establish the global design gate. It streams bounded normalized events to standard error and writes the final command result to standard output. Ctrl+C records cancellation and terminates the owned provider process tree.
+The command requires an eligible task and its applicable readiness checks. Outcome-authorized
+work uses the selected task's current grant and contract; legacy work retains its accepted-impact
+and approved-plan checks. Ready, Approved and InProgress are eligible execution states.
+An approved design pack is required for downstream frontend work; coordination, wireframe,
+and visual-design preparation remain eligible because they establish the global design gate.
+The command streams bounded normalized events to standard error and writes the final result
+to standard output. Ctrl+C records cancellation and terminates the owned provider process tree.
 
 When engineering defaults are adopted with `requireTaskCompletion: true`, or work accounting is established at the authority, direct execution also requires its authorized canonical change/task allocation. This includes sibling tasks when accounting began for another story through retained correction history or registered participant controls; each still needs its own applicable finite allocation. That accounting adoption does not adopt engineering quality policy. Use [`cis agent work`](cis_agent_work.md) to supply the allocation decision, inspect durable consumption, and record progress or a justified continuation. A missing allocation returns a non-success hold before expensive preparation. New runs, providers, profiles, source revisions, or resumed provider attempts do not reset the accounting owner. Governed story execution uses that same owner through its dedicated story commands, including review/correction and owned-repository stages; do not launch its synthetic stage IDs through direct `agent run`. Product-document authoring retains its dedicated flow. Profile presence alone does not adopt accounting.
 
@@ -57,7 +63,18 @@ Nested stages created by the governed story or correction controller may use an 
 
 Participant runs receive bounded, hash-checked snapshots of the selected authority documents. When present, the task dossier's `test-cases.csv` accompanies `test-cases.md`, so the agent can inspect the export itself. These snapshots retain authority-relative identities and do not overwrite participant files.
 
-CIS records the snapshots and hashes before the provider starts, then checks the originals before accepting successful execution and before resuming. A changed bound CSV causes result rejection or blocks resume. For a generated catalogue, follow the [feature-plan import and derivation guidance](cis_plan_import_spec.md) to regenerate its projections and establish an approved current plan before starting a fresh run. Resuming an existing run requires its original bound context to remain current.
+CIS records the snapshots and hashes before the provider starts and verifies their
+integrity before accepting success or resuming. For outcome-authorized participant
+tasks, an unrelated approved amendment may update the shared authorization, proposal
+or task view while the selected task's contract, scope, constraints, applicable approvals
+and limits remain current. The original snapshots and approval history remain evidence
+of what the worker received. Changes to selected authority still hold execution;
+other bound documents, including a catalogue CSV, must remain unchanged.
+
+For a generated catalogue, follow the [feature-plan import and derivation guidance](cis_plan_import_spec.md)
+to regenerate its projections and establish an approved current plan before starting
+a fresh run. Resuming a run preserves its original bound context and rechecks the
+selected task's current authority.
 
 `--timeout-seconds` is the total foreground-run limit, with a minimum requested bound of 30 seconds and the applicable provider-profile maximum (3,600 seconds in the reviewed profile). The bound must also fit remaining task/change work after restoration reserve. Known preparation consumes part of that same bound. The provider receives the positive remainder with fractional seconds preserved, so a 30-second request can still launch after short preparation; there is no second 30-second minimum. An exhausted remainder holds before launch, and oversized requests are rejected before provider invocation. Startup and idle limits are at most 30 and 300 seconds respectively, each bounded by the remaining provider window. Startup, idle, and total expiry produce distinct failure classifications and retain consumed work; use `cis agent recover` only for a proven orphan and `cis agent resume` to append a later attempt.
 

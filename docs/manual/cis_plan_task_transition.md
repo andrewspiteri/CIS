@@ -3,7 +3,7 @@ title: "cis plan task transition"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-10-05"
+last_reviewed: "2026-11-15"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-plan-task-transition
@@ -40,9 +40,19 @@ writing completion. Failed, missing, stale and skipped required gates block; jus
 inapplicability is separate. Deleting an adopted policy does not remove its obligations.
 Repositories without adoption retain their earlier lifecycle.
 
-For imported plans, every transition first verifies that the canonical feature file
-still matches the digest recorded in `plan.md`. Source drift blocks all task movement;
-rerun same-path `cis plan import-spec` to generate a revised Draft before continuing.
+After an approved outcome amendment, completed tasks retain their original contracts,
+evidence and applicable authorization history. For affected unfinished tasks, record
+Cancelled or Deferred to end or postpone the old work, or use `cis plan task split` to create
+replacement children within current scope. Splitting retains the original accounting
+owner. A task transition does not stop an active process or reconcile its reservation;
+use the existing execution recovery commands when needed. New execution and completion
+must satisfy current authority; deferral does not authorize stale work to resume.
+
+For imported plans, execution and completion verify that the canonical feature file
+still matches the recorded digest. Source drift requires the existing import/review
+path. Under outcome authority, historical completion remains valid and cancellation
+or deferral can retain the old contract without authorizing further execution. Legacy
+plans retain their existing source-currency checks for every transition.
 
 When completing `core.delivery.final-sweep`, terminal disposition is role-aware:
 executable tasks must be Complete/Deferred/Cancelled, approved wireframe and design

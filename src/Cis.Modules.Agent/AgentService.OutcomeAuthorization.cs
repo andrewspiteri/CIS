@@ -40,6 +40,9 @@ public sealed partial class AgentService
 
     private static void ValidateOutcomeTaskScope(CisOutcomeAuthorization authorization, JsonElement task)
     {
+        if (authorization.Request.VisualUi == false && task.TryGetProperty("category", out var category)
+            && category.GetString() is "frontend" or "wireframe" or "design")
+            throw new InvalidDataException("The selected visual task is outside the outcome's current no-UI scope.");
         var scopes = OutcomeTaskScopes(task);
         if (scopes.Length == 0 || !task.TryGetProperty("authorizationScopeBasis", out var basis)
             || basis.GetString() != CisOutcomeAuthority.ScopeBasis(authorization, scopes))

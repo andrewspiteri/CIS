@@ -664,12 +664,14 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
         var item = plan.WorkItems.FirstOrDefault(candidate => candidate.Id.Equals(request.TaskId, StringComparison.OrdinalIgnoreCase));
         if (item is null) return Error(change.Id, $"Task was not found: {request.TaskId}");
         if (item.ContractErrors.Count > 0) return Error(change.Id, item.ContractErrors.ToArray());
-        var sourceCurrencyErrors = outcomeAuthority is null || item.RequirementIds.Count > 0
+        var target = CanonicalTaskStatus(request.Status);
+        if (target is null) return Error(change.Id, $"Unsupported task status: {request.Status}");
+        var historicalDisposition = outcomeAuthority is not null && target is "Cancelled" or "Deferred";
+        var sourceCurrencyErrors = !historicalDisposition && (outcomeAuthority is null || item.RequirementIds.Count > 0)
             ? ValidateSourceCurrency(change, plan.Source) : [];
         if (sourceCurrencyErrors.Count > 0)
             return Error(change.Id, sourceCurrencyErrors.ToArray());
-        var target = CanonicalTaskStatus(request.Status);
-        if (target is null) return Error(change.Id, $"Unsupported task status: {request.Status}");
+        PlanValidation? dispositionValidation = null;
         if (outcomeAuthority is not null && target is "Approved" or "InProgress" or "Complete")
         {
             var readiness = EvaluateReadiness(change.RepositoryPath);
@@ -677,9 +679,12 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
         }
         if (outcomeAuthority is not null)
         {
-            var selected = ValidateOutcomePlan(change, plan.WorkItems, outcomeAuthority,
-                new HashSet<string>([item.Id], StringComparer.Ordinal));
+            var selected = historicalDisposition
+                ? ValidateOutcomeDisposition(change, plan.WorkItems, outcomeAuthority, item, target)
+                : ValidateOutcomePlan(change, plan.WorkItems, outcomeAuthority,
+                    new HashSet<string>([item.Id], StringComparer.Ordinal), allowHistorical: false);
             if (!selected.Valid) return Error(change.Id, selected.Errors.ToArray());
+            if (historicalDisposition) dispositionValidation = selected;
         }
         if (target == "Complete")
         {
@@ -692,7 +697,8 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
         if (!AllowedTransition(current, target))
             return Error(change.Id, $"Invalid task transition: {current} -> {target}");
 
-        if ((plan.Source?.FrontendChanges == true || outcomeAuthority?.Request.VisualUi == true) && item.Category is not ("coordination" or "wireframe" or "design")
+        var currentVisualUi = outcomeAuthority is null ? plan.Source?.FrontendChanges == true : outcomeAuthority.Request.VisualUi == true;
+        if (currentVisualUi && item.Category is not ("coordination" or "wireframe" or "design")
             && target is "ReadyForReview" or "Approved" or "InProgress" or "Complete")
         {
             var gateErrors = ValidateCanonicalTaskGate(change, plan.Source, item, completing: target == "Complete");
@@ -760,6 +766,8 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
             if (target == "Complete") SnapshotToolUsage(change, item, Path.Combine(Path.GetDirectoryName(OutcomePlanPath(change))!, item.TaskPath!));
             _changes.AppendEvent(change, "task-status-changed", new Dictionary<string, string>
             { ["taskId"] = item.Id, ["from"] = current, ["to"] = target, ["actor"] = request.Actor, ["reason"] = request.Reason });
+            if (dispositionValidation is not null)
+                return new("task-transitioned", change.Id, plan.Status, updatedItems, dispositionValidation, [], true, plan.Source);
             return OutcomeResult(change, updatedItems, authority, "task-transitioned", true, new HashSet<string>([item.Id], StringComparer.Ordinal));
         }
         var planPath = _changes.DossierFile(change, "plan.md");
@@ -844,8 +852,7 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
         if (File.Exists(OutcomePlanPath(change)))
         {
             var authority = OutcomeAuthority(change) ?? throw new InvalidDataException("The outcome authorization is missing.");
-            if (task.AuthorizationScopeIds.Count == 0 || task.AuthorizationScopeIds.Except(authority.Request.Scope.Select(scope => scope.Id)).Any()
-                || task.AuthorizationScopeBasis != CisOutcomeAuthority.ScopeBasis(authority, task.AuthorizationScopeIds))
+            if (OutcomeTaskValidationAuthority(authority, task, allowHistorical: false) is null)
                 throw new InvalidDataException("The selected task's scope requires targeted authorization.");
             var digest = OutcomeTaskDigest(task);
             if (task.RequirementIds.Count > 0 && ReadPlan(change).Source is { } source)
@@ -948,7 +955,11 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
             return [$"Task {task.Id} uses unresolved approval gate '{task.ApprovalGate}'; retain its existing authority and resolve that gate before continuation."];
         if (completing && task.ApprovalGate == "human-final-acceptance" && CanonicalStatus(task.Status) != "Complete")
             return [$"Task {task.Id} requires its existing canonical final acceptance before linked story completion."];
-        var requiresDesign = (source?.FrontendChanges == true || OutcomeAuthority(change)?.Request.VisualUi == true || task.Category == "frontend") && task.Category is not ("coordination" or "wireframe" or "design")
+        var authority = OutcomeAuthority(change);
+        if (authority?.Request.VisualUi == false && task.Category is "frontend" or "wireframe" or "design")
+            return [$"Task {task.Id} is outside the outcome's current no-UI scope."];
+        var visualUi = authority is null ? source?.FrontendChanges == true : authority.Request.VisualUi == true;
+        var requiresDesign = (visualUi || task.Category == "frontend") && task.Category is not ("coordination" or "wireframe" or "design")
             || completing && task.ApprovalGate == "global-design-approval";
         if (!requiresDesign) return [];
         var path = _changes.DossierFile(change, "design.md");
@@ -1359,12 +1370,18 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
         return new PlanValidation(errors.Count == 0, errors, warnings, accepted.Count, covered.Intersect(accepted).Count(), openDecisions);
     }
 
-    private void ValidateManualTestCaseArtifacts(ChangeDossier change, PlanSource source, ICollection<string> errors)
+    private void ValidateManualTestCaseArtifacts(ChangeDossier change, PlanSource source, ICollection<string> errors,
+        bool? retainedApplicability = null)
     {
-        var applicability = _changes.DocumentApplicability(change, source.FrontendChanges,
-            FeatureIssuePackBuilder.RequiresTestCatalogue(change.RepositoryPath, source.Path));
-        foreach (var error in applicability.Errors) errors.Add(error);
-        if (!applicability.ManualTestCatalogue) return;
+        var required = retainedApplicability;
+        if (!required.HasValue)
+        {
+            var applicability = _changes.DocumentApplicability(change, source.FrontendChanges,
+                FeatureIssuePackBuilder.RequiresTestCatalogue(change.RepositoryPath, source.Path));
+            foreach (var error in applicability.Errors) errors.Add(error);
+            required = applicability.ManualTestCatalogue;
+        }
+        if (!required.Value) return;
         var markdownPath = _changes.DossierFile(change, "test-cases.md");
         var csvPath = _changes.DossierFile(change, "test-cases.csv");
         if (!File.Exists(markdownPath))
@@ -1410,11 +1427,21 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
     {
         var change = _changes.Read(repositoryPath, changeId);
         if (change is null) return [$"Change dossier was not found: {changeId}"];
-        var source = ReadPlan(change).Source;
-        var applicability = _changes.DocumentApplicability(change, source?.FrontendChanges,
-            source is not null ? FeatureIssuePackBuilder.RequiresTestCatalogue(repositoryPath, source.Path) : null);
-        if (applicability.Errors.Count > 0) return applicability.Errors;
-        if ((source is not null || _changes.IsProportionate(change)) && !applicability.ManualTestCatalogue) return [];
+        var plan = ReadPlan(change);
+        var source = plan.Source;
+        bool manualCatalogue;
+        var sourceTasks = plan.WorkItems.Where(task => task.RequirementIds.Count > 0).ToArray();
+        if (source is not null && File.Exists(OutcomePlanPath(change)) && OutcomeAuthority(change) is { } authority
+            && sourceTasks.Length > 0 && sourceTasks.All(OutcomeRetainsHistoricalAuthority))
+            manualCatalogue = HistoricalOutcomeCatalogueRequired(change, source, authority, sourceTasks);
+        else
+        {
+            var applicability = _changes.DocumentApplicability(change, source?.FrontendChanges,
+                source is not null ? FeatureIssuePackBuilder.RequiresTestCatalogue(repositoryPath, source.Path) : null);
+            if (applicability.Errors.Count > 0) return applicability.Errors;
+            manualCatalogue = applicability.ManualTestCatalogue;
+        }
+        if ((source is not null || _changes.IsProportionate(change)) && !manualCatalogue) return [];
         var markdownPath = _changes.DossierFile(change, "test-cases.md");
         if (!File.Exists(markdownPath)) return ["Automated-test traceability requires test-cases.md."];
 

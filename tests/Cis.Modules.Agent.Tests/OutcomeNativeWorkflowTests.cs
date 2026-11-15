@@ -160,6 +160,59 @@ public sealed partial class AgentExecutionTests
         Assert.Equal(report, File.ReadAllBytes(reportPath));
         File.WriteAllText(childPath, completedDocument);
 
+        // An actual approved amendment must not strand the settled result or
+        // turn replacement children into fresh accounting owners.
+        var beforeAmendment = controller.WorkStatus(repository.Path, "CIS-0001", children[0].Id).Work!;
+        var beforeAmendmentLedger = File.ReadAllBytes(ledgerPath);
+        var amended = changes.Authorize(new(repository.Path, "CIS-0001", grant with
+        {
+            Scope = [new("native-v2", "Deliver the specifically revised neutral X/Y scope.", ["src", "tests", "config.json"])],
+            DecisionReference = "fixture:approved-native-scope-amendment"
+        }, "Maintainer", "Authorize this specific replacement scope without changing the total limits."));
+        Assert.True(amended.ExitCode == 0, string.Join("; ", amended.Errors));
+        Assert.NotEqual(0, planner.Validate(repository.Path, "CIS-0001").ExitCode);
+        foreach (var staleTask in new[] { supporting.Id, children[1].Id })
+        {
+            var cancelled = planner.TransitionTask(new(repository.Path, "CIS-0001", staleTask, "Cancelled", actor,
+                "Preserve the original task and costs while closing superseded scope."));
+            Assert.True(cancelled.ExitCode == 0, string.Join("; ", cancelled.Errors));
+        }
+        var replacement = planner.OrganizeOutcomeTasks(new(repository.Path, "CIS-0001",
+            [Definition("Reconcile the revised X behavior", "X") with { ScopeIds = ["native-v2"] },
+             Definition("Retain the revised supporting X obligation", "X") with { ScopeIds = ["native-v2"] }],
+            actor, "Reconcile the retained owner into explicit current-scope children.", first.Id), "split");
+        Assert.True(replacement.ExitCode == 0, string.Join("; ", replacement.Errors.Concat(replacement.Validation?.Errors ?? [])));
+        var replacementChildren = replacement.WorkItems.Where(item => item.AuthorizationScopeIds.Contains("native-v2", StringComparer.Ordinal)).ToArray();
+        Assert.Equal(2, replacementChildren.Length);
+        Assert.All(replacementChildren, child => Assert.Equal(first.Id, child.WorkOwnerTaskId));
+        Assert.Equal("Complete", Assert.Single(replacement.WorkItems, item => item.Id == children[0].Id).Status);
+        Start(replacementChildren[0].Id);
+        Assert.Equal(0, planner.Validate(repository.Path, "CIS-0001").ExitCode);
+        Assert.Equal(completedDocument, File.ReadAllText(childPath));
+        Assert.Equal(report, File.ReadAllBytes(reportPath));
+        Assert.Equal(calls, File.ReadAllLines(callsPath));
+        Assert.Equal(beforeAmendmentLedger, File.ReadAllBytes(ledgerPath));
+        var currentAssociation = new CisNativeWorkOptions("CIS-0001", replacementChildren[0].Id,
+            AuthorityPath: repository.Path, Actor: actor);
+        var currentInspection = controller.Inspect(repository.Path, currentAssociation);
+        Assert.Empty(currentInspection.Errors);
+        Assert.Equal(first.Id, currentInspection.Control!.Work!.OwnerTaskId);
+        var currentAdmission = controller.Admit(new(repository.Path, "native/approved-amendment-preparation", "incremental-unit", 30, currentAssociation));
+        Assert.True(currentAdmission.Allowed, string.Join("; ", currentAdmission.Errors));
+        using (var preparation = currentAdmission.Scope!)
+            Assert.Equal(first.Id, preparation.Reference.OwnerTaskId);
+        var afterAmendment = controller.WorkStatus(repository.Path, "CIS-0001", replacementChildren[0].Id).Work!;
+        Assert.Equal(beforeAmendment.Change.AllocatedMilliseconds, afterAmendment.Change.AllocatedMilliseconds);
+        Assert.Equal(beforeAmendment.Change.AllocatedAttempts, afterAmendment.Change.AllocatedAttempts);
+        Assert.True(afterAmendment.Change.ConsumedMilliseconds >= beforeAmendment.Change.ConsumedMilliseconds);
+        Assert.True(afterAmendment.Change.UsedAttempts >= beforeAmendment.Change.UsedAttempts);
+        Assert.Equal(beforeAmendment.Task!.AllocatedMilliseconds, afterAmendment.Task!.AllocatedMilliseconds);
+        Assert.Equal(beforeAmendment.Task.AllocatedAttempts, afterAmendment.Task.AllocatedAttempts);
+        Assert.Equal(0, afterAmendment.Change.ReservedMilliseconds);
+        Assert.Equal(2, JsonNode.Parse(File.ReadAllBytes(ledgerPath))!["changes"]!["CIS-0001"]!["owners"]!.AsObject().Count);
+        Assert.Equal(report, File.ReadAllBytes(reportPath));
+        Assert.Equal(calls, File.ReadAllLines(callsPath));
+
         void Start(string task)
         {
             var result = planner.TransitionTask(new(repository.Path, "CIS-0001", task, "InProgress", actor, "Start this in-scope task under its existing outcome."));

@@ -73,7 +73,7 @@ public sealed partial class PlanningService
             var current = existing.WorkItems.ToList();
             var target = request.TaskId is null ? null : current.SingleOrDefault(item => item.Id.Equals(request.TaskId, StringComparison.OrdinalIgnoreCase));
             if (operation is "split" or "update" && target is null) return Error(change.Id, "The task to organize was not found.");
-            if (target is { Status: "Complete" })
+            if (target is not null && CanonicalStatus(target.Status) == "Complete")
                 return Error(change.Id, "Preserve completed task contracts and their history; add supporting work instead.");
             if (operation == "split" && request.Tasks.Count < 2) return Error(change.Id, "A split requires at least two bounded children.");
             if (operation == "update" && request.Tasks.Count != 1) return Error(change.Id, "An update describes one unfinished task.");
@@ -96,7 +96,11 @@ public sealed partial class PlanningService
                 if (operation == "update") item = item with { ParentId = target!.ParentId, WorkOwnerTaskId = target.WorkOwnerTaskId, InstanceKey = target.InstanceKey };
                 added.Add(item);
             }
-            if (operation == "split" && (added.SelectMany(item => item.AuthorizationScopeIds).Except(target!.AuthorizationScopeIds).Any()
+            var historicalSplit = operation == "split" && OutcomeTaskValidationAuthority(authority, target!, allowHistorical: false) is null
+                && OutcomeTaskValidationAuthority(authority, target! with { Status = "Decomposed" }, allowHistorical: true) is not null;
+            if (operation == "split" && !historicalSplit && OutcomeTaskValidationAuthority(authority, target!, allowHistorical: false) is null)
+                return Error(change.Id, "The parent has no retained approved scope to reconcile; preserve its contract and resolve that specific binding before splitting.");
+            if (operation == "split" && !historicalSplit && (added.SelectMany(item => item.AuthorizationScopeIds).Except(target!.AuthorizationScopeIds).Any()
                 || target!.AuthorizationScopeIds.Except(added.SelectMany(item => item.AuthorizationScopeIds)).Any()))
                 return Error(change.Id, "Split children must preserve and cover their retained parent's authorized scope; add separate supporting work for another scope.");
             var metadataOnlyUpdate = operation == "update" && OutcomeTaskDigest(target!) == OutcomeTaskDigest(added[0]);
@@ -279,7 +283,8 @@ public sealed partial class PlanningService
         => new(status, change.Id, authority is null ? "Draft" : "Approved", items,
             ValidateOutcomePlan(change, items, authority, selected), [], applied);
 
-    private PlanValidation ValidateOutcomePlan(ChangeDossier change, IReadOnlyList<PlanWorkItem> items, CisOutcomeAuthorization? authority, IReadOnlySet<string>? selected = null)
+    private PlanValidation ValidateOutcomePlan(ChangeDossier change, IReadOnlyList<PlanWorkItem> items, CisOutcomeAuthorization? authority,
+        IReadOnlySet<string>? selected = null, bool allowHistorical = true)
     {
         var errors = new List<string>();
         var warnings = new List<string>();
@@ -290,11 +295,17 @@ public sealed partial class PlanningService
             if (selected is not null && !selected.Contains(task.Id)) continue;
             errors.AddRange(task.ContractErrors);
             if (authority is null) { warnings.Add(task.Id + ": proposed; outcome authorization is not yet recorded."); continue; }
-            if (task.AuthorizationScopeIds.Count == 0 || task.AuthorizationScopeIds.Except(authority.Request.Scope.Select(scope => scope.Id), StringComparer.Ordinal).Any())
+            var taskAuthority = OutcomeTaskValidationAuthority(authority, task, allowHistorical);
+            if (taskAuthority is null)
+            {
+                errors.Add(task.Id + ": accepted scope changed or has no retained authorization; reconcile this task's authority.");
+                continue;
+            }
+            if (task.AuthorizationScopeIds.Count == 0 || task.AuthorizationScopeIds.Except(taskAuthority.Request.Scope.Select(scope => scope.Id), StringComparer.Ordinal).Any())
             { errors.Add(task.Id + ": scope expansion requires a targeted human decision; unrelated work remains authorized."); continue; }
-            if (task.AuthorizationScopeBasis != CisOutcomeAuthority.ScopeBasis(authority, task.AuthorizationScopeIds))
+            if (task.AuthorizationScopeBasis != CisOutcomeAuthority.ScopeBasis(taskAuthority, task.AuthorizationScopeIds))
                 errors.Add(task.Id + ": accepted scope changed; reconcile this task's authority.");
-            errors.AddRange(OutcomeDefinitionErrors(authority, new(task.Title, task.AuthorizationScopeIds, task.AcceptanceCriteria, task.Validation)
+            errors.AddRange(OutcomeDefinitionErrors(taskAuthority, new(task.Title, task.AuthorizationScopeIds, task.AcceptanceCriteria, task.Validation)
                 { Paths = task.WorkPaths, Complexity = task.Complexity == "high" ? "medium" : task.Complexity, Category = task.Category }));
             if (task.Complexity == "high" && items.Count(item => item.ParentId == task.Id) < 2) errors.Add(task.Id + ": high work requires bounded children.");
             if (string.IsNullOrWhiteSpace(task.AcceptanceCriteria) || string.IsNullOrWhiteSpace(task.Validation)) errors.Add(task.Id + ": missing acceptance or validation.");
@@ -307,9 +318,19 @@ public sealed partial class PlanningService
         if (decisions.BlockingOpen > 0) errors.Add("Blocking decisions remain open.");
         if (ReadOutcomePlan(change)?.Source is { } source)
         {
-            if (selected is null || items.Any(item => selected.Contains(item.Id) && item.RequirementIds.Count > 0))
+            var sourceTasks = items.Where(item => (selected is null || selected.Contains(item.Id)) && item.RequirementIds.Count > 0).ToArray();
+            var historicalSource = allowHistorical && sourceTasks.Length > 0 && sourceTasks.All(OutcomeRetainsHistoricalAuthority);
+            if (!historicalSource && sourceTasks.Length > 0)
                 errors.AddRange(ValidateSourceCurrency(change, source));
-            ValidateManualTestCaseArtifacts(change, source, errors);
+            // A selected supporting task has no imported-source contract. Keep the
+            // completed source's catalogue basis rather than applying today's UI
+            // choice to that retained evidence during an unrelated task operation.
+            var catalogueTasks = sourceTasks.Length > 0 ? sourceTasks : items.Where(item => item.RequirementIds.Count > 0).ToArray();
+            var historicalCatalogue = (allowHistorical || selected is not null && sourceTasks.Length == 0)
+                && catalogueTasks.Length > 0 && catalogueTasks.All(OutcomeRetainsHistoricalAuthority);
+            var retainedCatalogue = historicalCatalogue && authority is not null
+                ? HistoricalOutcomeCatalogueRequired(change, source, authority, catalogueTasks) : (bool?)null;
+            ValidateManualTestCaseArtifacts(change, source, errors, retainedCatalogue);
         }
         else errors.AddRange(ValidateOutcomeManualCatalogue(change));
         return new(errors.Count == 0, errors, warnings, 0, 0, decisions.BlockingOpen);

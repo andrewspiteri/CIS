@@ -323,7 +323,7 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
                 try
                 {
                     envelope = CreateEnvelope(context, changeId, taskId, providerId, taskText, task, target.Id, target.RepositoryPath, mode, permission);
-                    envelope = BindAuthorityArtifacts(context, envelope, diagnostics);
+                    envelope = BindAuthorityArtifacts(context, envelope, diagnostics, authorityDossierDigest);
                     if (envelope.AuthorityArtifacts is { } artifacts)
                         ValidateTaskEligibility(context, changeId, taskText, diagnostics,
                             artifacts.ToDictionary(item => item.Path, StringComparer.Ordinal));
@@ -865,7 +865,7 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         if (envelope is null || Sha(File.ReadAllText(envelopePath)) != view.Manifest.EnvelopeDigest) diagnostics.Add("ERROR: The run envelope is missing or changed; prepare a new run instead of resuming.");
         if (envelope?.ExpiresAtUtc is { } expires && (!DateTimeOffset.TryParse(expires, out var expiry) || _clock().ToUniversalTime() > expiry.ToUniversalTime()))
             diagnostics.Add("ERROR: The retained agent envelope expired; prepare a new run instead of resuming.");
-        if (envelope is not null && !AuthorityArtifactsCurrent(context, envelope))
+        if (envelope is not null && !AuthorityArtifactsCurrent(context, envelope, view.Manifest.AuthorityDossierDigest, view.Manifest.AcceptedScopeDigest))
             diagnostics.Add("ERROR: Bound authority context is missing, changed or stale; prepare a new run instead of resuming.");
         if (view.Manifest.AuthorityInputDigest is not null || view.Manifest.AuthorityDossierDigest is not null)
         {
@@ -1374,7 +1374,7 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
             }
             if (currentManifest.Status == CisAgentRunStates.Interrupted) finalState = CisAgentRunStates.Interrupted;
             if (finalState == CisAgentRunStates.Succeeded && completion is null) finalState = CisAgentRunStates.InvalidEvidence;
-            if (finalState == CisAgentRunStates.Succeeded && !AuthorityArtifactsCurrent(context, envelope))
+            if (finalState == CisAgentRunStates.Succeeded && !AuthorityArtifactsCurrent(context, envelope, currentManifest.AuthorityDossierDigest, currentManifest.AcceptedScopeDigest))
             {
                 diagnostics.Add("ERROR: Bound authority context changed during execution; the result cannot establish current evidence.");
                 finalState = CisAgentRunStates.InvalidEvidence;

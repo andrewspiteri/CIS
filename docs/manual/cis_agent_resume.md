@@ -3,7 +3,7 @@ title: "cis agent resume"
 type: command-reference
 status: Active
 owner: "Andrew Spiteri"
-last_reviewed: "2026-11-06"
+last_reviewed: "2026-11-15"
 review_cadence: "on command change"
 cis:
   stable_id: change-impact-studio:manual:cis-agent-resume
@@ -27,6 +27,13 @@ cis agent resume <run-id> --actor <identity> --reason <rationale> [--message <co
 ```
 
 The provider must support resumption, the original worktree and unchanged envelope must remain available, and the prior run must be terminal. CIS sends the complete digest-bound task contract and artifact route on every attempt, followed by the optional continuation, so a failed pre-session attempt cannot resume with an unbounded or context-free prompt. The next attempt appends provenance and never erases the first result. Ctrl+C follows the same bounded cancellation behavior as `cis agent run`.
+
+The envelope is the retained task instructions and snapshots; it is not rewritten
+when shared live documents change. An unrelated approved outcome amendment does not invalidate a participant task whose
+contract, selected scope, constraints, applicable approvals and limits remain current.
+Resume retains the original snapshots and checks their integrity and approval history.
+Actual selected-authority changes and changes to other bound documents still block
+resume. See the [participant context checks](cis_agent_run.md) for the same completion rule.
 
 For a direct task under adopted engineering defaults or authority-wide work accounting, resume admits its canonical accounting owner against current allocation, recovery state, and provider policy. Authority-wide accounting can originate from another story's finite allocation; this task still needs its applicable owner and allocation even when engineering quality policy is not adopted. Resume does not replenish time or logical attempts. Without an override CIS rechecks the recorded timeout; use `--timeout-seconds` to select a shorter supported bound when status reports less capacity. The requested total bound is at least 30 seconds and no more than the current profile maximum (3,600 seconds in the reviewed profile) or the capacity remaining after task/change restoration reserves. Known preparation consumes part of that reservation; the provider receives any positive remainder, including fractional seconds, with startup and idle limits bounded by it. A reason, message, provider-attempt increment, or `--approve-requests` grants no allocation authority. Use [`cis agent work`](cis_agent_work.md) for owner-specific holds, progress and permitted in-scope continuation. Product-document resumptions retain their existing governed flow.
 

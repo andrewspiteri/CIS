@@ -69,7 +69,7 @@ public sealed partial class FeedbackModuleTests : IDisposable
             0,
             40,
             0,
-            [new CisTokenSavingsCandidate(100, 10, "test", "high", "probe run")]));
+            [new CisTokenSavingsCandidate(100, 10, "test", "high", "probe run")]) { CanonicalCommand = "probe run", RecognizedOptions = ["--repo"] });
 
         var summary = new FeedbackService(store).Summary(_root, null);
 
@@ -168,7 +168,7 @@ public sealed partial class FeedbackModuleTests : IDisposable
             ["agent", "runs", "--summary", "--repo", _root], _root,
             now.AddMinutes(-1), now, 25, 0, 8_000, 0,
             [new CisTokenSavingsCandidate(10_000, 2_000,
-                "full manifests versus summary", "high", "agent runs")]));
+                "full manifests versus summary", "high", "agent runs")]) { CanonicalCommand = "agent runs", RecognizedOptions = ["--summary", "--repo"] });
 
         var result = new FeedbackService(store, () => now).Opportunities(_root, null);
 
@@ -235,7 +235,11 @@ public sealed partial class FeedbackModuleTests : IDisposable
         DateTimeOffset startedAt, int exitCode, int outputCharacters)
     {
         store.Record(new CisToolUsageCapture(arguments, _root,
-            startedAt, startedAt.AddMilliseconds(25), 25, exitCode, outputCharacters, 0, []));
+            startedAt, startedAt.AddMilliseconds(25), 25, exitCode, outputCharacters, 0, [])
+        {
+            CanonicalCommand = arguments[0] == "--version" ? "version" : string.Join(' ', arguments.Take(2)),
+            RecognizedOptions = arguments.Where(argument => argument.StartsWith('-')).ToArray(),
+        });
     }
 
     public void Dispose()

@@ -1,3 +1,5 @@
+using Cis.Abstractions;
+
 namespace Cis.Modules.Feedback;
 
 public sealed record ToolUsageEntry(
@@ -21,6 +23,9 @@ public sealed record ToolUsageEntry(
     string Outcome = "",
     string? BuildIdentity = null)
 {
+    public CisInvocationObservations? Observations { get; init; }
+    public long? StandardOutputUtf8Bytes { get; init; }
+    public long? StandardErrorUtf8Bytes { get; init; }
     public int OutputExpansionEstimatedTokens => Math.Max(0, ActualEstimatedTokens - BaselineEstimatedTokens);
 }
 

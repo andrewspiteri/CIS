@@ -83,27 +83,23 @@ internal sealed partial class AgentWorkLedger
         var normalized = paths.Distinct(StoragePathComparer).Where(path => !paths.Any(parent =>
                 !StoragePathComparer.Equals(path, parent) && StorageWithin(parent, path)))
             .Where(path => !accounting.Any(parent => StorageWithin(parent, path))).Order(StringComparer.Ordinal).ToArray();
-        var added = MeasureOperationPaths(normalized, accounting.Concat(previous?.OperationPaths ?? []));
+        var added = MeasureOperationPaths(normalized, accounting.Concat(previous?.OperationPaths ?? []), accounting);
         var initial = checked((previous?.InitialOperationBytes ?? 0) + added);
         return (normalized, accounting, initial, MeasureOperationPaths(normalized, accounting));
     }
 
-    private static long MeasureOperationPaths(IEnumerable<string> paths, IEnumerable<string> excluded)
+    private static long MeasureOperationPaths(IEnumerable<string> paths, IEnumerable<string> excluded,
+        IReadOnlyList<string>? excludedAliasTargets = null)
     {
+        var operationPaths = paths.ToArray();
         var excludedPaths = excluded.ToArray();
-        var files = new HashSet<string>(StoragePathComparer);
-        long bytes = 0;
-        foreach (var path in paths)
-        {
-            if (excludedPaths.Any(parent => StorageWithin(parent, path))) continue;
-            if (!File.Exists(path) && !Directory.Exists(path)) continue;
-            if (CisPathSafety.IsReparsePoint(path) || Directory.Exists(path) && CisPathSafety.ContainsReparsePointInTree(path))
-                throw new InvalidDataException("An operation growth domain contains linked or unreadable storage.");
-            foreach (var file in File.Exists(path) ? new[] { path } : CisPathSafety.EnumerateFiles(path))
-                if (!excludedPaths.Any(parent => StorageWithin(parent, file)) && files.Add(file))
-                    bytes = checked(bytes + new FileInfo(file).Length);
-        }
-        return bytes;
+        // A globally owned target is insufficient: these exact operation paths
+        // must count it, and excluded accounting cannot supply alias coverage.
+        // Previous operation paths excluded only from added baseline bytes still
+        // retain their original coverage and immutable initial byte contribution.
+        try { return MeasureStoragePaths(operationPaths, operationPaths, excludedPaths, excludedAliasTargets ?? excludedPaths); }
+        catch (InvalidDataException error)
+        { throw new InvalidDataException("An operation growth domain contains linked or unreadable storage.", error); }
     }
 
     private static void ValidateOperationOverlap(Ledger state, Change change, CisAgentWorkReference reference,

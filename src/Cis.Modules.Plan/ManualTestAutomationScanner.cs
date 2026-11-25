@@ -3,6 +3,7 @@ using Cis.Abstractions;
 
 namespace Cis.Modules.Plan;
 
+/// <summary>Finds candidate source references only; it never certifies execution or behavioral coverage.</summary>
 internal sealed partial class ManualTestAutomationScanner
 {
     private const long MaximumSourceBytes = 2 * 1024 * 1024;
@@ -34,9 +35,17 @@ internal sealed partial class ManualTestAutomationScanner
     }
 
     public IReadOnlyDictionary<string, IReadOnlyList<string>> Scan(string repositoryPath)
+        => Scan(ResolveRepositories(repositoryPath));
+
+    internal static IReadOnlyDictionary<string, IReadOnlyList<string>> ScanSourcePaths(string repositoryPath)
+        => Scan([new RepositoryScope("", repositoryPath)]).ToDictionary(item => item.Key,
+            item => (IReadOnlyList<string>)item.Value.Select(reference => reference[2..reference.LastIndexOf(':')])
+                .Distinct(StringComparer.Ordinal).ToArray(), StringComparer.OrdinalIgnoreCase);
+
+    private static IReadOnlyDictionary<string, IReadOnlyList<string>> Scan(IEnumerable<RepositoryScope> repositories)
     {
         var found = new Dictionary<string, SortedSet<string>>(StringComparer.OrdinalIgnoreCase);
-        foreach (var repository in ResolveRepositories(repositoryPath))
+        foreach (var repository in repositories)
         {
             foreach (var path in EnumerateTestSources(repository.RepositoryPath))
             {
@@ -44,7 +53,7 @@ internal sealed partial class ManualTestAutomationScanner
                 try
                 {
                     var info = new FileInfo(path);
-                    if (info.Length > MaximumSourceBytes) continue;
+                    if (info.Attributes.HasFlag(FileAttributes.ReparsePoint) || info.Length > MaximumSourceBytes) continue;
                     content = File.ReadAllText(path);
                     if (!RecognizedTestPattern().IsMatch(content)) continue;
                 }

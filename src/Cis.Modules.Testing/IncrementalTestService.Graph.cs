@@ -5,30 +5,89 @@ namespace Cis.Modules.Testing;
 
 public sealed partial class IncrementalTestService
 {
-    private sealed record Selection(CisGraphSnapshotReadResult Snapshot, IncrementalTestBatch[] Batches);
+    private sealed record Selection(CisGraphSnapshotReadResult Snapshot, IncrementalTestBatch[] Batches,
+        IReadOnlyList<string> Diagnostics);
 
     private Selection Select(Input input, IncrementalTestState state, bool force)
     {
-        var snapshot = _graph.Read(input.Repository);
-        Require(snapshot.ExitCode == 0 && snapshot.Freshness == "fresh" && snapshot.Graph?.Build.Status == "complete"
-            && snapshot.Manifest is not null && snapshot.Graph.DiagnosticSummary.Errors == 0 && snapshot.Graph.DiagnosticSummary.Warnings == 0,
-            "A fresh, complete graph without errors or warnings is required. Run cis graph build before planning. " + string.Join("; ", snapshot.Errors));
+        CisGraphSnapshotReadResult snapshot;
+        using (CisInvocationTelemetry.MeasurePhase("graph"))
+        {
+            snapshot = _graph.ReadCurrent(input.Repository);
+        }
+        Require(snapshot.ExitCode == 0 && snapshot.Freshness == "fresh" && snapshot.Graph?.Build.Status is "complete" or "partial"
+            && snapshot.Manifest is not null && snapshot.Graph.DiagnosticSummary.Errors == 0,
+            "A fresh, complete graph input inventory without extraction errors is required. " + string.Join("; ", snapshot.Errors));
         var graph = snapshot.Graph!;
+        var warningDiagnostics = snapshot.Diagnostics.Where(item => item.Severity == "warning").ToArray();
+        // Known documentation and verification-mapping diagnostics do not alter compiler dependencies.
+        // Publishing a result reference must not change test selection and invalidate that same result.
+        // Missing diagnostic details and new warning kinds are uncertainty, never proof of independence.
+        var reliableDependencies = graph.DiagnosticSummary.Warnings == warningDiagnostics.Length
+            && warningDiagnostics.All(item => item.Code is "CIS-GRAPH-DOC-002" or "CIS-GRAPH-VERIFY-001" or "CIS-GRAPH-VERIFY-002")
+            && (graph.Build.Status == "complete" || warningDiagnostics.Length > 0);
+        var selectionDiagnostics = warningDiagnostics.Select(item => item.Code + ": " + item.Message).Take(12).ToList();
+        if (warningDiagnostics.Length > 12)
+            selectionDiagnostics.Add($"{warningDiagnostics.Length - 12} additional graph warnings remain in graph diagnostics.");
+        if (!reliableDependencies)
+            selectionDiagnostics.Add("Dependency evidence is incomplete or unclassified; using the configured full test filter and conservative input inventory.");
+        CisInvocationTelemetry.RecordGraph("incremental-selection", graph.Build.Id, "current",
+            reliableDependencies ? "dependency-evidence-available" : "conservative-full-scope");
         Require(graph.Nodes.Count <= 250000 && graph.Edges.Count <= 1000000, "Graph exceeds the incremental planning bound.");
         var paths = graph.Nodes.ToDictionary(node => node.Key, node => DependencyLocations(node).Select(location => location.Path.Replace('\\', '/'))
             .Where(path => CisPathSafety.TryResolveUnderRoot(input.Repository, path, out var full) && File.Exists(full))
             .Distinct(PathComparer).ToArray(), StringComparer.Ordinal);
+        var repositorySymbols = graph.Nodes.Where(node => node.Kind == "symbol" && paths[node.Key].Length > 0)
+            .Select(node => node.Key).ToHashSet(StringComparer.Ordinal);
+        var interfaceTargets = graph.Nodes.Where(node => node.Subtype == "interface"
+            || node.Properties.GetValueOrDefault("declaringTypeKind") == "interface").Select(node => node.Key).ToHashSet(StringComparer.Ordinal);
+        var uncertainPaths = new HashSet<string>(PathComparer);
         var forward = new Dictionary<string, HashSet<string>>(PathComparer);
         var reverse = new Dictionary<string, HashSet<string>>(PathComparer);
-        foreach (var edge in graph.Edges.Where(edge => edge.State is not ("proposed" or "rejected")
-            && edge.Type is "calls" or "depends-on" or "references" or "implemented-by" or "implements" or "inherits-from"))
+        foreach (var key in repositorySymbols)
         {
-            if (!paths.TryGetValue(edge.From, out var from) || !paths.TryGetValue(edge.To, out var to)) continue;
+            if (paths[key].Length < 2) continue;
+            // Every bound partial declaration contributes to the same symbol,
+            // even when no dependency edge targets the type itself. A star keeps
+            // the closure connected without generating every declaration pair.
+            var declarations = paths[key].Order(StringComparer.Ordinal).ToArray();
+            foreach (var declaration in declarations.Skip(1))
+            {
+                Add(forward, declarations[0], declaration);
+                Add(forward, declaration, declarations[0]);
+                Add(reverse, declarations[0], declaration);
+                Add(reverse, declaration, declarations[0]);
+            }
+        }
+        foreach (var edge in graph.Edges.Where(edge => edge.State is not ("proposed" or "rejected")
+            && edge.Type is "calls" or "depends-on" or "references" or "implemented-by" or "implements" or "inherits" or "inherits-from"))
+        {
+            if (ContextualVerificationEdge(edge)) continue;
+            var from = paths.GetValueOrDefault(edge.From, []);
+            var to = paths.GetValueOrDefault(edge.To, []);
+            var dispatchRelation = edge.Type is "implements" or "inherits" or "inherits-from";
+            if (dispatchRelation && (!repositorySymbols.Contains(edge.From) || !repositorySymbols.Contains(edge.To)))
+            {
+                uncertainPaths.UnionWith(from);
+                uncertainPaths.UnionWith(to);
+            }
+            if ((edge.Type is "calls" or "references") && interfaceTargets.Contains(edge.To)
+                && !repositorySymbols.Contains(edge.To)) uncertainPaths.UnionWith(from);
             foreach (var source in from) foreach (var target in to)
             {
                 if (PathComparer.Equals(source, target)) continue;
                 Add(forward, source, target);
                 Add(reverse, target, source);
+                // A repository contract can dispatch to any known implementation,
+                // including an override inherited through a base implementation.
+                // These are conservative candidates, not observed runtime bindings.
+                // External symbols have no declaration paths and never join callers.
+                if (dispatchRelation
+                    && repositorySymbols.Contains(edge.From) && repositorySymbols.Contains(edge.To))
+                {
+                    Add(forward, target, source);
+                    Add(reverse, source, target);
+                }
             }
         }
         var profile = input.Profile;
@@ -41,7 +100,9 @@ public sealed partial class IncrementalTestService
         var represented = paths.Values.SelectMany(value => value).ToHashSet(PathComparer);
         var allInputs = snapshot.Manifest!.Inputs.Select(item => item.Path)
             .Concat(profile.SourceFiles).Concat(profile.TestFiles).Distinct(PathComparer).Order(StringComparer.Ordinal).ToArray();
+        var graphOnly = GraphOnlyInputs(input, snapshot, paths);
         var result = new List<IncrementalTestBatch>();
+        var uncertainBatches = new List<string>();
         foreach (var source in profile.SourceFiles.OrderBy(file => !PathComparer.Equals(file, profile.CanarySourceFile)).ThenBy(file => file, StringComparer.Ordinal))
         {
             var callers = Closure([source], reverse);
@@ -56,20 +117,28 @@ public sealed partial class IncrementalTestService
             // fixtures and names whose separators do not imply the existing predicate.
             var classes = classNames.Where(name => !HasCoveringClassFilter(name, classNames))
                 .Select(name => "FullyQualifiedName~" + name + ".").Order(StringComparer.Ordinal).ToArray();
-            var narrow = source.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) && represented.Contains(source) && tests.Length > 0 && classes.Length > 0
-                && snapshot.GraphCapabilities.Contains("compiler.calls", StringComparer.Ordinal);
+            var dependencyFamily = Closure(tests.Append(source), forward);
+            var uncertain = callers.Concat(dependencyFamily).Any(uncertainPaths.Contains);
+            if (uncertain) uncertainBatches.Add(source);
+            var narrow = reliableDependencies && source.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) && represented.Contains(source) && tests.Length > 0 && classes.Length > 0
+                && !uncertain && snapshot.GraphCapabilities.Contains("compiler.calls", StringComparer.Ordinal);
             var filter = narrow ? "(" + profile.FullTestFilter + ")&(" + string.Join('|', classes) + ")" : profile.FullTestFilter;
             if (filter.Length > 32768) narrow = false;
             if (!narrow) { tests = allTests.Order(StringComparer.Ordinal).ToArray(); filter = profile.FullTestFilter; }
             // File-level closure includes shared fixtures and transitive implementation dependencies.
             // Inconclusive selection uses every graph input, rather than treating missing edges as independence.
-            var dependencies = (narrow ? Closure(tests.Append(source), forward) : allInputs.ToHashSet(PathComparer))
+            var dependencies = (narrow ? dependencyFamily : allInputs.ToHashSet(PathComparer))
                 .Order(StringComparer.Ordinal).ToArray();
+            using var identityPhase = CisInvocationTelemetry.MeasurePhase("identity");
             var inputHashes = dependencies.Select(file => new { file, hash = HashFile(Safe(input.Repository, file)) }).ToArray();
             var relevantEdges = dependencies.SelectMany(file => forward.GetValueOrDefault(file, []).Select(target => file + "->" + target))
                 .Order(StringComparer.Ordinal).ToArray();
             string unit;
             string mutation;
+            string? previousUnit = null;
+            string? previousMutation = null;
+            IncrementalInputFact[] unitBasis = [];
+            IncrementalInputFact[] mutationBasis = [];
             if (input.LegacyIdentity)
             {
                 var identity = HashObject(new
@@ -93,15 +162,19 @@ public sealed partial class IncrementalTestService
                 // evidence. Only unrelated fallback inventory can be discarded.
                 var explicitUnitInputs = Closure(tests.Append(source), forward)
                     .Select(file => Safe(input.Repository, file)).ToHashSet(PathComparer);
-                var unitInputs = dependencies.Where(file => UnitDependencyInput(input, file, explicitUnitInputs)).ToArray();
+                var materialDependencies = dependencies.Where(file => !graphOnly.Contains(file)
+                    || explicitUnitInputs.Contains(Safe(input.Repository, file))).ToArray();
+                var unitInputs = materialDependencies.Where(file => UnitDependencyInput(input, file, explicitUnitInputs)).ToArray();
                 var unitHashes = unitInputs.Select(file => new { file, hash = HashFile(Safe(input.Repository, file)) }).ToArray();
                 var unitEdges = unitInputs.SelectMany(file => forward.GetValueOrDefault(file, [])
-                    .Where(target => UnitDependencyInput(input, target, explicitUnitInputs)).Select(target => file + "->" + target))
+                    .Where(target => (!graphOnly.Contains(target) || explicitUnitInputs.Contains(Safe(input.Repository, target)))
+                        && UnitDependencyInput(input, target, explicitUnitInputs)).Select(target => file + "->" + target))
                     .Order(StringComparer.Ordinal).ToArray();
-                var mutationInputs = dependencies.Where(file => !PathComparer.Equals(Safe(input.Repository, file), input.ProfilePath)).ToArray();
+                var mutationInputs = materialDependencies.Where(file => !PathComparer.Equals(Safe(input.Repository, file), input.ProfilePath)).ToArray();
                 var mutationHashes = mutationInputs.Select(file => new { file, hash = HashFile(Safe(input.Repository, file)) }).ToArray();
                 var mutationEdges = mutationInputs.SelectMany(file => forward.GetValueOrDefault(file, [])
-                    .Where(target => !PathComparer.Equals(Safe(input.Repository, target), input.ProfilePath)).Select(target => file + "->" + target))
+                    .Where(target => (!graphOnly.Contains(target) || explicitUnitInputs.Contains(Safe(input.Repository, target)))
+                        && !PathComparer.Equals(Safe(input.Repository, target), input.ProfilePath)).Select(target => file + "->" + target))
                     .Order(StringComparer.Ordinal).ToArray();
                 // The effective closure, filter and file contents carry selection.
                 // Producer and extractor build coordinates are provenance only.
@@ -116,14 +189,114 @@ public sealed partial class IncrementalTestService
                     inputHashes = mutationHashes,
                     relevantEdges = mutationEdges
                 });
+                unitBasis = MaterialBasis(input, source, tests, filter, unitInputs, unitEdges, false,
+                    unitHashes.ToDictionary(item => item.file, item => item.hash, PathComparer));
+                mutationBasis = MaterialBasis(input, source, tests, filter, mutationInputs, mutationEdges, true,
+                    mutationHashes.ToDictionary(item => item.file, item => item.hash, PathComparer));
+                if (materialDependencies.Length != dependencies.Length)
+                {
+                    // Compatibility checks reconstruct the previous algorithm from
+                    // today's complete inputs and canonical execution environment.
+                    // An older raw transport environment is not equivalent to the
+                    // environment now delivered to native commands. These checks
+                    // never rewrite a result or invent its missing input breakdown.
+                    var previousUnitInputs = dependencies.Where(file => UnitDependencyInput(input, file, explicitUnitInputs)).ToArray();
+                    previousUnit = HashObject(new
+                    {
+                        input.UnitIdentity,
+                        source,
+                        tests,
+                        filter,
+                        inputHashes = previousUnitInputs.Select(file => new { file, hash = HashFile(Safe(input.Repository, file)) }).ToArray(),
+                        relevantEdges = previousUnitInputs.SelectMany(file => forward.GetValueOrDefault(file, [])
+                            .Where(target => UnitDependencyInput(input, target, explicitUnitInputs)).Select(target => file + "->" + target))
+                            .Order(StringComparer.Ordinal).ToArray()
+                    });
+                    var previousMutationInputs = dependencies.Where(file => !PathComparer.Equals(Safe(input.Repository, file), input.ProfilePath)).ToArray();
+                    previousMutation = HashObject(new
+                    {
+                        input.MutationIdentity,
+                        unit = previousUnit,
+                        source,
+                        tests,
+                        filter,
+                        inputHashes = previousMutationInputs.Select(file => new { file, hash = HashFile(Safe(input.Repository, file)) }).ToArray(),
+                        relevantEdges = previousMutationInputs.SelectMany(file => forward.GetValueOrDefault(file, [])
+                            .Where(target => !PathComparer.Equals(Safe(input.Repository, target), input.ProfilePath)).Select(target => file + "->" + target))
+                            .Order(StringComparer.Ordinal).ToArray()
+                    });
+                }
+                dependencies = materialDependencies;
             }
             var id = "file-" + HashObject(source)[..20];
+            var canonicalUnit = unit;
+            var canonicalMutation = mutation;
             state.Batches.TryGetValue(id, out var prior);
+            if (!force && prior?.Unit?.InputBasisId is null && previousUnit is not null
+                && Current(input, source, prior?.Unit, previousUnit, false, filter)) unit = previousUnit;
+            if (!force && prior?.Mutation?.InputBasisId is null && previousMutation is not null
+                && Current(input, source, prior?.Mutation, previousMutation, true, filter)) mutation = previousMutation;
+            var unitCurrent = !force && Current(input, source, prior?.Unit, unit, false, filter);
+            var mutationCurrent = !force && profile.MutationCommand is not null && Current(input, source, prior?.Mutation, mutation, true, filter);
             result.Add(new(id, source, narrow ? "graph" : "all-tests", tests, filter, unit, mutation,
-                !force && Current(input, source, prior?.Unit, unit, false, filter),
-                !force && profile.MutationCommand is not null && Current(input, source, prior?.Mutation, mutation, true, filter), dependencies));
+                unitCurrent, mutationCurrent, dependencies)
+            {
+                UnitInputs = unitBasis,
+                MutationInputs = mutationBasis,
+                CanonicalUnitFingerprint = canonicalUnit,
+                CanonicalMutationFingerprint = canonicalMutation,
+                UnitReasons = ExplainReuse(input, state, prior?.Unit, unitBasis, unitCurrent, false),
+                MutationReasons = ExplainReuse(input, state, prior?.Mutation, mutationBasis, mutationCurrent, true)
+            });
         }
-        return new(snapshot, result.ToArray());
+        selectionDiagnostics.AddRange(uncertainBatches.Take(12).Select(source => source
+            + ": unresolved interface or inheritance dependencies reach this batch; using the configured full test filter and conservative input inventory."));
+        if (uncertainBatches.Count > 12)
+            selectionDiagnostics.Add($"{uncertainBatches.Count - 12} additional batches use the same unresolved-dependency fallback.");
+        CisInvocationTelemetry.RecordVerification("unit", "selected", result.Count,
+            reliableDependencies ? "dependency-selection" : "conservative-full-scope");
+        return new(snapshot, result.ToArray(), selectionDiagnostics);
+    }
+
+    private static HashSet<string> GraphOnlyInputs(Input input, CisGraphSnapshotReadResult snapshot,
+        IReadOnlyDictionary<string, string[]> paths)
+    {
+        var graph = snapshot.Graph!;
+        var protectedInputs = input.Profile.SourceFiles.Concat(input.Profile.TestFiles).Concat(input.Profile.ConfigFiles)
+            .Concat(input.Profile.ToolFiles).Select(file => Path.GetFullPath(file, input.Repository)).ToHashSet(PathComparer);
+        // A catalogued document may also be a real test fixture or package input.
+        // Positive native evidence and explicit profile consumption take precedence.
+        protectedInputs.UnionWith(graph.Nodes.Where(node => node.Kind is "source-file" or "symbol" or "test" or "dependency")
+            .SelectMany(node => paths[node.Key]).Select(file => Safe(input.Repository, file)));
+        var graphOnly = graph.Nodes.Where(node => node.Kind == "document").SelectMany(node => paths[node.Key])
+            .Concat(snapshot.Manifest!.Inputs.Select(item => item.Path).Where(path => path.Replace('\\', '/')
+                .StartsWith(".cis/local/", StringComparison.OrdinalIgnoreCase)))
+            .Concat([".cis/repository.yml", snapshot.Manifest.DocumentationRoot.TrimEnd('/', '\\') + "/catalog.yml"])
+            .Where(file => !protectedInputs.Contains(Path.GetFullPath(file, input.Repository))
+                && !ProfileReferencesInput(input, file)).ToHashSet(PathComparer);
+        return graphOnly;
+    }
+
+    private static bool ProfileReferencesInput(Input input, string relative)
+    {
+        var file = Safe(input.Repository, relative);
+        var working = Safe(input.Repository, input.Profile.WorkingDirectory, true);
+        var references = new[] { relative, Relative(input.Repository, file), Relative(working, file), file, Path.GetFileName(file) }
+            .Select(value => value.Replace('\\', '/')).Where(value => value.Length > 0).Distinct(PathComparer).ToArray();
+        return new[] { input.Profile.UnitCommand, input.Profile.MutationCommand, input.Profile.RecoveryCommand }
+            .Where(command => command is not null).SelectMany(command => command!).Concat(input.Profile.Environment.Values)
+            .Any(value => references.Any(reference => value.Replace('\\', '/').Contains(reference, CisPathSafety.PlatformComparison)));
+    }
+
+    private static bool ContextualVerificationEdge(CisGraphEdge edge)
+    {
+        if (edge.Type is not ("references" or "implemented-by")) return false;
+        // The store merges observations. A contextual declaration cannot erase an
+        // independent compiler/project fact (or an unfamiliar conservative fact).
+        if (edge.Observations.Any(item => item.Method is not ("explicit-verification-declaration"
+            or "file-reference-cooccurrence" or "recorded-receipt-pin"))) return false;
+        return edge.Properties.GetValueOrDefault("role") is "explicit-result-reference" or "implementing-task"
+            || edge.Properties.GetValueOrDefault("mapping") == "explicit" || edge.Observations.Count > 0;
     }
 
     private static IEnumerable<CisGraphLocation> DependencyLocations(CisGraphNode node)
@@ -164,6 +337,7 @@ public sealed partial class IncrementalTestService
 
     private bool Current(Input input, string source, IncrementalStageResult? result, string fingerprint, bool mutation, string testFilter)
     {
+        using var evidencePhase = CisInvocationTelemetry.MeasurePhase("evidence");
         if (result is not { Completed: true } || result.Fingerprint != fingerprint
             || result.AssessmentContractVersion != CisIncrementalResultContract.Version
                 && !(input.LegacyIdentity && result.AssessmentContractVersion == 0)) return false;

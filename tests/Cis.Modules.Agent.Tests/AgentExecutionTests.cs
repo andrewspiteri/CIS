@@ -2135,9 +2135,12 @@ The owner evaluates one customer using authorized BI evidence and relevant relat
     {
         public string Path { get; }
         private AgentRepository(string path) => Path = path;
-        public static AgentRepository Create(bool git = false, bool unborn = false)
+        public static AgentRepository Create(bool git = false, bool unborn = false, bool shortPath = false)
         {
-            var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "cis-agent-tests", Guid.NewGuid().ToString("N"));
+            // Leave room for Git's nested worktree metadata under long sandbox TEMP paths.
+            var path = shortPath
+                ? System.IO.Path.Combine(System.IO.Path.GetTempPath(), "ca-" + Guid.NewGuid().ToString("N")[..12])
+                : System.IO.Path.Combine(System.IO.Path.GetTempPath(), "cis-agent-tests", Guid.NewGuid().ToString("N"));
             var repository = new AgentRepository(path);
             repository.Write(".cis/repository.yml", "schema_version: 1\nrepository:\n  id: agent-fixture\ndocumentation_root: docs/cis\n");
             repository.Write("docs/cis/catalog.yml", "schema_version: 1\nrepository: agent-fixture\ndocuments: []\n");

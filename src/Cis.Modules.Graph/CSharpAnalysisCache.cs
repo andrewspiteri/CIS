@@ -11,12 +11,22 @@ internal static class CSharpAnalysisCache
     {
         using var timing = CisPerformanceTrace.Start("graph.compiler");
         // A whole-compilation key invalidates cross-file bindings on any source or ownership change.
-        var identity = JsonSerializer.Serialize(new { version = 1, runtime = Environment.Version.ToString(),
+        var identity = JsonSerializer.Serialize(new
+        {
+            version = 2,
+            runtime = Environment.Version.ToString(),
             module = typeof(CSharpCompilerAnalyzer).Module.ModuleVersionId,
             compiler = typeof(Microsoft.CodeAnalysis.CSharp.CSharpCompilation).Assembly.FullName,
-            inputs = inputs.OrderBy(item => item.Path, StringComparer.Ordinal).Select(item => new {
-                item.Path, item.ComponentId, item.HasConfirmedComponent, item.ProjectPath, item.ProjectReferences,
-                hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(item.Content))) }) });
+            inputs = inputs.OrderBy(item => item.Path, StringComparer.Ordinal).Select(item => new
+            {
+                item.Path,
+                item.ComponentId,
+                item.HasConfirmedComponent,
+                item.ProjectPath,
+                item.ProjectReferences,
+                hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(item.Content)))
+            })
+        });
         var key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
         var path = Path.Combine(repository, ".cis", "local", "graph", "compiler-analysis.json");
         var safe = !CisPathSafety.ContainsReparsePoint(repository, path);
@@ -27,7 +37,7 @@ internal static class CSharpAnalysisCache
                 if (File.Exists(path) && new FileInfo(path).Length <= 64 * 1024 * 1024)
                 {
                     var entry = JsonSerializer.Deserialize<Entry>(File.ReadAllText(path));
-                    if (entry?.Key == key && entry.Analysis is { Symbols: not null, ReferencedSymbols: not null, Annotations: not null, Interfaces: not null, Calls: not null })
+                    if (entry?.Key == key && entry.Analysis is { Symbols: not null, ReferencedSymbols: not null, Annotations: not null, Interfaces: not null, Calls: not null, References: not null })
                     { timing.Mark("cache-hit"); return entry.Analysis; }
                 }
             }

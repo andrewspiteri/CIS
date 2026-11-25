@@ -7,13 +7,22 @@ public sealed class GraphSnapshotReader : ICisGraphSnapshotReader
     private readonly ICisRepositoryContextResolver _resolver;
     private readonly SqliteGraphStore _store;
     private readonly IReadOnlyList<string> _expectedExtractors;
+    private readonly GraphBuilder? _builder;
+
+    public GraphSnapshotReader(ICisRepositoryContextResolver resolver, SqliteGraphStore? store,
+        IEnumerable<ICisGraphAugmenter>? augmenters)
+        : this(resolver, store, augmenters, null, null)
+    {
+    }
 
     public GraphSnapshotReader(ICisRepositoryContextResolver resolver, SqliteGraphStore? store = null,
-        IEnumerable<ICisGraphAugmenter>? augmenters = null)
+        IEnumerable<ICisGraphAugmenter>? augmenters = null, GraphBuilder? builder = null,
+        IEnumerable<ICisTestResultAdapter>? resultAdapters = null)
     {
         _resolver = resolver;
         _store = store ?? new SqliteGraphStore();
-        _expectedExtractors = GraphBuilder.ComposeExtractors(augmenters);
+        _expectedExtractors = GraphBuilder.ComposeExtractors(augmenters, resultAdapters);
+        _builder = builder;
     }
 
     public CisGraphSnapshotReadResult Read(string repositoryPath)
@@ -22,7 +31,43 @@ public sealed class GraphSnapshotReader : ICisGraphSnapshotReader
     public CisGraphMetadataReadResult ReadMetadata(string repositoryPath)
         => GraphReadScope.Read(this, nameof(ReadMetadata), repositoryPath, () => ReadMetadataCore(repositoryPath));
 
-    private CisGraphMetadataReadResult ReadMetadataCore(string repositoryPath)
+    public CisGraphSnapshotReadResult ReadCurrent(string repositoryPath)
+    {
+        // Recheck current inputs without discarding an unchanged materialized graph.
+        var metadata = ReadMetadataCore(repositoryPath, current: true);
+        if (metadata.Freshness == "fresh")
+        {
+            CisInvocationTelemetry.RecordGraph("snapshot-current", metadata.Build?.Id, "reused", "current-inputs-unchanged");
+            var snapshot = Read(repositoryPath);
+            if (snapshot.Graph?.Build.Id == metadata.Build?.Id && snapshot.Freshness == "fresh"
+                && snapshot.Manifest is not null && metadata.Manifest is not null
+                && snapshot.Manifest.Inputs.SequenceEqual(metadata.Manifest.Inputs)) return snapshot;
+            CisReadScope.Invalidate();
+            return Read(repositoryPath);
+        }
+        if (_builder is null || metadata.Status == "invalid-repository")
+        {
+            CisInvocationTelemetry.RecordGraph("snapshot-current", metadata.Build?.Id, "unavailable", "graph-unavailable");
+            CisReadScope.Invalidate();
+            return Read(repositoryPath);
+        }
+        CisReadScope.Invalidate();
+        var build = _builder.Build(repositoryPath);
+        CisReadScope.Invalidate();
+        var current = Read(repositoryPath);
+        CisInvocationTelemetry.RecordGraph("snapshot-current", current.Graph?.Build.Id,
+            build.ExitCode == 0 && current.Freshness == "fresh" ? "refreshed" : "unavailable", "refresh-required");
+        return build.ExitCode == 0 ? current
+            : current with
+            {
+                Status = "refresh-failed",
+                ExitCode = build.ExitCode,
+                Diagnostics = current.Diagnostics.Concat(build.Diagnostics).Distinct().ToArray(),
+                Errors = current.Errors.Concat(build.Diagnostics.Where(item => item.Severity == "error").Select(item => item.Message)).Distinct().ToArray()
+            };
+    }
+
+    private CisGraphMetadataReadResult ReadMetadataCore(string repositoryPath, bool current = false)
     {
         var resolution = _resolver.Resolve(repositoryPath);
         if (!resolution.IsSuccess)
@@ -31,7 +76,7 @@ public sealed class GraphSnapshotReader : ICisGraphSnapshotReader
         if (!File.Exists(_store.DatabasePath(context.RepositoryPath)))
             return new("missing", 4, context.RepositoryPath, "missing", null, null, [],
                 ["Graph generation is missing. Run `cis graph build` first."]);
-        var header = _store.ReadHeader(context.RepositoryPath);
+        var header = current ? _store.ReadCurrentHeader(context.RepositoryPath) : _store.ReadHeader(context.RepositoryPath);
         if (!header.Success || header.Build is null || header.Manifest is null)
             return new("invalid", 4, context.RepositoryPath, "unknown", null, null, [],
                 [$"Unable to read SQLite graph generation: {header.Error}"]);
@@ -42,13 +87,14 @@ public sealed class GraphSnapshotReader : ICisGraphSnapshotReader
         if (header.Build.Id != manifest.BuildId)
             return new("invalid", 4, context.RepositoryPath, "unknown", header.Build, manifest, [],
                 ["Graph and manifest build identities do not match. Run `cis graph build`."]);
-        var stale = FindStaleInputs(context.RepositoryPath, manifest);
+        var stale = FindStaleInputs(context.RepositoryPath, manifest, current);
         var warnings = new List<string>();
         if (header.Build.Status == "partial") warnings.Add("The graph was built with extraction warnings; inference evidence may be incomplete.");
         if (stale.Count > 0) warnings.Add($"The graph is stale for {stale.Count} input(s); run `cis graph build` before inference.");
         return new(stale.Count == 0 ? "available" : "stale", stale.Count == 0 ? 0 : 5,
             context.RepositoryPath, stale.Count == 0 ? "fresh" : "stale", header.Build, manifest,
-            warnings.Concat(stale.Take(20).Select(path => "Stale graph input: " + path)).ToArray(), []);
+            warnings.Concat(stale.Take(20).Select(path => "Stale graph input: " + path)).ToArray(), [])
+        { Diagnostics = header.Diagnostics };
     }
 
     private CisGraphSnapshotReadResult ReadCore(string repositoryPath)
@@ -86,7 +132,8 @@ public sealed class GraphSnapshotReader : ICisGraphSnapshotReader
                 manifest,
                 Capabilities(graph, manifest),
                 warnings.Concat(stale.Take(20).Select(path => "Stale graph input: " + path)).ToArray(),
-                []);
+                []) with
+            { Diagnostics = stored.Diagnostics };
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
@@ -105,7 +152,7 @@ public sealed class GraphSnapshotReader : ICisGraphSnapshotReader
         if (graph.Nodes.Any(node => node.Kind == "test")) capabilities.Add("tests.symbols");
         if (graph.Edges.Any(edge => edge.Type == "calls" && nodeKinds.TryGetValue(edge.From, out var kind) && kind == "test"))
             capabilities.Add("tests.calls");
-        if (manifest.Extractors.Any(extractor => extractor is "cis.csharp.semantic-facts/1" or "cis.csharp.semantic-facts/2" or "cis.csharp.semantic-facts/3"))
+        if (manifest.Extractors.Any(extractor => extractor is "cis.csharp.semantic-facts/1" or "cis.csharp.semantic-facts/2" or "cis.csharp.semantic-facts/3" or "cis.csharp.semantic-facts/4"))
         {
             capabilities.Add("compiler.symbols");
             capabilities.Add("compiler.calls");
@@ -122,7 +169,7 @@ public sealed class GraphSnapshotReader : ICisGraphSnapshotReader
         return capabilities.ToArray();
     }
 
-    private IReadOnlyList<string> FindStaleInputs(string repositoryPath, CisGraphManifest manifest)
+    private IReadOnlyList<string> FindStaleInputs(string repositoryPath, CisGraphManifest manifest, bool current = false)
     {
         var stale = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
         if (!manifest.Extractors.SequenceEqual(_expectedExtractors, StringComparer.Ordinal)) stale.Add("extractor-set-changed");
@@ -130,15 +177,27 @@ public sealed class GraphSnapshotReader : ICisGraphSnapshotReader
         foreach (var input in manifest.Inputs)
         {
             var path = Path.Combine(repositoryPath, input.Path.Replace('/', Path.DirectorySeparatorChar));
-            var inputState = GraphInputInspection.Read(input.Path, path);
+            var inputState = current ? GraphInputInspection.ReadCurrent(input.Path, path) : GraphInputInspection.Read(input.Path, path);
             if (!inputState.Exists) { stale.Add(input.Path + " (missing)"); continue; }
             if (inputState.Error is not null) stale.Add(input.Path + " (unreadable)");
             else if (!string.Equals(inputState.Hash, input.Hash, StringComparison.Ordinal)) stale.Add(input.Path + " (changed)");
+            try
+            {
+                if (GraphProjectionFingerprint.Read(repositoryPath, input.Path, current) != input.ProjectionHash)
+                    stale.Add(input.Path + " (projection changed)");
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                stale.Add(input.Path + " (projection unreadable)");
+            }
         }
         try
         {
-            foreach (var current in ImplementationGraphExtractor.EnumerateInputPaths(repositoryPath))
-                if (!known.Contains(current)) stale.Add(current + " (new)");
+            var currentPaths = current
+                ? ImplementationGraphExtractor.EnumerateCurrentInputPaths(repositoryPath)
+                : ImplementationGraphExtractor.EnumerateInputPaths(repositoryPath);
+            foreach (var currentPath in currentPaths)
+                if (!known.Contains(currentPath)) stale.Add(currentPath + " (new)");
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {

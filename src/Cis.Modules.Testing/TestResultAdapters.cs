@@ -192,43 +192,115 @@ public sealed class PlaywrightJsonResultAdapter : ICisTestResultAdapter
 
     public TestSuiteExecution Read(TestResultAdapterContext context)
     {
-        using var document = JsonDocument.Parse(File.ReadAllText(context.ResultPath));
+        var bytes = File.ReadAllBytes(context.ResultPath);
+        using var document = JsonDocument.Parse(bytes);
         var cases = new List<TestCaseExecution>();
-        if (document.RootElement.TryGetProperty("suites", out var suites)) VisitSuites(suites, cases);
-        return VitestJsonResultAdapter.Build(context, cases);
+        var diagnostics = new List<string>();
+        var root = Object(document.RootElement, "report");
+        var reportRoot = root.TryGetProperty("config", out var config) ? Text(Object(config, "config"), "rootDir") : null;
+        if (!root.TryGetProperty("suites", out var suites))
+            throw new InvalidDataException("Playwright report is missing its suites array.");
+        VisitSuites(Array(suites, "suites"), cases, diagnostics, [], context, reportRoot);
+        var execution = VitestJsonResultAdapter.Build(context, cases);
+        var reportDigest = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+        if (!execution.Artifacts.Any(item => item.Kind == "test-result" && item.Bytes == bytes.LongLength && item.Digest == reportDigest))
+            throw new InvalidDataException("Playwright report changed while its results were being read.");
+        if (root.TryGetProperty("errors", out var errors))
+        {
+            foreach (var error in Array(errors, "errors").EnumerateArray())
+                diagnostics.Add($"Playwright runner error: {ErrorMessage(error) ?? error.ToString()}");
+            if (errors.GetArrayLength() > 0)
+                execution = execution with { Status = "failed", FailureKind = TestFailureKind.Infrastructure };
+        }
+        return execution with { Diagnostics = execution.Diagnostics.Concat(diagnostics).ToArray() };
     }
 
-    private static void VisitSuites(JsonElement suites, ICollection<TestCaseExecution> cases)
+    private static void VisitSuites(JsonElement suites, ICollection<TestCaseExecution> cases,
+        ICollection<string> diagnostics, IReadOnlyList<string> parents, TestResultAdapterContext context, string? reportRoot)
     {
         foreach (var suite in suites.EnumerateArray())
         {
-            if (suite.TryGetProperty("suites", out var nested)) VisitSuites(nested, cases);
+            Object(suite, "suite");
+            var suiteTitle = Text(suite, "title");
+            var titles = string.IsNullOrWhiteSpace(suiteTitle) ? parents : parents.Concat([suiteTitle]).ToArray();
+            if (suite.TryGetProperty("suites", out var nested)) VisitSuites(Array(nested, "nested suites"), cases, diagnostics, titles, context, reportRoot);
             if (!suite.TryGetProperty("specs", out var specs)) continue;
-            foreach (var spec in specs.EnumerateArray())
+            foreach (var spec in Array(specs, "specs").EnumerateArray())
             {
-                var title = spec.TryGetProperty("title", out var name) ? name.GetString() ?? "unnamed" : "unnamed";
-                var source = spec.TryGetProperty("file", out var file) ? file.GetString() : null;
-                if (!spec.TryGetProperty("tests", out var tests)) continue;
-                foreach (var test in tests.EnumerateArray())
+                Object(spec, "spec");
+                var title = Text(spec, "title") ?? "unnamed";
+                var source = Source(Text(spec, "file"), context, reportRoot);
+                if (!spec.TryGetProperty("tests", out var tests))
+                    throw new InvalidDataException("Playwright spec is missing its tests array.");
+                foreach (var test in Array(tests, "tests").EnumerateArray())
                 {
-                    if (!test.TryGetProperty("results", out var results) || results.GetArrayLength() == 0)
+                    Object(test, "test");
+                    var project = Text(test, "projectName") ?? Text(test, "projectId");
+                    var name = string.Join(" > ", titles.Concat([title]));
+                    if (!string.IsNullOrWhiteSpace(project)) name = $"[{project}] {name}";
+                    if (!test.TryGetProperty("results", out var results) || Array(results, "results").GetArrayLength() == 0)
                     {
                         foreach (var id in TestResultEvidence.CaseIds(title))
-                            cases.Add(new TestCaseExecution(id, title, "skipped", 0, source, null));
+                            cases.Add(new TestCaseExecution(id, name, "skipped", 0, source, null));
                         continue;
                     }
+                    var attempts = results.EnumerateArray().Select(item => Text(Object(item, "result"), "status") ?? "unknown").ToArray();
                     var result = results[results.GetArrayLength() - 1];
-                    var status = result.TryGetProperty("status", out var state) ? state.GetString() ?? "failed" : "failed";
-                    var duration = result.TryGetProperty("duration", out var elapsed) && elapsed.TryGetDouble(out var ms) ? ms : 0;
-                    var failure = result.TryGetProperty("error", out var error) && error.TryGetProperty("message", out var message)
-                        ? message.GetString()
-                        : null;
+                    var actualStatus = attempts[^1];
+                    var expectedStatus = Text(test, "expectedStatus") ?? "passed";
+                    var outcome = Text(test, "status");
+                    var status = actualStatus == "passed" && expectedStatus == "passed" && outcome is null or "expected" or "flaky"
+                        ? "passed" : actualStatus == "skipped" ? "skipped" : "failed";
+                    var duration = 0d;
+                    if (result.TryGetProperty("duration", out var elapsed)
+                        && (elapsed.ValueKind != JsonValueKind.Number || !elapsed.TryGetDouble(out duration) || !double.IsFinite(duration) || duration < 0))
+                        throw new InvalidDataException("Playwright result duration must be a nonnegative finite number.");
+                    var failure = result.TryGetProperty("error", out var error) ? ErrorMessage(error) : null;
+                    if (status == "failed" && failure is null)
+                        failure = $"Native result status={actualStatus}; expectedStatus={expectedStatus}; outcome={outcome ?? "unreported"}.";
+                    if (attempts.Length > 1 || outcome == "flaky")
+                        diagnostics.Add($"Playwright case '{name}' completed with {attempts.Length} attempt(s): {string.Join(", ", attempts)}; outcome={outcome ?? "unreported"}.");
                     foreach (var id in TestResultEvidence.CaseIds(title))
-                        cases.Add(new TestCaseExecution(id, title,
-                            status is "passed" or "expected" ? "passed" : status is "skipped" ? "skipped" : "failed",
+                        cases.Add(new TestCaseExecution(id, name, status,
                             duration, source, failure));
                 }
             }
+        }
+    }
+
+    private static JsonElement Object(JsonElement value, string name)
+        => value.ValueKind == JsonValueKind.Object ? value
+            : throw new InvalidDataException($"Playwright {name} must be an object.");
+
+    private static JsonElement Array(JsonElement value, string name)
+        => value.ValueKind == JsonValueKind.Array ? value
+            : throw new InvalidDataException($"Playwright {name} must be an array.");
+
+    private static string? Text(JsonElement value, string name)
+    {
+        if (!value.TryGetProperty(name, out var property) || property.ValueKind == JsonValueKind.Null) return null;
+        if (property.ValueKind != JsonValueKind.String)
+            throw new InvalidDataException($"Playwright {name} must be a string.");
+        return property.GetString();
+    }
+
+    private static string? ErrorMessage(JsonElement value)
+        => Text(Object(value, "error"), "message") ?? Text(value, "value");
+
+    private static string? Source(string? file, TestResultAdapterContext context, string? reportRoot)
+    {
+        if (string.IsNullOrWhiteSpace(file)) return null;
+        try
+        {
+            var workingDirectory = Path.GetFullPath(context.Suite.WorkingDirectory, context.RepositoryPath);
+            var root = string.IsNullOrWhiteSpace(reportRoot) ? workingDirectory : Path.GetFullPath(reportRoot, workingDirectory);
+            var absolute = Path.GetFullPath(file, root);
+            return CisPathSafety.IsUnderRoot(context.RepositoryPath, absolute)
+                ? Path.GetRelativePath(context.RepositoryPath, absolute).Replace('\\', '/') : absolute.Replace('\\', '/');
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            throw new InvalidDataException("Playwright source location is invalid.", exception);
         }
     }
 }

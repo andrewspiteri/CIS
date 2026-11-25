@@ -8,7 +8,8 @@ using Cis.Abstractions;
 namespace Cis.Modules.Workflow;
 
 public sealed record WorkflowStep(string Id, string Executable, IReadOnlyList<string> Arguments, IReadOnlyList<string> DependsOn,
-    bool ContinueOnFailure, int TimeoutSeconds, string WorkingDirectory = ".", IReadOnlyList<string>? TestSuites = null)
+    bool ContinueOnFailure, int TimeoutSeconds, string WorkingDirectory = ".", IReadOnlyList<string>? TestSuites = null,
+    IReadOnlyDictionary<string, string>? EnvironmentVariables = null)
 {
     public IReadOnlyList<string> Suites => TestSuites ?? [];
 }
@@ -45,12 +46,19 @@ public sealed class WorkflowService
         if (d.Count > 0) return New(context, "invalid", runId, workflow, null, described.Workflows, d, false);
         var runDirectory = Path.Combine(context.RepositoryPath, RunsPath.Replace('/', Path.DirectorySeparatorChar), runId!); Directory.CreateDirectory(runDirectory);
         var statePath = Path.Combine(runDirectory, "state.json"); var now = _clock().ToUniversalTime().ToString("O");
+        var retained = File.Exists(statePath) ? ReadState(statePath, d) : null;
+        if (d.Count > 0) return New(context, "invalid-state", runId, workflow, retained, described.Workflows, d, false);
         string? inputDigest;
-        try { inputDigest = CisExecutionIdentity.CaptureIfAdopted(context); }
+        try
+        {
+            // New native runs need a source identity even before completion policy adoption.
+            // Keep legacy null identities on resume; they cannot verify current browser journeys.
+            inputDigest = retained?.InputDigest is not null || retained is null && workflow.Steps.Any(step => step.Suites.Count > 0)
+                ? CisExecutionIdentity.Capture(context) : CisExecutionIdentity.CaptureIfAdopted(context);
+        }
         catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
         { return New(context, "invalid-inputs", runId, workflow, null, described.Workflows, [$"ERROR: Execution inputs could not be identified: {exception.Message}"], false); }
-        var state = File.Exists(statePath) ? ReadState(statePath, d) : new WorkflowRunState(2, runId!, workflow.Id, workflow.Digest, "running", now, now, [], inputDigest);
-        if (state is null || d.Count > 0) return New(context, "invalid-state", runId, workflow, state, described.Workflows, d, false);
+        var state = retained ?? new WorkflowRunState(2, runId!, workflow.Id, workflow.Digest, "running", now, now, [], inputDigest);
         if (state.WorkflowDigest != workflow.Digest) return New(context, "definition-changed", runId, workflow, state, described.Workflows,
             ["ERROR: Workflow changed after this run began; start a new run ID."], false);
         if (inputDigest is not null && state.InputDigest != inputDigest)
@@ -70,6 +78,8 @@ public sealed class WorkflowService
         }
         var finalSteps = workflow.Steps.Where(x => states.ContainsKey(x.Id)).Select(x => states[x.Id]).ToArray();
         var finalStatus = finalSteps.Any(x => x.Status == "failed" || x.Status == "blocked") ? "failed" : finalSteps.Length == workflow.Steps.Count ? "succeeded" : "running";
+        if (!applied && finalStatus == state.Status && finalSteps.SequenceEqual(state.Steps))
+            return New(context, finalStatus, runId, workflow, state, described.Workflows, d, false);
         state = state with { Status = finalStatus, UpdatedAtUtc = _clock().ToUniversalTime().ToString("O"), Steps = finalSteps }; WriteState(statePath, state);
         return New(context, finalStatus, runId, workflow, state, described.Workflows, d, applied);
     }
@@ -111,7 +121,12 @@ public sealed class WorkflowService
                 return State("failed", null, "Working directory does not exist.", "missing-prerequisite");
             }
             using var process = new Process { StartInfo = new ProcessStartInfo(step.Executable) { WorkingDirectory = workingDirectory, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true } };
-            foreach (var arg in step.Arguments) process.StartInfo.ArgumentList.Add(arg);
+            string ExpandExecution(string value) => value
+                .Replace("{run-id}", Path.GetFileName(runDirectory), StringComparison.Ordinal)
+                .Replace("{attempt}", attempt.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
+            foreach (var arg in step.Arguments) process.StartInfo.ArgumentList.Add(ExpandExecution(arg));
+            foreach (var variable in step.EnvironmentVariables ?? new Dictionary<string, string>())
+                process.StartInfo.Environment[variable.Key] = ExpandExecution(variable.Value);
             process.StartInfo.Environment["CIS_WORKFLOW_RUN_ID"] = Path.GetFileName(runDirectory);
             process.StartInfo.Environment["CIS_WORKFLOW_STEP_ID"] = step.Id;
             process.StartInfo.Environment["CIS_WORKFLOW_ATTEMPT"] = attempt.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -186,12 +201,29 @@ public sealed class WorkflowService
                 throw new InvalidOperationException($"Step '{id}' timeout must be an integer between 1 and 3600 seconds.");
             var tokens = Tokenize(Value("Command"));
             if (tokens.Count == 0) throw new InvalidOperationException($"Step '{id}' has no command.");
-            steps.Add(new(id, tokens[0], tokens.Skip(1).ToArray(), Split(Value("Depends on")), policy.Equals("yes", StringComparison.OrdinalIgnoreCase), timeout, Value("Working directory", "."), Split(Value("Test suites"))));
+            steps.Add(new(id, tokens[0], tokens.Skip(1).ToArray(), Split(Value("Depends on")), policy.Equals("yes", StringComparison.OrdinalIgnoreCase), timeout, Value("Working directory", "."), Split(Value("Test suites")), ParseEnvironment(Value("Environment"))));
         }
         return new(Path.GetFileNameWithoutExtension(path), Path.GetRelativePath(context.RepositoryPath, path).Replace(Path.DirectorySeparatorChar, '/'), Sha(text), steps);
     }
     private static IReadOnlyList<string> Tokenize(string value)
     { var result = new List<string>(); var current = new StringBuilder(); var quoted = false; foreach (var ch in value) { if (ch == '"') { quoted = !quoted; continue; } if (char.IsWhiteSpace(ch) && !quoted) { if (current.Length > 0) { result.Add(current.ToString()); current.Clear(); } } else current.Append(ch); } if (quoted) throw new InvalidOperationException("Command contains an unclosed quote."); if (current.Length > 0) result.Add(current.ToString()); return result; }
+    private static IReadOnlyDictionary<string, string>? ParseEnvironment(string value)
+    {
+        if (value is "" or "-") return null;
+        var variables = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var token in Tokenize(value))
+        {
+            var separator = token.IndexOf('=');
+            if (separator <= 0 || !Regex.IsMatch(token[..separator], @"\A[A-Za-z_][A-Za-z0-9_]*\z", RegexOptions.CultureInvariant))
+                throw new InvalidOperationException("Workflow environment entries must be NAME=value assignments.");
+            var name = token[..separator];
+            if (name.StartsWith("CIS_WORKFLOW_", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Workflow environment entries cannot replace CIS_WORKFLOW_ execution identity.");
+            if (!variables.TryAdd(name, token[(separator + 1)..]))
+                throw new InvalidOperationException("Workflow environment variable names must be unique.");
+        }
+        return variables;
+    }
     private static string[] Split(string value) => value is "" or "-" ? [] : value.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
     private static void Validate(WorkflowDefinition workflow, List<string> d)
     { if (workflow.Steps.Count == 0) d.Add("ERROR: Workflow has no steps."); var ids = workflow.Steps.Select(x => x.Id).ToHashSet(StringComparer.OrdinalIgnoreCase); if (ids.Count != workflow.Steps.Count) d.Add("ERROR: Workflow step IDs must be unique."); foreach (var step in workflow.Steps) { foreach (var dep in step.DependsOn) if (!ids.Contains(dep)) d.Add($"ERROR: Step '{step.Id}' has unknown dependency '{dep}'."); if (string.IsNullOrWhiteSpace(step.WorkingDirectory)) d.Add($"ERROR: Step '{step.Id}' has no working directory."); } }

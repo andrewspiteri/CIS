@@ -24,18 +24,23 @@ public sealed partial class TestingServiceTests
         participant.Write(".cis/repository.yml", "schema_version: 1\nrepository:\n  id: application\ndocumentation_root: docs/cis\n");
         authority.Write("docs/cis/changes/CIS-0001/test-cases.md", "### TC-AUTH-001: Establish identity\n");
         // The authority intentionally has no native profile. Only the participant executes tests.
-        if (!missingProfile)
-            participant.Write("docs/cis/references/test-suite-profile.md", Profile("unit", "junit", ".cis/local/results/unit.xml"));
-        var run = new TestRunManifest(1, "RUN-1", "verify", "digest", manifestOwner, "revision", "profile",
-            "test", "2026-08-26T00:00:00Z", "2026-08-26T00:01:00Z", outcome,
-            [new("api-unit", "unit", "xunit", outcome, TestFailureKind.None, 1,
-                outcome == "passed" ? 1 : 0, outcome == "failed" ? 1 : 0, outcome == "skipped" ? 1 : 0, 1,
-                [new("TC-AUTH-001", "TC-AUTH-001 establishes identity", outcome, 1, "tests/IdentityTests.cs", null)], null, null, [], [])], []);
-        participant.Write(".cis/local/testing/runs/RUN-1/manifest.json", JsonSerializer.Serialize(run, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        participant.Write("docs/cis/references/test-suite-profile.md", Profile("unit", "junit", ".cis/local/results/unit.xml"));
+        participant.Write("docs/cis/workflows/verify.md", "| Step | Command | Depends on | Continue on failure | Timeout seconds | Test suites |\n| unit | dotnet --version | - | no | 30 | api-unit |\n");
+        var definition = new WorkflowService(new CisRepositoryContextResolver()).Describe(participant.Path, "verify").Workflow!;
+        var began = DateTimeOffset.UtcNow.AddMinutes(-1);
+        participant.Write(".cis/local/workflows/RUN-1/state.json", JsonSerializer.Serialize(new WorkflowRunState(2,
+            "RUN-1", "verify", definition.Digest, "succeeded", began.ToString("O"), began.AddSeconds(30).ToString("O"),
+            [new("unit", "succeeded", 0, began.ToString("O"), began.AddSeconds(30).ToString("O"), 1, "unit.log", null)]),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        var caseOutcome = outcome switch { "failed" => "<failure message=\"Expected identity\"/>", "skipped" => "<skipped/>", _ => "" };
+        participant.Write(".cis/local/results/unit.xml", $"<testsuite><testcase name=\"TC-AUTH-001 establishes identity\">{caseOutcome}</testcase></testsuite>");
         var resolver = new CisRepositoryContextResolver();
         var registry = new TraceWorkspaceRegistry(new(authority.Path, "fixture",
             [new("fixture", authority.Path, "docs/cis", "authority"), new("application", participant.Path, "docs/cis")]));
         var service = new TestingService(resolver, new WorkflowService(resolver), [new JUnitTestResultAdapter()], registry);
+        var run = service.Reconcile(participant.Path, "RUN-1").Manifest! with { RepositoryId = manifestOwner };
+        participant.Write(".cis/local/testing/runs/RUN-1/manifest.json", JsonSerializer.Serialize(run, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        if (missingProfile) File.Delete(Path.Combine(participant.Path, "docs/cis/references/test-suite-profile.md"));
 
         var result = service.Trace(authority.Path, "CIS-0001", "RUN-1");
 

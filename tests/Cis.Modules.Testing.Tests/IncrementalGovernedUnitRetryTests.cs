@@ -21,6 +21,10 @@ public sealed partial class IncrementalGovernedUnitRetryTests
 
         Assert.True(first.ExitCode == 0, string.Join("; ", first.Diagnostics));
         Assert.True(first.ScopeComplete);
+        AssertNoUnsettledReasons(first);
+        AssertNoUnsettledReasons(JsonSerializer.Deserialize<IncrementalTestResult>(File.ReadAllBytes(
+            fixture.Native.Full(IncrementalTestService.LocalRoot + "/sample/latest-run.json")),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web))!);
         Assert.Equal(2, first.ExecutedUnitBatches);
         var calls = fixture.Native.Calls();
         Assert.Equal(2, calls.Length);
@@ -45,12 +49,20 @@ public sealed partial class IncrementalGovernedUnitRetryTests
 
         Assert.True(second.ExitCode == 0, string.Join("; ", second.Diagnostics));
         Assert.True(second.ScopeComplete);
+        AssertNoUnsettledReasons(second);
+        AssertNoUnsettledReasons(JsonSerializer.Deserialize<IncrementalTestResult>(File.ReadAllBytes(
+            fixture.Native.Full(IncrementalTestService.LocalRoot + "/sample/latest-run.json")),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web))!);
         Assert.Equal(0, second.ExecutedUnitBatches);
         Assert.Equal(2, second.ReusedUnitBatches);
         Assert.Equal(calls, fixture.Native.Calls());
         foreach (var report in reports) Assert.Equal(report.Value, File.ReadAllBytes(report.Key));
         Assert.All(fixture.Work().Executions, execution => Assert.False(execution.NativeRestorationRequired));
         Assert.Equal(0, fixture.Work().Task!.ReservedMilliseconds);
+
+        static void AssertNoUnsettledReasons(IncrementalTestResult result)
+            => Assert.DoesNotContain(result.Batches.SelectMany(batch => batch.UnitReasons.Concat(batch.MutationReasons)),
+                reason => reason.Category == "unsettled-execution");
     }
 
     [Fact]

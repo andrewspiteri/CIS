@@ -77,4 +77,8 @@ public sealed record CisGraphManifest(
 
 public sealed record CisGraphInput(
     string Path,
-    string Hash);
+    string Hash)
+{
+    /// <summary>Context-only semantic facts; never substitutes for the material/native Hash.</summary>
+    public string? ProjectionHash { get; init; }
+}

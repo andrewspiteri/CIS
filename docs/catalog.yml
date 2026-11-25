@@ -291,6 +291,16 @@ documents:
     type: workflow-definition
     status: active
     authority: canonical
+  - id: change-impact-studio:workflow:cis-0005-source-closeout
+    path: docs/workflows/cis-0005-source-closeout.md
+    type: workflow-definition
+    status: active
+    authority: canonical
+  - id: change-impact-studio:workflow:cis-0005-closeout-contracts
+    path: docs/workflows/cis-0005-closeout-contracts.md
+    type: workflow-definition
+    status: active
+    authority: canonical
   - id: change-impact-studio:workflow:security-verification
     path: docs/workflows/security-verification.md
     type: workflow-definition
@@ -2687,3 +2697,112 @@ documents:
     type: agent-task
     status: draft
     authority: canonical
+  - id: change-impact-studio:change:cis-0004:proposal
+    path: docs/changes/CIS-0004/proposal.md
+    type: change-proposal
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:change:cis-0004:task:work-001
+    path: docs/changes/CIS-0004/agent-tasks/WORK-001.md
+    type: agent-task
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:change:cis-0004:plan
+    path: docs/changes/CIS-0004/plan.md
+    type: delivery-plan
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:change:cis-0004:verification
+    path: docs/changes/CIS-0004/verification.md
+    type: verification-record
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:change:cis-0005:proposal
+    path: docs/changes/CIS-0005/proposal.md
+    type: change-proposal
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:change:cis-0005:task:work-001
+    path: docs/changes/CIS-0005/agent-tasks/WORK-001.md
+    type: agent-task
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:change:cis-0005:plan
+    path: docs/changes/CIS-0005/plan.md
+    type: delivery-plan
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:change:cis-0005:verification
+    path: docs/changes/CIS-0005/verification.md
+    type: verification-record
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:change:cis-0005:task:work-002
+    path: docs/changes/CIS-0005/agent-tasks/WORK-002.md
+    type: agent-task
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:change:cis-0005:task:work-003
+    path: docs/changes/CIS-0005/agent-tasks/WORK-003.md
+    type: agent-task
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:change:cis-0005:task:work-004
+    path: docs/changes/CIS-0005/agent-tasks/WORK-004.md
+    type: agent-task
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:change:cis-0005:task:work-005
+    path: docs/changes/CIS-0005/agent-tasks/WORK-005.md
+    type: agent-task
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:change:cis-0005:task:work-006
+    path: docs/changes/CIS-0005/agent-tasks/WORK-006.md
+    type: agent-task
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:change:cis-0005:task:work-007
+    path: docs/changes/CIS-0005/agent-tasks/WORK-007.md
+    type: agent-task
+    status: draft
+    authority: canonical
+  - id: change-impact-studio:change:cis-0005:implementation-plan
+    path: docs/changes/CIS-0005/implementation-plan.md
+    type: implementation-plan
+    status: approved
+    authority: derived
+  - id: change-impact-studio:change:cis-0005:closeout-plan
+    path: docs/changes/CIS-0005/closeout-plan.md
+    type: implementation-plan
+    status: approved
+    authority: derived
+  - id: change-impact-studio:change:cis-0005:storage-cleanup-proposal
+    path: docs/changes/CIS-0005/storage-cleanup-proposal.md
+    type: implementation-plan
+    status: approved
+    authority: derived
+
+  - id: change-impact-studio:workflow:cis-0005-closeout-security
+    path: docs/workflows/cis-0005-closeout-security.md
+    type: workflow-definition
+    status: active
+    authority: canonical
+
+  - id: change-impact-studio:change:cis-0005:remaining-source-closeout-plan
+    path: docs/changes/CIS-0005/remaining-source-closeout-plan.md
+    type: implementation-plan
+    status: proposed
+    authority: derived
+
+  - id: change-impact-studio:change:cis-0005:review-d449dcf-corrections
+    path: docs/changes/CIS-0005/review-d449dcf-corrections.md
+    type: implementation-plan
+    status: active
+    authority: derived
+
+  - id: change-impact-studio:change:cis-0005:incremental-selection-correctness-plan
+    path: docs/changes/CIS-0005/incremental-selection-correctness-plan.md
+    type: implementation-plan
+    status: active
+    authority: derived

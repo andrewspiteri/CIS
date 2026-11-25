@@ -87,7 +87,9 @@ public sealed partial class GraphBuilderTests
         var store = new SqliteGraphStore();
         var path = store.DatabasePath(repository.Path);
         File.WriteAllText(path, "corrupt database fixture");
-        Assert.Equal(0, CreateBuilder().Build(repository.Path, refresh: true).ExitCode);
+        var rebuilt = CreateBuilder().Build(repository.Path, refresh: true);
+        Assert.True(rebuilt.ExitCode == 0, string.Join(Environment.NewLine,
+            rebuilt.Diagnostics.Select(diagnostic => diagnostic.Code + ": " + diagnostic.Message)));
         Assert.True(store.Read(repository.Path).Success);
         var backup = Assert.Single(Directory.GetDirectories(Path.GetDirectoryName(path)!, "corrupt-*"));
         Assert.Equal("corrupt database fixture", File.ReadAllText(Path.Combine(backup, "context.db")));

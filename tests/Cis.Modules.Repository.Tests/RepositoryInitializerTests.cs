@@ -2321,7 +2321,9 @@ public sealed class RepositoryInitializerTests
             "instructions",
             "cis-repository.instructions.md"));
         Assert.Contains("same `--repo` and `--root`", repositoryInstruction, StringComparison.Ordinal);
-        Assert.Contains("explicit human-authority commands", repositoryInstruction, StringComparison.Ordinal);
+        Assert.Contains("recording one actual human decision through `cis change authorize`", repositoryInstruction, StringComparison.Ordinal);
+        Assert.Contains("Under explicit delegation", repositoryInstruction, StringComparison.Ordinal);
+        Assert.Contains("Preserve real decision resolution, design, closure and publication gates.", repositoryInstruction, StringComparison.Ordinal);
         Assert.Contains("cis-import-repositories", repositoryInstruction, StringComparison.Ordinal);
         Assert.Contains("cis-skill-governance", repositoryInstruction, StringComparison.Ordinal);
         Assert.Contains("cis-standards-governance", repositoryInstruction, StringComparison.Ordinal);
@@ -2375,7 +2377,8 @@ public sealed class RepositoryInitializerTests
             "cis-impact-review",
             "SKILL.md"));
         Assert.Contains("cis impact completeness", impactReviewSkill, StringComparison.Ordinal);
-        Assert.Contains("Never disposition findings autonomously", impactReviewSkill, StringComparison.Ordinal);
+        Assert.Contains("Never invent disposition authority", impactReviewSkill, StringComparison.Ordinal);
+        Assert.Contains("CIS checks concrete paths against the retained graph and authorization.", impactReviewSkill, StringComparison.Ordinal);
         var decisionReviewSkill = File.ReadAllText(Path.Combine(
             repository.Path,
             ".github",
@@ -2391,11 +2394,11 @@ public sealed class RepositoryInitializerTests
             "cis-bounded-planning",
             "SKILL.md"));
         Assert.Contains("cis plan validate", planningSkill, StringComparison.Ordinal);
-        Assert.Contains("cis plan import-spec", planningSkill, StringComparison.Ordinal);
+        Assert.Contains("Existing exact-feature and legacy impact/import/approve paths retain their original boundaries.", planningSkill, StringComparison.Ordinal);
         Assert.Contains("cis plan derive", planningSkill, StringComparison.Ordinal);
         Assert.Contains("do not request separate impact or plan approvals", planningSkill, StringComparison.Ordinal);
         Assert.Contains("wireframe", planningSkill, StringComparison.Ordinal);
-        Assert.Contains("decomposed parent", planningSkill, StringComparison.Ordinal);
+        Assert.Contains("Retain high items as containers with bounded children.", planningSkill, StringComparison.Ordinal);
         Assert.Contains("agent-tasks/WORK-NNN.md", planningSkill, StringComparison.Ordinal);
         Assert.Contains("design.md", planningSkill, StringComparison.Ordinal);
         Assert.Contains("verification.md", planningSkill, StringComparison.Ordinal);

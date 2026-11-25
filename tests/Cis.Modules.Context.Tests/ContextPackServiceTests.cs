@@ -7,7 +7,7 @@ using Microsoft.Data.Sqlite;
 
 namespace Cis.Modules.Context.Tests;
 
-public sealed class ContextPackServiceTests
+public sealed partial class ContextPackServiceTests
 {
     [Fact]
     public void Create_WritesDeterministicPackAndIsIdempotent()
@@ -51,11 +51,85 @@ public sealed class ContextPackServiceTests
         Assert.True(result.ContentTruncated);
         Assert.True(result.Sources.Any(source => source.Truncated) || result.Omissions.Count > 0);
         Assert.True(result.Sources.Sum(source => source.IncludedCharacters) <= 1_000);
+        Assert.True(result.DeliveredCharacters <= 1_000);
+        Assert.True(result.DeliveredUtf8Bytes <= 4_000);
+        Assert.NotNull(result.DetailPath);
+        Assert.True(File.Exists(ToAbsolute(repository.Path, result.DetailPath!)));
         Assert.All(result.Sources, source =>
         {
             Assert.True(source.Evidence.Count <= 25);
             Assert.Equal(source.TotalEvidence - source.Evidence.Count, source.OmittedEvidence);
         });
+    }
+
+    [Fact]
+    public void Create_BoundsCompleteJsonAndMarkdownIncludingMetadataAndUnicode()
+    {
+        using var repository = TemporaryRepository.CreateInitialized();
+        repository.Write("src/Orders.Api/Unicode.cs", "namespace Orders.Api; // " + string.Concat(Enumerable.Repeat("日本語 😀 ", 2_000)));
+        Assert.Equal(0, CreateBuilder().Build(repository.Path).ExitCode);
+
+        var result = CreateService().Create(Request(repository.Path) with { MaxCharacters = 12_000, MaxUtf8Bytes = 8_000 });
+
+        Assert.Equal(0, result.ExitCode);
+        string json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)) + Environment.NewLine;
+        string markdown = File.ReadAllText(ToAbsolute(repository.Path, result.OutputPath!));
+        Assert.True(json.Length <= result.DeliveredCharacters);
+        Assert.True(markdown.Length <= result.DeliveredCharacters);
+        Assert.True(result.DeliveredCharacters <= 12_000);
+        Assert.True(System.Text.Encoding.UTF8.GetByteCount(json) <= 8_000);
+        Assert.True(System.Text.Encoding.UTF8.GetByteCount(markdown) <= 8_000);
+        Assert.True(result.DeliveredUtf8Bytes <= 8_000);
+        Assert.True(result.ContentTruncated);
+        Assert.True(result.OmittedMetadataItems > 0 || result.Sources.Any(source => source.Truncated));
+        Assert.Equal((result.DeliveredCharacters + 3) / 4, result.EstimatedDeliveredTokens);
+    }
+
+    [Fact]
+    public void Prepare_RefreshesMissingGraphAndReportsUnresolvedTaskRootWithinCompleteBudget()
+    {
+        using var repository = TemporaryRepository.CreateInitialized();
+        var resolver = new CisRepositoryContextResolver();
+        var snapshots = new GraphSnapshotReader(resolver, builder: CreateBuilder());
+        var service = new ContextPackService(new GraphQueryService(resolver), snapshots);
+
+        var result = service.Prepare(new(repository.Path, "CIS-0001", "WORK-001", "docs/cis/changes/CIS-0001/agent-tasks/WORK-001.md", MaxCharacters: 1_000, MaxUtf8Bytes: 1_000));
+
+        Assert.Equal("unavailable", result.Status);
+        Assert.Equal("fresh", result.Freshness);
+        Assert.Contains("CIS-TASK-CONTEXT-ROOT-MISSING", result.DiagnosticCodes);
+        Assert.NotNull(result.SnapshotId);
+        string json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+        Assert.Equal(json.Length, result.DeliveredCharacters);
+        Assert.Equal(System.Text.Encoding.UTF8.GetByteCount(json), result.DeliveredUtf8Bytes);
+        Assert.True(result.DeliveredCharacters <= result.MaxCharacters);
+        Assert.True(result.DeliveredUtf8Bytes <= result.MaxUtf8Bytes);
+    }
+
+    [Fact]
+    public void Prepare_UsesCurrentCanonicalDocumentAndKeepsItsAuthorityTextUntouched()
+    {
+        using var repository = TemporaryRepository.CreateInitialized();
+        var resolver = new CisRepositoryContextResolver();
+        var snapshots = new GraphSnapshotReader(resolver, builder: CreateBuilder());
+        var before = snapshots.ReadCurrent(repository.Path);
+        var root = before.Graph!.Nodes.First(node => node.Kind == "document" && node.Locations.Count > 0
+            && File.Exists(ToAbsolute(repository.Path, node.Locations[0].Path)));
+        string path = root.Locations[0].Path;
+        string canonical = File.ReadAllText(ToAbsolute(repository.Path, path)) + "\nCurrent synthetic task evidence.\n";
+        repository.Write(path, canonical);
+        var service = new ContextPackService(new GraphQueryService(resolver), snapshots);
+
+        var result = service.Prepare(new(repository.Path, "CIS-0001", "WORK-001", path));
+
+        Assert.Equal("fresh", result.Freshness);
+        Assert.NotEqual(before.Graph.Build.Id, result.SnapshotId);
+        Assert.NotEqual("unavailable", result.Status);
+        Assert.Contains("Selection manifest", result.Content, StringComparison.Ordinal);
+        Assert.True(result.DeliveredCharacters <= result.MaxCharacters);
+        Assert.True(result.DeliveredUtf8Bytes <= result.MaxUtf8Bytes);
+        Assert.NotNull(result.DetailPath);
+        Assert.Equal(canonical, File.ReadAllText(ToAbsolute(repository.Path, path)));
     }
 
     [Fact]
@@ -334,14 +408,14 @@ public sealed class ContextPackServiceTests
     private static ContextPackService CreateService()
         => new(new GraphQueryService(new CisRepositoryContextResolver()));
 
-    private static GraphBuilder CreateBuilder()
+    private static GraphBuilder CreateBuilder(IEnumerable<ICisTestResultAdapter>? adapters = null)
     {
         var resolver = new CisRepositoryContextResolver();
         var reader = new DocumentationCatalogReader();
         var inspector = new MarkdownDocumentInspector();
         var inventory = new DocumentationInventoryService(resolver, reader, inspector);
         var validation = new DocumentationValidationService(resolver, reader, inventory, inspector);
-        return new GraphBuilder(resolver, reader, inventory, validation);
+        return new GraphBuilder(resolver, reader, inventory, validation, testResultAdapters: adapters);
     }
 
     private static string ToAbsolute(string repositoryPath, string relativePath)

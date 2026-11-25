@@ -140,7 +140,8 @@ public sealed partial class MutationRunService
                     "The admitted native storage operation lost its attributed growth domain.");
             }
             if (scratchMarker is not null)
-                AtomicJson(scratchMarker, new NativeScratch(nativeTemporary, DateTimeOffset.UtcNow.AddSeconds(profile.TimeoutSeconds + 45))
+                AtomicJson(scratchMarker, new NativeScratch(nativeTemporary, scope is null
+                    ? DateTimeOffset.UtcNow.AddSeconds(profile.TimeoutSeconds + 45) : DateTimeOffset.UtcNow.Add(scope.Remaining))
                 { WorkReference = scope?.Reference, AuthorityPath = scope?.AuthorityPath });
             Directory.CreateDirectory(nativeTemporary);
             ownsNativeTemporary = true;
@@ -179,6 +180,7 @@ public sealed partial class MutationRunService
                 maximumRunBytes = profile.MaxRunBytes,
                 maximumRetainedBytes = profile.MaxRetainedBytes,
                 minimumFreeBytes = profile.MinFreeBytes,
+                clearEnvironmentPrefixes = IncrementalTestService.NativeSessionEnvironmentPrefixes,
                 environment,
             });
             WriteRequest();
@@ -212,6 +214,7 @@ public sealed partial class MutationRunService
                     MaximumOperationBytes = [long]$request.maximumOperationBytes
                     MaximumRunBytes = [long]$request.maximumRunBytes; MaximumRetainedBytes = [long]$request.maximumRetainedBytes
                     MinimumFreeBytes = [long]$request.minimumFreeBytes
+                    ClearEnvironmentPrefixes = [string[]]$request.clearEnvironmentPrefixes
                     Environment = $request.environment
                 }
                 $result = Invoke-BoundedMutationProcess @arguments
@@ -225,6 +228,10 @@ public sealed partial class MutationRunService
             {
                 var remaining = scope.Remaining;
                 Require(remaining >= TimeSpan.FromSeconds(1), "Native preparation exhausted the usable admitted window before launch.");
+                // The driver includes storage preflight, ownership and cleanup.
+                // Its hard deadline remains the admitted parent's actual window;
+                // the unchanged native timeout applies only after target release.
+                guardTimeout = remaining;
                 nativeSeconds = Math.Min(nativeSeconds, Math.Max(1, (int)Math.Floor(remaining.TotalSeconds - Math.Min(3, remaining.TotalSeconds - 1))));
                 profile = StorageLimits(profile, storageReservation, TreeBytes(temporary));
                 WriteRequest();

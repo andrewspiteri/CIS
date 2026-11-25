@@ -46,7 +46,27 @@ public sealed record IncrementalTestOptions(string RepositoryPath, string Profil
 
 public sealed record IncrementalTestBatch(string Id, string SourceFile, string Selection,
     string[] TestFiles, string TestFilter, string UnitFingerprint, string MutationFingerprint,
-    bool UnitCurrent, bool MutationCurrent, string[] DependencyFiles);
+    bool UnitCurrent, bool MutationCurrent, string[] DependencyFiles)
+{
+    [System.Text.Json.Serialization.JsonIgnore]
+    public IncrementalInputFact[] UnitInputs { get; init; } = [];
+    [System.Text.Json.Serialization.JsonIgnore]
+    public IncrementalInputFact[] MutationInputs { get; init; } = [];
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? CanonicalUnitFingerprint { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? CanonicalMutationFingerprint { get; init; }
+    public IncrementalReuseReason[] UnitReasons { get; init; } = [];
+    public IncrementalReuseReason[] MutationReasons { get; init; } = [];
+}
+
+/// <summary>One material input's identity; values and source contents are never retained.</summary>
+public sealed record IncrementalInputFact(string Category, string Input, string Sha256)
+{
+    public string Origin { get; init; } = "file";
+    public bool MutationOnly { get; init; }
+}
+public sealed record IncrementalReuseReason(string Category, string Input, string Change);
 
 public sealed record IncrementalStageResult(string Fingerprint, string Status, bool Completed,
     string ReportPath, string ReportSha256, MutationNativeExecution? Execution,
@@ -61,6 +81,7 @@ public sealed record IncrementalStageResult(string Fingerprint, string Status, b
     public MutationNativeExecution? PostflightExecution { get; init; }
     public int PostflightPassed { get; init; }
     public IncrementalProducerRevalidation[] ProducerRevalidations { get; init; } = [];
+    public string? InputBasisId { get; init; }
 }
 
 /// <summary>Reviewed compatibility proof for an unchanged native report and its producer inputs.</summary>
@@ -86,6 +107,8 @@ public sealed record IncrementalTestState
     public string WorkCoverage { get; init; } = "unaccounted-non-adopted";
     public string? RecoveryBasis { get; init; }
     public Dictionary<string, IncrementalBatchState> Batches { get; init; } = new(StringComparer.Ordinal);
+    public Dictionary<string, IncrementalInputFact> InputFacts { get; init; } = new(StringComparer.Ordinal);
+    public Dictionary<string, string[]> InputBases { get; init; } = new(StringComparer.Ordinal);
 }
 
 public sealed record IncrementalTestResult(string Status, int ExitCode)

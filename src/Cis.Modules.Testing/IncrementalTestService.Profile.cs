@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using System.Text;
@@ -28,6 +29,9 @@ public sealed partial class IncrementalTestService
         public string Layer { get; init; } = "all";
         public string UnitIdentity { get; init; } = "";
         public string MutationIdentity { get; init; } = "";
+        public Dictionary<string, string> NativeEnvironmentOverrides { get; init; } = new(PathComparer);
+        public Dictionary<string, string> MaterialEnvironmentDigests { get; init; } = new(PathComparer);
+        public IncrementalInputFact[] MaterialFacts { get; init; } = [];
         public bool LegacyIdentity { get; init; }
         public string? LegacyTestingProducer { get; init; }
         public string? LegacyHelperProducer { get; init; }
@@ -116,6 +120,12 @@ public sealed partial class IncrementalTestService
         foreach (var command in new[] { profile.UnitCommand, profile.MutationCommand, profile.RecoveryCommand }.Where(value => value is not null))
             Require(Path.IsPathFullyQualified(command![0]) && tools.Contains(Path.GetFullPath(command[0]), PathComparer),
                 "Each native command must use an absolute executable included in toolFiles.");
+        var configurationHashes = profile.ConfigFiles.ToDictionary(file => file, file => HashFile(Safe(repository, file)), StringComparer.Ordinal);
+        var toolHashes = tools.ToDictionary(file => file, HashFile, PathComparer);
+        var environment = Environment.GetEnvironmentVariables().Cast<DictionaryEntry>().ToArray();
+        var declared = profile.Environment.OrderBy(pair => pair.Key, StringComparer.Ordinal).ToArray();
+        var selectedMutationConfiguration = profile.StrykerConfigFile is null ? null
+            : Relative(repository, Safe(repository, profile.StrykerConfigFile));
         var profileHash = HashFile(path);
         var legacyIdentity = previousTestingProducer is not null || previousHelperProducer is not null;
         string commonIdentity;
@@ -128,22 +138,19 @@ public sealed partial class IncrementalTestService
             var common = new
             {
                 profile = profileHash,
-                configuration = profile.ConfigFiles.Order(StringComparer.Ordinal).Select(file => new { file, hash = HashFile(Safe(repository, file)) }).ToArray(),
-                tools = tools.Select(file => new { file, hash = HashFile(file) }).ToArray(),
+                configuration = profile.ConfigFiles.Order(StringComparer.Ordinal).Select(file => new { file, hash = configurationHashes[file] }).ToArray(),
+                tools = tools.Select(file => new { file, hash = toolHashes[file] }).ToArray(),
                 cis = new[] { previousTestingProducer ?? HashFile(typeof(IncrementalTestService).Assembly.Location), previousHelperProducer ?? HashFile(typeof(CisProcessJob).Assembly.Location) },
                 platform = System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier,
-                ambientEnvironment = environmentIdentity ?? AmbientEnvironmentIdentity(profile, legacySessionEnvironment),
+                ambientEnvironment = environmentIdentity ?? CapturedEnvironmentIdentity(profile, legacySessionEnvironment, false, environment),
             };
             commonIdentity = unitIdentity = mutationIdentity = HashObject(common);
         }
         else
         {
             var working = Relative(repository, Safe(repository, profile.WorkingDirectory, true));
-            var declared = profile.Environment.OrderBy(pair => pair.Key, StringComparer.Ordinal).ToArray();
-            var ambient = environmentIdentity ?? AmbientEnvironmentIdentity(profile, false, ignoreOverriddenTemporary: true);
+            var ambient = environmentIdentity ?? CapturedEnvironmentIdentity(profile, false, true, environment);
             var platform = System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier;
-            var selectedMutationConfiguration = profile.StrykerConfigFile is null ? null
-                : Relative(repository, Safe(repository, profile.StrykerConfigFile));
             unitIdentity = HashObject(new
             {
                 contract = CisIncrementalResultContract.Version,
@@ -153,10 +160,10 @@ public sealed partial class IncrementalTestService
                 profile.UnitResultFormat,
                 mutationConfiguration = UnitRendersMutationConfiguration(profile) ? selectedMutationConfiguration : null,
                 configuration = profile.ConfigFiles.Where(file => UnitConfigurationInput(repository, profile, path, file))
-                    .Order(StringComparer.Ordinal).Select(file => new { file, hash = HashFile(Safe(repository, file)) }).ToArray(),
+                    .Order(StringComparer.Ordinal).Select(file => new { file, hash = configurationHashes[file] }).ToArray(),
                 // toolFiles is the declared common native toolchain inventory;
                 // command indirection does not make a listed tool unit-irrelevant.
-                tools = tools.Select(file => new { file, hash = HashFile(file) }).ToArray(),
+                tools = tools.Select(file => new { file, hash = toolHashes[file] }).ToArray(),
                 declared,
                 ambient,
                 platform
@@ -174,18 +181,23 @@ public sealed partial class IncrementalTestService
                 profile.BreakThreshold,
                 profile.RerunAdditionalTimeoutMilliseconds,
                 configuration = profile.ConfigFiles.Where(file => !PathComparer.Equals(Safe(repository, file), path))
-                    .Order(StringComparer.Ordinal).Select(file => new { file, hash = HashFile(Safe(repository, file)) }).ToArray(),
-                tools = tools.Select(file => new { file, hash = HashFile(file) }).ToArray()
+                    .Order(StringComparer.Ordinal).Select(file => new { file, hash = configurationHashes[file] }).ToArray(),
+                tools = tools.Select(file => new { file, hash = toolHashes[file] }).ToArray()
             });
             commonIdentity = HashObject(new { unitIdentity, mutationIdentity });
         }
         var storage = Safe(repository, ".cis/local/testing");
         var root = Safe(repository, LocalRoot + "/" + profile.Id);
+        var materialEnvironment = MaterialEnvironmentDigests(profile, environment);
         return new(repository, profile, path, profileHash, storage, root, Safe(root, "state.json"), commonIdentity)
         {
             Layer = options.Layer,
             UnitIdentity = unitIdentity,
             MutationIdentity = mutationIdentity,
+            NativeEnvironmentOverrides = NativeEnvironment(profile, Safe(repository, profile.WorkingDirectory, true), environment),
+            MaterialEnvironmentDigests = materialEnvironment,
+            MaterialFacts = ProfileMaterialFacts(repository, profile, path, tools, materialEnvironment, configurationHashes, toolHashes,
+                declared, selectedMutationConfiguration),
             LegacyIdentity = legacyIdentity,
             LegacyTestingProducer = previousTestingProducer,
             LegacyHelperProducer = previousHelperProducer

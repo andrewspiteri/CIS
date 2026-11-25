@@ -54,7 +54,11 @@ public sealed partial class IncrementalTestService
             Require(settled?.Allowed != false, string.Join(" ", settled?.Errors ?? []));
         }
     }
-    private static void Save(Input input, IncrementalTestState state) => Write(input, input.StatePath, state);
+    private static void Save(Input input, IncrementalTestState state)
+    {
+        PruneInputBases(state);
+        Write(input, input.StatePath, state);
+    }
     private static void SaveLatest(Input input, IncrementalTestResult result) => Write(input, Safe(input.Root, "latest-run.json"), result);
 
     private static void Write<T>(Input input, string path, T value)

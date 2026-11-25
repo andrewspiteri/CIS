@@ -43,6 +43,7 @@ public sealed record IncrementalEvidenceReportPin(string SourceFile, string Role
 /// <summary>A current declared-scope receipt. Release scope and acceptance remain the receiver's decision.</summary>
 public sealed record IncrementalEvidenceResult(string Status, int ExitCode)
 {
+    public IReadOnlyDictionary<string, IncrementalReuseReason[]> ReuseReasons { get; init; } = new Dictionary<string, IncrementalReuseReason[]>();
     public int AssessmentContractVersion => CisIncrementalResultContract.Version;
     public string Layer { get; init; } = "all";
     public int SchemaVersion => 1;

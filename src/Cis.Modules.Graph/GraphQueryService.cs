@@ -10,12 +10,18 @@ public sealed class GraphQueryService : ICisGraphQueryService
     private readonly SqliteGraphStore _store;
     private readonly IReadOnlyList<string> _expectedExtractors;
 
+    public GraphQueryService(ICisRepositoryContextResolver repositoryContextResolver, SqliteGraphStore? store,
+        IEnumerable<ICisGraphAugmenter>? augmenters)
+        : this(repositoryContextResolver, store, augmenters, null)
+    {
+    }
+
     public GraphQueryService(ICisRepositoryContextResolver repositoryContextResolver, SqliteGraphStore? store = null,
-        IEnumerable<ICisGraphAugmenter>? augmenters = null)
+        IEnumerable<ICisGraphAugmenter>? augmenters = null, IEnumerable<ICisTestResultAdapter>? resultAdapters = null)
     {
         _repositoryContextResolver = repositoryContextResolver;
         _store = store ?? new SqliteGraphStore();
-        _expectedExtractors = GraphBuilder.ComposeExtractors(augmenters);
+        _expectedExtractors = GraphBuilder.ComposeExtractors(augmenters, resultAdapters);
     }
 
     public CisGraphQueryResult Find(string repositoryPath, CisGraphFindRequest request)
@@ -429,6 +435,8 @@ public sealed class GraphQueryService : ICisGraphQueryService
                 {
                     stale.Add(input.Path + " (changed)");
                 }
+                if (GraphProjectionFingerprint.Read(repositoryPath, input.Path) != input.ProjectionHash)
+                    stale.Add(input.Path + " (projection changed)");
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {

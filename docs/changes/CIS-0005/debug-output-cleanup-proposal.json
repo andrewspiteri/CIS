@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "status": "completed",
+  "scope": "CIS-0005 source closeout storage headroom only",
+  "exactDirectories": [
+    "tests/Cis.Modules.Feedback.Tests/bin/Debug",
+    "tests/Cis.Modules.Definition.Tests/bin/Debug",
+    "tests/Cis.Modules.Docs.Tests/bin/Debug",
+    "tests/Cis.Modules.References.Tests/bin/Debug"
+  ],
+  "files": 1555,
+  "bytesToRemove": 367366940,
+  "preservedArchive": ".artifacts/outcome-workflow-correction/CIS-0005/WORK-007/source-closeout/proposed-debug-preservation-20261124/preserved-debug-inputs.zip",
+  "archiveBytes": 166916148,
+  "archiveSha256": "2b619fe5b9ab0860af0a459f0a6e7fd0756d8e2561fe65b0794a3ee2e3a3969c",
+  "preservationManifest": ".artifacts/outcome-workflow-correction/CIS-0005/WORK-007/source-closeout/proposed-debug-preservation-20261124/manifest.json",
+  "preservationManifestSha256": "128a66021cff899b29e7a4f75752382464483eeb70c7f14d977aa518b8782f46",
+  "allArchiveEntriesReadbackVerified": true,
+  "originalFilesRehashedUnchanged": true,
+  "nativeReferenceInspection": "No exact Debug-path references in current work control/agent native records, workflow records, test run records or security run records; retained search receipt under .cis/local/testing/current-context-closeout/proposed-debug-reference-check.*",
+  "preconditions": [
+    "Drain current native work before removal",
+    "Recheck exact resolved paths stay inside this checkout and have no reparse points",
+    "Recheck all 1555 original files against the preserved SHA-256 manifest",
+    "Recheck absence of active consumers and current required native/recovery references",
+    "Remove only the four named Debug trees; retain every Release tree, archive, report and control record"
+  ],
+  "countedSnapshotBytes": 14743079057,
+  "ordinaryHeadroomBeforeRemovalBytes": 2168354671,
+  "sourceCeilingBytes": 17179869184,
+  "restorationReserveBytes": 268435456,
+  "reason": "Current ordinary headroom is below the bounded Semgrep image/stage/report/runtime reservation. The current 16 GiB policy cannot be replaced by ordinary allocation, and cleanupControllers is empty. Earlier human approval covered only two Trivy cache files.",
+  "noAdditionalAuthority": "No generic cleanup delegation, storage/time/attempt increase, image pull, package change, commit, push, merge or release",
+  "restoration": "Verified ZIP preserves all original relative paths and file bytes. Restore exact entries through an explicitly admitted restoration if needed; do not overwrite unrelated newer outputs.",
+  "approval": {
+    "decision": "Approve exact archived Debug cleanup",
+    "reviewer": "Andrew Spiteri",
+    "recordedAtUtc": "2026-11-24T23:56:53.9772485Z",
+    "decisionReference": "CIS-0005-SOURCE-CLOSEOUT:USER-APPROVED-EXACT-FOUR-ARCHIVED-DEBUG-TREES"
+  },
+  "executionManifest": ".cis/local/testing/current-context-closeout/debug-output-cleanup-manifest.json"
+}

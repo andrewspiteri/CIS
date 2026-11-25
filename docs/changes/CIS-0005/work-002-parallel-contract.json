@@ -1,0 +1,20 @@
+{
+  "tasks": [
+    {
+      "category": "implementation",
+      "complexity": "medium",
+      "dependsOn": [],
+      "title": "Connect criteria to explicit implementation checks and honest results",
+      "scopeIds": [
+        "traceability"
+      ],
+      "acceptanceCriteria": "Existing accepted criteria reach task/component/artifact/check and actual evidence through explicit mappings; lexical file co-occurrence stays discovered association, changed-file lists stay provenance, missing/currentness facts remain explicit. Bookkeeping/result references cannot self-invalidate native evidence.",
+      "validation": "Existing graph/plan/native evidence fixtures exercise explicit mappings, unresolved references, lexical false coverage, actual report digests/status/applicability and semantic versus status/result identity. Demonstrate at least one real RM-08 criterion using current evidence.",
+      "paths": [
+        "src",
+        "tests",
+        "docs"
+      ]
+    }
+  ]
+}

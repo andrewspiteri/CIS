@@ -152,12 +152,15 @@ internal static class RepositoryTestingStarter
             {
                 var id = SafeId(component.Id + "-browser");
                 var prerequisiteId = SafeId(component.Id + "-browser-prerequisite");
-                var result = $".cis/local/testing/results/{id}.json";
-                var command = $"{prefix} run {browser}";
+                var result = $".cis/local/testing/results/{id}/{{run-id}}/attempt-{{attempt}}/playwright.json";
+                var output = Relative(root, Path.Combine(repositoryPath, result.Replace('/', Path.DirectorySeparatorChar)));
+                var artifacts = Relative(root, Path.Combine(repositoryPath, Path.GetDirectoryName(result)!, "artifacts"));
+                var command = $"{prefix} run {browser}{(prefix == "npm" ? " --" : string.Empty)} --reporter=line,json {Quote("--output=" + artifacts)}";
+                var environment = $"PLAYWRIGHT_JSON_OUTPUT_FILE={Quote(output)}";
                 suites.Add(new(id, component.Id, "browser", "playwright", command, component.Root, "playwright-json", result,
-                    "-", "-", "Node.js, installed browsers, application runtime, and JSON reporter output", "critical frontend journeys", "release", "retain-on-failure"));
+                    "-", "-", "Node.js, installed browsers, application runtime, and a browser script that forwards Playwright options", "critical frontend journeys", "release", "retain-on-failure"));
                 steps.Add(new(prerequisiteId, $"{prefix} exec playwright install chromium", component.Root, "-", "-", "no", 1200));
-                steps.Add(new(id, command, component.Root, id, prerequisiteId, "no", 2400));
+                steps.Add(new(id, command, component.Root, id, prerequisiteId, "no", 2400, environment));
             }
 
             if (scripts.ContainsKey("build")) steps.Add(new(SafeId(component.Id + "-build"), $"{prefix} run build", component.Root, "-", "-", "no", 1200));
@@ -184,7 +187,7 @@ internal static class RepositoryTestingStarter
     private static string CreateWorkflow(IEnumerable<Step> steps)
     {
         var body = string.Join(Environment.NewLine, steps.DistinctBy(item => item.Id).Select(item =>
-            $"| {item.Id} | {item.Command} | {item.WorkingDirectory} | {item.Suites} | {item.DependsOn} | {item.ContinueOnFailure} | {item.Timeout} |"));
+            $"| {item.Id} | {item.Command} | {item.WorkingDirectory} | {item.Suites} | {item.DependsOn} | {item.ContinueOnFailure} | {item.Timeout} | {item.Environment} |"));
         return $$"""
         ---
         title: "Standard Delivery Verification Workflow"
@@ -198,9 +201,10 @@ internal static class RepositoryTestingStarter
         # Standard delivery verification workflow
 
         Commands are selected from repository classification and declared package scripts. Reinitialization preserves reviewed commands.
+        Environment entries are non-secret NAME=value assignments; quote values containing spaces. CIS replaces {run-id} and {attempt} in arguments and environment values for each step execution.
 
-        | Step | Command | Working directory | Test suites | Depends on | Continue on failure | Timeout seconds |
-        |---|---|---|---|---|---|---:|
+        | Step | Command | Working directory | Test suites | Depends on | Continue on failure | Timeout seconds | Environment |
+        |---|---|---|---|---|---|---:|---|
         {{body}}
         """;
     }
@@ -252,6 +256,7 @@ internal static class RepositoryTestingStarter
 
         Result, coverage, mutation, and retained artifact paths are derived state under `.cis/local/`.
         Suite-specific sanitized runtime evidence belongs under `.cis/local/testing/diagnostics/<suite-id>/<run-id>/attempt-<number>/` and is hash-correlated during `cis test reconcile`.
+        Browser result paths use {run-id} and {attempt} to retain each execution separately. Bind PLAYWRIGHT_JSON_OUTPUT_FILE to that path in the workflow Environment column, relative to its working directory; the generated workflow includes this binding. Imported profiles require the same binding in their adopted workflow.
 
         | Suite ID | Component | Layer | Framework | Command | Working directory | Result format | Result path | Coverage path | Mutation path | Prerequisites | Applies when | CI tier | Artifacts |
         |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -283,5 +288,5 @@ internal static class RepositoryTestingStarter
         string WorkingDirectory, string ResultFormat, string ResultPath, string CoveragePath, string MutationPath,
         string Prerequisites, string AppliesWhen, string CiTier, string Artifacts);
     private sealed record Step(string Id, string Command, string WorkingDirectory, string Suites, string DependsOn,
-        string ContinueOnFailure, int Timeout);
+        string ContinueOnFailure, int Timeout, string Environment = "-");
 }

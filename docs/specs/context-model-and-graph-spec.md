@@ -223,7 +223,7 @@ conflicts are validation errors.
 | `subscribes-to` | Component or symbol subscribes to an event contract |
 | `configured-by` | Component or workflow is configured by a configuration item |
 | `deployed-by` | Component is deployed by a workflow or infrastructure node |
-| `verified-by` | Requirement, contract, component, symbol, or workflow is verified by a test |
+| `verified-by` | Declares a test applicable to a requirement, contract, component, artifact, symbol, or workflow; coverage and execution remain separate |
 | `generated-from` | Artifact or symbol is generated from another contract or source |
 | `supersedes` | Decision, document, requirement, or contract replaces an earlier node |
 
@@ -315,9 +315,14 @@ similarity is low-confidence proposal evidence, not a deterministic relationship
 ### 7.2 Test evidence
 
 Tests may be represented at project, suite, and case level. A test project reference
-creates `depends-on`; it does not by itself prove `verified-by`. A `verified-by` edge
-requires stronger evidence such as an explicit contract/requirement ID, a resolved
-call or symbol reference in test code, framework metadata, or a reviewed declaration.
+creates `depends-on`; it does not by itself prove `verified-by`. Declared `verified-by`
+edges require an explicit mapping to a resolved test declaration. A stable reference
+identity found anywhere in a test file creates a discovered, medium-confidence
+`references` association with method `file-reference-cooccurrence`. It does not claim
+that each test asserts the reference or that any test ran. Compiler-bound `calls`
+remain structural evidence, separate from declared mappings and recorded results.
+An explicit mapping declares an applicable check. It does not assess assertion coverage
+or whether that check addresses the complete meaning of a criterion.
 
 Naming similarity may propose a test relationship but is excluded from default
 traversal. Query results state the evidence level so “tests-for” never implies that a
@@ -594,11 +599,109 @@ their deterministic lexical or structured behavior until equivalent front ends e
 
 ## 15. Implemented slices
 
-`cis graph build` includes repository, catalog-document, repository-profile component,
+`cis graph build` includes repository, catalog-document, declared component,
 governed reference-item, source-file, symbol, test, workflow-job, and dependency nodes.
 It hashes every supported canonical and implementation input and emits evidence-backed
 `contains`, `describes`, `declares`, `governed-by`, `owns`, `belongs-to`, `depends-on`,
 `calls`, `implemented-by`, and `verified-by` edges with content-addressed build identity.
+
+Components come from both legacy repository-profile headings and the canonical
+`## Component catalogue` table in a catalogued component-sheet. Catalogue IDs remain
+the graph's component IDs; their labels, responsibilities and requirement references
+retain the table's provenance. A catalogue declaration alone does not claim any source
+path. The optional same-sheet table below declares exact repository-relative files or
+directory prefixes. These synthetic examples illustrate the format:
+
+```markdown
+## Implementation and verification locations
+
+| Component ID | Relationship | Path |
+| --- | --- | --- |
+| TI-MOD-ORDERS | owns | src/Shared/Orders |
+| TI-MOD-STOCK | owns | src/Shared/Stock |
+| TI-MOD-ORDERS | verified-by | tests/SharedTests.cs |
+| TI-MOD-STOCK | verified-by | tests/SharedTests.cs |
+```
+
+The longest `owns` prefix selects a primary owner, allowing logical modules inside one
+project. Equal-specificity declarations by different components produce a diagnostic
+and leave that path unowned. A more specific declaration can still resolve its own
+subtree. Globs, absolute paths and traversal are rejected. Legacy `Root` declarations
+remain supported. Compatible declarations of the same ID merge their provenance and
+paths. `verified-by` can associate the same discovered test with several components;
+the test keeps one identity. This declares a verification mapping with no recorded
+execution result and does not claim that the test passed or covered the component.
+Location-only component sheets can supply current path declarations for existing IDs.
+All component declarations are resolved before path rows, so catalogue order does not
+turn a valid existing component into an unknown owner. Such a sheet supplies locations
+and provenance without replacing the canonical component's meaning or approval.
+When a lower-authority component declaration conflicts with a canonical one, canonical
+meaning, label and lifecycle take precedence in either catalogue order. Conflicting
+declarations and both sources remain visible. Location rows still add their own explicit
+provenance; they do not replace the component's canonical meaning.
+
+Current consumers use the explicit `ICisGraphSnapshotReader.ReadCurrent` boundary.
+It checks current input and extractor identities, refreshes a missing or stale graph
+through the existing build lock and atomic publication, then returns the observed
+generation. An unchanged generation reuses its materialized graph within the current
+invocation. Actual publication invalidates earlier query caches. Ordinary graph reads
+and historical navigation retain their read-only behavior. Both snapshot and metadata
+reads expose the stored structured diagnostics; strict validation remains unchanged.
+
+An optional `## Implementation and verification` table in a catalogued document makes
+exact criterion-to-check relationships explicit. For example, these synthetic values
+refer to already declared identities:
+
+```markdown
+| Criterion | Task | Component | Artifact | Check | Result reference |
+| --- | --- | --- | --- | --- | --- |
+| example:acceptance#AC-10 | example:task:one | TI-MOD-ORDERS | src/Shared/Orders/Reader.cs | tests/ReaderTests.cs#ChecksReader | .cis/local/testing/reader-evidence.json |
+```
+
+Existing `ID | Criterion` tables and criterion-ID columns with `AC-01`-style IDs create
+source-backed criterion nodes, qualified by the source document's stable ID. The graph
+retains source authority and lifecycle; declaration does not establish human approval.
+The task must resolve to a catalogued agent-task, the artifact must have the declared
+component as its confirmed owner, and the check must resolve to one test. Check syntax
+accepts an exact graph key, local ID, `file#method`, or compiler-qualified method name.
+A test file alone never selects all its tests. Unresolved or ambiguous rows produce
+diagnostics. An empty or `-` result reference leaves the declared mapping without a result.
+Declared check edges carry `role=declared-applicable-check`, with coverage and meaning
+assessments both `not-assessed`. These declarations preserve the separate canonical
+task and feature meaning checks.
+
+A result reference can point to an existing schema-1 `cis-incremental-evidence-v1`
+receipt. The graph projects the receipt's recorded status, native report and input pins.
+To label a specific check `recorded-passed`, its artifact batch and exact test-file
+closure must match, the native report must retain its pinned bytes, and the existing
+registered result adapter must find the exact native case. Missing adapters, unknown
+receipt contracts, changed reports or ambiguous case identities leave that outcome
+unknown. Receipt data never runs tests or invokes the verification service during a
+graph build. External input paths retain recorded hashes and remain unassessed; the
+graph does not open them. Repository input matches are observations, not a claim that
+the result is fully applicable to the current environment, selection or installed tool.
+Normal `test incremental verify` makes that separate current assessment.
+Even a `recorded-passed` outcome for the exact check does not mark the whole acceptance
+criterion passed. Its remaining obligations, assertion coverage and meaning still need
+their normal assessment.
+
+`CisGraphInput.ProjectionHash` tracks context semantics separately from the existing
+material `Hash`. It includes explicit criterion/mapping facts and referenced receipt,
+report and repository-input facts. Task state, completion bookkeeping, receipt assessment
+time, graph-build references and reuse diagnostics are excluded. Semantic edits refresh
+the graph payload even when its material build ID is unchanged; healthy reads compare
+the manifest projection identities before reusing that payload. This preserves managed
+approval baselines and native input fingerprints while keeping contextual evidence fresh.
+Criterion and mapping line coordinates also participate in this context identity, so
+moving a declaration refreshes its locators and excerpts. A newly catalogued managed
+task likewise requires a context refresh while retaining the existing material build
+baseline. Ordinary historical reads report that context as stale; `ReadCurrent` refreshes it.
+For agent-task documents, the context projection also includes semantic frontmatter and
+ordinary task text, including the title, objective and related file links. Administrative
+`status`/`task_status`, checkbox completion markers and the canonical `Completion evidence`
+section remain bookkeeping. This context normalization does not change canonical task
+authority digests or material hashes. Recording a link keeps source context current; it
+does not invent a graph relationship or assign the linked criterion to that task.
 
 Canonical change-decision ledgers create `decision` nodes carrying category,
 blocking/advisory gate, lifecycle, resolution, and promotion evidence. Catalogued ADRs
@@ -615,9 +718,9 @@ addressable; raw argument values are never persisted. Adjacent semantic invocati
 and idempotency milestones produce an intraprocedural `dataflow` summary. This is not
 interprocedural control-flow or runtime proof. Recognized test methods also call their
 bound production symbols. Project references prove dependency only. A deterministic
-verification relationship requires a recognized test case containing the exact stable
-identity of a governed reference; an exact declared evidence path may connect that
-reference to its source file.
+verification relationship requires an explicit resolved mapping; file-level reference
+co-occurrence remains a discovered association. An exact declared evidence path may
+connect a reference to its source file.
 
 The first query slice includes exact/type/subtype/facet/bounded-text lookup, bounded
 cycle-safe neighbourhood traversal, explicit proposal opt-in, input/extractor

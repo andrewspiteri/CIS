@@ -137,6 +137,7 @@ public sealed partial class TestingServiceTests
         Assert.Equal("passed", execution.Status);
         Assert.Equal("TC-BROWSER-001", Assert.Single(execution.Cases).Id);
         Assert.Equal(4, execution.DurationMilliseconds);
+        Assert.Contains(execution.Diagnostics, item => item.Contains("failed, passed", StringComparison.Ordinal));
     }
 
     [Fact]

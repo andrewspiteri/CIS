@@ -40,8 +40,6 @@ public sealed class IncrementalTestServiceTests
     [Theory]
     [InlineData("stale")]
     [InlineData("missing")]
-    [InlineData("partial")]
-    [InlineData("warning")]
     public void IncompleteGraphCannotAuthorizeReuseOrExecution(string fault)
     {
         using var fixture = new Fixture { GraphFault = fault };

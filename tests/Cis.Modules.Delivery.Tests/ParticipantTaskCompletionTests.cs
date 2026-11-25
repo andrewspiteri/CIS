@@ -105,7 +105,7 @@ public sealed partial class DeliveryWorkflowTests
         internal TaskEngineeringCompletion Service => new(new CisRepositoryContextResolver(), RegistryAvailable ? new WorkspaceRegistry(new CisRepositoryContextResolver()) : null,
             new ParticipantAssessment(RequireBuild), GraphOverride ?? new ClosingGraph(path => GraphAction?.Invoke(path)), Checks);
 
-        internal ParticipantClosureFixture(bool seedPlan = false)
+        internal ParticipantClosureFixture(bool seedPlan = false, bool seedOutcomePlan = false)
         {
             if (seedPlan)
             {
@@ -149,11 +149,43 @@ public sealed partial class DeliveryWorkflowTests
             Authority.Write(".cis/workspace.yml", "schema_version: 2\necosystem:\n  id: fixture\n  name: Fixture\nproduct:\n  id: fixture\n  name: Fixture\nrepositories:\n" + registrations + "\n");
             Change ??= new("CIS-0001", "Fixture", "Verify scope", "Approved", "fixture", "fixture", "graph-1", Authority.Path,
                 "docs/cis", "docs/cis/changes/CIS-0001", []);
+            if (seedOutcomePlan)
+            {
+                // A standalone authority exercises the same outcome path as source self-hosting.
+                File.Delete(Path.Combine(Authority.Path, ".cis/workspace.yml"));
+                var services = CreateServices();
+                Assert.Equal(0, services.Graph.Build(Authority.Path).ExitCode);
+                Change = Assert.IsType<ChangeDossier>(services.Changes.Create(new(Authority.Path,
+                    "Close the accepted guide", "Document the existing accepted behavior.", [])).Change);
+                Assert.Equal(0, services.Changes.Authorize(new(Authority.Path, Change.Id,
+                    OutcomeRequest(Authority.Path) with { Outcome = Change.Outcome, VisualUi = false },
+                    "Original human", "Authorize the fixture's bounded outcome.")).ExitCode);
+                var seed = Assert.Single(services.Plans.Build(Authority.Path, Change.Id).WorkItems);
+                var organized = services.Plans.OrganizeOutcomeTasks(new(Authority.Path, Change.Id,
+                    [new("Document the accepted guide", ["documentation"], "The guide preserves the accepted behavior.",
+                        "Review the guide against the accepted contract.") { Category = "documentation", Paths = ["docs/guide.md"] }],
+                    "Controller", "Describe one executable task within the accepted outcome.", seed.Id), "update");
+                Assert.Equal(0, organized.ExitCode);
+                Task = Assert.Single(organized.WorkItems);
+                var started = services.Plans.TransitionTask(new(Authority.Path, Change.Id, Task.Id,
+                    "InProgress", "Controller", "Begin the scoped guide task."));
+                Assert.Empty(started.Errors);
+                Task = Assert.Single(started.WorkItems);
+                var taskPath = Path.Combine(Authority.Path, Change.RelativePath, Task.TaskPath!);
+                Document = File.ReadAllText(taskPath).Replace("- [ ]", "- [x]", StringComparison.Ordinal)
+                    + "\n| Protocol review | Passed | Scoped fixture protocol evidence. |\n";
+                File.WriteAllText(taskPath, Document);
+                var resolver = new CisRepositoryContextResolver();
+                Plans = new(services.Changes, services.Impacts, services.Decisions, resolver,
+                    workspaceRegistry: new WorkspaceRegistry(resolver), engineering: new ParticipantAssessment(false),
+                    graphReader: new ClosingGraph(path => GraphAction?.Invoke(path)), repositoryChecks: [new ClosingAlignment()]);
+            }
         }
         internal CisRepositoryContext Context(string id) => new CisRepositoryContextResolver().Resolve(Repository(id).Path).Context!;
         internal EngineeringCompletionReceipt Prepare(string id)
         {
-            var result = Service.Prepare(Change, Task, FallbackTargets, Document, id);
+            var result = Plans is null ? Service.Prepare(Change, Task, FallbackTargets, Document, id)
+                : Plans.CompletionContext(Authority.Path, Change.Id, Task.Id, id);
             Assert.Empty(result.Errors);
             return Assert.IsType<EngineeringCompletionReceipt>(result.Template);
         }

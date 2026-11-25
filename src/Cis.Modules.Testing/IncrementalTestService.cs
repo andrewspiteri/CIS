@@ -10,6 +10,8 @@ public sealed partial class IncrementalTestService
 {
     public IncrementalTestResult Plan(IncrementalTestOptions options)
     {
+        if (options.Work?.ChangeId is { } changeId)
+            CisInvocationTelemetry.AssociateTask(changeId, options.Work.TaskId);
         try
         {
             var input = Read(options);
@@ -17,9 +19,19 @@ public sealed partial class IncrementalTestService
             var result = Summarize(input, options, Select(input, state, options.Force), state,
                 state.RecoveryRequired || state.ActiveExecutionUntilUtc is not null ? "recovery-required" : "planned", 0);
             return StateSettlementErrors(input.Repository, state, Safe(input.Root, "latest-run.json")) is { Length: > 0 } errors
-                ? result with { Status = "settlement-required", ExitCode = 4, ScopeComplete = false, Diagnostics = errors } : result;
+                ? result with
+                {
+                    Status = "settlement-required",
+                    ExitCode = 4,
+                    ScopeComplete = false,
+                    Diagnostics = result.Diagnostics.Concat(errors).ToArray()
+                } : result;
         }
-        catch (Exception error) when (Expected(error)) { return new("invalid-plan", 2) { Diagnostics = [error.Message] }; }
+        catch (Exception error) when (Expected(error))
+        {
+            CisInvocationTelemetry.RecordBlocker("incremental-plan-invalid");
+            return new("invalid-plan", 2) { Diagnostics = [error.Message] };
+        }
     }
 
     public IncrementalTestResult Run(IncrementalTestOptions options, int nativeTimeoutSeconds = 0)
@@ -41,10 +53,19 @@ public sealed partial class IncrementalTestService
         var restorationCompleted = false;
         NativeCorrectnessPilotResult? pilot = null;
         // Settle admitted work after any failure, but publish only while owning the native lease.
-        IncrementalTestResult Complete(IncrementalTestResult result) => FinishIncrementalResult(lease is null ? null : input, state,
-            result with { WorkReference = admission?.Reference, WorkCoverage = admission?.Coverage ?? "unaccounted-non-adopted", Pilot = pilot },
-            work, state?.RecoveryRequired == true || recoveryOf is not null && !restorationCompleted ? "RecoveryRequired"
-                : recoveryOf is not null ? "Restored" : "native-finished", admission?.Control);
+        IncrementalTestResult Complete(IncrementalTestResult result)
+        {
+            CisInvocationTelemetry.RecordVerification("unit", "executed", result.ExecutedUnitBatches, "native-launch");
+            CisInvocationTelemetry.RecordVerification("unit", "reused", result.ReusedUnitBatches, "compatible-native-result");
+            CisInvocationTelemetry.RecordVerification("mutation", "executed", result.ExecutedMutationBatches, "native-launch");
+            CisInvocationTelemetry.RecordVerification("mutation", "reused", result.ReusedMutationBatches, "compatible-native-result");
+            var finished = FinishIncrementalResult(lease is null ? null : input, state,
+                result with { WorkReference = admission?.Reference, WorkCoverage = admission?.Coverage ?? "unaccounted-non-adopted", Pilot = pilot },
+                work, state?.RecoveryRequired == true || recoveryOf is not null && !restorationCompleted ? "RecoveryRequired"
+                    : recoveryOf is not null ? "Restored" : "native-finished", admission?.Control);
+            if (finished.ExitCode is not (0 or 3)) CisInvocationTelemetry.RecordBlocker("incremental-" + finished.Status);
+            return finished;
+        }
         try
         {
             // Inspect retained invocation ownership under the same lease used for
@@ -62,6 +83,8 @@ public sealed partial class IncrementalTestService
                 AuthorityPath = requested.AuthorityPath ?? retained.Association?.AuthorityPath,
                 Actor = requested.Actor ?? retained.Association?.Actor
             };
+            if (association?.ChangeId is { } changeId)
+                CisInvocationTelemetry.AssociateTask(changeId, association.TaskId);
             admission = MutationRunService.AdmitNative(_nativeWork,
                 new(options.RepositoryPath, "native/incremental/" + Guid.NewGuid().ToString("N"), "incremental-" + options.Layer,
                     options.MaximumSeconds, association)
@@ -210,7 +233,8 @@ public sealed partial class IncrementalTestService
                     var execution = Execute(input, batch, input.Profile.UnitCommand, output,
                         Seconds(input, options, watch, reserve), ref state);
                     var unchanged = Unchanged(input, batch);
-                    var result = Assess(input, batch, false, output, execution, unchanged);
+                    var result = Assess(input, batch, false, output, execution, unchanged) with
+                    { InputBasisId = RetainBasis(state, batch.UnitInputs) };
                     executedUnit++;
                     saved = saved with { Unit = result, Mutation = result.Completed ? mutation : null };
                     state.Batches[batch.Id] = saved;
@@ -228,7 +252,8 @@ public sealed partial class IncrementalTestService
                 var nativeOutput = Work(input);
                 var native = Execute(input, batch, input.Profile.MutationCommand!, nativeOutput,
                     Seconds(input, options, watch, reserve, nativeTimeoutSeconds > 0 ? nativeTimeoutSeconds : null), ref state);
-                var assessed = Assess(input, batch, true, nativeOutput, native, Unchanged(input, batch, mutation: true));
+                var assessed = Assess(input, batch, true, nativeOutput, native, Unchanged(input, batch, mutation: true)) with
+                { InputBasisId = RetainBasis(state, batch.MutationInputs) };
                 executedMutation++;
                 rerunMutations.Add(batch.Id);
                 // A crash between native completion and recovery cannot publish a reusable mutation result.
@@ -250,7 +275,7 @@ public sealed partial class IncrementalTestService
                 if (!assessed.Completed || input.SettlementErrors.Count > 0)
                 { diagnostics.AddRange(assessed.Diagnostics); failed = true; break; }
             }
-            var final = Select(Read(options), state, false);
+            var final = Select(Read(options) with { Work = work }, state, false);
             var resultSummary = Summarize(input, options, final, state, failed ? cancellationToken.IsCancellationRequested ? "cancelled" : "failed" : "completed", failed ? 4 : 0) with
             {
                 ExecutedUnitBatches = executedUnit,
@@ -260,7 +285,7 @@ public sealed partial class IncrementalTestService
                     && final.Batches.Any(current => current.Id == batch.Id && current.UnitCurrent && current.MutationCurrent)),
                 DurationMilliseconds = watch.ElapsedMilliseconds,
                 RetainedBytes = Bytes(input.Storage),
-                Diagnostics = diagnostics,
+                Diagnostics = diagnostics.Concat(final.Diagnostics).Distinct(StringComparer.Ordinal).ToArray(),
             };
             if (!failed && !resultSummary.ScopeComplete) resultSummary = resultSummary with { Status = "batch-limit", ExitCode = 3 };
             SaveLatest(input, resultSummary);
@@ -363,8 +388,9 @@ public sealed partial class IncrementalTestService
         var now = Read(options);
         if ((mutation ? now.MutationIdentity != input.MutationIdentity : now.UnitIdentity != input.UnitIdentity)) return false;
         var selected = Select(now, new(), false).Batches.Single(item => item.Id == batch.Id);
-        return selected.UnitFingerprint == batch.UnitFingerprint
-            && (!mutation || selected.MutationFingerprint == batch.MutationFingerprint);
+        return (selected.CanonicalUnitFingerprint ?? selected.UnitFingerprint) == (batch.CanonicalUnitFingerprint ?? batch.UnitFingerprint)
+            && (!mutation || (selected.CanonicalMutationFingerprint ?? selected.MutationFingerprint)
+                == (batch.CanonicalMutationFingerprint ?? batch.MutationFingerprint));
     }
 
     private static int Seconds(Input input, IncrementalTestOptions options, Stopwatch watch, int reserve, int? nativeOverride = null)
@@ -374,10 +400,15 @@ public sealed partial class IncrementalTestService
         string output, int seconds, ref IncrementalTestState state, bool fullTests = false)
     {
         input.Cancellation.ThrowIfCancellationRequested();
+        // Native time is a separate bound. Preparation and publication consume
+        // the existing parent's inclusive remainder, never a new allowance.
+        var inclusiveSeconds = input.Work is null ? 0 : (int)Math.Min(3600, Math.Floor(input.Work.Remaining.TotalSeconds));
+        Require(input.Work is null || inclusiveSeconds >= 1, "The parent native work window ended before child preparation.");
         var admission = input.Work?.AdmitChild("native/incremental/stage/" + Guid.NewGuid().ToString("N"),
-            fullTests ? "native-restoration" : command == input.Profile.UnitCommand ? "native-unit" : "native-mutation", Math.Min(3600, seconds + 15));
+            fullTests ? "native-restoration" : command == input.Profile.UnitCommand ? "native-unit" : "native-mutation", inclusiveSeconds);
         if (admission is { Allowed: false }) throw new InvalidDataException(string.Join(" ", admission.Errors));
         using var work = admission?.Scope;
+        var admittedUntil = work is null ? (DateTimeOffset?)null : DateTimeOffset.UtcNow.Add(work.Remaining);
         var storageResult = FinishNativeStorage(input, state);
         Require(storageResult?.Allowed != false, string.Join(" ", storageResult?.Errors ?? []));
         var limits = new MutationRunProfile
@@ -390,7 +421,7 @@ public sealed partial class IncrementalTestService
         };
         input.ActiveStorage = MutationRunService.BeginNativeStorage(input.Repository, output, input.Storage, limits, work, input.OwnedStorage);
         limits = MutationRunService.StorageLimits(limits, input.ActiveStorage);
-        state = state with { ActiveExecutionUntilUtc = DateTimeOffset.UtcNow.AddSeconds(seconds + 30) };
+        state = state with { ActiveExecutionUntilUtc = admittedUntil ?? DateTimeOffset.UtcNow.AddSeconds(seconds + 30) };
         state = state with { ActiveWorkReference = work?.Reference };
         Save(input, state);
         var working = Safe(input.Repository, input.Profile.WorkingDirectory, true);
@@ -410,10 +441,14 @@ public sealed partial class IncrementalTestService
         var expanded = command.Select(value => value.Replace("{sourceFile}", Relative(working, Safe(input.Repository, batch.SourceFile)), StringComparison.Ordinal)
             .Replace("{testFilter}", fullTests ? input.Profile.FullTestFilter : batch.TestFilter, StringComparison.Ordinal)
             .Replace("{mutationConfig}", mutationConfig ?? "", StringComparison.Ordinal)).ToArray();
-        limits = limits with { Environment = NativeEnvironment(input.Profile, working) };
-        var execution = MutationRunService.Execute(input.Repository, output, input.Storage, limits, expanded, work, input.Cancellation,
-            input.OwnedStorage, input.ActiveStorage, input.WorkController) with
-        { SettlementReference = input.Work?.Reference, WorkAuthorityPath = work?.AuthorityPath };
+        limits = limits with { Environment = input.NativeEnvironmentOverrides };
+        MutationNativeExecution execution;
+        using (CisInvocationTelemetry.MeasurePhase("native"))
+        {
+            execution = MutationRunService.Execute(input.Repository, output, input.Storage, limits, expanded, work, input.Cancellation,
+                input.OwnedStorage, input.ActiveStorage, input.WorkController) with
+            { SettlementReference = input.Work?.Reference, WorkAuthorityPath = work?.AuthorityPath };
+        }
         if (work is not null)
         {
             var control = work.Finish("native-finished", "Native incremental stage completed: " + execution.Status, []);
@@ -511,6 +546,7 @@ public sealed partial class IncrementalTestService
             CompleteScopeScore = mutationComplete ? score : null,
             ThresholdMet = mutationComplete && score >= input.Profile.BreakThreshold && mutations.All(item => item.NoCoverage == 0 && item.TimedOut == 0),
             Batches = batches,
+            Diagnostics = selection.Diagnostics,
             WorkReference = state.WorkReference,
             WorkCoverage = state.WorkCoverage,
         };

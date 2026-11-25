@@ -20,6 +20,8 @@ public sealed record AgentTaskEnvelope(int SchemaVersion, string Id, string Repo
     IReadOnlyList<AgentAuthorityArtifact>? AuthorityArtifacts = null, string? AuthoritySelectionDigest = null)
 {
     public CisAgentWorkReference? Work { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public CisTaskContextDelivery? TaskContext { get; init; }
 }
 public sealed record AgentAuthorityArtifact(string Path, string Sha256, string Content);
 public sealed record AgentBrdReviewFinding(string Id, string Severity, string Category, string Location,
@@ -145,6 +147,7 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
     private readonly ICisTextGenerationService? _textGeneration;
     private readonly ICisEngineeringTaskContractReader? _taskContracts;
     private readonly IReadOnlyList<IChangeReadinessCheck> _readinessChecks;
+    private readonly ICisTaskContextPreparer? _taskContext;
     private readonly AgentWorkLedger _workLedger;
     private readonly ConcurrentDictionary<string, (long Length, long Count)> _eventSequences = new(
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
@@ -163,7 +166,8 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         ICisEngineeringTaskContractReader? taskContracts)
         : this(resolver, providers, workspaceRegistry, clock, sourceEvidenceRegistrars, sourceEvidenceReconciler,
             productDefinitionAuthorities, technicalIntentDraftPreparer, observedReferencePreparer, solutionDesignDrafts,
-            textGeneration, taskContracts, null) { }
+            textGeneration, taskContracts, null)
+    { }
     public AgentService(ICisRepositoryContextResolver resolver, IEnumerable<ICisAgentProvider> providers,
         ICisWorkspaceRegistry? workspaceRegistry = null, Func<DateTimeOffset>? clock = null,
         IEnumerable<ICisSourceEvidenceRegistrar>? sourceEvidenceRegistrars = null,
@@ -174,7 +178,24 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         ICisSolutionDesignDrafts? solutionDesignDrafts = null, ICisTextGenerationService? textGeneration = null,
         ICisEngineeringTaskContractReader? taskContracts = null,
         IEnumerable<IChangeReadinessCheck>? readinessChecks = null)
+        : this(null, resolver, providers, workspaceRegistry, clock, sourceEvidenceRegistrars, sourceEvidenceReconciler,
+            productDefinitionAuthorities, technicalIntentDraftPreparer, observedReferencePreparer, solutionDesignDrafts,
+            textGeneration, taskContracts, readinessChecks)
+    { }
+
+    public AgentService(ICisTaskContextPreparer? taskContext,
+        ICisRepositoryContextResolver resolver, IEnumerable<ICisAgentProvider> providers,
+        ICisWorkspaceRegistry? workspaceRegistry = null, Func<DateTimeOffset>? clock = null,
+        IEnumerable<ICisSourceEvidenceRegistrar>? sourceEvidenceRegistrars = null,
+        ICisBrdSourceEvidenceReconciler? sourceEvidenceReconciler = null,
+        IEnumerable<ICisProductDefinitionAuthority>? productDefinitionAuthorities = null,
+        ICisTechnicalIntentDraftPreparer? technicalIntentDraftPreparer = null,
+        ICisObservedReferencePreparer? observedReferencePreparer = null,
+        ICisSolutionDesignDrafts? solutionDesignDrafts = null, ICisTextGenerationService? textGeneration = null,
+        ICisEngineeringTaskContractReader? taskContracts = null,
+        IEnumerable<IChangeReadinessCheck>? readinessChecks = null)
     {
+        _taskContext = taskContext;
         _resolver = resolver;
         _providers = providers.OrderBy(item => item.Descriptor.Id, StringComparer.Ordinal).ToArray();
         _workspaceRegistry = workspaceRegistry;
@@ -238,6 +259,7 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
 
     public AgentResult Prepare(string repositoryPath, string changeId, string taskId, string provider)
     {
+        CisInvocationTelemetry.AssociateTask(changeId, taskId);
         var context = Resolve(repositoryPath, out var diagnostics); if (context is null) return New(null, "invalid-repository", diagnostics: diagnostics);
         if (!AllDescriptors().Any(item => item.Id.Equals(provider, StringComparison.OrdinalIgnoreCase))) diagnostics.Add($"ERROR: Unknown agent provider '{provider}'.");
         var task = FindTask(context, changeId, taskId, diagnostics); if (task is null || diagnostics.Count > 0) return New(context, "invalid", diagnostics: diagnostics);
@@ -926,6 +948,7 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
                     ProviderSessionId = allowedCommands.Count > 0 || view.Manifest.AllowedCommands.Count > 0
                         ? null : view.Manifest.ProviderSessionId
                 };
+                envelope = RefreshResumedTaskContext(context, updated, envelope!);
                 if (work is not null)
                 {
                     if (work.RemainingProviderTime() <= TimeSpan.Zero)
@@ -1254,6 +1277,10 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         IReadOnlyList<string>? expectedQuestionIds = null, bool taskReview = false,
         IReadOnlyList<string>? evidenceDirectories = null, WorkExecutionScope? work = null)
     {
+        if (IsDirectWorkRun(manifest, envelope))
+        {
+            CisInvocationTelemetry.AssociateTask(envelope.ChangeId, envelope.TaskId);
+        }
         var minimumSeconds = work?.Reference.ParentExecutionId is null ? 30 : 1;
         if (manifest.TimeoutSeconds < minimumSeconds || manifest.TimeoutSeconds > 3600
             || work is not null && manifest.TimeoutSeconds > work.TimeoutSeconds)
@@ -1265,7 +1292,9 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         // Every supported host receives policy explicitly, including direct author/review and resumed runs.
         // The task envelope retains authority; referenced source artifacts remain untrusted evidence.
         prompt = CommandPermissionPrompt(manifest.AllowedCommands) + HumanReadableContentPolicy.Instructions("the task's document reader and human reviewer",
-            "the bounded task below and its structured final report", requireBrdReview ? "review" : null) + AuthorityArtifactPrompt(envelope) + prompt;
+            "the bounded task below and its structured final report", requireBrdReview ? "review" : null) + AuthorityArtifactPrompt(envelope) + TaskContextPrompt(envelope) + prompt;
+        // Provider input is the complete observed prompt; mandatory authority retains its own bounds.
+        CisInvocationTelemetry.RecordDeliveredContext(Encoding.UTF8.GetByteCount(prompt));
         var request = new CisAgentExecutionRequest(manifest.RunId, manifest.Attempt, manifest.Provider, manifest.Transport, manifest.Mode,
             manifest.Permission, manifest.WorkingDirectory, prompt, TimeSpan.FromSeconds(manifest.TimeoutSeconds), manifest.ProviderSessionId,
             approveWithinCeiling, manifest.Actor, NativeProviderEnvironment(context, work?.Reference, manifest.Actor),
@@ -1510,7 +1539,10 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
                 "Preserve protected accounting, reservations, settlement and recovery state; derived views and results cannot override it.",
                 "Do not infer approvals or completion.", "Return a structured final JSON object; do not edit CIS lifecycle evidence directly."],
             target, revision.Revision, revision.Digest, mode, permission, scopeDigest, _clock().AddHours(24).ToUniversalTime().ToString("O"),
-            AuthoritySelectionDigest: selectionDigest);
+            AuthoritySelectionDigest: selectionDigest)
+        {
+            TaskContext = PrepareTaskContext(context, changeId, taskId, relative, taskText, targetRepositoryPath)
+        };
     }
 
     private IReadOnlyList<AgentReferenceInput> ReadReferenceInputs(CisRepositoryContext context,

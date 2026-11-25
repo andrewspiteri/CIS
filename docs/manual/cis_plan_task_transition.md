@@ -11,6 +11,8 @@ cis:
 
 # `cis plan task transition`
 
+Add `--summary` for a compact JSON result focused on the affected task, with resulting state, whether a change was applied, exit code, blocker counts, bounded explanations and omitted-item counts. The projection is capped at 12,000 characters and 48,000 UTF-8 bytes in every output format. Omit the flag for existing complete output. This only changes presentation; transition authority, completion review, evidence checks and canonical lifecycle records remain governed by the existing rules.
+
 Moves one generated task through its governed lifecycle.
 
 ```text
@@ -47,6 +49,20 @@ requirements, artifact integrity, native evidence and distinct review runs befor
 writing completion. Failed, missing, stale and skipped required gates block; justified
 inapplicability is separate. Deleting an adopted policy does not remove its obligations.
 Repositories without adoption retain their earlier lifecycle.
+
+Repeated completion requests reassess current authority, task scope, alignment and
+receipt/artifact bytes, including a task already marked Complete. Within one review,
+initial repository identity calculations are shared only for the same repository
+path and documentation root. The final target and authority input checks always
+capture current state again. Managed adoption is read through the existing bounded
+policy reader, including its deleted-policy safeguards.
+
+Set `CIS_PERF_TRACE=1` to inspect the completion review's adoption, initial identity,
+alignment, graph, evidence and final-fence timings on stderr. Durations are inclusive
+and can overlap. The usage ledger groups low-level traces into fixed phase categories;
+its summary does not contain source paths. Reassessment of a completion receipt is
+separate from native execution: compatible native reports remain eligible under the
+existing material-input and result-interpretation checks.
 
 After an approved outcome amendment, completed tasks retain their original contracts,
 evidence and applicable authorization history. For affected unfinished tasks, record

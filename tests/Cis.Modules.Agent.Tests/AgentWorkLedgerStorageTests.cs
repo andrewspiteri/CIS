@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Cis.Abstractions;
@@ -6,6 +7,193 @@ namespace Cis.Modules.Agent.Tests;
 
 public sealed partial class AgentWorkLedgerTests
 {
+    [Fact]
+    public void WorkLedger_OwnedStorageCountsOrdinaryTargetsOnceWithoutGrantingDirectoryAliasesClaimAuthority()
+    {
+        using var f = new Fixture();
+        using var aliases = new StorageDirectoryAliases(f);
+        var identity = f.Identity("WORK-A");
+        var owned = Path.Combine(f.Context.RepositoryPath, "owned");
+        var target = Path.Combine(owned, "packages/client-core");
+        Directory.CreateDirectory(target);
+        File.WriteAllBytes(Path.Combine(target, "first.bin"), new byte[7]);
+        File.WriteAllBytes(Path.Combine(target, "second.bin"), new byte[11]);
+        var allocation = new CisAgentWorkAllocationRequest(300, 3, 0, [new(identity.TaskId, 240, 3)],
+            "approved fixture allocation", "count ordinary workspace targets once", AcknowledgeHistoricalUnknown: true)
+        {
+            Controllers = ["Controller"],
+            Storage = new(8 * 1024 * 1024,
+                [new(f.Context.RepositoryPath, ".cis/local"), new(f.Context.RepositoryPath, "owned") { Scratch = true },
+                    new(f.Context.RepositoryPath, "owned/packages/client-core") { Scratch = true }])
+        };
+        Assert.Equal(0, f.Ledger.Allocate(f.Context, identity.ChangeId, allocation, [identity], "Controller", "Measure declared physical ownership.").ExitCode);
+        var native = f.Ledger.Admit(f.Context, identity, "native/alias-check", 60, 60);
+        Assert.True(native.Admitted);
+        var before = f.Ledger.InspectStorage(f.Context, identity.ChangeId, identity.TaskId);
+        Assert.True(before.Allowed, string.Join("; ", before.Errors));
+        var alias = Path.Combine(owned, "node_modules/@sample/client-core");
+        aliases.Create(alias, target);
+        aliases.Create(Path.Combine(owned, "other_modules/client-core"), target);
+
+        var counted = f.Ledger.InspectStorage(f.Context, identity.ChangeId, identity.TaskId);
+
+        Assert.True(counted.Allowed, string.Join("; ", counted.Errors));
+        Assert.Equal(before.Storage!.OwnedBytes, counted.Storage!.OwnedBytes);
+        Assert.Equal(before.Storage.ProtectedBytes, counted.Storage.ProtectedBytes);
+        File.WriteAllBytes(Path.Combine(target, "new.bin"), new byte[13]);
+        var grown = f.Ledger.InspectStorage(f.Context, identity.ChangeId, identity.TaskId);
+        Assert.True(grown.Allowed, string.Join("; ", grown.Errors));
+        Assert.Equal(counted.Storage.OwnedBytes + 13, grown.Storage!.OwnedBytes);
+        Assert.Equal(counted.Storage.ProtectedBytes + 13, grown.Storage.ProtectedBytes);
+        var ledger = Path.Combine(f.Context.RepositoryPath, CisAgentWorkPaths.Ledger);
+        var retained = File.ReadAllBytes(ledger);
+        var claim = f.Ledger.ReserveStorage(f.Context, native.Reference!, "alias-is-not-a-claim", 128,
+            [new(alias, Scratch: true)], false, false, "Controller");
+        Assert.False(claim.Allowed);
+        Assert.Contains(claim.Result.Errors, error => error.Contains("linked", StringComparison.Ordinal));
+        Assert.Equal(retained, File.ReadAllBytes(ledger));
+        Assert.Equal(0, f.Ledger.Settle(f.Context, native.Reference!, "native-finished", true).ExitCode);
+    }
+
+    [Theory]
+    [InlineData("outside")]
+    [InlineData("chain")]
+    [InlineData("cycle")]
+    [InlineData("nested-alias")]
+    [InlineData("missing")]
+    public void WorkLedger_OwnedStorageHoldsUnprovenDirectoryAliasesWithoutChangingAccounting(string scenario)
+    {
+        using var f = new Fixture();
+        using var aliases = new StorageDirectoryAliases(f);
+        var identity = f.Identity("WORK-A");
+        var owned = Path.Combine(f.Context.RepositoryPath, "owned");
+        var target = Path.Combine(owned, "packages/client-core");
+        Directory.CreateDirectory(target);
+        File.WriteAllBytes(Path.Combine(target, "payload.bin"), new byte[31]);
+        var allocation = new CisAgentWorkAllocationRequest(300, 3, 0, [new(identity.TaskId, 240, 3)],
+            "approved fixture allocation", "unknown alias usage stays held", AcknowledgeHistoricalUnknown: true)
+        {
+            Controllers = ["Controller"],
+            Storage = new(8 * 1024 * 1024,
+                [new(f.Context.RepositoryPath, ".cis/local"), new(f.Context.RepositoryPath, "owned") { Scratch = true }])
+        };
+        Assert.Equal(0, f.Ledger.Allocate(f.Context, identity.ChangeId, allocation, [identity], "Controller", "Preserve bounded ownership.").ExitCode);
+        var aliasTarget = target;
+        switch (scenario)
+        {
+            case "outside":
+                aliasTarget = Path.Combine(f.Context.RepositoryPath, "unowned");
+                Directory.CreateDirectory(aliasTarget);
+                File.WriteAllBytes(Path.Combine(aliasTarget, "external.bin"), new byte[47]);
+                break;
+            case "chain":
+                aliasTarget = Path.Combine(owned, "intermediate");
+                aliases.Create(aliasTarget, target);
+                break;
+            case "cycle":
+                aliasTarget = owned;
+                break;
+            case "nested-alias":
+                var nestedTarget = Path.Combine(owned, "other-package");
+                Directory.CreateDirectory(nestedTarget);
+                aliases.Create(Path.Combine(target, "nested"), nestedTarget);
+                break;
+        }
+        aliases.Create(Path.Combine(owned, "node_modules/@sample/client-core"), aliasTarget);
+        if (scenario == "missing") Directory.Delete(target, true);
+        var ledger = Path.Combine(f.Context.RepositoryPath, CisAgentWorkPaths.Ledger);
+        var retained = File.ReadAllBytes(ledger);
+
+        var result = f.Ledger.InspectStorage(f.Context, identity.ChangeId, identity.TaskId);
+
+        Assert.False(result.Allowed);
+        Assert.Null(result.Storage);
+        Assert.Contains(result.Errors, error => error.Contains("linked or unreadable material", StringComparison.Ordinal));
+        Assert.Equal(retained, File.ReadAllBytes(ledger));
+    }
+
+    [Fact]
+    public void WorkLedger_OwnedStorageCannotDeclareADirectoryAliasAsItsOwnedRoot()
+    {
+        using var f = new Fixture();
+        using var aliases = new StorageDirectoryAliases(f);
+        var identity = f.Identity("WORK-A");
+        var target = Path.Combine(f.Context.RepositoryPath, "target");
+        Directory.CreateDirectory(target);
+        aliases.Create(Path.Combine(f.Context.RepositoryPath, "alias"), target);
+        var allocation = new CisAgentWorkAllocationRequest(300, 3, 0, [new(identity.TaskId, 240, 3)],
+            "approved fixture allocation", "aliases cannot establish ownership", AcknowledgeHistoricalUnknown: true)
+        { Storage = new(8 * 1024 * 1024, [new(f.Context.RepositoryPath, "alias") { Scratch = true }]) };
+
+        var result = f.Ledger.Allocate(f.Context, identity.ChangeId, allocation, [identity], "Controller", "Retain exact root requirements.");
+
+        Assert.NotEqual(0, result.ExitCode);
+        Assert.Contains(result.Errors, error => error.Contains("unlinked", StringComparison.Ordinal));
+    }
+
+    private sealed class StorageDirectoryAliases : IDisposable
+    {
+        private readonly string root;
+        private readonly List<string> paths = [];
+
+        internal StorageDirectoryAliases(Fixture fixture)
+        {
+            root = Path.GetFullPath(fixture.Context.RepositoryPath);
+            var fixtureRoot = Path.Combine(Path.GetTempPath(), "cis-agent-work-ledger-tests");
+            Assert.True(CisPathSafety.IsUnderRoot(fixtureRoot, root));
+            Assert.True(Guid.TryParseExact(Path.GetFileName(root), "N", out _));
+            Assert.False(CisPathSafety.ContainsReparsePoint(Path.GetPathRoot(root)!, root));
+        }
+
+        internal void Create(string path, string target)
+        {
+            path = Path.GetFullPath(path);
+            target = Path.GetFullPath(target);
+            Assert.True(CisPathSafety.IsUnderRoot(root, path));
+            Assert.True(CisPathSafety.IsUnderRoot(root, target, allowRoot: true));
+            Assert.False(CisPathSafety.ContainsReparsePoint(root, Path.GetDirectoryName(path)!));
+            Assert.Null(ExistingAttributes(path));
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            // Register only the exact new alias name, never its target directory.
+            paths.Add(path);
+            if (!OperatingSystem.IsWindows())
+            {
+                Directory.CreateSymbolicLink(path, target);
+                return;
+            }
+            // Use the existing Windows junction pattern without symlink privilege.
+            var start = new ProcessStartInfo("cmd.exe")
+            { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+            foreach (var argument in new[] { "/d", "/c", "mklink", "/J", path, target }) start.ArgumentList.Add(argument);
+            using var process = Process.Start(start)!;
+            var error = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+            Assert.True(process.ExitCode == 0, error);
+        }
+
+        public void Dispose()
+        {
+            // This helper is declared after Fixture, so these exact links are
+            // detached before the fixture's ordinary recursive directory cleanup.
+            foreach (var path in paths.AsEnumerable().Reverse())
+            {
+                Assert.True(CisPathSafety.IsUnderRoot(root, path));
+                Assert.False(CisPathSafety.ContainsReparsePoint(Path.GetPathRoot(root)!, Path.GetDirectoryName(path)!));
+                var attributes = ExistingAttributes(path);
+                if (attributes is null) continue;
+                Assert.True(attributes.Value.HasFlag(FileAttributes.ReparsePoint), "Owned alias cleanup must never delete an ordinary replacement.");
+                Directory.Delete(path, recursive: false);
+                Assert.Null(ExistingAttributes(path));
+            }
+        }
+
+        private static FileAttributes? ExistingAttributes(string path)
+        {
+            try { return File.GetAttributes(path); }
+            catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException) { return null; }
+        }
+    }
+
     [Fact]
     public void WorkLedger_OwnedStorageHistoryCompactsWithoutBypassingAnActiveOwnerOrBlockingSettlementAndDeletion()
     {

@@ -89,6 +89,42 @@ public sealed partial class DefinitionWizardTests
         const string answer = "The product operations owner handles rollback for the current release.";
         File.WriteAllText(inputPath, JsonSerializer.Serialize(new { resolution = answer, reviewToken = token }));
         // This synthetic fixture grants exactly this answer; actor text is provenance, not permission.
+        var questionnairePath = Path.Combine(repository.Path, "docs/cis/specs/technical-intent-questionnaire.md");
+        var questionnaireBeforeReview = File.ReadAllBytes(questionnairePath);
+        var preparedSelection = CisProductDocumentPaths.Read(repository.Path);
+        var selectedBeforeReview = Path.Combine(repository.Path, preparedSelection["technical"]);
+        var technicalBeforeReview = File.ReadAllBytes(selectedBeforeReview);
+        var selectionPath = Path.Combine(repository.Path, CisProductDocumentPaths.SelectionFile);
+        var selectionBeforeReview = File.ReadAllBytes(selectionPath);
+        const string equivalentRelativePath = "docs/cis/imports/technical/equivalent-prepared.md";
+        var equivalentPath = Path.Combine(repository.Path, equivalentRelativePath);
+        File.WriteAllBytes(equivalentPath, technicalBeforeReview);
+        try
+        {
+            preparedSelection["technical"] = equivalentRelativePath;
+            File.WriteAllText(selectionPath, JsonSerializer.Serialize(preparedSelection));
+            var switchedDocument = await Cli(2, "technical-intent", "decisions", "resolve", "TI-DEC-900", "--workspace", repository.Path,
+                "--input", inputPath, "--actor", "Fixture decision owner");
+            Assert.Equal("conflict", switchedDocument.GetProperty("status").GetString());
+            Assert.False(switchedDocument.GetProperty("applied").GetBoolean());
+            Assert.Equal(technicalBeforeReview, File.ReadAllBytes(selectedBeforeReview));
+            Assert.Equal(technicalBeforeReview, File.ReadAllBytes(equivalentPath));
+        }
+        finally
+        {
+            File.WriteAllBytes(selectionPath, selectionBeforeReview);
+            File.Delete(equivalentPath);
+        }
+        try
+        {
+            File.AppendAllText(questionnairePath, "\n<!-- An input edit after the reviewed token was issued. -->\n");
+            var changedInput = await Cli(2, "technical-intent", "decisions", "resolve", "TI-DEC-900", "--workspace", repository.Path,
+                "--input", inputPath, "--actor", "Fixture decision owner");
+            Assert.Equal("conflict", changedInput.GetProperty("status").GetString());
+            Assert.False(changedInput.GetProperty("applied").GetBoolean());
+            Assert.Equal(technicalBeforeReview, File.ReadAllBytes(selectedBeforeReview));
+        }
+        finally { File.WriteAllBytes(questionnairePath, questionnaireBeforeReview); }
         var saved = await Cli(0, "technical-intent", "decisions", "resolve", "TI-DEC-900", "--workspace", repository.Path,
             "--input", inputPath, "--actor", "Fixture decision owner");
         Assert.True(saved.GetProperty("applied").GetBoolean());

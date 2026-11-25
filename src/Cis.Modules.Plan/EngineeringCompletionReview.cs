@@ -39,7 +39,8 @@ public static class EngineeringCompletionReview
         PlanWorkItem task, string policyPath, CisGraphMetadataReadResult? graph, EngineeringAssessment assessment, string inputDigest, string documentationRoot, string? taskDocument = null,
         string? taskContractDigest = null, string? reviewTaskId = null, string? implementationTaskId = null, string? implementationRepository = null,
         string? reviewRepository = null, string? receiptRepository = null, string? expectedRepositoryId = null, string? authorityInputDigest = null,
-        string? authorityDossierDigest = null)
+        string? authorityDossierDigest = null, IReadOnlyList<string>? requiredBrowserCaseIds = null,
+        string? browserCatalogueRepository = null, string? browserCataloguePath = null)
     {
         var errors = new List<string>(assessment.Diagnostics);
         if (!assessment.Adopted) return errors;
@@ -82,12 +83,16 @@ public static class EngineeringCompletionReview
             foreach (var required in assessment.RequiredGates)
             {
                 var evidence = receipt.Gates.FirstOrDefault(gate => gate.Id == required.Id);
+                if (required.Id == "browser" && evidence?.State == EngineeringGateState.Passed && requiredBrowserCaseIds is null)
+                    requiredBrowserCaseIds = BrowserJourneyRequirements.ForTask(browserCatalogueRepository ?? repository,
+                        browserCataloguePath ?? Path.Combine(repository, documentationRoot, "changes", changeId, "test-cases.md"), task);
                 var evidenceRepository = required.Id == "review" ? reviewRepository ?? repository : repository;
                 ReviewGate(evidenceRepository, required, evidence, errors);
                 if (evidence is { Artifacts.Count: > 0 } && (evidence.State == EngineeringGateState.Passed || evidence.Id == "coverage" && evidence.State == EngineeringGateState.Inapplicable))
                     errors.AddRange(EngineeringNativeEvidence.Review(evidenceRepository, evidence, inputDigest, receipt.ReviewerRunId,
                         reviewTaskId ?? task.Id, taskContractDigest ?? TaskDigest(task, taskDocument), documentationRoot, thresholds,
-                        required.Id == "review" && reviewRepository is not null ? repository : null, authorityInputDigest, authorityDossierDigest));
+                        required.Id == "review" && reviewRepository is not null ? repository : null, authorityInputDigest, authorityDossierDigest,
+                        requiredBrowserCaseIds));
             }
             ReviewVerificationObligations(repository, reviewRepository, task, receipt, assessment, errors);
         }

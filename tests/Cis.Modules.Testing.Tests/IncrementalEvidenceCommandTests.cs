@@ -33,6 +33,24 @@ public sealed partial class TestingServiceTests
         Assert.Equal(CisIncrementalResultContract.Version, result.RootElement.GetProperty("assessmentContractVersion").GetInt32());
         Assert.Equal(calls, fixture.Calls());
         Assert.Equal(state, File.ReadAllBytes(statePath));
+
+        output.GetStringBuilder().Clear();
+        try
+        {
+            Console.SetOut(output);
+            Assert.Equal(0, registry.Root.Parse(["test", "incremental", "verify", "--profile", "profile.json", "--repo", fixture.Path,
+                "--layer", "unit", "--summary", "--format", "json"]).Invoke());
+        }
+        finally { Console.SetOut(previous); }
+        using var summary = System.Text.Json.JsonDocument.Parse(output.ToString());
+        Assert.Equal("incremental-summary", summary.RootElement.GetProperty("kind").GetString());
+        Assert.True(summary.RootElement.GetProperty("scopeComplete").GetBoolean());
+        Assert.Equal(0, summary.RootElement.GetProperty("executedUnitBatches").GetInt32());
+        Assert.Equal(2, summary.RootElement.GetProperty("reusedUnitBatches").GetInt32());
+        Assert.False(summary.RootElement.TryGetProperty("batches", out _));
+        Assert.True(output.ToString().Length <= 8000);
+        Assert.Equal(calls, fixture.Calls());
+        Assert.Equal(state, File.ReadAllBytes(statePath));
     }
 
     [Theory]

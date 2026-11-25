@@ -1,0 +1,21 @@
+{
+  "tasks": [
+    {
+      "category": "implementation",
+      "complexity": "medium",
+      "dependsOn": [],
+      "title": "Project canonical components and logical implementation ownership",
+      "scopeIds": [
+        "components"
+      ],
+      "acceptanceCriteria": "Preserve canonical stable component identities/provenance and repository-profile support; explicit logical path ownership within shared projects and multi-component test verification resolve deterministically with visible conflicts and omissions. Reconcile accepted current consumer modules through RM-08 without inventing new requirements.",
+      "validation": "Focused graph component/identity/evidence regressions exercise canonical tables, legacy declarations, overlapping logical roots, conflicting primary owners and one test verifying multiple components. Inspect accepted consumer module boundaries and exact paths.",
+      "paths": [
+        "src/Cis.Modules.Graph",
+        "src/Cis.Abstractions",
+        "tests/Cis.Modules.Graph.Tests",
+        "docs"
+      ]
+    }
+  ]
+}

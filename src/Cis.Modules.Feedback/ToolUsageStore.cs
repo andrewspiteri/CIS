@@ -45,7 +45,9 @@ public sealed class ToolUsageStore : ICisToolUsageRecorder
         var ledgerPath = LedgerPath(repository);
         Directory.CreateDirectory(Path.GetDirectoryName(ledgerPath)!);
         var outputTokens = EstimateTokens(capture.StandardOutputCharacters + capture.StandardErrorCharacters);
-        var command = CommandPath(capture.Arguments);
+        var command = CanonicalCommand(capture.CanonicalCommand);
+        var options = (capture.RecognizedOptions ?? []).Take(256).Where(RecognizedOption)
+            .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).Take(32).ToArray();
         var candidate = capture.SavingsCandidates
             .Where(item => string.Equals(item.Command, command, StringComparison.Ordinal))
             .OrderByDescending(item => Math.Max(0, item.BaselineEstimatedTokens - (item.ActualEstimatedTokens ?? outputTokens)))
@@ -54,14 +56,21 @@ public sealed class ToolUsageStore : ICisToolUsageRecorder
         var actual = candidate?.ActualEstimatedTokens ?? outputTokens;
         var savings = Math.Max(0, baseline - actual);
         var savingsPercent = baseline == 0 ? 0 : Math.Round(100d * savings / baseline, 2);
+        var observations = NormalizeObservations(capture.Observations);
+        if (observations is not null && capture.RecognizedOptions is { } providedOptions)
+            observations = observations with
+            {
+                DroppedObservations = (int)Math.Min(int.MaxValue,
+                (long)observations.DroppedObservations + Math.Max(0, providedOptions.Count - options.Length))
+            };
         var entry = new ToolUsageEntry(
-            2,
-            Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture),
+            3,
+            observations?.InvocationId ?? Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture),
             capture.StartedAtUtc,
             capture.EndedAtUtc,
             capture.ElapsedMilliseconds,
             command,
-            OptionNames(capture.Arguments),
+            options,
             capture.ExitCode,
             capture.StandardOutputCharacters,
             capture.StandardErrorCharacters,
@@ -73,9 +82,55 @@ public sealed class ToolUsageStore : ICisToolUsageRecorder
             candidate?.Basis ?? "command-output-only; no defensible counterfactual registered",
             candidate?.Confidence ?? "none",
             capture.Outcome is "succeeded" or "invalid-request" or "blocked" or "governed-findings" or "cancelled" or "failed"
-                ? capture.Outcome : ClassifyOutcome(command, capture.ExitCode), capture.BuildIdentity);
+                ? capture.Outcome : ClassifyOutcome(command, capture.ExitCode), capture.BuildIdentity)
+        {
+            Observations = observations,
+            StandardOutputUtf8Bytes = capture.StandardOutputUtf8Bytes is >= 0 ? capture.StandardOutputUtf8Bytes : null,
+            StandardErrorUtf8Bytes = capture.StandardErrorUtf8Bytes is >= 0 ? capture.StandardErrorUtf8Bytes : null,
+        };
         AppendBounded(ledgerPath, entry);
     }
+
+    private static CisInvocationObservations? NormalizeObservations(CisInvocationObservations? value)
+    {
+        if (value is null || !Guid.TryParseExact(value.InvocationId, "N", out _)) return null;
+        var dropped = (long)Math.Max(0, value.DroppedObservations);
+        string? Field(string? field, Func<string, bool> valid)
+        {
+            if (field is null || valid(field)) return field;
+            dropped++;
+            return null;
+        }
+        T[] Bounded<T>(IReadOnlyList<T>? items, Func<T, bool> valid)
+        {
+            var retained = (items ?? []).Take(CisInvocationTelemetryScope.MaximumObservationsPerKind).Where(valid).Distinct().ToArray();
+            dropped += (items?.Count ?? 0) - retained.Length;
+            return retained;
+        }
+        var operation = Field(value.Operation, text => text.Length <= 256 && text.Split(' ') is { Length: <= 8 } parts && parts.All(part => Identifier(part, 64)));
+        var parent = Field(value.ParentInvocationId, text => Guid.TryParseExact(text, "N", out _));
+        var change = Field(value.ChangeId, text => CanonicalId(text, "CIS-", 4));
+        var task = Field(value.TaskId, text => change is not null && CanonicalId(text, "WORK-", 3));
+        var phases = Bounded(value.Phases, item => item is not null && Identifier(item.Phase) && double.IsFinite(item.ElapsedMilliseconds)
+            && item.ElapsedMilliseconds >= 0 && item.Count > 0);
+        var graph = Bounded(value.Graph, item => item is not null && Identifier(item.Consumer)
+            && (item.SnapshotId is null || Identifier(item.SnapshotId)) && Identifier(item.Outcome, 32) && Identifier(item.Reason));
+        var verification = Bounded(value.Verification, item => item is not null && Identifier(item.Scope)
+            && item.Disposition is "selected" or "executed" or "reused" or "invalidated" && item.Batches >= 0 && Identifier(item.Reason));
+        var blockers = Bounded(value.BlockerCodes, item => Identifier(item));
+        var delivered = value.DeliveredContextUtf8Bytes;
+        if (delivered < 0) { delivered = null; dropped++; }
+        return new(value.InvocationId, parent, operation, change, task, phases, graph, verification, blockers, delivered,
+            (int)Math.Min(int.MaxValue, dropped));
+    }
+
+    private static bool Identifier(string? value, int maximum = 128)
+        => value is { Length: > 0 } && value.Length <= maximum
+            && value.All(character => char.IsAsciiLetterOrDigit(character) || character is '.' or '_' or '-' or ':');
+
+    private static bool CanonicalId(string value, string prefix, int digits)
+        => value.Length == prefix.Length + digits && value.StartsWith(prefix, StringComparison.Ordinal)
+            && value.AsSpan(prefix.Length).IndexOfAnyExceptInRange('0', '9') < 0;
 
     public FeedbackUsageResult Read(string repositoryPath, DateTimeOffset? sinceUtc = null, int limit = 100)
     {
@@ -211,23 +266,14 @@ public sealed class ToolUsageStore : ICisToolUsageRecorder
         return null;
     }
 
-    private static string CommandPath(IReadOnlyList<string> arguments)
-    {
-        if (arguments.Any(argument => string.Equals(argument, "--version", StringComparison.OrdinalIgnoreCase)))
-        {
-            return "version";
-        }
+    private static string CanonicalCommand(string? value)
+        => value is { Length: > 0 and <= 129 } && value.Split(' ') is { Length: <= 2 } parts
+            && parts.All(part => Identifier(part, 64)) ? value : "unknown";
 
-        var parts = arguments.TakeWhile(argument => !argument.StartsWith('-')).Take(2).ToArray();
-        return parts.Length == 0 ? "help" : string.Join(' ', parts);
-    }
-
-    private static IReadOnlyList<string> OptionNames(IReadOnlyList<string> arguments) => arguments
-        .Where(argument => argument.StartsWith('-'))
-        .Select(argument => argument.Split('=', 2)[0])
-        .Distinct(StringComparer.Ordinal)
-        .Order(StringComparer.Ordinal)
-        .ToArray();
+    private static bool RecognizedOption(string value)
+        => value is { Length: > 1 and <= 64 } && value.StartsWith('-')
+            && value.TrimStart('-') is { Length: > 0 } name
+            && name.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_');
 
     private static int EstimateTokens(int characters) =>
         characters == 0 ? 0 : Math.Max(1, (int)Math.Ceiling(characters / (double)CharactersPerEstimatedToken));

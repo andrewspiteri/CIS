@@ -84,12 +84,20 @@ public sealed partial class TestingService
             diagnostics.Any(IsError) ? "invalid" : "valid");
     }
 
-    public TestingResult Reconcile(string repositoryPath, string runId)
+    public TestingResult Reconcile(string repositoryPath, string runId) => ReconcileCore(repositoryPath, runId, null);
+
+    public TestingResult Reconcile(string repositoryPath, string runId, IReadOnlyList<string> suiteIds)
+        => ReconcileCore(repositoryPath, runId, suiteIds ?? []);
+
+    private TestingResult ReconcileCore(string repositoryPath, string runId, IReadOnlyList<string>? suiteIds)
     {
         var validation = Validate(repositoryPath, true);
         if (validation.RepositoryPath is null || validation.Diagnostics.Any(IsError)) return validation with { RunId = runId };
         var context = _resolver.Resolve(validation.RepositoryPath).Context!;
         var diagnostics = validation.Diagnostics.ToList();
+        var selected = SelectSuites(validation.Suites, suiteIds, diagnostics);
+        if (diagnostics.Any(IsError))
+            return Result(context, null, runId, validation.Suites, null, [], diagnostics, false, "invalid-selection");
         var workflow = _workflows.Status(context.RepositoryPath, runId);
         if (workflow.Run is null || workflow.Diagnostics.Count > 0)
         {
@@ -103,8 +111,15 @@ public sealed partial class TestingService
             return Result(context, null, runId, validation.Suites, null, [], diagnostics, false, "invalid-run");
         }
 
+        if (suiteIds is not null && (string.IsNullOrWhiteSpace(workflow.Run.InputDigest) || definition.Digest != workflow.Run.WorkflowDigest
+            || selected.Any(suite => !definition.Steps.Any(step => step.Suites.Contains(suite.Id, StringComparer.OrdinalIgnoreCase)))))
+        {
+            diagnostics.Add("ERROR: Selected-suite reconciliation requires recorded workflow inputs, the exact workflow definition and a bound step for every selected suite.");
+            return Result(context, null, runId, validation.Suites, null, [], diagnostics, false, "invalid-selection");
+        }
+
         var executions = new List<TestSuiteExecution>();
-        foreach (var suite in validation.Suites)
+        foreach (var suite in selected)
         {
             var steps = definition.Steps.Where(step => step.Suites.Contains(suite.Id, StringComparer.OrdinalIgnoreCase)).ToArray();
             if (steps.Length == 0)
@@ -119,20 +134,32 @@ public sealed partial class TestingService
                 continue;
             }
             var failedState = states.LastOrDefault(state => state.Status is "failed" or "blocked");
-            var failedMutation = failedState is not null && suite.ResultFormat.Equals("stryker-json", StringComparison.OrdinalIgnoreCase)
-                && states.Length == steps.Length && states.All(state => state.Status is "failed" or "succeeded");
-            if (failedState is not null && !failedMutation)
+            var playwright = suite.ResultFormat.Equals("playwright-json", StringComparison.OrdinalIgnoreCase);
+            var failedNativeReport = failedState is not null
+                && (playwright || suite.ResultFormat.Equals("stryker-json", StringComparison.OrdinalIgnoreCase))
+                && states.Length == steps.Length && states.All(state => state.Status is "failed" or "succeeded")
+                && (!playwright || states.All(state => DateTimeOffset.TryParse(state.CompletedAtUtc, out _)));
+            if (failedState is not null && !failedNativeReport)
             {
                 executions.Add(Failed(suite, failedState));
                 continue;
             }
-            if (!failedMutation && (states.Length != steps.Length || states.Any(state => state.Status != "succeeded")))
+            if (!failedNativeReport && (states.Length != steps.Length || states.Any(state => state.Status != "succeeded")))
             {
                 executions.Add(Unavailable(suite, "Every bound workflow step must finish successfully before its reports can be reconciled."));
                 continue;
             }
 
-            var resultPath = SafePath(context.RepositoryPath, suite.ResultPath, diagnostics, suite.Id, required: true);
+            if ((suite.ResultPath.Contains("{run-id}", StringComparison.Ordinal)
+                || suite.ResultPath.Contains("{attempt}", StringComparison.Ordinal)) && states.Length != 1)
+            {
+                executions.Add(InvalidEvidence(suite, "A native result path with run or attempt placeholders must be bound to exactly one workflow step."));
+                continue;
+            }
+            var reportAttempt = states[0].Attempt;
+            var declaredResultPath = suite.ResultPath.Replace("{run-id}", runId, StringComparison.Ordinal)
+                .Replace("{attempt}", reportAttempt.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
+            var resultPath = SafePath(context.RepositoryPath, declaredResultPath, diagnostics, suite.Id, required: true);
             var beforePaths = diagnostics.Count;
             var coveragePath = CoveragePath(context.RepositoryPath, suite.CoveragePath, diagnostics, suite.Id, resolve: true);
             var mutationPath = SafePath(context.RepositoryPath, suite.MutationPath, diagnostics, suite.Id, required: false);
@@ -146,13 +173,21 @@ public sealed partial class TestingService
                 executions.Add(InvalidEvidence(suite, "The declared native result file is missing."));
                 continue;
             }
-            if (workflow.Run.InputDigest is not null || failedMutation)
+            if (workflow.Run.InputDigest is not null || failedNativeReport || playwright)
             {
-                var started = states.Select(state => DateTimeOffset.TryParse(state.StartedAtUtc, out var value) ? value : DateTimeOffset.MaxValue).Min();
+                var starts = states.Select(state => DateTimeOffset.TryParse(state.StartedAtUtc, out var value) ? value : DateTimeOffset.MaxValue);
+                var started = playwright ? starts.Max() : starts.Min();
                 var reports = new[] { resultPath, coveragePath, mutationPath }.Where(path => path is not null).ToArray();
                 if (reports.Any(path => !File.Exists(path) || File.GetLastWriteTimeUtc(path!) < started.UtcDateTime))
                 {
                     executions.Add(InvalidEvidence(suite, "A declared native report is missing or predates this execution; use retained per-run output paths."));
+                    continue;
+                }
+                var completed = states.Select(state => DateTimeOffset.TryParse(state.CompletedAtUtc, out var value)
+                    ? value : DateTimeOffset.MinValue).Max();
+                if (playwright && reports.Any(path => File.GetLastWriteTimeUtc(path!) > completed.UtcDateTime))
+                {
+                    executions.Add(InvalidEvidence(suite, "A declared native browser report was written after this execution completed."));
                     continue;
                 }
             }
@@ -194,21 +229,24 @@ public sealed partial class TestingService
             var steps = definition.Steps.Where(step => step.Suites.Contains(suite.Id, StringComparer.OrdinalIgnoreCase)).ToArray();
             var states = workflow.Run.Steps.Where(state => steps.Any(step => step.Id.Equals(state.Id, StringComparison.OrdinalIgnoreCase))).ToArray();
             var failedState = states.LastOrDefault(state => state.Status is "failed" or "blocked");
-            if (failedState is not null && suite.ResultFormat.Equals("stryker-json", StringComparison.OrdinalIgnoreCase))
+            if (failedState is not null && (suite.ResultFormat.Equals("stryker-json", StringComparison.OrdinalIgnoreCase)
+                || suite.ResultFormat.Equals("playwright-json", StringComparison.OrdinalIgnoreCase)))
             {
                 // Preserve the failed process observation while retaining any
-                // fresh native mutant outcomes that could still be assessed.
+                // fresh native outcomes that could still be assessed.
                 execution = execution with
                 {
                     Status = "failed",
                     FailureKind = ParseFailure(failedState.FailureKind),
-                    Diagnostics = new[] { failedState.Error ?? $"Workflow step {failedState.Id} failed." }.Concat(execution.Diagnostics).ToArray(),
+                    Diagnostics = new[] { failedState.Error ?? $"Workflow step {failedState.Id} failed." }
+                        .Concat(execution.Diagnostics).Distinct(StringComparer.Ordinal).ToArray(),
                 };
             }
             var caseIds = execution.Cases.Select(item => item.Id).Where(item => !string.IsNullOrWhiteSpace(item))
                 .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(item => item, StringComparer.OrdinalIgnoreCase).ToArray();
+            var nativeAttempt = states.Length == 1 ? (int?)states[0].Attempt : null;
             var artifacts = execution.Artifacts
-                .Select(artifact => Correlate(artifact, runId, null, suite, revision, caseIds))
+                .Select(artifact => Correlate(artifact, runId, nativeAttempt, suite, revision, caseIds))
                 .Concat(WorkflowLogArtifacts(context.RepositoryPath, runId, suite, states, revision, caseIds, diagnostics))
                 .Concat(SuiteDiagnosticArtifacts(context.RepositoryPath, runId, suite, revision, caseIds, runStartedAt, diagnostics))
                 .DistinctBy(item => (item.Path, item.Digest, item.SuiteId, item.Attempt))
@@ -233,12 +271,27 @@ public sealed partial class TestingService
             Environment.GetEnvironmentVariable("CIS_IMPLEMENTER"),
             Environment.GetEnvironmentVariable("CIS_ASSURER"),
             Environment.GetEnvironmentVariable("CIS_ASSURANCE_TECHNIQUE"), workflow.Run.InputDigest);
-        var runRoot = Path.Combine(context.RepositoryPath, LocalRoot.Replace('/', Path.DirectorySeparatorChar), "runs", runId);
+        if (suiteIds is not null)
+        {
+            manifest = manifest with { SchemaVersion = 2, Status = status == "passed" ? "scope-passed" : status };
+            manifest = manifest with
+            {
+                Scope = TestReconcileScope.Create(manifest,
+                selected.Select(suite => suite.Id).Order(StringComparer.Ordinal).ToArray(),
+                validation.Suites.Select(suite => suite.Id).Except(selected.Select(suite => suite.Id), StringComparer.OrdinalIgnoreCase)
+                    .Order(StringComparer.Ordinal).ToArray())
+            };
+        }
+        var reference = manifest.Scope?.Id ?? runId;
+        var runRoot = Path.Combine(context.RepositoryPath, LocalRoot.Replace('/', Path.DirectorySeparatorChar),
+            manifest.Scope is null ? "runs" : "scoped-runs", reference);
+        if (manifest.Scope is not null)
+            return PublishScope(context, runRoot, reference, selected, manifest, executions, allArtifacts, diagnostics);
         Directory.CreateDirectory(runRoot);
         Write(Path.Combine(runRoot, "manifest.json"), JsonSerializer.Serialize(manifest, JsonOptions));
         Write(Path.Combine(runRoot, "results.json"), JsonSerializer.Serialize(executions, JsonOptions));
         Write(Path.Combine(runRoot, "artifacts.json"), JsonSerializer.Serialize(allArtifacts, JsonOptions));
-        return Result(context, null, runId, validation.Suites, manifest, [], diagnostics, true, "reconciled");
+        return Result(context, null, reference, suiteIds is null ? validation.Suites : selected, manifest, [], diagnostics, true, "reconciled");
     }
 
     private static (double Threshold, string ReportSha256, string AssessmentSha256, JsonElement? RunContext)? MutationAssessmentThreshold(string repository, string report)
@@ -369,10 +422,20 @@ public sealed partial class TestingService
     {
         var context = Resolve(repositoryPath, out var diagnostics);
         if (context is null) return Result(null, changeId, runId, [], null, [], diagnostics, false, "invalid-repository");
+        if (!SafeIdPattern().IsMatch(runId))
+        {
+            diagnostics.Add("ERROR: Test run reference must be a single portable path segment.");
+            return Result(context, changeId, runId, [], null, [], diagnostics, false, "invalid-run");
+        }
         if (!SafeIdPattern().IsMatch(changeId))
         {
             diagnostics.Add("ERROR: Change ID must be a single portable path segment.");
             return Result(context, changeId, runId, [], null, [], diagnostics, false, "invalid-change");
+        }
+        if (!SafeIdPattern().IsMatch(runId))
+        {
+            diagnostics.Add("ERROR: Run ID must be a single portable path segment.");
+            return Result(context, changeId, runId, [], null, [], diagnostics, false, "invalid-run");
         }
         changeId = Path.GetFileName(changeId);
         var testCases = Path.Combine(context.DocumentationPath, "changes", changeId, "test-cases.md");
@@ -383,17 +446,14 @@ public sealed partial class TestingService
         }
         var ids = TestCaseHeadingPattern().Matches(File.ReadAllText(testCases)).Select(match => match.Groups["id"].Value.ToUpperInvariant()).Distinct().ToArray();
         var manifests = ReadWorkspaceManifests(context, runId, diagnostics);
-        var suiteByCase = manifests.SelectMany(item => item.Suites)
-            .SelectMany(suite => suite.Cases.Select(testCase => (Id: suite.SuiteId, Case: testCase)))
-            .Where(item => item.Case.Status == "passed" && !string.IsNullOrWhiteSpace(item.Case.Id))
+        var suiteByCase = manifests.SelectMany(manifest => manifest.Suites
+            .SelectMany(suite => suite.Cases.Select(testCase => (Id: suite.SuiteId, Case: testCase,
+                Passed: suite.Status == "passed" && testCase.Status == "passed"))))
+            .Where(item => !string.IsNullOrWhiteSpace(item.Case.Id))
             .GroupBy(item => item.Case.Id, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(item => item.Key, item => item.ToArray(), StringComparer.OrdinalIgnoreCase);
-        var passed = manifests.SelectMany(item => item.Suites).SelectMany(item => item.Cases)
-            .Where(item => item.Status == "passed" && !string.IsNullOrWhiteSpace(item.Id))
-            .GroupBy(item => item.Id, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(item => item.Key, item => item.ToArray(), StringComparer.OrdinalIgnoreCase);
-        var trace = ids.Select(id => passed.TryGetValue(id, out var cases)
-            ? new TestTraceResult(id, "passed", suiteByCase[id].Select(item => item.Id).Distinct().ToArray(), cases.Select(item => item.Source ?? item.Name).Distinct().ToArray())
+        var trace = ids.Select(id => suiteByCase.TryGetValue(id, out var cases) && cases.All(item => item.Passed)
+            ? new TestTraceResult(id, "passed", cases.Select(item => item.Id).Distinct().ToArray(), cases.Select(item => item.Case.Source ?? item.Case.Name).Distinct().ToArray())
             : new TestTraceResult(id, "missing", [], [])).ToArray();
         foreach (var missing in trace.Where(item => item.Status == "missing"))
             diagnostics.Add($"ERROR: {missing.Id} is not present in a passed reconciled test result for run '{runId}'.");
@@ -403,7 +463,8 @@ public sealed partial class TestingService
             Artifacts = manifests.SelectMany(item => item.Artifacts)
                 .DistinctBy(item => (item.Path, item.Digest, item.SuiteId, item.Attempt)).ToArray(),
             Status = manifests.Any(item => item.Status is "failed" or "invalid-evidence") ? "failed"
-                : manifests.Any(item => item.Status == "incomplete") ? "incomplete" : "passed",
+                : manifests.Any(item => item.Status == "incomplete") ? "incomplete"
+                : manifests.Any(item => item.Scope is not null) ? "scope-passed" : "passed",
         };
         var profiles = ReadTraceProfiles(context, manifests, diagnostics);
         return Result(context, changeId, runId, profiles, combined, trace,
@@ -437,25 +498,92 @@ public sealed partial class TestingService
         var manifests = new List<TestRunManifest>();
         foreach (var repository in repositories)
         {
-            var path = Path.Combine(repository.Path, LocalRoot.Replace('/', Path.DirectorySeparatorChar), "runs", runId, "manifest.json");
+            var ordinary = Path.Combine(repository.Path, LocalRoot.Replace('/', Path.DirectorySeparatorChar), "runs", runId, "manifest.json");
+            var scoped = Path.Combine(repository.Path, LocalRoot.Replace('/', Path.DirectorySeparatorChar), "scoped-runs", runId, "manifest.json");
+            if (File.Exists(ordinary) && File.Exists(scoped))
+            { diagnostics.Add($"ERROR: Test evidence reference '{runId}' is ambiguous; preserve both records and choose a different workflow identity."); continue; }
+            var path = File.Exists(ordinary) ? ordinary : scoped;
             if (!File.Exists(path)) continue;
+            if (path == scoped && CisPathSafety.ContainsReparsePoint(repository.Path, path))
+            { diagnostics.Add($"ERROR: Selected-suite manifest '{runId}' must remain unlinked."); continue; }
             try
             {
                 var manifest = JsonSerializer.Deserialize<TestRunManifest>(File.ReadAllText(path), JsonOptions);
                 if (manifest is not null)
                 {
-                    if (!string.Equals(manifest.RepositoryId, repository.Id, StringComparison.Ordinal))
+                    if (manifest.SchemaVersion == 1 ? manifest.Scope is not null || path == scoped
+                        : manifest.SchemaVersion != 2 || path == ordinary || manifest.Scope is null
+                            || manifest.Scope.Id != runId || !manifest.Scope.Matches(manifest))
+                        diagnostics.Add($"ERROR: Test manifest scope/schema is invalid for '{runId}'.");
+                    else if (!string.Equals(manifest.RepositoryId, repository.Id, StringComparison.Ordinal))
                         diagnostics.Add($"ERROR: Test manifest repository '{manifest.RepositoryId}' does not match its registered owner '{repository.Id}'.");
-                    else manifests.Add(manifest);
+                    else if (TraceManifestIsCurrent(repository.Path, manifest.Scope?.WorkflowRunId ?? runId, manifest, diagnostics)) manifests.Add(manifest);
                 }
             }
-            catch (JsonException exception)
+            catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException or InvalidDataException)
             {
                 diagnostics.Add($"ERROR: Test manifest for {repository.Id} is invalid: {exception.Message}");
             }
         }
         if (manifests.Count == 0) diagnostics.Add($"ERROR: No reconciled test manifest was found for run '{runId}'.");
         return manifests;
+    }
+
+    private bool TraceManifestIsCurrent(string repository, string runId, TestRunManifest manifest, ICollection<string> diagnostics)
+    {
+        var context = _resolver.Resolve(repository).Context;
+        if (context is not null && !File.Exists(ProfilePath(context)))
+        {
+            diagnostics.Add($"ERROR: Test-suite profile was not found for executing repository {manifest.RepositoryId}.");
+            return false;
+        }
+        var browser = manifest.Suites?.Any(suite => string.Equals(suite.Layer, "browser", StringComparison.OrdinalIgnoreCase)) == true;
+        if (browser && string.IsNullOrWhiteSpace(manifest.InputDigest))
+        {
+            diagnostics.Add($"ERROR: Browser evidence for {manifest.RepositoryId} has no execution input digest; start a fresh workflow run to verify current journeys.");
+            return false;
+        }
+        var currentInputDigest = context is null ? null : manifest.InputDigest is not null || browser
+            ? CisExecutionIdentity.Capture(context) : CisExecutionIdentity.CaptureIfAdopted(context);
+        var workflow = _workflows.Status(repository, runId);
+        var definition = _workflows.Describe(repository, manifest.WorkflowId).Workflow;
+        if (context is null || manifest.RunId != runId || workflow.Run is null || workflow.Diagnostics.Count > 0
+            || definition is null || manifest.WorkflowDigest != definition.Digest || workflow.Run.WorkflowDigest != definition.Digest
+            || manifest.StartedAtUtc != workflow.Run.CreatedAtUtc || manifest.CompletedAtUtc != workflow.Run.UpdatedAtUtc
+            || manifest.SuiteProfileDigest != ProfileDigest(context) || manifest.RepositoryRevision != Revision(repository)
+            || manifest.InputDigest != workflow.Run.InputDigest || manifest.InputDigest != currentInputDigest)
+        {
+            diagnostics.Add($"ERROR: Test manifest for {manifest.RepositoryId} does not match the current repository, profile, workflow, or execution inputs; reconcile a current run.");
+            return false;
+        }
+        if (manifest.Suites is null || manifest.Artifacts is null
+            || manifest.Suites.Any(suite => suite.Cases is null || suite.Artifacts is null
+                || (suite.Cases.Count > 0 && !suite.Artifacts.Any(artifact => artifact.Kind == "test-result"
+                    && artifact.RunId == runId && artifact.SuiteId == suite.SuiteId
+                    && artifact.RepositoryRevision == manifest.RepositoryRevision
+                    && manifest.Artifacts.Any(bound => bound.Path == artifact.Path && bound.Digest == artifact.Digest
+                        && bound.Bytes == artifact.Bytes && bound.SuiteId == artifact.SuiteId)))))
+        {
+            diagnostics.Add($"ERROR: Test manifest for {manifest.RepositoryId} has missing or unbound native results.");
+            return false;
+        }
+        foreach (var artifact in manifest.Artifacts.Concat(manifest.Suites.SelectMany(suite => suite.Artifacts))
+            .DistinctBy(item => (item.Path, item.Digest, item.Bytes)))
+        {
+            if (!CisPathSafety.TryResolveUnderRoot(repository, artifact.Path, out var path)
+                || CisPathSafety.ContainsReparsePoint(repository, path) || !File.Exists(path))
+            {
+                diagnostics.Add($"ERROR: Native artifact for {manifest.RepositoryId} is missing or unsafe: {artifact.Path}");
+                return false;
+            }
+            using var stream = File.OpenRead(path);
+            if (stream.Length != artifact.Bytes || !Convert.ToHexString(SHA256.HashData(stream)).Equals(artifact.Digest, StringComparison.OrdinalIgnoreCase))
+            {
+                diagnostics.Add($"ERROR: Native artifact for {manifest.RepositoryId} has changed: {artifact.Path}");
+                return false;
+            }
+        }
+        return true;
     }
 
     private IReadOnlyList<TestSuiteProfile> ReadProfile(CisRepositoryContext context, ICollection<string> diagnostics)

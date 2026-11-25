@@ -9,7 +9,7 @@ internal sealed class TaskEngineeringCompletion(ICisRepositoryContextResolver re
     ICisEngineeringAssessment? engineering, ICisGraphSnapshotReader? graph, IReadOnlyList<ICisRepositoryDoctorCheck> checks)
 {
     internal (EngineeringCompletionReceipt? Template, IReadOnlyList<string> Errors) Prepare(ChangeDossier change, PlanWorkItem task,
-        IReadOnlyList<string>? fallbackTargets, string? document, string? target)
+        IReadOnlyList<string>? fallbackTargets, string? document, string? target, string? taskContractDigest = null)
     {
         try
         {
@@ -22,7 +22,7 @@ internal sealed class TaskEngineeringCompletion(ICisRepositoryContextResolver re
                 return (null, ["Engineering defaults must be adopted by the selected target and the graph module available."]);
             if (assessment.Diagnostics.Count > 0) return (null, assessment.Diagnostics);
             var template = EngineeringCompletionReview.Template(change.Id, task, Policy(context), graph.ReadMetadata(context.RepositoryPath),
-                assessment, CisExecutionIdentity.Capture(context), document);
+                assessment, CisExecutionIdentity.Capture(context), document, taskContractDigest);
             return (template with { RepositoryId = context.RepositoryId, ReceiptPath = scope.ReceiptPath }, []);
         }
         catch (Exception error) when (Recoverable(error)) { return (null, [error.Message]); }
@@ -31,28 +31,54 @@ internal sealed class TaskEngineeringCompletion(ICisRepositoryContextResolver re
     internal IReadOnlyList<string> Review(ChangeDossier change, PlanWorkItem task, IReadOnlyList<string>? fallbackTargets,
         Func<string?> readDocument, Func<string>? readContract = null)
     {
+        using var reviewTiming = CisPerformanceTrace.Start("completion.review");
         var errors = new List<string>();
         try
         {
             var authority = resolver.Resolve(change.RepositoryPath).Context ?? throw new InvalidDataException("Task authority context is unavailable.");
-            var authorityAdopted = CisExecutionIdentity.CaptureIfAdopted(authority) is not null;
+            bool authorityAdopted;
+            using (CisPerformanceTrace.Start("completion.adoption.authority"))
+                authorityAdopted = CisEngineeringPolicy.Read(authority.RepositoryPath)?.RequireTaskCompletion == true;
             if (!authorityAdopted && !AnyTargetAdopted(change, task, fallbackTargets)) return [];
             var scopes = new TaskCompletionScopes(resolver, registry).Resolve(change, task, fallbackTargets);
-            var adoptedTargets = scopes.ToDictionary(scope => scope.Context.RepositoryId,
-                scope => CisExecutionIdentity.CaptureIfAdopted(scope.Context) is not null, StringComparer.Ordinal);
+            Dictionary<string, bool> adoptedTargets;
+            using (CisPerformanceTrace.Start("completion.adoption.targets"))
+                adoptedTargets = scopes.ToDictionary(scope => scope.Context.RepositoryId,
+                    scope => CisEngineeringPolicy.Read(scope.Context.RepositoryPath)?.RequireTaskCompletion == true, StringComparer.Ordinal);
             if (!authorityAdopted && adoptedTargets.Values.All(adopted => !adopted)) return [];
-            var authorityIdentity = CisExecutionIdentity.Capture(authority);
-            var dossierIdentity = CisTaskAuthorityContext.Capture(authority, change.Id);
+            // Share only initial observations within this review. DocumentationRoot affects
+            // dossier exclusions; the final captures below deliberately bypass this dictionary.
+            var initialIdentities = new Dictionary<(string Root, string DocumentationRoot), string>();
+            string InitialIdentity(CisRepositoryContext context)
+            {
+                var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(context.RepositoryPath));
+                if (OperatingSystem.IsWindows()) root = root.ToUpperInvariant();
+                var key = (root, context.DocumentationRoot.Replace('\\', '/').TrimEnd('/'));
+                if (!initialIdentities.TryGetValue(key, out var digest))
+                    initialIdentities.Add(key, digest = CisExecutionIdentity.Capture(context));
+                return digest;
+            }
+            string authorityIdentity;
+            using (CisPerformanceTrace.Start("completion.identity.authority"))
+                authorityIdentity = InitialIdentity(authority);
+            string dossierIdentity;
+            using (CisPerformanceTrace.Start("completion.identity.dossier"))
+                dossierIdentity = CisTaskAuthorityContext.Capture(authority, change.Id);
             var document = readDocument();
+            // Outcome and legacy tasks have different canonical contract projections.
+            // Bind evidence and the final fresh read to the selected projection alike.
+            var contractDigest = readContract?.Invoke() ?? EngineeringCompletionReview.TaskDigest(task, document);
             var identities = new List<(CisRepositoryContext Context, string Digest)>();
             if (scopes.Any(scope => scope.Context.RepositoryId != authority.RepositoryId))
             {
-                if (graph?.ReadMetadata(authority.RepositoryPath) is not { ExitCode: 0, Freshness: "fresh", Build.Status: "complete" or "partial" })
-                    errors.Add("Authority task context requires a fresh graph before participant completion.");
+                using (CisPerformanceTrace.Start("completion.graph"))
+                    if (graph?.ReadMetadata(authority.RepositoryPath) is not { ExitCode: 0, Freshness: "fresh", Build.Status: "complete" or "partial" })
+                        errors.Add("Authority task context requires a fresh graph before participant completion.");
                 var authorityAlignment = checks.Where(check => check.Name == "engineering-alignment").ToArray();
                 if (authorityAlignment.Length == 0) errors.Add("Authority engineering alignment checker is unavailable.");
-                errors.AddRange(authorityAlignment.SelectMany(check => check.Inspect(authority)).Where(finding => finding.Severity == "error")
-                    .Select(finding => "authority: " + finding.Message));
+                using (CisPerformanceTrace.Start("completion.alignment"))
+                    errors.AddRange(authorityAlignment.SelectMany(check => check.Inspect(authority)).Where(finding => finding.Severity == "error")
+                        .Select(finding => "authority: " + finding.Message));
             }
             foreach (var scope in scopes)
             {
@@ -65,36 +91,52 @@ internal sealed class TaskEngineeringCompletion(ICisRepositoryContextResolver re
                         if (adopted || authorityAdopted) errors.Add($"{context.RepositoryId}: Engineering completion assessment provider is unavailable.");
                         continue;
                     }
-                    var assessment = engineering.Assess(context, task.Category);
+                    EngineeringAssessment assessment;
+                    using (CisPerformanceTrace.Start("completion.assessment"))
+                        assessment = engineering.Assess(context, task.Category);
                     errors.AddRange(assessment.Diagnostics.Select(error => context.RepositoryId + ": " + error));
                     if (!assessment.Adopted)
                     {
                         errors.Add($"{context.RepositoryId}: Combined task completion requires reviewed engineering adoption for every declared target when any target or the authority has adopted it.");
                         continue;
                     }
-                    var identity = CisExecutionIdentity.Capture(context);
+                    string identity;
+                    using (CisPerformanceTrace.Start("completion.identity.target"))
+                        identity = InitialIdentity(context);
                     identities.Add((context, identity));
                     var alignment = checks.Where(check => check.Name == "engineering-alignment").ToArray();
                     if (alignment.Length == 0) errors.Add(context.RepositoryId + ": Engineering alignment checker is unavailable.");
-                    errors.AddRange(alignment.SelectMany(check => check.Inspect(context)).Where(finding => finding.Severity == "error")
-                        .Select(finding => context.RepositoryId + ": " + finding.Message));
+                    using (CisPerformanceTrace.Start("completion.alignment"))
+                        errors.AddRange(alignment.SelectMany(check => check.Inspect(context)).Where(finding => finding.Severity == "error")
+                            .Select(finding => context.RepositoryId + ": " + finding.Message));
                     var participant = context.RepositoryId != authority.RepositoryId;
-                    errors.AddRange(EngineeringCompletionReview.Review(context.RepositoryPath, Path.Combine(change.RepositoryPath, scope.ReceiptPath),
-                        change.Id, task, Policy(context), graph?.ReadMetadata(context.RepositoryPath), assessment, identity, context.DocumentationRoot, document,
-                        implementationRepository: participant ? authority.RepositoryPath : null,
-                        reviewRepository: participant ? authority.RepositoryPath : null,
-                        receiptRepository: authority.RepositoryPath, expectedRepositoryId: context.RepositoryId,
-                        authorityInputDigest: participant ? authorityIdentity : null,
-                        authorityDossierDigest: participant ? dossierIdentity : null).Select(error => context.RepositoryId + ": " + error));
+                    CisGraphMetadataReadResult? metadata;
+                    using (CisPerformanceTrace.Start("completion.graph"))
+                        metadata = graph?.ReadMetadata(context.RepositoryPath);
+                    using (CisPerformanceTrace.Start("completion.evidence"))
+                        errors.AddRange(EngineeringCompletionReview.Review(context.RepositoryPath, Path.Combine(change.RepositoryPath, scope.ReceiptPath),
+                            change.Id, task, Policy(context), metadata, assessment, identity, context.DocumentationRoot, document,
+                            taskContractDigest: contractDigest,
+                            implementationRepository: participant ? authority.RepositoryPath : null,
+                            reviewRepository: participant ? authority.RepositoryPath : null,
+                            receiptRepository: authority.RepositoryPath, expectedRepositoryId: context.RepositoryId,
+                            authorityInputDigest: participant ? authorityIdentity : null,
+                            authorityDossierDigest: participant ? dossierIdentity : null,
+                            browserCatalogueRepository: authority.RepositoryPath,
+                            browserCataloguePath: Path.Combine(authority.RepositoryPath, change.RelativePath, "test-cases.md"))
+                            .Select(error => context.RepositoryId + ": " + error));
                 }
                 catch (Exception error) when (Recoverable(error)) { errors.Add(context.RepositoryId + ": " + error.Message); }
             }
-            foreach (var (context, digest) in identities)
-                if (CisExecutionIdentity.Capture(context) != digest)
-                    errors.Add(context.RepositoryId + ": Participant inputs changed while other repositories were being reviewed.");
-            if (CisExecutionIdentity.Capture(authority) != authorityIdentity || CisTaskAuthorityContext.Capture(authority, change.Id) != dossierIdentity || readDocument() != document
-                || readContract is not null && readContract() != EngineeringCompletionReview.TaskDigest(task, document))
-                errors.Add("Authority or task inputs changed during completion review; refresh the complete evidence.");
+            using (CisPerformanceTrace.Start("completion.final-fence"))
+            {
+                foreach (var (context, digest) in identities)
+                    if (CisExecutionIdentity.Capture(context) != digest)
+                        errors.Add(context.RepositoryId + ": Participant inputs changed while other repositories were being reviewed.");
+                if (CisExecutionIdentity.Capture(authority) != authorityIdentity || CisTaskAuthorityContext.Capture(authority, change.Id) != dossierIdentity || readDocument() != document
+                    || readContract is not null && readContract() != contractDigest)
+                    errors.Add("Authority or task inputs changed during completion review; refresh the complete evidence.");
+            }
         }
         catch (Exception error) when (Recoverable(error)) { errors.Add(error.Message); }
         return errors;

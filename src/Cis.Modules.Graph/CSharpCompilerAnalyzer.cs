@@ -1,6 +1,7 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Operations;
 
 namespace Cis.Modules.Graph;
 
@@ -35,7 +36,10 @@ internal static class CSharpCompilerAnalyzer
             results.SelectMany(result => result.ReferencedSymbols).DistinctBy(item => item.LocalId).OrderBy(item => item.LocalId, StringComparer.Ordinal).ToArray(),
             results.SelectMany(result => result.Annotations).Distinct().ToArray(),
             results.SelectMany(result => result.Interfaces).Distinct().ToArray(),
-            results.SelectMany(result => result.Calls).ToArray());
+            results.SelectMany(result => result.Calls).ToArray())
+        {
+            References = results.SelectMany(result => result.References).Distinct().ToArray()
+        };
     }
 
     private static CSharpCompilerAnalysis AnalyzeCompilation(IReadOnlyList<CSharpCompilerInput> inputs,
@@ -140,6 +144,7 @@ internal static class CSharpCompilerAnalyzer
         }
 
         var calls = new Dictionary<string, CSharpCompilerCall>(StringComparer.Ordinal);
+        var references = new Dictionary<string, CSharpCompilerRelation>(StringComparer.Ordinal);
         foreach (var syntaxTree in syntaxTrees)
         {
             var model = compilation.GetSemanticModel(syntaxTree, ignoreAccessibility: true);
@@ -152,6 +157,24 @@ internal static class CSharpCompilerAnalyzer
             foreach (var creation in root.DescendantNodes().OfType<ObjectCreationExpressionSyntax>())
             {
                 AddCall(model, creation, creation, creation.ArgumentList?.Arguments.Select(argument => argument.Expression) ?? [], inputByPath, symbols, referenced, calls);
+            }
+
+            // Record static member binding separately from method invocation. These
+            // operations cover reads, writes, indexers and event subscriptions,
+            // including interface properties, without inventing runtime dispatch.
+            foreach (var expression in root.DescendantNodes().Where(node => node is IdentifierNameSyntax
+                or MemberAccessExpressionSyntax or MemberBindingExpressionSyntax
+                or ElementAccessExpressionSyntax or ElementBindingExpressionSyntax))
+            {
+                var target = model.GetOperation(expression) switch
+                {
+                    IFieldReferenceOperation field => (ISymbol)field.Field,
+                    IPropertyReferenceOperation property => property.Property,
+                    IEventReferenceOperation @event => @event.Event,
+                    _ => null
+                };
+                if (target is not null)
+                    AddReference(model, expression, target, inputByPath, symbols, referenced, references);
             }
         }
 
@@ -169,7 +192,11 @@ internal static class CSharpCompilerAnalyzer
             referenced.Values.OrderBy(symbol => symbol.LocalId, StringComparer.Ordinal).ToArray(),
             annotations.Values.OrderBy(relation => relation.SourceLocalId, StringComparer.Ordinal).ThenBy(relation => relation.TargetLocalId, StringComparer.Ordinal).ToArray(),
             interfaces.Values.OrderBy(relation => relation.SourceLocalId, StringComparer.Ordinal).ThenBy(relation => relation.TargetLocalId, StringComparer.Ordinal).ToArray(),
-            orderedCalls);
+            orderedCalls)
+        {
+            References = references.Values.OrderBy(relation => relation.SourceLocalId, StringComparer.Ordinal)
+                .ThenBy(relation => relation.TargetLocalId, StringComparer.Ordinal).ToArray()
+        };
     }
 
     private static IEnumerable<SyntaxNode> DeclarationNodes(SyntaxNode root)
@@ -179,6 +206,34 @@ internal static class CSharpCompilerAnalyzer
             or LocalFunctionStatementSyntax
             or BasePropertyDeclarationSyntax
             or AccessorDeclarationSyntax);
+
+    private static void AddReference(
+        SemanticModel model,
+        SyntaxNode expression,
+        ISymbol target,
+        IReadOnlyDictionary<string, CSharpCompilerInput> inputs,
+        IDictionary<string, CSharpCompilerSymbol> symbols,
+        IDictionary<string, CSharpCompilerReferencedSymbol> referenced,
+        IDictionary<string, CSharpCompilerRelation> references)
+    {
+        var caller = model.GetEnclosingSymbol(expression.SpanStart);
+        if (caller is null || !TryCreateSourceSymbol(caller, expression, inputs, out var callerSymbol)) return;
+        symbols.TryAdd(callerSymbol.LocalId, callerSymbol);
+        var definition = target.OriginalDefinition;
+        string targetId;
+        if (TryCreateSourceSymbol(definition, expression, inputs, out var targetSymbol))
+        {
+            symbols.TryAdd(targetSymbol.LocalId, targetSymbol);
+            targetId = targetSymbol.LocalId;
+        }
+        else
+        {
+            var external = CreateReferencedSymbol(definition, SymbolKind(definition, expression), []);
+            referenced.TryAdd(external.LocalId, external);
+            targetId = external.LocalId;
+        }
+        AddRelation(callerSymbol.LocalId, targetId, "references", expression, references);
+    }
 
     private static void AddCall(
         SemanticModel model,
@@ -339,6 +394,11 @@ internal static class CSharpCompilerAnalyzer
             generatedReasons)
         {
             OwnershipConflictPaths = mixedOwnership ? sourcePaths : [],
+            DeclarationLocations = symbol.Locations.Where(location => location.IsInSource && location.SourceTree is not null
+                    && inputs.ContainsKey(location.SourceTree.FilePath.Replace('\\', '/')))
+                .Select(location => new CSharpCompilerDeclarationLocation(location.SourceTree!.FilePath.Replace('\\', '/'),
+                    location.GetLineSpan().StartLinePosition.Line + 1))
+                .Distinct().OrderBy(location => location.Path, StringComparer.Ordinal).ThenBy(location => location.Line).ToArray(),
         };
         return true;
     }
@@ -369,7 +429,11 @@ internal static class CSharpCompilerAnalyzer
             kind,
             definition.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
             assembly,
-            semantics.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray());
+            semantics.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray())
+        {
+            DeclaringTypeKind = (definition is INamedTypeSymbol named ? named.TypeKind : definition.ContainingType?.TypeKind)
+                ?.ToString().ToLowerInvariant() ?? string.Empty
+        };
     }
 
     private static void AddRelation(
@@ -669,7 +733,10 @@ internal sealed record CSharpCompilerSymbol(
     IReadOnlyList<string> GeneratedReasons)
 {
     public IReadOnlyList<string> OwnershipConflictPaths { get; init; } = [];
+    public IReadOnlyList<CSharpCompilerDeclarationLocation> DeclarationLocations { get; init; } = [];
 }
+
+internal sealed record CSharpCompilerDeclarationLocation(string Path, int Line);
 
 internal sealed record CSharpCompilerReferencedSymbol(
     string LocalId,
@@ -678,7 +745,10 @@ internal sealed record CSharpCompilerReferencedSymbol(
     string Kind,
     string Signature,
     string Assembly,
-    IReadOnlyList<string> Semantics);
+    IReadOnlyList<string> Semantics)
+{
+    public string DeclaringTypeKind { get; init; } = string.Empty;
+}
 
 internal sealed record CSharpCompilerRelation(
     string SourceLocalId,
@@ -708,4 +778,7 @@ internal sealed record CSharpCompilerAnalysis(
     IReadOnlyList<CSharpCompilerReferencedSymbol> ReferencedSymbols,
     IReadOnlyList<CSharpCompilerRelation> Annotations,
     IReadOnlyList<CSharpCompilerRelation> Interfaces,
-    IReadOnlyList<CSharpCompilerCall> Calls);
+    IReadOnlyList<CSharpCompilerCall> Calls)
+{
+    public IReadOnlyList<CSharpCompilerRelation> References { get; init; } = [];
+}

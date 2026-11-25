@@ -11,6 +11,183 @@ namespace Cis.Modules.Testing.Tests;
 public sealed class IncrementalMaterialIdentityTests
 {
     [Fact]
+    public void ConfigurationPathMatchingAProfileFactNameKeepsInspectionAndReuseUsable()
+    {
+        using var fixture = new GovernedUnitFixture();
+        fixture.Native.Write("unit-command", "original declared configuration");
+        fixture.Native.Save(fixture.Native.Profile with { ConfigFiles = [.. fixture.Native.Profile.ConfigFiles, "unit-command"] });
+        AssertCompleted(fixture.Run());
+        var calls = fixture.Native.Calls();
+        var reports = Reports(fixture);
+        AssertWarm(fixture, calls, reports);
+
+        fixture.Native.Write("unit-command", "changed declared configuration");
+        var plan = fixture.Service.Plan(fixture.Options());
+        var status = fixture.Service.Plan(fixture.Options());
+        var verified = fixture.Service.Verify(new(fixture.Native.Path, "profile.json") { Layer = "unit" });
+        Assert.Equal(0, plan.ExitCode);
+        Assert.Equal(2, plan.PendingUnitBatches);
+        Assert.Equal(2, status.PendingUnitBatches);
+        Assert.All(plan.Batches, batch => Assert.Contains(batch.UnitReasons,
+            reason => reason.Category == "configuration" && reason.Input == "unit-command" && reason.Change == "changed"));
+        Assert.Equal(4, verified.ExitCode);
+        Assert.Contains(verified.ReuseReasons.SelectMany(pair => pair.Value),
+            reason => reason.Category == "configuration" && reason.Input == "unit-command" && reason.Change == "changed");
+        Assert.Equal(calls, fixture.Native.Calls());
+
+        fixture.Native.Write("unit-command", "original declared configuration");
+        Assert.Equal(0, fixture.Service.Plan(fixture.Options()).PendingUnitBatches);
+        Assert.Equal(0, fixture.Service.Verify(new(fixture.Native.Path, "profile.json") { Layer = "unit" }).ExitCode);
+        AssertWarm(fixture, calls, reports);
+    }
+
+    [Fact]
+    public void FallbackSeparatesCloseoutMetadataFromDeclaredDocumentsProjectsAndUnknownBuildInputs()
+    {
+        using var fixture = new GovernedUnitFixture();
+        fixture.Native.Write("docs/closeout.md", "# Closeout\nPending verification.\n");
+        fixture.Native.Write("docs/packaged-guide.md", "# Packaged guide\nA real declared test input.\n");
+        fixture.Native.Write("tests/Fixture.csproj", "<Project />");
+        fixture.Native.Write("build/helper.ps1", "Write-Output 'native preparation input'");
+        fixture.Native.Save(fixture.Native.Profile with { ConfigFiles = [.. fixture.Native.Profile.ConfigFiles, "docs/packaged-guide.md"] });
+        var graph = new MetadataGraph(fixture.Native);
+        var service = new IncrementalTestService(graph, fixture.Controller, fixture.Controller);
+        AssertCompleted(service.Run(fixture.Options(), 0, TestContext.Current.CancellationToken));
+        var calls = fixture.Native.Calls();
+        var reports = Reports(fixture);
+        fixture.Native.Write("docs/closeout.md", "# Closeout\nThe existing native cases passed.\n");
+        fixture.Native.BuildSuffix = "new-commit-and-unchanged-executable-graph";
+        AssertWarm(fixture, calls, reports, service);
+
+        foreach (var file in new[] { "docs/packaged-guide.md", "tests/Fixture.csproj", "build/helper.ps1" })
+        {
+            var before = File.ReadAllBytes(fixture.Native.Full(file));
+            fixture.Native.Write(file, "Changed genuinely material input.");
+            var pending = service.Plan(fixture.Options());
+            Assert.Equal(2, pending.PendingUnitBatches);
+            Assert.All(pending.Batches, batch => Assert.Contains(batch.UnitReasons, reason => reason.Input == file && reason.Change == "changed"));
+            File.WriteAllBytes(fixture.Native.Full(file), before);
+            Assert.Equal(0, service.Plan(fixture.Options()).PendingUnitBatches);
+        }
+        Assert.Equal(calls, fixture.Native.Calls());
+
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ExactCompatibleOldFallbackResultWithoutInputBreakdownStillReusesWithoutRewritingHistory(bool declaredTransport)
+    {
+        using var environment = new NeutralTransportEnvironment();
+        using var fixture = new IncrementalTestServiceTests.Fixture();
+        const string transportName = "CODEX_REUSE_SYNTHETIC_INPUT";
+        if (declaredTransport)
+        {
+            fixture.Save(fixture.Profile with { Environment = new() { [transportName] = "declared-native-input" } });
+            fixture.Write(".cis/environment-probe.json", JsonSerializer.Serialize(new[] { transportName }));
+        }
+        fixture.Write("docs/closeout.md", "# Unchanged historical note\n");
+        fixture.Write("docs/packaged-guide.md", "# Guide\n");
+        fixture.Write("tests/Fixture.csproj", "<Project />");
+        fixture.Write("build/helper.ps1", "Write-Output 'native preparation input'");
+        var graph = new MetadataGraph(fixture) { GovernanceDocuments = false };
+        var service = new IncrementalTestService(graph);
+        var options = new IncrementalTestOptions(fixture.Path, "profile.json", "unit", 4, 120);
+        AssertCompleted(service.Run(options, 0, TestContext.Current.CancellationToken));
+        if (declaredTransport)
+            Assert.Equal("declared-native-input", JsonSerializer.Deserialize<Dictionary<string, string>>(
+                File.ReadAllBytes(fixture.Full(".cis/environment-observed.json")))![transportName]);
+        var calls = fixture.Calls();
+        var statePath = fixture.Full(IncrementalTestService.LocalRoot + "/sample/state.json");
+        var historical = fixture.SavedState();
+        var reports = historical.Batches.Values.Select(batch => fixture.Full(IncrementalTestService.LocalRoot + "/sample/" + batch.Unit!.ReportPath))
+            .ToDictionary(path => path, File.ReadAllBytes);
+        foreach (var (id, batch) in historical.Batches.ToArray()) historical.Batches[id] = batch with { Unit = batch.Unit! with { InputBasisId = null } };
+        historical.InputFacts.Clear();
+        historical.InputBases.Clear();
+        fixture.WriteState(historical);
+        var historicalBytes = File.ReadAllBytes(statePath);
+        graph.GovernanceDocuments = true;
+
+        var plan = service.Plan(options);
+        Assert.Equal(0, plan.PendingUnitBatches);
+        foreach (var batch in plan.Batches) Assert.Equal(historical.Batches[batch.Id].Unit!.Fingerprint, batch.UnitFingerprint);
+        Assert.Equal(0, service.Verify(new(fixture.Path, "profile.json") { Layer = "unit" }).ExitCode);
+        Assert.Equal(historicalBytes, File.ReadAllBytes(statePath));
+        Assert.Equal(0, service.Run(options, 0, TestContext.Current.CancellationToken).ExecutedUnitBatches);
+        Assert.All(fixture.SavedState().Batches.Values, batch => Assert.Null(batch.Unit!.InputBasisId));
+        Assert.Equal(calls, fixture.Calls());
+
+        // A real mutation-only continuation must use canonical material identity
+        // for the during-run guard while retaining the accepted legacy unit pin.
+        fixture.Save(fixture.Profile with { BreakThreshold = 85 });
+        var continued = service.Run(options with { Layer = "all" }, 0, TestContext.Current.CancellationToken);
+        AssertCompleted(continued);
+        Assert.Equal(0, continued.ExecutedUnitBatches);
+        Assert.Equal(2, continued.ReusedUnitBatches);
+        Assert.Equal(2, continued.ExecutedMutationBatches);
+        Assert.All(continued.Batches, batch => Assert.True(batch.UnitCurrent && batch.MutationCurrent));
+        foreach (var (id, batch) in historical.Batches)
+            Assert.Equal(batch.Unit!.Fingerprint, fixture.SavedState().Batches[id].Unit!.Fingerprint);
+        foreach (var report in reports) Assert.Equal(report.Value, File.ReadAllBytes(report.Key));
+        Assert.Equal(0, service.Verify(new(fixture.Path, "profile.json") { Layer = "unit" }).ExitCode);
+        var continuationCalls = fixture.Calls();
+        Assert.Equal(calls.Length + 6, continuationCalls.Length); // Mutation, recovery and postflight for each source.
+        var next = service.Run(options with { Layer = "all" }, 0, TestContext.Current.CancellationToken);
+        AssertCompleted(next);
+        Assert.Equal(0, next.ExecutedUnitBatches);
+        Assert.Equal(0, next.ExecutedMutationBatches);
+        Assert.Equal(continuationCalls, fixture.Calls());
+
+        if (!declaredTransport)
+        {
+            // Model an older synthetic cache whose native environment included
+            // a nonempty transport input. The corrected target would remove it,
+            // so an exact old raw digest cannot authorize automatic reuse.
+            var retained = fixture.SavedState();
+            var syntheticHistorical = fixture.SavedState();
+            Environment.SetEnvironmentVariable(transportName, "old-material-native-input");
+            var oldFingerprints = PreviousRawTransportFingerprints(fixture, service, graph);
+            foreach (var (id, batch) in syntheticHistorical.Batches.ToArray())
+                syntheticHistorical.Batches[id] = batch with { Unit = batch.Unit! with { Fingerprint = oldFingerprints[id], InputBasisId = null } };
+            fixture.WriteState(syntheticHistorical);
+            var denied = service.Plan(options);
+            Assert.Equal(2, denied.PendingUnitBatches);
+            Assert.All(denied.Batches, batch => Assert.Contains(batch.UnitReasons, reason => reason.Category == "input-detail-unavailable"));
+            Assert.Equal(4, service.Verify(new(fixture.Path, "profile.json") { Layer = "unit" }).ExitCode);
+            Assert.Equal(continuationCalls, fixture.Calls());
+            foreach (var report in reports) Assert.Equal(report.Value, File.ReadAllBytes(report.Key));
+            fixture.WriteState(retained);
+            Environment.SetEnvironmentVariable(transportName, null);
+            Assert.Equal(0, service.Plan(options).PendingUnitBatches);
+        }
+
+        fixture.Write("docs/closeout.md", "# Historical dependency changed\n");
+        var unknown = service.Plan(options);
+        Assert.Equal(2, unknown.PendingUnitBatches);
+        Assert.All(unknown.Batches, batch => Assert.Contains(batch.UnitReasons, reason => reason.Category == "input-detail-unavailable"));
+        Assert.Equal(continuationCalls, fixture.Calls());
+    }
+
+    [Fact]
+    public void MissingAndAlteredReportsHaveSpecificReadOnlyReasonsAndRestorationRecoversReuse()
+    {
+        using var fixture = new GovernedUnitFixture();
+        AssertCompleted(fixture.Run());
+        var calls = fixture.Native.Calls();
+        var reports = Reports(fixture);
+        var report = reports.First();
+        fixture.Native.Write(Path.GetRelativePath(fixture.Native.Path, report.Key), "Altered report bytes");
+        Assert.Contains(fixture.Service.Plan(fixture.Options()).Batches.SelectMany(batch => batch.UnitReasons), reason => reason.Category == "report-altered");
+        File.Delete(report.Key);
+        Assert.Contains(fixture.Service.Plan(fixture.Options()).Batches.SelectMany(batch => batch.UnitReasons), reason => reason.Category == "report-missing");
+        File.WriteAllBytes(report.Key, report.Value);
+        Assert.Equal(0, fixture.Service.Plan(fixture.Options()).PendingUnitBatches);
+        Assert.Equal(0, fixture.Service.Verify(new(fixture.Native.Path, "profile.json") { Layer = "unit" }).ExitCode);
+        Assert.Equal(calls, fixture.Native.Calls());
+    }
+
+    [Fact]
     public void AcceptedUnitReportsSurviveProfileFormattingRetentionAndMutationOnlySettings()
     {
         using var fixture = new GovernedUnitFixture(mutationConfigured: true, recoveryConfigured: true);
@@ -145,7 +322,21 @@ public sealed class IncrementalMaterialIdentityTests
         var profile = fixture.Native.Profile;
         fixture.Native.Save(profile with { FullTestFilter = "FullyQualifiedName~Fixture.Changed" });
         AssertPending("src/A.cs", "src/B.cs");
+        Assert.All(fixture.Service.Plan(fixture.Options()).Batches, batch => Assert.Contains(batch.UnitReasons,
+            reason => reason.Category == "selection" && reason.Input == "full-test-filter" && reason.Change == "changed"));
         fixture.Native.Save(profile);
+        fixture.Native.Save(profile with { UnitCommand = [.. profile.UnitCommand, "--changed-command"] });
+        Assert.All(fixture.Service.Plan(fixture.Options()).Batches, batch => Assert.Contains(batch.UnitReasons,
+            reason => reason.Category == "configuration" && reason.Input == "unit-command" && reason.Change == "changed"));
+        fixture.Native.Write("added-config.json", "{\"newMaterialInput\":true}");
+        fixture.Native.Save(profile with { ConfigFiles = [.. profile.ConfigFiles, "added-config.json"] });
+        Assert.All(fixture.Service.Plan(fixture.Options()).Batches, batch => Assert.Contains(batch.UnitReasons,
+            reason => reason.Category == "configuration" && reason.Input == "added-config.json" && reason.Change == "added"));
+        fixture.Native.Save(profile with { ConfigFiles = [] });
+        Assert.All(fixture.Service.Plan(fixture.Options()).Batches, batch => Assert.Contains(batch.UnitReasons,
+            reason => reason.Category == "configuration" && reason.Input == "config.json" && reason.Change == "removed"));
+        fixture.Native.Save(profile);
+        Assert.Equal(0, fixture.Service.Plan(fixture.Options()).PendingUnitBatches);
         Assert.Equal(calls, fixture.Native.Calls());
 
         fixture.Native.Write("src/B.cs", "public static class B { public static bool Value => false; }");
@@ -160,6 +351,11 @@ public sealed class IncrementalMaterialIdentityTests
             var original = File.ReadAllBytes(fixture.Native.Full(path));
             fixture.Native.Write(path, changed);
             AssertPending(affected);
+            var category = path == "config.json" ? "configuration" : path == "native-tool.version" ? "tool"
+                : path.StartsWith("tests/", StringComparison.Ordinal) ? "test" : path == "src/Shared.cs" ? "dependency" : "source";
+            var input = category == "tool" ? fixture.Native.Full(path) : path;
+            foreach (var batch in fixture.Service.Plan(fixture.Options()).Batches.Where(batch => affected.Contains(batch.SourceFile)))
+                Assert.Contains(batch.UnitReasons, reason => reason.Category == category && reason.Input == input && reason.Change == "changed");
             File.WriteAllBytes(fixture.Native.Full(path), original);
         }
 
@@ -260,6 +456,49 @@ public sealed class IncrementalMaterialIdentityTests
             Assert.Equal(!unitRendersConfiguration, prior.UnitFingerprint == current.UnitFingerprint);
         }
         Assert.Equal(calls, fixture.Native.Calls());
+        // Keep the governed unit contract above, and obtain a real synthetic
+        // native mutation result through the existing ungoverned fixture too.
+        using var native = new IncrementalTestServiceTests.Fixture();
+        foreach (var path in new[] { "config/first.json", "config/second.json" })
+            native.Write(path, "{\"stryker-config\":{\"additional-timeout\":1000,\"mutate\":[]}}");
+        native.Save(native.Profile with
+        {
+            ConfigFiles = [.. native.Profile.ConfigFiles, "config/first.json", "config/second.json"],
+            StrykerConfigFile = "config/first.json",
+            MutationCommand = [native.Profile.UnitCommand[0], native.Profile.UnitCommand[1],
+                "config-mutation", "{output}", "{mutationConfig}"],
+            UnitCommand = unitRendersConfiguration ? [.. native.Profile.UnitCommand, "{mutationConfig}"] : native.Profile.UnitCommand
+        });
+        AssertCompleted(native.Run());
+        var nativeCalls = native.Calls();
+        var acceptedProfile = native.Profile;
+        var acceptedState = native.SavedState();
+        native.Save(acceptedProfile with { StrykerConfigFile = "config/second.json" });
+        var changed = native.Plan();
+        Assert.Equal(2, changed.PendingMutationBatches);
+        Assert.All(changed.Batches, batch => Assert.Contains(batch.MutationReasons,
+            reason => reason.Category == "configuration" && reason.Input == "mutation:selected-configuration" && reason.Change == "changed"));
+
+        var omitted = acceptedState.InputFacts.Where(pair => pair.Value.Origin == "profile"
+            && pair.Value.Category == "configuration" && pair.Value.Input == "mutation:selected-configuration")
+            .Select(pair => pair.Key).ToHashSet(StringComparer.Ordinal);
+        foreach (var basis in acceptedState.InputBases.Keys.ToArray())
+            acceptedState.InputBases[basis] = acceptedState.InputBases[basis].Where(id => !omitted.Contains(id)).ToArray();
+        foreach (var id in omitted) acceptedState.InputFacts.Remove(id);
+        native.WriteState(acceptedState);
+        var historical = native.Plan();
+        Assert.All(historical.Batches, batch =>
+        {
+            Assert.Contains(batch.MutationReasons, reason => reason.Category == "input-detail-unavailable"
+                && reason.Input == "mutation:selected-configuration");
+            Assert.DoesNotContain(batch.MutationReasons, reason => reason.Input == "mutation:selected-configuration" && reason.Change == "added");
+        });
+        native.Save(acceptedProfile);
+        var reused = native.Run();
+        AssertCompleted(reused);
+        Assert.Equal(0, reused.ExecutedUnitBatches);
+        Assert.Equal(0, reused.ExecutedMutationBatches);
+        Assert.Equal(nativeCalls, native.Calls());
     }
 
     private static void ConfigureMutationInputs(GovernedUnitFixture fixture, params string[] files)
@@ -386,6 +625,72 @@ public sealed class IncrementalMaterialIdentityTests
                 Manifest = snapshot.Manifest! with
                 { Inputs = [.. snapshot.Manifest.Inputs, .. additional], Extractors = [Extractor] }
             };
+        }
+    }
+
+    private sealed class MetadataGraph(IncrementalTestServiceTests.Fixture fixture) : ICisGraphSnapshotReader
+    {
+        public bool GovernanceDocuments { get; set; } = true;
+        public CisGraphSnapshotReadResult Read(string repositoryPath)
+        {
+            var snapshot = fixture.Read(repositoryPath);
+            var files = new[] { "docs/closeout.md", "docs/packaged-guide.md", "tests/Fixture.csproj", "build/helper.ps1" };
+            var documents = files.Where(file => file.EndsWith(".md", StringComparison.Ordinal)).Select((file, index) =>
+                new CisGraphNode("fixture-document-" + index, "sample", GovernanceDocuments ? "document" : "file", "verification", file,
+                    file, [], "derived", "active", [new(file, "file", file)], new Dictionary<string, string>(), []));
+            return snapshot with
+            {
+                GraphCapabilities = [],
+                Graph = snapshot.Graph! with { Nodes = [.. snapshot.Graph.Nodes, .. documents] },
+                Manifest = snapshot.Manifest! with { Inputs = [.. snapshot.Manifest.Inputs, .. files.Select(file =>
+                    new CisGraphInput(file, Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(fixture.Full(file))))))] }
+            };
+        }
+    }
+
+    private static Dictionary<string, string> PreviousRawTransportFingerprints(IncrementalTestServiceTests.Fixture fixture,
+        IncrementalTestService service, MetadataGraph graph)
+    {
+        var type = typeof(IncrementalTestService);
+        const System.Reflection.BindingFlags hidden = System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic;
+        var sessionNames = (string[])type.GetField("SessionEnvironmentNames", hidden)!.GetValue(null)!;
+        var omitted = sessionNames.Concat(fixture.Profile.Environment.Keys).Concat(CisNativeWorkEnvironment.Keys)
+            .Concat(["TEMP", "TMP", "TMPDIR"]).ToHashSet(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        var ambient = Environment.GetEnvironmentVariables().Cast<System.Collections.DictionaryEntry>()
+            .Where(pair => !omitted.Contains((string)pair.Key)).OrderBy(pair => (string)pair.Key, StringComparer.Ordinal)
+            .Select(pair => new { name = (string)pair.Key, value = (string?)pair.Value }).ToArray();
+        var oldAmbient = (string)type.GetMethod("HashObject", hidden)!.MakeGenericMethod(ambient.GetType()).Invoke(null, [ambient])!;
+        var input = type.GetMethod("Read", hidden)!.Invoke(null,
+            [new IncrementalTestOptions(fixture.Path, "profile.json", "unit"), null, null, false, oldAmbient]);
+        var previous = graph.GovernanceDocuments;
+        try
+        {
+            graph.GovernanceDocuments = false;
+            var selected = type.GetMethod("Select", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .Invoke(service, [input, new IncrementalTestState(), false])!;
+            return ((IncrementalTestBatch[])selected.GetType().GetProperty("Batches")!.GetValue(selected)!)
+                .ToDictionary(batch => batch.Id, batch => batch.UnitFingerprint, StringComparer.Ordinal);
+        }
+        finally { graph.GovernanceDocuments = previous; }
+    }
+
+    private sealed class NeutralTransportEnvironment : IDisposable
+    {
+        private readonly Dictionary<string, string?> previous = System.Environment.GetEnvironmentVariables()
+            .Cast<System.Collections.DictionaryEntry>().Where(pair => ((string)pair.Key).StartsWith("CODEX_", StringComparison.OrdinalIgnoreCase)
+                || ((string)pair.Key).StartsWith("BROWSER_USE_ACCESS_", StringComparison.OrdinalIgnoreCase))
+            .ToDictionary(pair => (string)pair.Key, pair => (string?)pair.Value);
+        public NeutralTransportEnvironment()
+        {
+            foreach (var name in previous.Keys) System.Environment.SetEnvironmentVariable(name, null);
+        }
+        public void Dispose()
+        {
+            foreach (var name in System.Environment.GetEnvironmentVariables().Cast<System.Collections.DictionaryEntry>()
+                         .Select(pair => (string)pair.Key).Where(name => name.StartsWith("CODEX_", StringComparison.OrdinalIgnoreCase)
+                             || name.StartsWith("BROWSER_USE_ACCESS_", StringComparison.OrdinalIgnoreCase)).ToArray())
+                System.Environment.SetEnvironmentVariable(name, null);
+            foreach (var pair in previous) System.Environment.SetEnvironmentVariable(pair.Key, pair.Value);
         }
     }
 }

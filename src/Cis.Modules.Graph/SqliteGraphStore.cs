@@ -8,7 +8,7 @@ namespace Cis.Modules.Graph;
 
 public sealed class SqliteGraphStore
 {
-    public const int StorageSchemaVersion = 6;
+    public const int StorageSchemaVersion = 7;
     public const string DatabaseRelativePath = ".cis/local/graph/context.db";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -81,6 +81,8 @@ public sealed class SqliteGraphStore
 
     public GraphStoreHeaderResult ReadHeader(string repositoryPath)
         => GraphReadScope.Read(this, nameof(ReadHeader), repositoryPath, () => ReadHeaderCore(repositoryPath));
+
+    internal GraphStoreHeaderResult ReadCurrentHeader(string repositoryPath) => ReadHeaderCore(repositoryPath);
 
     private GraphStoreHeaderResult ReadHeaderCore(string repositoryPath)
     {
@@ -339,8 +341,9 @@ public sealed class SqliteGraphStore
     {
         Execute(connection, transaction, "DELETE FROM source_inputs;");
         for (var index = 0; index < inputs.Count; index++)
-            Execute(connection, transaction, "INSERT INTO source_inputs(ordinal,path,hash) VALUES($ordinal,$path,$hash);",
-                ("$ordinal", index), ("$path", inputs[index].Path), ("$hash", inputs[index].Hash));
+            Execute(connection, transaction, "INSERT INTO source_inputs(ordinal,path,hash,projection_hash) VALUES($ordinal,$path,$hash,$projection);",
+                ("$ordinal", index), ("$path", inputs[index].Path), ("$hash", inputs[index].Hash),
+                ("$projection", inputs[index].ProjectionHash));
     }
 
     private static void InsertExtractors(SqliteConnection connection, SqliteTransaction transaction, IReadOnlyList<string> extractors)
@@ -634,10 +637,11 @@ public sealed class SqliteGraphStore
     private static IReadOnlyList<CisGraphInput> ReadInputs(SqliteConnection connection)
     {
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT path,hash FROM source_inputs ORDER BY ordinal;";
+        command.CommandText = "SELECT path,hash,projection_hash FROM source_inputs ORDER BY ordinal;";
         var result = new List<CisGraphInput>();
         using var reader = command.ExecuteReader();
-        while (reader.Read()) result.Add(new CisGraphInput(reader.GetString(0), reader.GetString(1)));
+        while (reader.Read()) result.Add(new CisGraphInput(reader.GetString(0), reader.GetString(1))
+        { ProjectionHash = reader.IsDBNull(2) ? null : reader.GetString(2) });
         return result;
     }
 
@@ -814,6 +818,24 @@ public sealed class SqliteGraphStore
             transaction.Commit();
             version = 6;
         }
+        if (version == 6)
+        {
+            using var transaction = connection.BeginTransaction();
+            var hasProjectionColumn = false;
+            using (var columns = connection.CreateCommand())
+            {
+                columns.Transaction = transaction;
+                columns.CommandText = "PRAGMA table_info(source_inputs);";
+                using var reader = columns.ExecuteReader();
+                while (reader.Read())
+                    if (reader.GetString(1) == "projection_hash") hasProjectionColumn = true;
+            }
+            // Existing recovery fixtures and interrupted upgrades can retain a
+            // newer column while the version marker still names the older schema.
+            Execute(connection, transaction, hasProjectionColumn ? "PRAGMA user_version=7;" : SchemaVersion7);
+            transaction.Commit();
+            version = 7;
+        }
         if (version != StorageSchemaVersion)
             throw new InvalidDataException($"Unsupported SQLite graph schema {version}; expected {StorageSchemaVersion}.");
     }
@@ -892,6 +914,11 @@ public sealed class SqliteGraphStore
         CREATE INDEX IF NOT EXISTS ix_node_evidence_id ON node_evidence(evidence_id);
         CREATE INDEX IF NOT EXISTS ix_edge_evidence_id ON edge_evidence(evidence_id);
         PRAGMA user_version=6;
+        """;
+
+    private const string SchemaVersion7 = """
+        ALTER TABLE source_inputs ADD COLUMN projection_hash TEXT NULL;
+        PRAGMA user_version=7;
         """;
 }
 

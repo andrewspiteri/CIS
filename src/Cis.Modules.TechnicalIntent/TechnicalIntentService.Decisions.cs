@@ -14,6 +14,15 @@ public sealed partial class TechnicalIntentService
     {
         var state = ResolveState(workspacePath);
         if (state.Errors.Count > 0) return Error("invalid", state);
+        using var preparedReview = RecoverPreparedDecisionReview(state, input);
+        if (preparedReview is not null)
+        {
+            var originalPath = state.CanonicalPath;
+            state = ResolveState(workspacePath);
+            if (state.Errors.Count > 0) return Error("invalid", state);
+            if (state.CanonicalPath != originalPath)
+                return Error("conflict", state, "The selected technical document changed. Refresh and review your retained edits before saving.");
+        }
         if (!ValidDecisionText(input.Resolution, 16384) || !ValidDecisionText(input.Actor, 200)
             || !string.IsNullOrWhiteSpace(input.Reason) && !ValidDecisionText(input.Reason, 4096))
             return Error("invalid", state, "Enter a substantive answer and human identity without placeholders or HTML comment markers. A separate reason is optional.");
@@ -51,7 +60,8 @@ public sealed partial class TechnicalIntentService
             var latest = ResolveState(workspacePath);
             if (File.ReadAllText(state.CanonicalPath) != document || state.Questionnaire is { } currentQuestionnaire
                 && (!File.Exists(currentQuestionnaire.Path) || Hash(File.ReadAllText(currentQuestionnaire.Path)) != currentQuestionnaire.Digest)
-                || latest.Errors.Count > 0 || input.ReviewToken != DecisionReviewToken(latest, row.Id, lines[location.Index]))
+                || latest.Errors.Count > 0 || DecisionDocumentPath(latest) != DecisionDocumentPath(state)
+                || input.ReviewToken != DecisionReviewToken(latest, row.Id, lines[location.Index]))
                 return Error("conflict", state, "Technical evidence changed while saving. Refresh the wizard. Nothing was saved.");
             if (previous is not null && previous.Resolution == resolution && previous.Reason == reason && previous.Actor == actor
                 && previous.SupportingBasis is not null && TechnicalIntentQuestionnaireService.ChangedBasis(previous.SupportingBasis, basis).Length == 0)
@@ -72,7 +82,8 @@ public sealed partial class TechnicalIntentService
             var next = string.Join('\n', lines);
             // Other rows, authored prose, baselines and prior approval metadata are preserved.
             // An edit to Active content is detected as stale by its existing approval digest.
-            if (File.ReadAllText(state.CanonicalPath) != document || state.Questionnaire is { } questionnaire
+            if (CurrentDecisionDocumentPath(state) != DecisionDocumentPath(state)
+                || File.ReadAllText(state.CanonicalPath) != document || state.Questionnaire is { } questionnaire
                 && (!File.Exists(questionnaire.Path) || Hash(File.ReadAllText(questionnaire.Path)) != questionnaire.Digest))
                 return Error("conflict", state, "Technical evidence changed while saving. Refresh the wizard. Nothing was saved.");
             var temporary = state.CanonicalPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
@@ -81,8 +92,33 @@ public sealed partial class TechnicalIntentService
             return new("saved", state.Workspace!.WorkspacePath, state.Authority.Id,
                 NormalizePath(Path.GetRelativePath(root, state.CanonicalPath)), null, state.Baselines, state.Warnings, [], true);
         }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
         { return Error("blocked", state, "The decision could not be saved. Another write may be running; retry when it finishes."); }
+    }
+
+    private static IDisposable? RecoverPreparedDecisionReview(State state, CisTechnicalDecisionResolution input)
+    {
+        if (CisDefinitionDraftScope.IsActive || state.Authority is null || state.CanonicalPath is null || state.Brd is null
+            || string.IsNullOrWhiteSpace(input.Id) || string.IsNullOrWhiteSpace(input.ReviewToken)) return null;
+        try
+        {
+            var selected = CisProductDocumentPaths.Read(state.Authority.RepositoryPath).GetValueOrDefault("technical");
+            if (selected is null || CisProductDocumentPaths.ValidatePath(state.Authority.RepositoryPath, selected) != state.CanonicalPath
+                || CisPathSafety.ContainsReparsePoint(state.Authority.RepositoryPath, state.CanonicalPath)
+                || !File.Exists(state.CanonicalPath)) return null;
+            var document = File.ReadAllText(state.CanonicalPath);
+            var rows = document.Split('\n').Where(line => Cells(line) is { Length: 5 } cells && cells[0] == input.Id).ToArray();
+            if (rows.Length != 1 || input.ReviewToken == DecisionReviewToken(state, input.Id, rows[0])
+                || !IsPreparedSelectedInput(document, state.Brd.Digest)) return null;
+            // Definition status issues tokens while interpreting this explicitly
+            // prepared selection. Recover that interpretation for this write only;
+            // the original locked token and final input fences still decide whether it saves.
+            return CisDefinitionDraftScope.Enter();
+        }
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException or ArgumentException)
+        {
+            return null;
+        }
     }
 
     private static bool ValidDecisionText(string value, int limit) => !string.IsNullOrWhiteSpace(value) && value.Length <= limit
@@ -258,8 +294,20 @@ public sealed partial class TechnicalIntentService
     {
         var cells = Cells(row);
         var basis = cells.Length == 5 ? JsonSerializer.Serialize(DecisionBasis(state, cells[1], cells[2])) : "ambiguous";
-        return Hash($"technical-decision-v2|{state.Authority!.RepositoryPath}|{id}|{row.TrimEnd('\r')}|{state.Questionnaire?.Digest ?? "missing"}|{state.Questionnaire?.Current}|{state.Baselines.FirstOrDefault(item => item.Kind == "brd")?.Version}|{basis}");
+        return Hash($"technical-decision-v3|{state.Authority!.RepositoryPath}|{DecisionDocumentPath(state)}|{id}|{row.TrimEnd('\r')}|{state.Questionnaire?.Digest ?? "missing"}|{state.Questionnaire?.Current}|{state.Baselines.FirstOrDefault(item => item.Kind == "brd")?.Version}|{basis}");
     }
+
+    private static string DecisionDocumentPath(State state, string? path = null)
+    {
+        var canonical = path ?? state.CanonicalPath;
+        if (canonical is null) return "missing";
+        var normalized = NormalizePath(Path.GetFullPath(canonical));
+        return OperatingSystem.IsWindows() ? normalized.ToUpperInvariant() : normalized;
+    }
+
+    private static string CurrentDecisionDocumentPath(State state)
+        => DecisionDocumentPath(state, CisProductDocumentPaths.Resolve(Path.Combine(state.Authority!.RepositoryPath,
+            state.Authority.DocumentationRoot.Replace('/', Path.DirectorySeparatorChar)), "specs", "technical-intent-spec.md"));
 
     private static DecisionAudit? ReadDecisionAudit(string line)
     {

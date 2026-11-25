@@ -1,0 +1,115 @@
+{
+  "tasks": [
+    {
+      "category": "implementation",
+      "complexity": "medium",
+      "dependsOn": [
+        "WORK-001"
+      ],
+      "title": "Connect criteria to explicit implementation checks and honest results",
+      "scopeIds": [
+        "traceability"
+      ],
+      "acceptanceCriteria": "Existing accepted criteria reach task/component/artifact/check and actual evidence through explicit mappings; lexical file co-occurrence stays discovered association, changed-file lists stay provenance, missing/currentness facts remain explicit. Bookkeeping/result references cannot self-invalidate native evidence.",
+      "validation": "Existing graph/plan/native evidence fixtures exercise explicit mappings, unresolved references, lexical false coverage, actual report digests/status/applicability and semantic versus status/result identity. Demonstrate at least one real RM-08 criterion using current evidence.",
+      "paths": [
+        "src",
+        "tests",
+        "docs"
+      ]
+    },
+    {
+      "category": "implementation",
+      "complexity": "medium",
+      "dependsOn": [],
+      "title": "Refresh current decisions and preserve conservative native selection and reuse",
+      "scopeIds": [
+        "freshness"
+      ],
+      "acceptanceCriteria": "Current impact and verification selection coalesce necessary refresh through existing orchestration, detect dirty add/edit/delete/dependency/interpretation changes, preserve historical navigation and approved baselines, expose scoped diagnostics and choose configured full fallback when dependency knowledge is uncertain. Unrelated documentation warnings retain eligible native evidence.",
+      "validation": "Existing graph/testing fixtures prove current freshness, conservative unknown-dependency fallback, unchanged second verification with zero extra native launches, relevant invalidation and unrelated documentation reuse. Retain existing report/authority/environment/settlement compatibility checks.",
+      "paths": [
+        "src",
+        "tests",
+        "docs"
+      ]
+    },
+    {
+      "category": "implementation",
+      "complexity": "medium",
+      "dependsOn": [],
+      "title": "Deliver bounded task context and concise routine output",
+      "scopeIds": [
+        "task-context"
+      ],
+      "acceptanceCriteria": "Normal preparation delivers existing context-pack content with accepted behavior/constraints, owning components/contracts, implementation/check locations, reasons/freshness/uncertainty/omissions and eligible evidence. The complete advisory envelope including metadata is size-bounded and remains separate from canonical authority. Opt-in concise mutation/status output preserves default machine compatibility and detail access.",
+      "validation": "Focused Context/Agent/Plan fixtures verify whole-delivery byte/character caps, authority digest compatibility, unavailable/stale context disclosure, normal prepare integration and opt-in concise task output; inspect presentation through normal CLI.",
+      "paths": [
+        "src",
+        "tests",
+        "docs"
+      ]
+    },
+    {
+      "category": "implementation",
+      "complexity": "medium",
+      "dependsOn": [
+        "WORK-003",
+        "WORK-004"
+      ],
+      "title": "Reuse measured completion review under current material authority",
+      "scopeIds": [
+        "completion"
+      ],
+      "acceptanceCriteria": "Measure completion phases before selecting optimization; reusable pure review is keyed by current task/criteria/authority/material/policy/graph/receipt/report interpretation while final current input/contract concurrency fence remains uncached. Explain review reuse separately from native result reuse and actual execution; same-state calls cannot hide stale evidence.",
+      "validation": "Existing completion/participant fixtures cover unchanged same-state review, relevant changes to task/report/input/policy/authority, rejection of stale cached verdicts and concurrent mutation detection. Compare representative inclusive timing with limits.",
+      "paths": [
+        "src",
+        "tests",
+        "docs"
+      ]
+    },
+    {
+      "category": "implementation",
+      "complexity": "medium",
+      "dependsOn": [],
+      "title": "Attribute bounded invocation cost in the existing usage ledger",
+      "scopeIds": [
+        "attribution"
+      ],
+      "acceptanceCriteria": "Add optional invocation/parent, parsed operation, safe change/task, bounded phases, graph consumption/freshness/reuse reasons, verification disposition, blocker codes and observable delivered-context sizes to existing bounded usage records. Preserve old fields/readability and unknown historical values; no secrets/raw environment or invented model token savings.",
+      "validation": "Focused Abstractions/Host/Feedback fixtures cover nested scope/operation attribution, bounded observations, legacy JSON roundtrips and reporting, secret-free code-only reasons, actual rendered sizes and no new material test inputs.",
+      "paths": [
+        "src",
+        "tests",
+        "docs"
+      ]
+    },
+    {
+      "category": "implementation",
+      "complexity": "medium",
+      "dependsOn": [
+        "WORK-001",
+        "WORK-002",
+        "WORK-003",
+        "WORK-004",
+        "WORK-005",
+        "WORK-006"
+      ],
+      "title": "Build install and demonstrate the corrected consumer workflow",
+      "scopeIds": [
+        "distribution"
+      ],
+      "acceptanceCriteria": "Produce Release distributable with exact source/artifact identity, preserve a practical rollback, update and verify actual explicit CISLIB invocation, refresh current derived context and complete all nine focused RM-08 demonstrations with real executed/reused evidence and honest remaining mappings/platform limits.",
+      "validation": "Run existing affected native checks and required build/package gates sequentially, verify exact installed artifact via normal wrapper, demonstrate current ownership/criterion/check/result paths and zero-launch repeat, retain rollback/hash manifest and concise before/after timing/output evidence within unchanged storage caps.",
+      "paths": [
+        "src",
+        "tests",
+        "tools",
+        "docs",
+        ".cis/local",
+        ".artifacts/outcome-workflow-correction"
+      ]
+    }
+  ]
+}

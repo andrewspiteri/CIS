@@ -69,6 +69,7 @@ public sealed class ImpactModule : ICisModule
         var depth = new Option<int>("--depth") { DefaultValueFactory = _ => 2, Description = "Graph depth from 1 to 10." };
         var limit = new Option<int>("--limit") { DefaultValueFactory = _ => 200, Description = "Maximum nodes per root from 1 to 1000." };
         var includeProposed = new Option<bool>("--include-proposed") { Description = "Include proposed graph relationships." };
+        var current = new Option<bool>("--current") { Description = "Refresh current implementation inputs for a bounded projection; preserve the original approved baseline and findings." };
         var repo = RepositoryOption();
         var format = FormatOption();
         command.Arguments.Add(id);
@@ -76,6 +77,7 @@ public sealed class ImpactModule : ICisModule
         command.Options.Add(depth);
         command.Options.Add(limit);
         command.Options.Add(includeProposed);
+        command.Options.Add(current);
         command.Options.Add(repo);
         command.Options.Add(format);
         command.SetAction(parseResult =>
@@ -86,7 +88,8 @@ public sealed class ImpactModule : ICisModule
                 (parseResult.GetValue(roots) ?? []).Select(ParseRoot).ToArray(),
                 parseResult.GetValue(depth),
                 parseResult.GetValue(limit),
-                parseResult.GetValue(includeProposed)));
+                parseResult.GetValue(includeProposed))
+            { CurrentImplementation = parseResult.GetValue(current) });
             Render(result, GetFormat(parseResult.GetValue(format)));
             return result.ExitCode;
         });
@@ -123,8 +126,12 @@ public sealed class ImpactModule : ICisModule
         var findingId = new Argument<string>("finding-id");
         var reason = new Option<string>("--reason") { Required = true, Description = "Required review rationale." };
         var actor = new Option<string?>("--actor") { Description = "Actual delegated controller deriving an in-scope acceptance." };
-        var scopes = new Option<string[]>("--scope") { Arity = ArgumentArity.ZeroOrMore, AllowMultipleArgumentsPerToken = true,
-            Description = "Explicit authorized scope ID. Repeat for each selected scope." };
+        var scopes = new Option<string[]>("--scope")
+        {
+            Arity = ArgumentArity.ZeroOrMore,
+            AllowMultipleArgumentsPerToken = true,
+            Description = "Explicit authorized scope ID. Repeat for each selected scope."
+        };
         var repo = RepositoryOption();
         var format = FormatOption();
         command.Arguments.Add(changeId);
@@ -211,6 +218,8 @@ public sealed class ImpactModule : ICisModule
         if (format == "agent")
         {
             Console.WriteLine($"status={result.Status};changeId={result.ChangeId};findings={result.Findings.Count};applied={result.Applied.ToString().ToLowerInvariant()};exitCode={result.ExitCode}");
+            if (result.AnalysisBasis is not null)
+                Console.WriteLine($"basis={result.AnalysisBasis};suitability={result.DecisionSuitability};graph={result.GraphBuildId}");
             foreach (var finding in result.Findings)
             {
                 Console.WriteLine($"finding={finding.Id};state={finding.State};category={finding.Category};confidence={finding.Confidence};target={Clean(finding.Target)};label={Clean(finding.Label)}");
@@ -234,6 +243,7 @@ public sealed class ImpactModule : ICisModule
         }
 
         Console.WriteLine($"Status: {result.Status}");
+        if (result.AnalysisBasis is not null) Console.WriteLine($"Analysis: {result.AnalysisBasis}; suitability: {result.DecisionSuitability}");
         foreach (var finding in result.Findings)
         {
             Console.WriteLine($"{finding.Id} [{finding.State}] {finding.Category} - {finding.Label}");

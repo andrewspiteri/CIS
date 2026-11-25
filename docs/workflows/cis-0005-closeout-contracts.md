@@ -1,0 +1,30 @@
+---
+title: "CIS-0005 layered contract verification"
+type: workflow-definition
+status: Active
+owner: "CIS maintainers"
+last_reviewed: "2026-11-25"
+review_cadence: "on scope, command or test-layer change"
+cis:
+  stable_id: change-impact-studio:workflow:cis-0005-closeout-contracts
+---
+
+# CIS-0005 layered contract verification
+
+Use a separately admitted 600-second parent, within the same shared WORK-007
+allocation/attempt. The step ceilings total450 seconds and leave150 for overhead.
+Formatting verifies the exact57 changed production C# files without writing fixes.
+The actual selections are twelve pure unit cases, four representative integration
+cases and three API compatibility cases, inspected by body rather than inferred
+from names. Each step produces its own native TRX. Reexecution of a case already
+in central regression is a new execution, not another claim from the same TRX.
+No coverage collector runs here; central regression retains changed-line coverage.
+No ignored/missing/skipped gate is called passed. Independent applicability and
+review remain separate from native execution. Preserve failed/previous outputs.
+
+| Step | Command | Working directory | Test suites | Depends on | Continue on failure | Timeout seconds |
+| --- | --- | --- | --- | --- | --- | --- |
+| format | dotnet exec --fx-version 10.0.12 "C:/Program Files/dotnet/sdk/10.0.401/dotnet.dll" format ChangeImpactStudio.slnx --verify-no-changes --no-restore --include src/Cis.Abstractions/CisGraphContracts.cs src/Cis.Abstractions/CisGraphSnapshotContracts.cs src/Cis.Abstractions/CisInvocationTelemetry.cs src/Cis.Abstractions/CisPerformanceTrace.cs src/Cis.Abstractions/CisReadScope.cs src/Cis.Abstractions/CisTaskContextContracts.cs src/Cis.Abstractions/CisTestingContracts.cs src/Cis.Abstractions/CisToolUsageContracts.cs src/Cis.Abstractions/TestReconcileScope.cs src/Cis.Host/CisApplication.cs src/Cis.Modules.Agent/AgentModule.cs src/Cis.Modules.Agent/AgentRoutineSummary.cs src/Cis.Modules.Agent/AgentService.cs src/Cis.Modules.Agent/AgentService.TaskContext.cs src/Cis.Modules.Agent/AgentWorkLedger.Storage.cs src/Cis.Modules.Agent/AgentWorkLedger.StorageOperations.cs src/Cis.Modules.Context/ContextModule.cs src/Cis.Modules.Context/ContextPackBudget.cs src/Cis.Modules.Context/ContextPackContracts.cs src/Cis.Modules.Context/ContextPackOutput.cs src/Cis.Modules.Context/ContextPackService.cs src/Cis.Modules.Context/ContextPackService.TaskContext.cs src/Cis.Modules.Feedback/FeedbackContracts.cs src/Cis.Modules.Feedback/FeedbackModule.cs src/Cis.Modules.Feedback/ToolUsageStore.cs src/Cis.Modules.Graph/ComponentSheetExtractor.cs src/Cis.Modules.Graph/GraphBuilder.Components.cs src/Cis.Modules.Graph/GraphBuilder.cs src/Cis.Modules.Graph/GraphBuilder.Verification.cs src/Cis.Modules.Graph/GraphEvidenceReceipt.cs src/Cis.Modules.Graph/GraphInputInspection.cs src/Cis.Modules.Graph/GraphProjectionFingerprint.cs src/Cis.Modules.Graph/GraphQueryService.cs src/Cis.Modules.Graph/GraphSnapshotReader.cs src/Cis.Modules.Graph/GraphValidator.cs src/Cis.Modules.Graph/SqliteGraphStore.cs src/Cis.Modules.Graph/TaskDocumentProjection.cs src/Cis.Modules.Graph/VerificationMappingExtractor.cs src/Cis.Modules.Impact/ImpactAnalysisService.cs src/Cis.Modules.Impact/ImpactAnalysisService.Current.cs src/Cis.Modules.Impact/ImpactContracts.cs src/Cis.Modules.Impact/ImpactModule.cs src/Cis.Modules.Plan/EngineeringNativeEvidence.cs src/Cis.Modules.Plan/EngineeringTestEvidence.cs src/Cis.Modules.Plan/PlanModule.cs src/Cis.Modules.Plan/PlanningService.cs src/Cis.Modules.Plan/PlanRoutineSummary.cs src/Cis.Modules.Plan/TaskEngineeringCompletion.cs src/Cis.Modules.TechnicalIntent/TechnicalIntentService.Decisions.cs src/Cis.Modules.Testing/IncrementalTestService.cs src/Cis.Modules.Testing/IncrementalTestService.Graph.cs src/Cis.Modules.Testing/IncrementalTestService.Verification.cs src/Cis.Modules.Testing/MutationRunService.Execution.cs src/Cis.Modules.Testing/TestingModule.cs src/Cis.Modules.Testing/TestingModule.IncrementalSummary.cs src/Cis.Modules.Testing/TestingService.cs src/Cis.Modules.Testing/TestingService.Selection.cs --verbosity minimal | . | - | - | no | 180 |
+| unit | dotnet exec --fx-version 10.0.12 "C:/Program Files/dotnet/sdk/10.0.401/vstest.console.dll" tests/Cis.Abstractions.Tests/bin/Release/net10.0/Cis.Abstractions.Tests.dll tests/Cis.Modules.Graph.Tests/bin/Release/net10.0/Cis.Modules.Graph.Tests.dll tests/Cis.Modules.Agent.Tests/bin/Release/net10.0/Cis.Modules.Agent.Tests.dll tests/Cis.Modules.Delivery.Tests/bin/Release/net10.0/Cis.Modules.Delivery.Tests.dll /Settings:tools/cis0005-closeout-unit.runsettings /Logger:trx;LogFileName=unit.trx /ResultsDirectory:.cis/local/testing/current-context-closeout/contracts-stage2/unit /Diag:.cis/local/testing/current-context-closeout/contracts-stage2/unit/vstest-diag.log | . | cis0005-pure-unit | format | no | 60 |
+| integration | dotnet exec --fx-version 10.0.12 "C:/Program Files/dotnet/sdk/10.0.401/vstest.console.dll" tests/Cis.Modules.Graph.Tests/bin/Release/net10.0/Cis.Modules.Graph.Tests.dll tests/Cis.Modules.Agent.Tests/bin/Release/net10.0/Cis.Modules.Agent.Tests.dll tests/Cis.Modules.Testing.Tests/bin/Release/net10.0/Cis.Modules.Testing.Tests.dll /Settings:tools/cis0005-closeout-integration.runsettings /Logger:trx;LogFileName=integration.trx /ResultsDirectory:.cis/local/testing/current-context-closeout/contracts-stage2/integration /Diag:.cis/local/testing/current-context-closeout/contracts-stage2/integration/vstest-diag.log | . | cis0005-integration | unit | no | 120 |
+| api | dotnet exec --fx-version 10.0.12 "C:/Program Files/dotnet/sdk/10.0.401/vstest.console.dll" tests/Cis.Modules.Testing.Tests/bin/Release/net10.0/Cis.Modules.Testing.Tests.dll tests/Cis.Modules.Delivery.Tests/bin/Release/net10.0/Cis.Modules.Delivery.Tests.dll /Settings:tools/cis0005-closeout-api.runsettings /Logger:trx;LogFileName=api.trx /ResultsDirectory:.cis/local/testing/current-context-closeout/contracts-stage2/api /Diag:.cis/local/testing/current-context-closeout/contracts-stage2/api/vstest-diag.log | . | cis0005-api-compatibility | integration | no | 90 |

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RunSettings>
+  <RunConfiguration>
+    <MaxCpuCount>1</MaxCpuCount>
+    <TargetFrameworkVersion>.NETCoreApp,Version=v10.0</TargetFrameworkVersion>
+    <TargetPlatform>x64</TargetPlatform>
+    <TestAdaptersPaths>C:/miscwork/portfolio/andrewspiteri.dev/content/change-impact-studio/tests/Cis.Modules.Testing.Tests/bin/Release/net10.0;C:/miscwork/portfolio/andrewspiteri.dev/content/change-impact-studio/tests/Cis.Modules.Delivery.Tests/bin/Release/net10.0</TestAdaptersPaths>
+    <TestCaseFilter>FullyQualifiedName~Cis.Modules.Testing.Tests.TestingServiceTests.MutationThreshold_PreservesTheExistingAdapterContextContract|FullyQualifiedName~Cis.Modules.Testing.Tests.TestingServiceTests.SelectedSuiteReconciliationPreservesFullEvidenceAndNativeWorkflowIdentity|FullyQualifiedName~Cis.Modules.Delivery.Tests.DeliveryWorkflowTests.PlanRoutineSummary_PreservesLegacyJsonAndReturnsAffectedTaskAndBlockers</TestCaseFilter>
+    <TestSessionTimeout>90000</TestSessionTimeout>
+  </RunConfiguration>
+</RunSettings>

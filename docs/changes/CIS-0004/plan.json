@@ -1,0 +1,59 @@
+{
+  "authorizationId": "change-impact-studio:CIS-0004:outcome:113100ae46a445b3926678b834500c41",
+  "actor": "Codex",
+  "workItems": [
+    {
+      "id": "WORK-001",
+      "category": "implementation",
+      "complexity": "medium",
+      "parentId": null,
+      "taskPath": "agent-tasks/WORK-001.md",
+      "title": "Preserve native saved-result reuse through continuation and integrate the verified correction",
+      "requirementIds": [],
+      "impactIds": [],
+      "dependsOn": [],
+      "acceptanceCriteria": "AC-1 through AC-5 in the outcome scope: normal CLI/native closeout and new-session reuse launches zero tests; genuine selective input changes give precise reasons from compact executed facts; compatible older records remain usable; exact corrected build integrates without replaying accepted CISLIB work.",
+      "validation": "Focused existing native Windows/Linux tests; actual CLI continuation with unchanged report and accounting; one independent review; exact committed build; explicit unit-only read-only CISLIB dispositions and optional single fresh historical profile within shared grant.",
+      "status": "ReadyForReview",
+      "taskTypeKey": "core.legacy",
+      "taskTypeVersion": "1.0",
+      "approvalGate": "none",
+      "targets": [],
+      "decisionIds": [],
+      "negativeCriteria": [],
+      "requiredOutputs": [],
+      "frontendType": null,
+      "storyId": null,
+      "instanceKey": "outcome:seed:14e7b3039fda468aa18cc12cffa26864",
+      "workOwnerTaskId": null,
+      "authorizationScopeIds": [
+        "reuse"
+      ],
+      "authorizationScopeBasis": "sha256:f9fe918d2acb07f4bd068945a888a80223c9a93cb5e82c0eff23da1f5b3352f8",
+      "workPaths": [
+        "src",
+        "tests",
+        "docs/manual/cis_test_incremental.md",
+        "docs/changes/CIS-0004"
+      ],
+      "assignee": "Codex",
+      "verificationObligations": [
+        {
+          "id": "task-contract",
+          "criteria": [
+            "AC-1 through AC-5 in the outcome scope: normal CLI/native closeout and new-session reuse launches zero tests; genuine selective input changes give precise reasons from compact executed facts; compatible older records remain usable; exact corrected build integrates without replaying accepted CISLIB work."
+          ],
+          "description": "Focused existing native Windows/Linux tests; actual CLI continuation with unchanged report and accounting; one independent review; exact committed build; explicit unit-only read-only CISLIB dispositions and optional single fresh historical profile within shared grant.",
+          "evidenceRoute": "review",
+          "evidenceExpectations": [
+            "Focused existing native Windows/Linux tests; actual CLI continuation with unchanged report and accounting; one independent review; exact committed build; explicit unit-only read-only CISLIB dispositions and optional single fresh historical profile within shared grant."
+          ],
+          "sharedGateIds": [],
+          "basisReferences": []
+        }
+      ],
+      "contractErrors": []
+    }
+  ],
+  "source": null
+}

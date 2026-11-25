@@ -1438,8 +1438,8 @@ managed_artifacts:
   path: .github/instructions/cis-agent-execution.instructions.md
   definition: guidance.instruction.agent-execution
   template_version: 1
-  applied_hash: sha256:02ba7501962f1e91f5fe4fba8dfcfde35b71f0049a801796bd3086f85b1198db
-  ownership: managed
+  applied_hash: sha256:d573179b2522659bd116f27456ddf434c4d0f355ec4b1038c0f1dcaf667b8511
+  ownership: human
 - id: guidance.instruction.ai-model-qualification
   path: .github/instructions/cis-ai-model-qualification.instructions.md
   definition: guidance.instruction.ai-model-qualification
@@ -1462,7 +1462,7 @@ managed_artifacts:
   path: .github/instructions/cis-change-delivery.instructions.md
   definition: guidance.instruction.change-delivery
   template_version: 1
-  applied_hash: sha256:00d6cbb6f76f8f050030024a6e2e27e1fd26ff39b4242947f7a953889207d990
+  applied_hash: sha256:f565ff5e93bb871fb8bd4a3cdd05be4a3959bfbbe3fd3087b9e3892cdae07ec6
   ownership: human
 - id: guidance.instruction.ci-investigation
   path: .github/instructions/cis-ci-investigation.instructions.md
@@ -1474,7 +1474,7 @@ managed_artifacts:
   path: .github/instructions/cis-delivery-execution.instructions.md
   definition: guidance.instruction.delivery-execution
   template_version: 1
-  applied_hash: sha256:d7b0f434d4208002ea25c8c6b9684653176b1264dcfbf7dd161f36c29efcb792
+  applied_hash: sha256:c57ce3799337b6b3c58ede71a7fc6648ac5fe58c6b188662630872dd264a2931
   ownership: human
 - id: guidance.instruction.engineering-assurance
   path: .github/instructions/cis-engineering-assurance.instructions.md
@@ -1528,7 +1528,7 @@ managed_artifacts:
   path: .github/instructions/cis-local-artifact-retention.instructions.md
   definition: guidance.instruction.local-artifact-retention
   template_version: 1
-  applied_hash: sha256:bf128cf2f99e5109a113c06a5ccb9556444543f2415c3700230d3c5e729c598f
+  applied_hash: sha256:431c047705964292a794074936993fedf920dea7f861933f6459e7d8a4bd7951
   ownership: human
 - id: guidance.instruction.mcp-adapter
   path: .github/instructions/cis-mcp-adapter.instructions.md
@@ -2140,7 +2140,7 @@ managed_artifacts:
   path: .github/skills/cis-agent-execution/SKILL.md
   definition: guidance.skill.agent-execution
   template_version: 1
-  applied_hash: sha256:763a1427db55ec4e0927272eb0b64ebb7b5a82640f28a42395150e332be8142e
+  applied_hash: sha256:190cb55799fe6a2f88ef7ae9b1d1899a124604c4dc2e4cd31debf04c9093d3d2
   ownership: human
 - id: guidance.skill.ai-model-qualification
   path: .github/skills/cis-ai-model-qualification/SKILL.md
@@ -2158,19 +2158,19 @@ managed_artifacts:
   path: .github/skills/cis-bounded-planning/SKILL.md
   definition: guidance.skill.bounded-planning
   template_version: 1
-  applied_hash: sha256:f799e7ce98a86470f4428f45122b5008a21db1866c4b34015769e10ea1e0688a
-  ownership: managed
+  applied_hash: sha256:d936796a4abf802f182b84c2f41466591bfaf879dcdae103bc9b61ca84bf5675
+  ownership: human
 - id: guidance.skill.change-dossier
   path: .github/skills/cis-change-dossier/SKILL.md
   definition: guidance.skill.change-dossier
   template_version: 1
-  applied_hash: sha256:48a79f1cff5c984f804f5647b8f26af765647a16949fb85697b18a1b8313fa62
+  applied_hash: sha256:490b91640075d2453b87f6a3394556d40110ff52a646c130764cdeaf3835cccb
   ownership: managed
 - id: guidance.skill.change-impact
   path: .github/skills/cis-change-impact/SKILL.md
   definition: guidance.skill.change-impact
   template_version: 1
-  applied_hash: sha256:96d0f4520f9d120b7fe5c65a6ba3be2cc2fa335eac748f8a5d66ee9f40f62d3a
+  applied_hash: sha256:05bc9810b801c3d4d20363a2ece13ef800da27d9b6b44ba600a1ced072fcfb88
   ownership: human
 - id: guidance.skill.ci-investigation
   path: .github/skills/cis-ci-investigation/SKILL.md
@@ -2266,25 +2266,25 @@ managed_artifacts:
   path: .github/skills/cis-govern-technical-intent/SKILL.md
   definition: guidance.skill.govern-technical-intent
   template_version: 2
-  applied_hash: sha256:9bf22807b221fc541d70245e32b6e93df622cb32809df561c97d656b789da7b1
+  applied_hash: sha256:c104d6f36750e27370fddf0a5b218acb8056da3f3dc21d5b9bad0054e095abd7
   ownership: human
 - id: guidance.skill.govern-ui-direction
   path: .github/skills/cis-govern-ui-direction/SKILL.md
   definition: guidance.skill.govern-ui-direction
   template_version: 2
-  applied_hash: sha256:739f06301fb158aef409a566a5700a34d07bf3fac65f1f2d7a1830e5a94d4985
+  applied_hash: sha256:9664323c80e4eeea218b653820294262517efa05c263deeb754a1a4eaf73cba0
   ownership: human
 - id: guidance.skill.graph-context
   path: .github/skills/cis-graph-context/SKILL.md
   definition: guidance.skill.graph-context
   template_version: 1
-  applied_hash: sha256:be6f89bb07e436cffc0c9525e68ec0feff605843b62c36ffb1c9468ae3f2caf7
-  ownership: managed
+  applied_hash: sha256:c3d2ef3e859cf2acdfb2ddde809e3a2de48614e6239ea8eb343e637a3df1b999
+  ownership: human
 - id: guidance.skill.impact-review
   path: .github/skills/cis-impact-review/SKILL.md
   definition: guidance.skill.impact-review
   template_version: 2
-  applied_hash: sha256:d976e52c8458a9a04b77f69d031336afe350d79e4ea179a2405a38c86451cfa0
+  applied_hash: sha256:00c7a3f3bd23c9fe143f79a0aba18e1026043677ab88944e4268bebd290b0f3e
   ownership: human
 - id: guidance.skill.import-repositories
   path: .github/skills/cis-import-repositories/SKILL.md
@@ -2296,7 +2296,7 @@ managed_artifacts:
   path: .github/skills/cis-local-artifact-retention/SKILL.md
   definition: guidance.skill.local-artifact-retention
   template_version: 1
-  applied_hash: sha256:d1c2a383f67585a4c66dac3905d64667f44f8e32ac17ee135f2c895e56413032
+  applied_hash: sha256:9313f33eef142b3a0baf62cdb50ac95463d89af41efb8387d850832437e4f7ab
   ownership: human
 - id: guidance.skill.maintain-contracts
   path: .github/skills/cis-maintain-contracts/SKILL.md
@@ -2392,13 +2392,13 @@ managed_artifacts:
   path: .github/skills/cis-validate-completion/SKILL.md
   definition: guidance.skill.validate-completion
   template_version: 1
-  applied_hash: sha256:519847acc565c90e5839cbec310ba09825a58ab3e31f08a5e99d6261bc08295b
+  applied_hash: sha256:14d2bf0ca1afa3fe6bf538d135936b318e9c7dc22c6630a35c31767e9f89fe00
   ownership: human
 - id: guidance.skill.verification
   path: .github/skills/cis-verification/SKILL.md
   definition: guidance.skill.verification
   template_version: 1
-  applied_hash: sha256:7d75898c043ed17d6a0ced5d01f8acaa6d7236c7b2a8b93e3c0b0e947616ec44
+  applied_hash: sha256:1ef0265e11a487b663841ad27f6a5cfc672dd81606c2f7fde665af662c2851c4
   ownership: human
 - id: guidance.skill.write-adr
   path: .github/skills/cis-write-adr/SKILL.md
@@ -2410,7 +2410,7 @@ managed_artifacts:
   path: AGENTS.md
   definition: guidance.host.agents
   template_version: 2
-  applied_hash: sha256:9f6655909343739d8c0352837c150bf78bdbb7c2e8e9e69c3e7186432c5984eb
+  applied_hash: sha256:fad48876bc67e0ab74481d0c1b95e79b3eb61c4ea5ef994722a3e8ecb716a0d1
   ownership: human
 - id: guidance.host.claude
   path: CLAUDE.md
@@ -2482,8 +2482,8 @@ managed_artifacts:
   path: docs/references/data-dictionary.md
   definition: reference.data-dictionary
   template_version: 1
-  applied_hash: sha256:6b5386db4ae2859593d61d2ffcfebdb7c728ee60f6904fe165f51deedd3305f7
-  ownership: managed
+  applied_hash: sha256:885bef841193870039f45e849b61bcd20f38e429daacce36f5da52c9658ef859
+  ownership: human
 - id: reference.diagnostics-profile
   path: docs/references/diagnostics-profile.md
   definition: reference.diagnostics-profile
@@ -2536,7 +2536,7 @@ managed_artifacts:
   path: docs/references/local-artifact-retention.md
   definition: reference.local-artifact-retention
   template_version: 1
-  applied_hash: sha256:bc44d7bee5c7469cf7d02a551c98a06b692050a7dbae4a7e6ec122947123833b
+  applied_hash: sha256:7479d5a9bcfaa12666729fbc19074482e1f174114750629f1e017ea8a5228e1f
   ownership: human
 - id: reference.module-ownership-map.reference
   path: docs/references/module-ownership-map.md
@@ -2567,7 +2567,7 @@ managed_artifacts:
   definition: reference.projection-dictionary
   template_version: 1
   applied_hash: sha256:a13e7bd9cb5674cc6d3b286134d08b361a62dea2102adb58e740d2f85fdc6262
-  ownership: managed
+  ownership: human
 - id: repository.profile
   path: docs/references/repository-profile.md
   definition: repository.profile

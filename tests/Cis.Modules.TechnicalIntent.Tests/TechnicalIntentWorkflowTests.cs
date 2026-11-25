@@ -707,7 +707,7 @@ public sealed partial class TechnicalIntentWorkflowTests
         var reconciled = environment.Intent.Initialize(environment.Authority.Path);
 
         Assert.True(reconciled.Applied);
-        Assert.Equal("Ready for Approval", reconciled.Validation!.EffectiveStatus);
+        Assert.Equal("Review Required", reconciled.Validation!.EffectiveStatus);
         var reconciledContent = File.ReadAllText(environment.TechnicalIntentPath);
         Assert.DoesNotContain("approved_by: \"Architecture owner\"", reconciledContent, StringComparison.Ordinal);
         Assert.Contains("reviewed standard clarification", File.ReadAllText(standardPath), StringComparison.Ordinal);

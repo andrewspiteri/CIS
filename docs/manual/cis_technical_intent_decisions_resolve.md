@@ -11,6 +11,17 @@ cis:
 
 # `cis technical-intent decisions resolve`
 
+A token returned by `definition status` can review an explicitly selected, prepared
+technical document before final activation. Saving recovers that same working-input
+interpretation only when the normal token does not match and the selected document
+still binds the current BRD baseline. The locked token comparison and final document
+and questionnaire checks still reject changed inputs. Recording the human's decision
+does not approve the BRD or technical intent, or activate the workspace.
+Review tokens bind the normalized selected document path as well as its reviewed
+inputs. Switching to an equivalent copy requires a new review; the save fences also
+recheck the current selection. Older pending tokens may require refresh. Recorded
+decisions and approval history are retained.
+
 ```text
 cis technical-intent decisions resolve <id> --input <json-file> --actor <human> [--workspace <path>] [--format <human|json|agent>]
 ```

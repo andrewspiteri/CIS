@@ -8,7 +8,10 @@ public sealed record ImpactAnalyseRequest(
     IReadOnlyList<ChangeRoot> Roots,
     int Depth,
     int Limit,
-    bool IncludeProposed);
+    bool IncludeProposed)
+{
+    public bool CurrentImplementation { get; init; }
+}
 
 public sealed record ImpactFinding(
     string Id,
@@ -49,5 +52,9 @@ public sealed record ImpactResult(
     IReadOnlyList<string> Diagnostics,
     bool Applied)
 {
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? AnalysisBasis { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? DecisionSuitability { get; init; }
     public int ExitCode => Diagnostics.Any(item => item.StartsWith("ERROR:", StringComparison.Ordinal)) ? 2 : 0;
 }

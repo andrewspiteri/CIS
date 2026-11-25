@@ -11,13 +11,68 @@ internal static class EngineeringTestEvidence
 {
     internal static readonly HashSet<string> Layers = new(StringComparer.Ordinal)
     { "unit", "component", "architecture", "integration", "business", "regression", "browser", "security", "api-compatibility", "coverage", "mutation" };
-    internal static string? Rejection(string repository, JsonElement root, string layer, EngineeringDefaultsPolicy policy, bool inapplicable = false)
+    internal static string? Rejection(string repository, JsonElement root, string layer, EngineeringDefaultsPolicy policy,
+        bool inapplicable = false, string? documentationRoot = null,
+        IReadOnlyList<string>? requiredBrowserCaseIds = null,
+        IReadOnlyDictionary<string, IReadOnlyList<string>>? browserSources = null)
     {
-        if (Text(root, "status") != "passed") return "test manifest status is not passed";
+        if (Number(root, "schemaVersion") == 2)
+        {
+            var manifest = root.Deserialize<TestRunManifest>(new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            if (Text(root, "status") != "scope-passed" || manifest?.Scope is null || !manifest.Scope.Matches(manifest))
+                return "selected-suite manifest scope, identity or status is invalid";
+            if (documentationRoot is null || !CisPathSafety.TryResolveUnderRoot(repository,
+                documentationRoot.TrimEnd('/', '\\') + "/references/test-suite-profile.md", out var profile)
+                || CisPathSafety.ContainsReparsePoint(repository, profile) || !File.Exists(profile) || new FileInfo(profile).Length > 1024 * 1024
+                || Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(profile))) != manifest.SuiteProfileDigest)
+                return "selected-suite manifest profile is missing or stale";
+        }
+        else if (Text(root, "status") != "passed" || root.TryGetProperty("scope", out var scope) && scope.ValueKind != JsonValueKind.Null)
+            return "test manifest status is not passed or uses an unsupported scope";
         if (!root.TryGetProperty("suites", out var suites) || suites.ValueKind != JsonValueKind.Array) return "native test suites are missing";
         if (!suites.EnumerateArray().Any(suite => SuitePasses(root, suite, layer, policy, inapplicable)))
             return $"no passing nonzero/non-skipped suite at layer {layer} with its own bound native report; coverage threshold={policy.MinimumCoverageLines}, mutation threshold={policy.MinimumMutationScore}";
+        if (layer == "browser")
+        {
+            var rejection = BrowserCasesRejection(repository, root, requiredBrowserCaseIds, policy, browserSources);
+            if (rejection is not null) return rejection;
+        }
         return ArtifactsIntact(repository, root) ? null : "a native report is missing, changed, or has an incorrect size/hash";
+    }
+
+    private static string? BrowserCasesRejection(string repository, JsonElement manifest, IReadOnlyList<string>? requiredIds, EngineeringDefaultsPolicy policy,
+        IReadOnlyDictionary<string, IReadOnlyList<string>>? browserSources)
+    {
+        if (requiredIds is not { Count: > 0 })
+            return "required browser journey identities are unresolved; bind the task to its frontend catalogue cases or list exact TC-* identities in its native browser verification obligation";
+        var sources = browserSources ?? ManualTestAutomationScanner.ScanSourcePaths(repository);
+        var suites = manifest.GetProperty("suites").EnumerateArray().Where(suite => Text(suite, "layer") == "browser").ToArray();
+        foreach (var id in requiredIds)
+        {
+            var found = false;
+            foreach (var suite in suites)
+            {
+                if (!suite.TryGetProperty("cases", out var cases) || cases.ValueKind != JsonValueKind.Array) continue;
+                var matches = cases.EnumerateArray().Where(test => Text(test, "id").Equals(id, StringComparison.OrdinalIgnoreCase)
+                    || BrowserJourneyRequirements.Ids(Text(test, "name")).Contains(id, StringComparer.OrdinalIgnoreCase)).ToArray();
+                if (matches.Length == 0) continue;
+                found = true;
+                // Playwright JSON reports file paths. TRX does not retain that location;
+                // preserve its existing TC identity join without inventing a source path.
+                if (!sources.TryGetValue(id, out var sourcePaths) || Text(suite, "framework").Equals("playwright", StringComparison.OrdinalIgnoreCase)
+                    && matches.Any(test => BrowserJourneyRequirements.SourcePath(repository, Text(test, "source")) is not { } path
+                        || !sourcePaths.Any(source => source.Equals(path, CisPathSafety.PlatformComparison))))
+                    return $"required browser journey {id} has no matching current test source for its native result; preserve the report's actual source path and the source's TC-* reference";
+                if (!SuitePasses(manifest, suite, "browser", policy, false) || cases.GetArrayLength() != Number(suite, "total")
+                    || string.IsNullOrWhiteSpace(Text(suite, "suiteId")) || string.IsNullOrWhiteSpace(Text(suite, "framework"))
+                    || !suite.GetProperty("artifacts").EnumerateArray().Any(artifact => Text(artifact, "kind") == "test-result"
+                        && Text(artifact, "suiteId") == Text(suite, "suiteId"))
+                    || cases.EnumerateArray().Any(test => Text(test, "status") != "passed"))
+                    return $"required browser journey {id} has a missing, non-passing or inconsistent native result; every reported project/parameter case must pass in its own bound browser suite";
+            }
+            if (!found) return $"required browser journey {id} has no executed native result in this browser evidence";
+        }
+        return null;
     }
     private static bool SuitePasses(JsonElement manifest, JsonElement suite, string layer, EngineeringDefaultsPolicy policy, bool inapplicable)
     {

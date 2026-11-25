@@ -122,7 +122,11 @@ public sealed record TestRunManifest(
     string? Implementer = null,
     string? Assurer = null,
     string? AssuranceTechnique = null,
-    string? InputDigest = null);
+    string? InputDigest = null)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public TestReconcileScope? Scope { get; init; }
+}
 
 [method: System.Text.Json.Serialization.JsonConstructor]
 public sealed record TestResultAdapterContext(

@@ -12,7 +12,8 @@ internal static class EngineeringNativeEvidence
 
     internal static IReadOnlyList<string> Review(string repository, EngineeringGateEvidence gate, string inputDigest,
         string reviewerRunId, string taskId, string taskContractDigest, string documentationRoot, EngineeringDefaultsPolicy policy,
-        string? expectedTargetRepository = null, string? authorityInputDigest = null, string? authorityDossierDigest = null)
+        string? expectedTargetRepository = null, string? authorityInputDigest = null, string? authorityDossierDigest = null,
+        IReadOnlyList<string>? requiredBrowserCaseIds = null)
     {
         if (gate.Id == "performance") return BenchmarkEvidenceReview.Review(repository, gate.Artifacts, inputDigest);
         if (!EngineeringTestEvidence.Layers.Contains(gate.Id) && gate.Id is not ("build" or "lint" or "format" or "review")) return [];
@@ -26,7 +27,9 @@ internal static class EngineeringNativeEvidence
             {
                 using var json = JsonDocument.Parse(File.ReadAllText(path));
                 var root = json.RootElement;
-                var expectedSchema = gate.Id is "build" or "lint" or "format" ? 2 : 1;
+                var scopedTests = EngineeringTestEvidence.Layers.Contains(gate.Id) && Number(root, "schemaVersion") == 2
+                    && !(gate.Id == "security" && root.TryGetProperty("profilePath", out _));
+                var expectedSchema = gate.Id is "build" or "lint" or "format" || scopedTests ? 2 : 1;
                 string? rejection;
                 if (Number(root, "schemaVersion") != expectedSchema) rejection = $"expected manifest schema {expectedSchema}";
                 else if (Text(root, "inputDigest") != inputDigest) rejection = "execution input digest is missing or stale";
@@ -35,7 +38,7 @@ internal static class EngineeringNativeEvidence
                     "review" => EngineeringReviewEvidence.Rejection(repository, gate, root, reviewerRunId, taskId, taskContractDigest, expectedTargetRepository, authorityInputDigest, artifact.Path, authorityDossierDigest),
                     "build" or "lint" or "format" => WorkflowRejection(root, artifact.Selector ?? gate.Id),
                     "security" when root.TryGetProperty("profilePath", out _) => EngineeringSecurityEvidence.Rejection(repository, root, documentationRoot),
-                    _ => EngineeringTestEvidence.Rejection(repository, root, gate.Id, policy, gate.State == EngineeringGateState.Inapplicable)
+                    _ => EngineeringTestEvidence.Rejection(repository, root, gate.Id, policy, gate.State == EngineeringGateState.Inapplicable, documentationRoot: documentationRoot, requiredBrowserCaseIds: requiredBrowserCaseIds)
                 };
                 if (rejection is null) return [];
                 reasons.Add($"{artifact.Path}: {rejection}");

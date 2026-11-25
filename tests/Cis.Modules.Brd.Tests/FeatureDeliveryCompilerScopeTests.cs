@@ -113,9 +113,15 @@ public sealed partial class FeatureIntakeTests
         Assert.Contains(reviewed.Warnings, warning => warning.Contains("Resolve the affected story's coverage reason", StringComparison.Ordinal));
         var id = reviewed.Stories.Single().Id;
         var read = service.Story(f.Authority, "referrals", id, false);
-        var plan = service.Story(f.Authority, "referrals", id, true, read.InputHash);
+        var plan = PrepareAssessedStory(service, f, id, read);
+        Assert.Empty(plan.Errors);
+        Assert.NotNull(plan.PlanHash);
+        Assert.NotNull(plan.Revision);
         var current = service.UpdateStoryWorkflow(f.Authority, "referrals", id, "approve", plan.PlanHash!, plan.Revision!, "Reviewer", "Reviewed task contract");
+        Assert.Empty(current.Errors);
         var preview = service.ExecuteStoryTask(f.Authority, "referrals", id, "T1", cancellation: TestContext.Current.CancellationToken);
+        Assert.Empty(preview.Errors);
+        Assert.NotNull(preview.ExecutionPlan);
         current = service.ExecuteStoryTask(f.Authority, "referrals", id, "T1", true, current.PlanHash, current.Revision,
             preview.ExecutionPlan!.Hash, "Reviewer", true, TestContext.Current.CancellationToken);
         Assert.Empty(current.Errors);

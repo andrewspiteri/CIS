@@ -32,6 +32,37 @@ public sealed class MutationRunnerScriptTests
     }
 
     [Fact]
+    public void NativeTimeoutStartsAtTargetReleaseAfterOwnedStoragePreflight()
+    {
+        using var fixture = new RunnerFixture();
+        var owned = Path.Combine(fixture.Root, "owned");
+        Directory.CreateDirectory(owned);
+        const string preflight = """
+            & (Get-Module MutationRunner) {
+                $script:originalOwnedCounter = (Get-Item Function:Get-MutationOwnedBytes).ScriptBlock
+                $script:delayedPreflight = $false
+                function script:Get-MutationOwnedBytes {
+                    param([string[]]$Paths, [string[]]$AccountingPaths = @())
+                    if (-not $script:delayedPreflight) {
+                        $script:delayedPreflight = $true
+                        Start-Sleep -Milliseconds 4000
+                    }
+                    & $script:originalOwnedCounter $Paths $AccountingPaths
+                }
+            }
+            """;
+
+        var result = fixture.Run("Write-Output healthy",
+            $"-TimeoutSeconds 3 -OwnedPaths @('{owned.Replace("'", "''")}')", beforeInvoke: preflight);
+
+        Assert.Equal("exited", result.GetProperty("status").GetString());
+        Assert.Equal(0, result.GetProperty("exitCode").GetInt32());
+        Assert.True(result.GetProperty("safelyStopped").GetBoolean());
+        Assert.True(result.GetProperty("durationMilliseconds").GetInt64() >= 4000);
+        Assert.Contains("healthy", File.ReadAllText(Path.Combine(fixture.RunRoot, "stdout.log")), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void StorageGrowthStopsTheProcessBeforeItCanReportSuccess()
     {
         using var fixture = new RunnerFixture();
@@ -66,6 +97,75 @@ public sealed class MutationRunnerScriptTests
         Assert.True(result.GetProperty("peakRunBytes").GetInt64() < admittedGrowth);
         Assert.True(result.GetProperty("peakRetainedBytes").GetInt64() < admittedGrowth);
         Assert.InRange(result.GetProperty("durationMilliseconds").GetInt64(), 0, 8_000);
+    }
+
+    [Theory]
+    [InlineData("covered")]
+    [InlineData("outside")]
+    [InlineData("accounting")]
+    [InlineData("accounting-temp")]
+    public void OwnedAliasCounterRequiresActualMeasuredDomainAndNonAccountingTarget(string scenario)
+    {
+        using var fixture = new RunnerFixture();
+        var domain = Path.Combine(fixture.Root, "workspace");
+        var accounting = Path.Combine(fixture.Root, "accounting");
+        var target = scenario switch
+        {
+            "accounting" => accounting,
+            "accounting-temp" => accounting + ".tmp-owned",
+            _ => Path.Combine(fixture.Root, "target"),
+        };
+        var storage = Path.Combine(fixture.Root, "native-storage");
+        Directory.CreateDirectory(target);
+        Directory.CreateDirectory(storage);
+        File.WriteAllBytes(Path.Combine(target, "payload.bin"), new byte[31]);
+        var alias = Path.GetFullPath(Path.Combine(domain, "node_modules/client-core"));
+        Directory.CreateDirectory(Path.GetDirectoryName(alias)!);
+        if (OperatingSystem.IsWindows())
+        {
+            var start = new ProcessStartInfo("cmd.exe")
+            { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+            foreach (var argument in new[] { "/d", "/c", "mklink", "/J", alias, target }) start.ArgumentList.Add(argument);
+            using var process = Process.Start(start)!;
+            var error = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+            Assert.True(process.ExitCode == 0, error);
+        }
+        else Directory.CreateSymbolicLink(alias, target);
+        try
+        {
+            var module = Path.Combine(RepositoryRoot(), "tools/MutationRunner.psm1").Replace("'", "''");
+            string[] paths = scenario is "accounting" or "accounting-temp" ? new[] { fixture.Root }
+                : scenario == "covered" ? new[] { domain, target } : [domain];
+            var selected = string.Join(",", paths.Select(path => "'" + path.Replace("'", "''") + "'"));
+            var excluded = scenario is "accounting" or "accounting-temp" ? "'" + accounting.Replace("'", "''") + "'" : "";
+            var script = $$"""
+                Import-Module '{{module}}' -Force
+                $loaded = Get-Module MutationRunner
+                $paths = @({{selected}})
+                $excluded = @({{excluded}})
+                try {
+                    $bytes = & $loaded { param($roots, $accounting) Get-MutationOwnedBytes $roots $accounting } $paths $excluded
+                    Write-Output ('counted:' + $bytes)
+                } catch { Write-Output ('held:' + $_.Exception.Message) }
+                """;
+
+            var result = fixture.Run(script, "", storage);
+
+            Assert.Equal("exited", result.GetProperty("status").GetString());
+            Assert.Equal(0, result.GetProperty("exitCode").GetInt32());
+            var observation = File.ReadAllText(Path.Combine(fixture.RunRoot, "stdout.log")).Trim();
+            if (scenario == "covered") Assert.Equal("counted:31", observation);
+            else Assert.StartsWith("held:Mutation storage contains a symbolic link:", observation, StringComparison.Ordinal);
+            Assert.Equal(31, new FileInfo(Path.Combine(target, "payload.bin")).Length);
+        }
+        finally
+        {
+            Assert.True(CisPathSafety.IsUnderRoot(fixture.Root, alias));
+            Assert.False(CisPathSafety.ContainsReparsePoint(fixture.Root, Path.GetDirectoryName(alias)!));
+            Assert.True(File.GetAttributes(alias).HasFlag(FileAttributes.ReparsePoint));
+            Directory.Delete(alias, recursive: false);
+        }
     }
 
     [Theory]
@@ -255,7 +355,7 @@ public sealed class MutationRunnerScriptTests
         public string Root { get; } = Path.Combine(Path.GetTempPath(), "cis-mutation-guard-" + Guid.NewGuid().ToString("N"));
         public string RunRoot => Path.Combine(Root, "run");
 
-        public JsonElement Run(string childScript, string options, string? storageRoot = null)
+        public JsonElement Run(string childScript, string options, string? storageRoot = null, string beforeInvoke = "")
         {
             var directory = new DirectoryInfo(RepositoryRoot());
             var module = Path.Combine(directory.FullName, "tools", "MutationRunner.psm1").Replace("'", "''");
@@ -263,6 +363,7 @@ public sealed class MutationRunnerScriptTests
             var script = $$"""
                 $ErrorActionPreference = 'Stop'
                 Import-Module '{{module}}' -Force
+                {{beforeInvoke}}
                 $result = Invoke-BoundedMutationProcess -FilePath (Get-Process -Id $PID).Path -Arguments @('-NoProfile', '-EncodedCommand', '{{encodedChild}}') -WorkingDirectory '{{directory.FullName.Replace("'", "''")}}' -RunRoot '{{RunRoot.Replace("'", "''")}}' -StorageRoot '{{(storageRoot ?? Root).Replace("'", "''")}}' -MinimumFreeBytes 0 {{options}}
                 $result | ConvertTo-Json -Compress
                 """;

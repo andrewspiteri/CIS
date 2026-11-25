@@ -76,6 +76,7 @@ public sealed class PlanModule : ICisModule
         var status = new Option<string>("--status") { Required = true, Description = "Target status." };
         var actor = new Option<string>("--actor") { Required = true, Description = "Person or agent performing the transition." };
         var reason = new Option<string>("--reason") { Required = true, Description = "Evidence-based transition reason." };
+        var summary = new Option<bool>("--summary") { Description = "Bounded affected-task result; full records remain available through status." };
         var repo = new Option<string>("--repo") { DefaultValueFactory = _ => Directory.GetCurrentDirectory(), Description = "Repository path." };
         var format = new Option<string>("--format") { DefaultValueFactory = _ => "human", Description = "Output format: human, json, or agent." };
         transition.Arguments.Add(changeId);
@@ -85,8 +86,11 @@ public sealed class PlanModule : ICisModule
         transition.Options.Add(reason);
         transition.Options.Add(repo);
         transition.Options.Add(format);
+        transition.Options.Add(summary);
         transition.SetAction(parseResult =>
         {
+            CisInvocationTelemetry.AssociateTask(parseResult.GetValue(changeId) ?? string.Empty,
+                parseResult.GetValue(taskId));
             var result = service.TransitionTask(new PlanTaskTransitionRequest(
                 parseResult.GetValue(repo) ?? Directory.GetCurrentDirectory(),
                 parseResult.GetValue(changeId) ?? string.Empty,
@@ -94,7 +98,8 @@ public sealed class PlanModule : ICisModule
                 parseResult.GetValue(status) ?? string.Empty,
                 parseResult.GetValue(actor) ?? string.Empty,
                 parseResult.GetValue(reason) ?? string.Empty));
-            Render(result, parseResult.GetValue(format) is "json" or "agent" ? parseResult.GetValue(format)! : "human");
+            Render(result, parseResult.GetValue(format) is "json" or "agent" ? parseResult.GetValue(format)! : "human",
+                parseResult.GetValue(summary), parseResult.GetValue(taskId));
             return result.ExitCode;
         });
         task.Subcommands.Add(transition);
@@ -386,6 +391,7 @@ public sealed class PlanModule : ICisModule
         Func<string, string, PlanResult> action)
     {
         var command = new Command(name, description);
+        var summary = new Option<bool>("--summary") { Description = "Bounded routine result; omit this flag for the complete legacy output." };
         var id = new Argument<string>("change-id");
         var repo = new Option<string>("--repo")
         {
@@ -400,20 +406,26 @@ public sealed class PlanModule : ICisModule
         command.Arguments.Add(id);
         command.Options.Add(repo);
         command.Options.Add(format);
+        command.Options.Add(summary);
         command.SetAction(parseResult =>
         {
             var result = action(
                 parseResult.GetValue(repo) ?? Directory.GetCurrentDirectory(),
                 parseResult.GetValue(id) ?? string.Empty);
-            Render(result, parseResult.GetValue(format) is "json" or "agent" ? parseResult.GetValue(format)! : "human");
+            Render(result, parseResult.GetValue(format) is "json" or "agent" ? parseResult.GetValue(format)! : "human", parseResult.GetValue(summary));
             return result.ExitCode;
         });
         return command;
     }
 
-    private static void Render(PlanResult result, string format)
+    private static void Render(PlanResult result, string format, bool summary = false, string? affectedTaskId = null)
     {
         if (result.Status == "blocked") CisInvocationOutcome.Report("blocked");
+        if (summary)
+        {
+            Console.WriteLine(PlanRoutineSummary.Render(result, affectedTaskId));
+            return;
+        }
         if (format == "json")
         {
             Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));

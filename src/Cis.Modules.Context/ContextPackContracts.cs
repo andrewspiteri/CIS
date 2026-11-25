@@ -14,7 +14,14 @@ public sealed record ContextPackRequest(
     bool IncludeProposed,
     string? OutputPath,
     bool Force,
-    IReadOnlyList<ContextPackRoot>? AdditionalRoots = null);
+    IReadOnlyList<ContextPackRoot>? AdditionalRoots = null)
+{
+    public int? MaxUtf8Bytes { get; init; }
+    public bool TaskEvidenceMode { get; init; }
+}
+
+public sealed record ContextPackVerificationFact(string CheckKey, string ResultReference, string RecordedStatus,
+    string RecordedOutcome, string InputState, string ReceiptState, string Applicability);
 
 public sealed record ContextPackRoot(
     string RepositoryPath,
@@ -96,11 +103,20 @@ public sealed record ContextPackResult(
     bool GraphAvailable,
     bool RequestValid)
 {
+    public int DeliveredCharacters { get; init; }
+    public int DeliveredUtf8Bytes { get; init; }
+    public int EstimatedDeliveredTokens { get; init; }
+    public int OmittedMetadataItems { get; init; }
+    public string? DetailPath { get; init; }
+    public bool OmittedErrors { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<ContextPackVerificationFact>? VerificationFacts { get; init; }
+
     public int ExitCode => !RepositoryConfigurationValid || !RequestValid
         ? 2
         : !GraphAvailable
             ? 4
-            : Diagnostics.Any(diagnostic => diagnostic.Severity == "error")
+            : OmittedErrors || Diagnostics.Any(diagnostic => diagnostic.Severity == "error")
                 ? 5
                 : Status == "collision"
                     ? 4

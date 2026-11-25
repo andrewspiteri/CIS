@@ -1044,7 +1044,11 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
         var task = plan.WorkItems.FirstOrDefault(item => item.Id == taskId);
         if (task is null) return (null, ["Task was not found."]);
         if (task.ContractErrors.Count > 0) return (null, task.ContractErrors);
-        try { return Completion().Prepare(change, task, plan.Source?.Targets, ReadTaskContract(change, task), target); }
+        try
+        {
+            return Completion().Prepare(change, task, plan.Source?.Targets, ReadTaskContract(change, task), target,
+            ReadTaskDigest(change.RepositoryPath, change.Id, task.Id));
+        }
         catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException)
         { return (null, [error.Message]); }
     }
@@ -1440,6 +1444,8 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
         var source = plan.Source;
         bool manualCatalogue;
         var sourceTasks = plan.WorkItems.Where(task => task.RequirementIds.Count > 0).ToArray();
+        var historicalNoUi = sourceTasks.Length > 0 && sourceTasks.All(OutcomeRetainsHistoricalAuthority)
+            && OutcomeAuthority(change)?.Request.VisualUi == false;
         if (source is not null && File.Exists(OutcomePlanPath(change)) && OutcomeAuthority(change) is { } authority
             && sourceTasks.Length > 0 && sourceTasks.All(OutcomeRetainsHistoricalAuthority))
             manualCatalogue = HistoricalOutcomeCatalogueRequired(change, source, authority, sourceTasks);
@@ -1474,9 +1480,11 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
                 continue;
             }
 
-            if (!Regex.IsMatch(section, @"(?im)^- Automation status:\s*Automated\s*$"))
+            if (!Regex.IsMatch(section, historicalNoUi
+                ? @"(?im)^- Automation status:\s*(?:Source linked|Automated)\s*$"
+                : @"(?im)^- Automation status:\s*Source linked\s*$"))
             {
-                errors.Add($"Manual test case {id} has automated coverage but its catalogue is stale; rerun `cis plan import-spec`.");
+                errors.Add($"Manual test case {id} has a source reference but its discovery catalogue is stale; rerun `cis plan import-spec`.");
                 continue;
             }
 
@@ -1486,6 +1494,8 @@ public sealed partial class PlanningService : ICisEngineeringTaskContractReader
             }
         }
 
+        // Retained completed UI history does not introduce new execution into a current explicitly no-UI outcome.
+        if (!historicalNoUi) errors.AddRange(ValidateBrowserJourneyCoverage(change.RepositoryPath, markdownPath, discovered, source?.RequirementIds));
         return errors.Distinct(StringComparer.Ordinal).ToArray();
     }
 

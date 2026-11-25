@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -9,6 +10,152 @@ namespace Cis.Modules.Agent.Tests;
 
 public sealed partial class AgentExecutionTests
 {
+    [Fact]
+    public void NativeWork_IncrementalUnitLaunchesAndSettlesWithCoveredWorkspaceDirectoryAlias()
+    {
+        using var repository = AgentRepository.Create();
+        AdoptWorkControl(repository);
+        var controller = new AgentService(new CisRepositoryContextResolver());
+        var allocation = WorkAllocation(180, 300, 30, ["WORK-090"]) with
+        {
+            Controllers = [WorkActor],
+            Storage = new(128 * 1024 * 1024,
+                [new(repository.Path, ".cis/local"), new(repository.Path, "workspace") { Scratch = true }]),
+        };
+        Assert.Equal(0, controller.AllocateWork(repository.Path, "CIS-0001",
+            WriteWorkInput(repository, "workspace-alias.json", allocation), WorkActor,
+            "Run one actual unit through the owned workspace measurement and native monitor.").ExitCode);
+        repository.Write("src/X.cs", "public static class X { public static bool Value => true; }");
+        repository.Write("src/Y.cs", "public static class Y { public static bool Value => true; }");
+        repository.Write("tests/XTests.cs", "class XTests { }");
+        repository.Write("tests/YTests.cs", "class YTests { }");
+        repository.Write("config.json", "{}");
+        repository.Write("workspace/packages/client-core/index.ts", "export const value = true;");
+        var dotnet = Environment.GetEnvironmentVariable("DOTNET_HOST_PATH");
+        if (dotnet is null || !File.Exists(dotnet))
+            dotnet = Path.GetFullPath("../../../dotnet" + (OperatingSystem.IsWindows() ? ".exe" : ""), RuntimeEnvironment.GetRuntimeDirectory());
+        var nativeFixture = Path.Combine(AppContext.BaseDirectory, "native-fixture", "Cis.Testing.NativeFixture.dll");
+        var profile = new IncrementalTestProfile
+        {
+            SchemaVersion = 1,
+            Id = "workspace-alias",
+            SourceFiles = ["src/X.cs"],
+            TestFiles = ["tests/XTests.cs"],
+            ConfigFiles = ["config.json"],
+            ToolFiles = [dotnet, nativeFixture],
+            FullTestFilter = "FullyQualifiedName~Fixture.",
+            UnitCommand = [dotnet, nativeFixture, "unit", "{output}", "{sourceFile}", "{testFilter}"],
+            UnitReportPath = "unit.trx",
+            TimeoutSeconds = 10,
+            MaxRetainedBytes = 16 * 1024 * 1024,
+            MinFreeBytes = 0,
+        };
+        repository.Write("unit-profile.json", JsonSerializer.Serialize(profile, JsonOptions));
+        var association = new CisNativeWorkOptions("CIS-0001", "WORK-090", AuthorityPath: repository.Path, Actor: WorkActor);
+        var ownedStorage = (ICisOwnedStorageController)controller;
+        var beforeAlias = ownedStorage.Inspect(repository.Path, association);
+        Assert.True(beforeAlias.Allowed, string.Join("; ", beforeAlias.Errors));
+        var alias = Path.GetFullPath(Path.Combine(repository.Path, "workspace/node_modules/@workspace/client-core"));
+        var target = Path.GetFullPath(Path.Combine(repository.Path, "workspace/packages/client-core"));
+        var fixtureRoot = Path.Combine(Path.GetTempPath(), "cis-agent-tests");
+        Assert.True(CisPathSafety.IsUnderRoot(fixtureRoot, repository.Path));
+        Assert.True(Guid.TryParseExact(Path.GetFileName(repository.Path), "N", out _));
+        Assert.True(CisPathSafety.IsUnderRoot(repository.Path, alias));
+        Assert.True(CisPathSafety.IsUnderRoot(repository.Path, target));
+        Assert.False(CisPathSafety.ContainsReparsePoint(Path.GetPathRoot(repository.Path)!, repository.Path));
+        Assert.Null(AliasAttributes());
+        Directory.CreateDirectory(Path.GetDirectoryName(alias)!);
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                var start = new ProcessStartInfo("cmd.exe")
+                { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+                foreach (var argument in new[] { "/d", "/c", "mklink", "/J", alias, target }) start.ArgumentList.Add(argument);
+                using var process = Process.Start(start)!;
+                var error = process.StandardError.ReadToEnd();
+                process.WaitForExit();
+                Assert.True(process.ExitCode == 0, error);
+            }
+            else Directory.CreateSymbolicLink(alias, target);
+            var counted = ownedStorage.Inspect(repository.Path, association);
+            Assert.True(counted.Allowed, string.Join("; ", counted.Errors));
+            Assert.Equal(beforeAlias.Storage!.OwnedBytes, counted.Storage!.OwnedBytes);
+            var service = new IncrementalTestService(new ProtectedEvidenceGraph(repository.Path), controller, controller);
+
+            var result = service.Run(new(repository.Path, "unit-profile.json", "unit", 1, 60) { Work = association },
+                0, TestContext.Current.CancellationToken);
+
+            Assert.True(result.ExitCode == 0, JsonSerializer.Serialize(result, JsonOptions));
+            Assert.Equal(1, result.ExecutedUnitBatches);
+            Assert.Equal(0, result.ExecutedMutationBatches);
+            var statePath = Path.Combine(repository.Path, result.StatePath!);
+            var state = JsonSerializer.Deserialize<IncrementalTestState>(File.ReadAllBytes(statePath), JsonOptions)!;
+            var unit = Assert.Single(state.Batches.Values).Unit!;
+            Assert.Equal("completed", unit.Status);
+            Assert.True(unit.Completed);
+            Assert.True(unit.Total > 0);
+            Assert.Equal(unit.Total, unit.Passed);
+            Assert.Equal(0, unit.Failed);
+            Assert.Equal(0, unit.Skipped);
+            var execution = Assert.IsType<MutationNativeExecution>(unit.Execution);
+            Assert.Equal("exited", execution.Status);
+            Assert.Equal(0, execution.ExitCode);
+            Assert.True(execution.SafelyStopped);
+            Assert.Equal("governed-native", execution.WorkCoverage);
+            Assert.True(execution.OwnedProcessPeak > 0);
+            Assert.True(execution.PeakOwnedBytes > 0);
+            Assert.True(execution.PeakOperationBytes > 0);
+            Assert.Empty(execution.SettlementErrors);
+            var report = Path.Combine(Path.GetDirectoryName(statePath)!, unit.ReportPath);
+            Assert.True(File.Exists(report));
+            Assert.Equal(unit.ReportSha256, Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(report))));
+            var calls = File.ReadAllLines(Path.Combine(repository.Path, ".cis/native-calls.log"));
+            Assert.StartsWith("unit ", Assert.Single(calls), StringComparison.Ordinal);
+            Assert.Equal(0, result.WorkControl!.Work!.Task!.ReservedMilliseconds);
+            Assert.All(result.WorkControl.Work.Executions, item => Assert.True(item.Finalized));
+            var storage = ownedStorage.Inspect(repository.Path, association);
+            Assert.True(storage.Allowed, string.Join("; ", storage.Errors));
+            Assert.Equal(0, storage.Storage!.ReservedBytes);
+            var stateBytes = File.ReadAllBytes(statePath);
+
+            var verified = service.Verify(new(repository.Path, "unit-profile.json") { Layer = "unit" });
+
+            Assert.True(verified.ExitCode == 0, JsonSerializer.Serialize(verified, JsonOptions));
+            Assert.Equal("verified", verified.Status);
+            Assert.Equal("unit", verified.Layer);
+            Assert.True(verified.ScopeComplete);
+            var verifiedBatch = Assert.Single(verified.Batches);
+            Assert.Equal("src/X.cs", verifiedBatch.SourceFile);
+            Assert.Equal(unit.Fingerprint, verifiedBatch.UnitFingerprint);
+            Assert.Equal(unit.ReportSha256, verifiedBatch.UnitReportSha256);
+            Assert.Equal(unit.Passed, verifiedBatch.UnitPassed);
+            Assert.Equal(calls, File.ReadAllLines(Path.Combine(repository.Path, ".cis/native-calls.log")));
+            Assert.Equal(stateBytes, File.ReadAllBytes(statePath));
+            Assert.Equal(unit.ReportSha256, Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(report))));
+            Assert.True(File.GetAttributes(alias).HasFlag(FileAttributes.ReparsePoint));
+            Assert.Equal("export const value = true;", File.ReadAllText(Path.Combine(target, "index.ts")));
+        }
+        finally
+        {
+            // Detach only this newly created alias before AgentRepository's
+            // ordinary cleanup, and never delete an ordinary replacement/target.
+            Assert.False(CisPathSafety.ContainsReparsePoint(Path.GetPathRoot(alias)!, Path.GetDirectoryName(alias)!));
+            if (AliasAttributes() is { } attributes)
+            {
+                Assert.True(attributes.HasFlag(FileAttributes.ReparsePoint));
+                Directory.Delete(alias, recursive: false);
+                Assert.Null(AliasAttributes());
+            }
+        }
+
+        FileAttributes? AliasAttributes()
+        {
+            try { return File.GetAttributes(alias); }
+            catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException) { return null; }
+        }
+    }
+
     [Fact]
     public void NativeWork_IncrementalExactRestorationPublishesItsOriginalLineageAndClearsRecovery()
     {

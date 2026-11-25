@@ -59,8 +59,17 @@ public sealed partial class TestingModule : ICisModule
     {
         var command = new Command("reconcile", "Parse one workflow run into typed local test evidence.");
         var repository = Repo(); var format = Format(); var run = Required("--run");
+        var suites = new Option<string[]>("--suite")
+        {
+            Arity = ArgumentArity.OneOrMore,
+            AllowMultipleArgumentsPerToken = true,
+            Description = "Explicit selected-suite evidence; repeat for each canonical suite. Omitted suites are not assessed."
+        };
         command.Options.Add(repository); command.Options.Add(format); command.Options.Add(run);
-        command.SetAction(parse => Render(service.Reconcile(parse.GetValue(repository)!, parse.GetValue(run)!), parse.GetValue(format)!));
+        command.Options.Add(suites);
+        command.SetAction(parse => Render(parse.GetValue(suites) is { Length: > 0 } selected
+            ? service.Reconcile(parse.GetValue(repository)!, parse.GetValue(run)!, selected)
+            : service.Reconcile(parse.GetValue(repository)!, parse.GetValue(run)!), parse.GetValue(format)!));
         return command;
     }
 
@@ -127,12 +136,14 @@ public sealed partial class TestingModule : ICisModule
         {
             var command = new Command(operation, operation == "run" ? "Execute bounded pending batches and save each completed result." : "Inspect current and pending batches without executing tests.");
             var repository = Repo(); var format = Format(); var profile = Required("--profile");
+            var summary = new Option<bool>("--summary") { Description = "Return a bounded operational summary; omit for complete legacy output." };
             var layer = new Option<string>("--layer") { DefaultValueFactory = _ => "all", Description = "unit, mutation, or all." };
             var batches = new Option<int>("--max-batches") { DefaultValueFactory = _ => 4 };
             var seconds = new Option<int>("--max-seconds") { DefaultValueFactory = _ => 1200 };
             var force = new Option<bool>("--force") { Description = "Rerun current results as well as pending work." };
             var nativeTimeout = new Option<int>("--native-timeout-seconds") { DefaultValueFactory = _ => 0, Description = "Invocation guard override, 1-3600 seconds; zero uses the profile. Does not change native per-mutant timeouts." };
             command.Options.Add(repository); command.Options.Add(format); command.Options.Add(profile);
+            command.Options.Add(summary);
             command.Options.Add(layer); command.Options.Add(batches); command.Options.Add(seconds); command.Options.Add(force);
             if (operation == "run") command.Options.Add(nativeTimeout);
             var work = NativeAssociation(command);
@@ -141,7 +152,7 @@ public sealed partial class TestingModule : ICisModule
                 var output = parse.GetValue(format)!;
                 if (output is not ("human" or "agent" or "json")) return 2;
                 var reader = services.GetService<ICisGraphSnapshotReader>();
-                if (reader is null) return RenderIncremental(new("missing-graph-module", 2) { Diagnostics = ["The installed graph module is required."] }, output);
+                if (reader is null) return RenderIncremental(new("missing-graph-module", 2) { Diagnostics = ["The installed graph module is required."] }, output, parse.GetValue(summary));
                 var service = new IncrementalTestService(reader, services.GetService<ICisNativeWorkController>(), services.GetService<ICisOwnedStorageController>());
                 var options = new IncrementalTestOptions(parse.GetValue(repository)!, parse.GetValue(profile)!, parse.GetValue(layer)!,
                     parse.GetValue(batches), parse.GetValue(seconds), parse.GetValue(force))
@@ -149,7 +160,7 @@ public sealed partial class TestingModule : ICisModule
                     Work = new(parse.GetValue(work.Change), parse.GetValue(work.Task), parse.GetValue(work.Parent), parse.GetValue(work.Authority), parse.GetValue(work.Actor))
                     { RecoveryOfExecutionId = parse.GetValue(work.Recovery) }
                 };
-                return RenderIncremental(operation == "run" ? WithNativeCancellation(token => service.Run(options, parse.GetValue(nativeTimeout), token)) : service.Plan(options), output);
+                return RenderIncremental(operation == "run" ? WithNativeCancellation(token => service.Run(options, parse.GetValue(nativeTimeout), token)) : service.Plan(options), output, parse.GetValue(summary));
             });
             root.Subcommands.Add(command);
         }
@@ -204,30 +215,33 @@ public sealed partial class TestingModule : ICisModule
         root.Subcommands.Add(refine);
         var verify = new Command("verify", "Verify current saved unit and mutation evidence without executing or changing the cache.");
         var verifyRepository = Repo(); var verifyFormat = Format(); var verifyProfile = Required("--profile");
+        var verifySummary = new Option<bool>("--summary") { Description = "Return a bounded current-evidence summary instead of the complete receipt." };
         var verifyLayer = new Option<string>("--layer") { DefaultValueFactory = _ => "all", Description = "unit or all declared evidence." };
         var refinementProfiles = new Option<string[]>("--refinement-profile")
         {
             Description = "Explicit native timeout rerun profiles to reverify. May be repeated; saved sidecar claims are not trusted.",
         };
         verify.Options.Add(verifyRepository); verify.Options.Add(verifyFormat); verify.Options.Add(verifyProfile); verify.Options.Add(refinementProfiles); verify.Options.Add(verifyLayer);
+        verify.Options.Add(verifySummary);
         verify.SetAction(parse =>
         {
             var output = parse.GetValue(verifyFormat)!;
             if (output is not ("human" or "agent" or "json")) return 2;
             var reader = services.GetService<ICisGraphSnapshotReader>();
-            if (reader is null) return RenderEvidence(new("missing-graph-module", 2), output);
+            if (reader is null) return RenderEvidence(new("missing-graph-module", 2), output, parse.GetValue(verifySummary));
             return RenderEvidence(new IncrementalTestService(reader, services.GetService<ICisNativeWorkController>(),
                 services.GetService<ICisOwnedStorageController>()).Verify(new(parse.GetValue(verifyRepository)!,
                 parse.GetValue(verifyProfile)!, parse.GetValue(refinementProfiles))
-                { Layer = parse.GetValue(verifyLayer)! }), output);
+                { Layer = parse.GetValue(verifyLayer)! }), output, parse.GetValue(verifySummary));
         });
         root.Subcommands.Add(verify);
         root.Subcommands.Add(SourceVariant(services));
         return root;
     }
 
-    private static int RenderEvidence(IncrementalEvidenceResult result, string format)
+    private static int RenderEvidence(IncrementalEvidenceResult result, string format, bool summary = false)
     {
+        if (summary) return RenderIncrementalSummary(result);
         if (format == "json") Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
         else if (format == "agent")
         {
@@ -270,8 +284,9 @@ public sealed partial class TestingModule : ICisModule
         return result.ExitCode;
     }
 
-    private static int RenderIncremental(IncrementalTestResult result, string format)
+    private static int RenderIncremental(IncrementalTestResult result, string format, bool summary = false)
     {
+        if (summary) return RenderIncrementalSummary(result);
         if (format == "json") Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
         else if (format == "agent")
         {

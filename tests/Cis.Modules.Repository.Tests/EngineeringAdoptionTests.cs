@@ -303,7 +303,8 @@ public sealed class EngineeringAdoptionTests
             Words(repo.Read($"{documentationRoot}/references/agent-provider-profile.md")), StringComparison.Ordinal);
         var planning = Words(repo.Read(".github/skills/cis-bounded-planning/SKILL.md"));
         Assert.Contains("Challenge an unnecessary framework as a whole", planning, StringComparison.Ordinal);
-        Assert.Contains("their existence does not independently require another task output or automation campaign", planning, StringComparison.Ordinal);
+        Assert.Contains("Derive task and verification applicability from accepted positive behavior, explicit obligations and adopted policy", planning, StringComparison.Ordinal);
+        Assert.Contains("Do not create coordination, documentation, verification, assurance or final-sweep tasks merely because those obligations exist", planning, StringComparison.Ordinal);
         var retention = Words(repo.Read(".github/skills/cis-local-artifact-retention/SKILL.md"));
         Assert.Contains("through existing authorized cleanup", retention, StringComparison.Ordinal);
         Assert.Contains("External shell/remote output outside the supported route is not controlled by the storage ceiling", retention, StringComparison.Ordinal);

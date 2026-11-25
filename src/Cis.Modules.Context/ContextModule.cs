@@ -1,5 +1,4 @@
 using System.CommandLine;
-using System.Text.Json;
 using Cis.Abstractions;
 using Cis.Modules.Graph;
 using Microsoft.Extensions.DependencyInjection;
@@ -10,12 +9,6 @@ public sealed class ContextModule : ICisModule
 {
     private static readonly string[] SupportedFormats = ["human", "json", "agent"];
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        WriteIndented = true,
-    };
-
     public string Name => "context";
 
     public string Description => "Retrieve bounded, evidence-backed engineering context from the local graph.";
@@ -23,6 +16,7 @@ public sealed class ContextModule : ICisModule
     public void RegisterServices(IServiceCollection services)
     {
         services.AddSingleton<ContextPackService>();
+        services.AddSingleton<ICisTaskContextPreparer>(provider => provider.GetRequiredService<ContextPackService>());
     }
 
     public void RegisterCommands(ICisCommandRegistry commands, IServiceProvider services)
@@ -218,8 +212,12 @@ public sealed class ContextModule : ICisModule
         };
         var maxCharacters = new Option<int>("--max-chars")
         {
-            Description = "Maximum canonical source characters, from 1000 to 1000000.",
+            Description = "Maximum complete context delivery characters, including metadata, from 1000 to 1000000.",
             DefaultValueFactory = _ => 50_000,
+        };
+        var maxBytes = new Option<int?>("--max-bytes")
+        {
+            Description = "Maximum complete UTF-8 delivery bytes, from 1000 to 4000000; defaults to four times --max-chars.",
         };
         var includeProposed = new Option<bool>("--include-proposed")
         {
@@ -255,6 +253,7 @@ public sealed class ContextModule : ICisModule
         command.Options.Add(depth);
         command.Options.Add(limit);
         command.Options.Add(maxCharacters);
+        command.Options.Add(maxBytes);
         command.Options.Add(includeProposed);
         command.Options.Add(output);
         command.Options.Add(force);
@@ -333,7 +332,8 @@ public sealed class ContextModule : ICisModule
                 parseResult.GetValue(includeProposed),
                 parseResult.GetValue(output),
                 parseResult.GetValue(force),
-                roots));
+                roots)
+            { MaxUtf8Bytes = parseResult.GetValue(maxBytes) });
             RenderPack(result, selectedFormat);
             if (result.ExitCode == 0 && result.Sources.Count > 0)
             {
@@ -439,118 +439,9 @@ public sealed class ContextModule : ICisModule
 
     private static void RenderPack(ContextPackResult result, string format)
     {
-        if (format == "json")
-        {
-            Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
-            return;
-        }
-
-        if (format == "agent")
-        {
-            Console.WriteLine(
-                $"status={Clean(result.Status)};exitCode={result.ExitCode};applied={result.Applied.ToString().ToLowerInvariant()};" +
-                $"freshness={Clean(result.Freshness)};sources={result.Sources.Count};omissions={result.Omissions.Count};" +
-                $"estimatedTokens={result.EstimatedTokens};graphTruncated={result.GraphTruncated.ToString().ToLowerInvariant()};" +
-                $"contentTruncated={result.ContentTruncated.ToString().ToLowerInvariant()}");
-            if (result.Build is not null)
-            {
-                Console.WriteLine($"buildId={Clean(result.Build.Id)}");
-            }
-
-            if (result.OutputPath is not null)
-            {
-                Console.WriteLine($"output={Clean(result.OutputPath)}");
-            }
-
-            if (result.StartNode is not null)
-            {
-                Console.WriteLine($"start={Clean(result.StartNode.Key)}");
-            }
-
-            foreach (var root in result.Roots)
-            {
-                Console.WriteLine(
-                    $"root={Clean(root.StartNode.Key)};repositoryId={Clean(root.RepositoryId)};repository={Clean(root.RepositoryPath)};" +
-                    $"buildId={Clean(root.Build.Id)};freshness={Clean(root.Freshness)}");
-            }
-
-            foreach (var source in result.Sources)
-            {
-                Console.WriteLine(
-                    $"source={Clean(source.Path)};repositoryId={Clean(source.RepositoryId)};repository={Clean(source.RepositoryPath)};" +
-                    $"factClass={source.FactClass};selected={source.SelectedCharacters};" +
-                    $"included={source.IncludedCharacters};total={source.TotalCharacters};estimatedTokens={source.EstimatedTokens};" +
-                    $"truncated={source.Truncated.ToString().ToLowerInvariant()};evidence={source.TotalEvidence};" +
-                    $"evidenceCompacted={source.OmittedEvidence};reason={Clean(string.Join(",", source.Reasons))}");
-                const int agentEvidenceLimit = 3;
-                foreach (var evidence in source.Evidence.Take(agentEvidenceLimit))
-                {
-                    Console.WriteLine($"evidence.{Clean(source.Path)}={FormatAgentEvidence(evidence)}");
-                }
-                if (source.Evidence.Count > agentEvidenceLimit || source.OmittedEvidence > 0)
-                {
-                    Console.WriteLine($"evidenceOmitted.{Clean(source.Path)}={Math.Max(0, source.Evidence.Count - agentEvidenceLimit) + source.OmittedEvidence}");
-                }
-            }
-
-            foreach (var omission in result.Omissions)
-            {
-                Console.WriteLine(
-                    $"omission={Clean(omission.Path)};repositoryId={Clean(omission.RepositoryId ?? string.Empty)};" +
-                    $"repository={Clean(omission.RepositoryPath ?? string.Empty)};reason={Clean(omission.Reason)}");
-            }
-
-            foreach (var diagnostic in result.Diagnostics)
-            {
-                Console.WriteLine($"diagnostic={Clean(diagnostic.Code)};severity={diagnostic.Severity};message={Clean(diagnostic.Message)}");
-            }
-
-            return;
-        }
-
-        Console.WriteLine($"Context pack: {result.Status}");
-        if (result.OutputPath is not null)
-        {
-            Console.WriteLine($"Output: {result.OutputPath}");
-        }
-
-        Console.WriteLine($"Roots: {result.Roots.Count}; sources: {result.Sources.Count}; omissions: {result.Omissions.Count}; estimated tokens: {result.EstimatedTokens}");
-        Console.WriteLine($"Freshness: {result.Freshness}; graph truncated: {result.GraphTruncated}; content truncated: {result.ContentTruncated}");
-        foreach (var diagnostic in result.Diagnostics)
-        {
-            Console.WriteLine($"[{diagnostic.Severity}] {diagnostic.Code}: {diagnostic.Message}");
-        }
-    }
-
-    private static string Clean(string value)
-        => value.Replace(";", ",", StringComparison.Ordinal)
-            .Replace("\r", " ", StringComparison.Ordinal)
-            .Replace("\n", " ", StringComparison.Ordinal);
-
-    private static string FormatAgentEvidence(ContextPackEvidence evidence)
-    {
-        var fields = new List<string>();
-        if (!string.IsNullOrWhiteSpace(evidence.NodeKey))
-        {
-            fields.Add("node:" + Clean(evidence.NodeKey));
-        }
-        if (!string.IsNullOrWhiteSpace(evidence.EdgeType))
-        {
-            fields.Add("edge:" + Clean(evidence.EdgeType));
-        }
-        if (!string.IsNullOrWhiteSpace(evidence.RelationshipState))
-        {
-            fields.Add("state:" + Clean(evidence.RelationshipState));
-        }
-        if (!string.IsNullOrWhiteSpace(evidence.Confidence))
-        {
-            fields.Add("confidence:" + Clean(evidence.Confidence));
-        }
-        fields.Add($"locator:{Clean(evidence.LocatorKind)}:{Clean(evidence.LocatorValue)}");
-        if (!string.IsNullOrWhiteSpace(evidence.Method))
-        {
-            fields.Add("method:" + Clean(evidence.Method));
-        }
-        return string.Join(',', fields);
+        using var phase = CisInvocationTelemetry.MeasurePhase("render");
+        string output = ContextPackOutput.Render(result, format);
+        CisInvocationTelemetry.RecordDeliveredContext(System.Text.Encoding.UTF8.GetByteCount(output + Environment.NewLine));
+        Console.WriteLine(output);
     }
 }

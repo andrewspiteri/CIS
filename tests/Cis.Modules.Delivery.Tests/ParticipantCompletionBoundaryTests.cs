@@ -6,6 +6,93 @@ namespace Cis.Modules.Delivery.Tests;
 public sealed partial class DeliveryWorkflowTests
 {
     [Fact]
+    public void OutcomeCompletionUsesTheSelectedContractForContextAndUnchangedPublicTransition()
+    {
+        using var fixture = new ParticipantClosureFixture(seedOutcomePlan: true);
+        var plans = Assert.IsType<PlanningService>(fixture.Plans);
+        var context = plans.CompletionContext(fixture.Authority.Path, fixture.Change.Id, fixture.Task.Id);
+        Assert.Empty(context.Errors);
+        var template = Assert.IsType<EngineeringCompletionReceipt>(context.Template);
+        Assert.Equal(plans.ReadTaskDigest(fixture.Authority.Path, fixture.Change.Id, fixture.Task.Id), template.TaskDigest);
+        Assert.NotEqual(EngineeringCompletionReview.TaskDigest(fixture.Task, fixture.Document), template.TaskDigest);
+        fixture.WriteReceipt("authority");
+
+        var transition = new PlanTaskTransitionRequest(fixture.Authority.Path, fixture.Change.Id, fixture.Task.Id,
+            "Complete", "Controller", "Close the unchanged outcome contract through its public planning flow.");
+        var completed = plans.TransitionTask(transition);
+        Assert.True(completed.Applied, string.Join("; ", completed.Errors.Concat(completed.Validation?.Errors ?? [])));
+        Assert.Empty(plans.TransitionTask(transition).Errors);
+    }
+
+    [Fact]
+    public void OutcomeCompletionRechecksItsSelectedContractAtTheFinalFence()
+    {
+        using var fixture = new ParticipantClosureFixture(seedOutcomePlan: true);
+        var plans = Assert.IsType<PlanningService>(fixture.Plans);
+        fixture.WriteReceipt("authority");
+        var originalContract = plans.ReadTaskDigest(fixture.Authority.Path, fixture.Change.Id, fixture.Task.Id);
+        var originalInputs = CisExecutionIdentity.Capture(fixture.Context("authority"));
+        var originalAuthority = CisTaskAuthorityContext.Capture(fixture.Context("authority"), fixture.Change.Id);
+        var taskPath = Path.Combine(fixture.Authority.Path, fixture.Change.RelativePath, fixture.Task.TaskPath!);
+        var originalDocument = File.ReadAllText(taskPath);
+        var changed = false;
+        fixture.GraphAction = _ =>
+        {
+            if (changed) return;
+            changed = true;
+            var planPath = Path.Combine(fixture.Authority.Path, fixture.Change.RelativePath, "plan.json");
+            var plan = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(planPath))!;
+            var task = Assert.Single(plan["workItems"]!.AsArray(),
+                item => item?["id"]?.GetValue<string>() == fixture.Task.Id)!;
+            task["workPaths"] = new System.Text.Json.Nodes.JsonArray("docs/changed-guide.md");
+            File.WriteAllText(planPath, plan.ToJsonString());
+        };
+
+        var completed = plans.TransitionTask(new(fixture.Authority.Path, fixture.Change.Id, fixture.Task.Id,
+            "Complete", "Controller", "Reject a changed executable contract during completion review."));
+
+        Assert.True(changed);
+        Assert.False(completed.Applied);
+        Assert.Contains(completed.Errors, error => error.Contains("Authority or task inputs changed during completion review", StringComparison.Ordinal));
+        Assert.NotEqual(originalContract, plans.ReadTaskDigest(fixture.Authority.Path, fixture.Change.Id, fixture.Task.Id));
+        Assert.Equal(originalInputs, CisExecutionIdentity.Capture(fixture.Context("authority")));
+        Assert.Equal(originalAuthority, CisTaskAuthorityContext.Capture(fixture.Context("authority"), fixture.Change.Id));
+        Assert.Equal(originalDocument, File.ReadAllText(taskPath));
+    }
+
+    [Fact]
+    public void RepeatedCompletionReviewMeasuresItsWorkAndRechecksChangedNativeArtifactBytes()
+    {
+        using var fixture = new ParticipantClosureFixture { RequireBuild = true };
+        fixture.WriteReceipt("first");
+        fixture.WriteReceipt("second");
+        using var observation = CisInvocationTelemetry.Begin("plan task transition");
+        Assert.Empty(fixture.Review());
+
+        fixture.First.Write(".cis/local/build.json", "{\"schemaVersion\":2,\"status\":\"failed\"}");
+        Assert.Contains(fixture.Review(), error => error.StartsWith("first: Gate 'build'", StringComparison.Ordinal));
+
+        var phases = observation.Snapshot().Phases;
+        Assert.Contains(phases, phase => phase.Phase == "identity" && phase.Count >= 2);
+        Assert.Contains(phases, phase => phase.Phase == "evidence" && phase.Count >= 2);
+        Assert.Contains(phases, phase => phase.Phase == "graph");
+    }
+
+    [Fact]
+    public void CompletionInitialIdentityReuseStillChecksAuthorityAgainAtTheFinalFence()
+    {
+        using var fixture = new ParticipantClosureFixture();
+        fixture.Task = fixture.Task with { Targets = ["authority"] };
+        fixture.WriteReceipt("authority");
+        fixture.GraphAction = path =>
+        {
+            if (path == fixture.Authority.Path)
+                fixture.Authority.Write("concurrent.md", "An edit after the shared initial identity observation.");
+        };
+        Assert.Contains(fixture.Review(), error => error.Contains("inputs changed during completion review", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void ParticipantPlanTransitionRequiresBothReceiptsThenRejectsLaterDossierChanges()
     {
         using var fixture = new ParticipantClosureFixture(seedPlan: true);

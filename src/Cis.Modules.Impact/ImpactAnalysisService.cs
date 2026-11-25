@@ -6,7 +6,7 @@ using Cis.Modules.Change;
 
 namespace Cis.Modules.Impact;
 
-public sealed class ImpactAnalysisService
+public sealed partial class ImpactAnalysisService
 {
     private static readonly string[] ImpactEdges =
     [
@@ -18,11 +18,16 @@ public sealed class ImpactAnalysisService
 
     private readonly ChangeDossierStore _changes;
     private readonly ICisGraphQueryService _graph;
+    private readonly ICisGraphSnapshotReader? _snapshots;
 
     public ImpactAnalysisService(ChangeDossierStore changes, ICisGraphQueryService graph)
+        : this(changes, graph, null) { }
+
+    public ImpactAnalysisService(ChangeDossierStore changes, ICisGraphQueryService graph, ICisGraphSnapshotReader? snapshots)
     {
         _changes = changes;
         _graph = graph;
+        _snapshots = snapshots;
     }
 
     public ImpactResult Analyse(ImpactAnalyseRequest request)
@@ -43,6 +48,8 @@ public sealed class ImpactAnalysisService
         {
             return Error(change.Id, "At least one impact root is required in the proposal or command.");
         }
+
+        if (request.CurrentImplementation) return AnalyseCurrent(change, request, roots);
 
         var prior = ReadImpact(change);
         if (prior.Errors.Count > 0) return Error(change.Id, string.Join("; ", prior.Errors));
@@ -199,6 +206,13 @@ public sealed class ImpactAnalysisService
             if (finding is null) return Error(changeId, "The impact finding was not found.");
             if (finding.State is "rejected" or "deferred")
                 return Error(changeId, "Preserve the existing rejected/deferred decision; resolve that specific difference before deriving acceptance.");
+            if (_snapshots is not null)
+            {
+                var current = _snapshots.ReadCurrent(repositoryPath);
+                if (current.ExitCode != 0 || current.Freshness != "fresh" || current.Graph?.Build.Id != change.GraphBuildId)
+                    return Error(changeId, "Derived impact acceptance requires current context at the exact retained graph baseline. " + string.Join("; ", current.Errors));
+                CisReadScope.Invalidate();
+            }
             var graph = _graph.Find(repositoryPath, new(finding.Target, null, null, null, null, 1000));
             var nodes = graph.Nodes.Where(node => node.Key == finding.Target).ToArray();
             if (graph.ExitCode != 0 || graph.Truncated || graph.Freshness != "fresh"
@@ -224,16 +238,22 @@ public sealed class ImpactAnalysisService
                 authorization.Reviewer, authorization.Request.DecisionReference, actor.Trim(), reason.Trim(), paths);
             var findings = document.Findings.Select(item => item.Id == findingId ? item with
             {
-                State = "accepted", OutcomeDisposition = provenance,
+                State = "accepted",
+                OutcomeDisposition = provenance,
                 ReviewReason = Clean($"Derived under outcome {authorization.Id} by {actor.Trim()}: {reason}")
             } : item).ToArray();
             WriteImpact(change, findings, document.Truncated);
             _changes.AppendEvent(change, "impact-derived", new Dictionary<string, string>
             {
-                ["findingId"] = findingId, ["authorizationId"] = authorization.Id,
-                ["authorizationDigest"] = authorization.Digest, ["reviewer"] = authorization.Reviewer,
-                ["decisionReference"] = authorization.Request.DecisionReference, ["actor"] = actor.Trim(),
-                ["scopeIds"] = JsonSerializer.Serialize(provenance.ScopeIds), ["scopeBasis"] = basis, ["reason"] = reason.Trim()
+                ["findingId"] = findingId,
+                ["authorizationId"] = authorization.Id,
+                ["authorizationDigest"] = authorization.Digest,
+                ["reviewer"] = authorization.Reviewer,
+                ["decisionReference"] = authorization.Request.DecisionReference,
+                ["actor"] = actor.Trim(),
+                ["scopeIds"] = JsonSerializer.Serialize(provenance.ScopeIds),
+                ["scopeBasis"] = basis,
+                ["reason"] = reason.Trim()
             });
             return new("derived", change.Id, change.GraphBuildId, findings,
                 CalculateCompleteness(findings, document.Truncated), [], true);

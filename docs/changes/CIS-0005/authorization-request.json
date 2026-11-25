@@ -1,0 +1,118 @@
+{
+  "outcome": "Implement current bounded requirement and verification context through the updated CIS distributable and verified explicit-route consumer installation.",
+  "scope": [
+    {
+      "id": "components",
+      "description": "Canonical component identities, explicit logical implementation ownership, multi-component verification and current accepted consumer module reconciliation.",
+      "paths": [
+        "src/Cis.Modules.Graph",
+        "src/Cis.Abstractions",
+        "tests/Cis.Modules.Graph.Tests",
+        "docs"
+      ]
+    },
+    {
+      "id": "traceability",
+      "description": "Explicit requirement/task/component/artifact/check/result paths with honest association and current applicability; preserve semantic versus bookkeeping identity.",
+      "paths": [
+        "src",
+        "tests",
+        "docs"
+      ]
+    },
+    {
+      "id": "freshness",
+      "description": "Current-impact and verification-selection orchestration, scoped diagnostics and conservative fallback with precise evidence reuse.",
+      "paths": [
+        "src",
+        "tests",
+        "docs"
+      ]
+    },
+    {
+      "id": "task-context",
+      "description": "Bounded normal task context and opt-in concise routine output, retaining legacy machine contracts and accepted authority bytes.",
+      "paths": [
+        "src",
+        "tests",
+        "docs"
+      ]
+    },
+    {
+      "id": "completion",
+      "description": "Measured current-material/authority-keyed review reuse and uncached final concurrency checks.",
+      "paths": [
+        "src",
+        "tests",
+        "docs"
+      ]
+    },
+    {
+      "id": "attribution",
+      "description": "Optional bounded attribution in the existing usage ledger and shared invocation observations, with historical unknowns retained.",
+      "paths": [
+        "src",
+        "tests",
+        "docs"
+      ]
+    },
+    {
+      "id": "distribution",
+      "description": "Release build/package, controlled explicit-route local consumer installation and rollback, focused real RM-08 evidence and concise verification record.",
+      "paths": [
+        "src",
+        "tests",
+        "tools",
+        "docs",
+        ".cis/local",
+        ".artifacts/outcome-workflow-correction"
+      ]
+    }
+  ],
+  "constraints": [
+    "User approved CIS-0005's seven-task plan and one shared allocation; all agents, already-performed intake, native checks, documentation, packaging, installation and consumer proof share the same totals.",
+    "Preserve historical approvals, baselines, task history, consumed work, native reports and unresolved recovery records; no old owner is reopened or costs reset.",
+    "No main merge, release, existing database access, external deployment, new graph engine, test harness or usage store. Deliberate input mutations use isolated native fixtures.",
+    "Source retains existing 16 GiB counted ceiling and 256 MiB reserve; consumer retains existing physical 6 GiB ceiling and 64 MiB reserve. Staging and rollback count; unknown/protected ownership does not grant deletion authority.",
+    "Current request authorizes the local CISLIB tooling update and focused RM-08 proof, superseding old no-consumer restrictions for this new work without amending historical grants."
+  ],
+  "seconds": 86400,
+  "attempts": 24,
+  "restorationSeconds": 1200,
+  "storage": {
+    "maximumBytes": 17179869184,
+    "roots": [
+      {
+        "repositoryPath": "C:/miscwork/portfolio/andrewspiteri.dev/content/change-impact-studio",
+        "path": ".artifacts/outcome-workflow-correction",
+        "scratch": true
+      },
+      {
+        "repositoryPath": "C:/miscwork/portfolio/andrewspiteri.dev/content/change-impact-studio",
+        "path": ".cis/local",
+        "scratch": false
+      },
+      {
+        "repositoryPath": "C:/miscwork/portfolio/andrewspiteri.dev/content/change-impact-studio",
+        "path": "src",
+        "scratch": true
+      },
+      {
+        "repositoryPath": "C:/miscwork/portfolio/andrewspiteri.dev/content/change-impact-studio",
+        "path": "tests",
+        "scratch": true
+      }
+    ],
+    "cleanupControllers": [],
+    "allowNativeScratch": true,
+    "restorationBytes": 268435456
+  },
+  "controllers": [
+    "Codex"
+  ],
+  "organizeTasks": true,
+  "distributeResources": true,
+  "visualUi": false,
+  "manualTestCatalogue": false,
+  "decisionReference": "CIS-CURRENT-CONTEXT-2026-11-24:USER-APPROVED-24H-24ATTEMPTS"
+}

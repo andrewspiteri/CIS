@@ -1,11 +1,12 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Text.Json;
 using Cis.Abstractions;
 
 namespace Cis.Modules.Context;
 
-public sealed class ContextPackService
+public sealed partial class ContextPackService : ICisTaskContextPreparer
 {
     private const string ContextRoot = ".cis/local/context";
     private const int MaximumSourceFileBytes = 2_000_000;
@@ -42,14 +43,30 @@ public sealed class ContextPackService
         "supersedes",
     ];
 
+    private static readonly string[] TaskEvidenceEdges =
+    [
+        "references", "governed-by", "describes", "owns", "belongs-to",
+        "implemented-by", "verified-by", "generated-from", "supersedes",
+    ];
+
     private readonly ICisGraphQueryService _graphQueries;
+    private readonly ICisGraphSnapshotReader? _snapshots;
 
     public ContextPackService(ICisGraphQueryService graphQueries)
+        : this(graphQueries, null)
+    {
+    }
+
+    public ContextPackService(ICisGraphQueryService graphQueries, ICisGraphSnapshotReader? snapshots)
     {
         _graphQueries = graphQueries;
+        _snapshots = snapshots;
     }
 
     public ContextPackResult Create(ContextPackRequest request)
+        => ContextPackBudget.Fit(CreateCore(request), request.MaxUtf8Bytes);
+
+    private ContextPackResult CreateCore(ContextPackRequest request)
     {
         var validation = Validate(request);
         if (validation is not null)
@@ -69,7 +86,9 @@ public sealed class ContextPackService
         }
 
         var rootQueries = requestedRoots
-            .Select((root, index) => new RootQuery(index, root, QueryContext(root, request)))
+            .Select((root, index) => new RootQuery(index, root, QueryContext(root,
+                request.TaskEvidenceMode ? request with { Limit = Math.Max(1, request.Limit / requestedRoots.Length) } : request,
+                request.TaskEvidenceMode ? Math.Max(1, 25 / requestedRoots.Length) : 25)))
             .ToArray();
         var failedQuery = rootQueries.FirstOrDefault(item => item.Query.ExitCode != 0);
         if (failedQuery is not null)
@@ -256,42 +275,57 @@ public sealed class ContextPackService
 
         var absoluteOutputPath = outputResolution.AbsolutePath!;
         var relativeOutputPath = ToRepositoryPath(repositoryPath, absoluteOutputPath);
-        var preliminary = FromQueries(
+        var complete = FromQueries(
             rootQueries,
             "created",
             request,
             sources,
             omissions,
             applied: true,
-            outputPath: relativeOutputPath);
+            outputPath: relativeOutputPath) with
+        {
+            VerificationFacts = request.TaskEvidenceMode ? VerificationFacts(rootQueries) : null
+        };
+        string detailPath = relativeOutputPath + ".details.json";
+        string detail = JsonSerializer.Serialize(complete, ContextPackOutput.Json);
+        if (Encoding.UTF8.GetByteCount(detail) > 8 * 1024 * 1024)
+        {
+            detail = JsonSerializer.Serialize(ContextPackBudget.Fit(complete with { MaxCharacters = 1_000_000 }), ContextPackOutput.Json);
+        }
+        var preliminary = ContextPackBudget.Fit(complete with { DetailPath = detailPath }, request.MaxUtf8Bytes);
         var markdown = RenderMarkdown(preliminary);
         if (File.Exists(absoluteOutputPath))
         {
             var existing = File.ReadAllText(absoluteOutputPath);
             if (string.Equals(existing, markdown, StringComparison.Ordinal))
             {
-                return preliminary with { Status = "unchanged", Applied = false };
+                if (File.Exists(absoluteOutputPath + ".details.json")
+                    && File.ReadAllText(absoluteOutputPath + ".details.json") == detail)
+                {
+                    return preliminary with { Status = "unchanged", Applied = false };
+                }
             }
 
             if (!request.Force)
             {
-                return preliminary with { Status = "collision", Applied = false };
+                return preliminary with { Status = "collision", Applied = false, DetailPath = null };
             }
         }
 
         Directory.CreateDirectory(Path.GetDirectoryName(absoluteOutputPath)!);
+        WriteAtomic(absoluteOutputPath + ".details.json", detail);
         WriteAtomic(absoluteOutputPath, markdown);
         return preliminary;
     }
 
-    private CisGraphQueryResult QueryContext(ContextPackRoot root, ContextPackRequest request)
+    private CisGraphQueryResult QueryContext(ContextPackRoot root, ContextPackRequest request, int maximumExpansions = 25)
     {
         var first = _graphQueries.Related(
             root.RepositoryPath,
             new CisGraphRelatedRequest(
                 root.Id,
                 root.Kind,
-                PackEdgeTypes,
+                request.TaskEvidenceMode ? TaskEvidenceEdges : PackEdgeTypes,
                 "both",
                 Depth: 1,
                 request.Limit,
@@ -311,15 +345,15 @@ public sealed class ContextPackService
             StringComparer.Ordinal);
         var diagnostics = first.Diagnostics.ToDictionary(DiagnosticKey, StringComparer.Ordinal);
         var frontier = first.Nodes.Skip(1)
-            .Where(IsExpandable)
-            .OrderBy(node => node.Key, StringComparer.Ordinal)
+            .Where(node => IsExpandable(node, request.TaskEvidenceMode))
+            .OrderBy(node => EvidencePriority(node, request.TaskEvidenceMode))
+            .ThenBy(node => node.Key, StringComparer.Ordinal)
             .ToArray();
         var expanded = new HashSet<string>(StringComparer.Ordinal)
         {
             first.Nodes[0].Key,
         };
         var truncated = first.Truncated;
-        const int maximumExpansions = 25;
         var expansionCount = 0;
         for (var depth = 2; depth <= request.Depth && frontier.Length > 0; depth++)
         {
@@ -343,7 +377,7 @@ public sealed class ContextPackService
                     new CisGraphRelatedRequest(
                         current.Key,
                         current.Kind,
-                        PackEdgeTypes,
+                        request.TaskEvidenceMode ? TaskEvidenceEdges : PackEdgeTypes,
                         "both",
                         Depth: 1,
                         request.Limit,
@@ -374,7 +408,7 @@ public sealed class ContextPackService
 
                     nodes.Add(node.Key, node);
                     nodeDepths.Add(node.Key, depth);
-                    if (IsExpandable(node))
+                    if (IsExpandable(node, request.TaskEvidenceMode))
                     {
                         nextFrontier.Add(node);
                     }
@@ -393,7 +427,8 @@ public sealed class ContextPackService
             }
 
             frontier = nextFrontier
-                .OrderBy(node => node.Key, StringComparer.Ordinal)
+                .OrderBy(node => EvidencePriority(node, request.TaskEvidenceMode))
+                .ThenBy(node => node.Key, StringComparer.Ordinal)
                 .ToArray();
         }
 
@@ -404,7 +439,7 @@ public sealed class ContextPackService
         }
 
         query["depth"] = request.Depth.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        query["edges"] = string.Join(',', PackEdgeTypes);
+        query["edges"] = string.Join(',', request.TaskEvidenceMode ? TaskEvidenceEdges : PackEdgeTypes);
         query["operation"] = "context-pack";
         return first with
         {
@@ -440,6 +475,21 @@ public sealed class ContextPackService
         builder.AppendLine($"- Bounds: depth={result.Depth}; nodes={result.Limit}; characters={result.MaxCharacters}");
         builder.AppendLine($"- Estimated included tokens: {result.EstimatedTokens}");
         builder.AppendLine($"- Truncation: graph={result.GraphTruncated.ToString().ToLowerInvariant()}; content={result.ContentTruncated.ToString().ToLowerInvariant()}");
+        builder.AppendLine($"- Omitted metadata: {result.OmittedMetadataItems}; detailed record: {result.DetailPath ?? "unavailable"}");
+        if (result.VerificationFacts is { } facts)
+        {
+            builder.AppendLine();
+            builder.AppendLine("## Recorded verification observations");
+            builder.AppendLine("Recorded case outcomes and input pins do not establish current native applicability, complete criterion coverage or satisfaction.");
+            if (facts.Count == 0)
+            {
+                builder.AppendLine("No recorded result was reached within this bounded selection; current outcome remains unknown. Inspect the detail and declared references.");
+            }
+            foreach (var fact in facts)
+            {
+                builder.AppendLine($"- `{fact.ResultReference}`: check={fact.CheckKey}; outcome={fact.RecordedOutcome}; status={fact.RecordedStatus}; receipt={fact.ReceiptState}; inputs={fact.InputState}; applicability={fact.Applicability}.");
+            }
+        }
         builder.AppendLine();
         builder.AppendLine("## Roots and repository baselines");
         builder.AppendLine();
@@ -589,6 +639,10 @@ public sealed class ContextPackService
         if (request.MaxCharacters is < 1000 or > 1_000_000)
         {
             return Invalid(request, "Character budget must be between 1000 and 1000000.");
+        }
+        if (request.MaxUtf8Bytes is < 1000 or > 4_000_000)
+        {
+            return Invalid(request, "UTF-8 delivery budget must be between 1000 and 4000000 bytes.");
         }
 
         if ((request.AdditionalRoots ?? []).Any(root =>
@@ -751,8 +805,36 @@ public sealed class ContextPackService
         return checked((depth * 10) + kindScore);
     }
 
-    private static bool IsExpandable(CisGraphNode node)
-        => node.Kind is "component" or "workflow";
+    private static bool IsExpandable(CisGraphNode node, bool taskEvidence)
+        => taskEvidence ? node.Kind is "document" or "requirement" or "test" or "source-file"
+            || node.Kind == "reference-item" && node.Subtype is "verification-result" or "verification-input"
+            : node.Kind is "component" or "workflow";
+
+    private static int EvidencePriority(CisGraphNode node, bool taskEvidence)
+        => !taskEvidence ? 0 : node.Kind is "requirement" or "test" or "reference-item" ? 0 : node.Kind == "document" ? 1 : 2;
+
+    private static IReadOnlyList<ContextPackVerificationFact> VerificationFacts(IReadOnlyList<RootQuery> queries)
+    {
+        var facts = new List<ContextPackVerificationFact>();
+        foreach (var query in queries)
+        {
+            foreach (var node in query.Query.Nodes.Where(node => node.Kind == "reference-item" && node.Subtype == "verification-result"))
+            {
+                var references = query.Query.Traversals.Where(traversal => traversal.Edge.To == node.Key
+                    && traversal.Edge.Properties.GetValueOrDefault("role") == "explicit-result-reference").ToArray();
+                foreach (var reference in references.DefaultIfEmpty())
+                {
+                    facts.Add(new(reference?.Edge.From ?? "unknown", node.Properties.GetValueOrDefault("graphIdentity", "unknown"),
+                        node.Properties.GetValueOrDefault("recordedStatus", "unknown"),
+                        reference?.Edge.Properties.GetValueOrDefault("nativeOutcome", "unknown") ?? "unknown",
+                        node.Properties.GetValueOrDefault("inputState", "unknown"), node.Properties.GetValueOrDefault("receiptState", "unknown"),
+                        node.Properties.GetValueOrDefault("applicability", "requires-current-native-verification")));
+                }
+            }
+        }
+        return facts.Distinct().OrderBy(fact => fact.ResultReference, StringComparer.Ordinal)
+            .ThenBy(fact => fact.CheckKey, StringComparer.Ordinal).ToArray();
+    }
 
     private static string DiagnosticKey(CisGraphDiagnostic diagnostic)
         => $"{diagnostic.Code}\u001f{diagnostic.Severity}\u001f{diagnostic.Message}";

@@ -441,7 +441,7 @@ public sealed partial class GraphBuilderTests
     }
 
     [Fact]
-    public void Build_PreservesFileScopedVerificationForMultipleTestsInOneFile()
+    public void Build_RetainsFileScopedCooccurrenceWithoutVerificationClaims()
     {
         using var repository = TemporaryRepository.CreateInitializedApiWithDeliveryEvidence();
         repository.Write("tests/Orders.Api.Tests/OrderContractTests.cs", """
@@ -466,10 +466,14 @@ public sealed partial class GraphBuilderTests
         var nodes = graph.RootElement.GetProperty("nodes").EnumerateArray()
             .ToDictionary(node => NodeValue(node, "key"), StringComparer.Ordinal);
         var verified = graph.RootElement.GetProperty("edges").EnumerateArray()
-            .Where(edge => NodeValue(edge, "type") == "verified-by").ToArray();
+            .Where(edge => NodeValue(edge, "type") == "references"
+                && edge.GetProperty("properties").TryGetProperty("association", out var association)
+                && association.GetString() == "file-reference-cooccurrence").ToArray();
         Assert.Equal(new[] { "First", "Second" }, verified
             .Select(edge => NodeValue(nodes[NodeValue(edge, "to")], "label")).Order(StringComparer.Ordinal));
         Assert.All(verified, edge => Assert.Equal("reference-item", NodeValue(nodes[NodeValue(edge, "from")], "kind")));
+        Assert.All(verified, edge => Assert.Equal("medium", NodeValue(edge, "confidence")));
+        Assert.DoesNotContain(graph.RootElement.GetProperty("edges").EnumerateArray(), edge => NodeValue(edge, "type") == "verified-by");
     }
 
     [Fact]
@@ -514,7 +518,7 @@ public sealed partial class GraphBuilderTests
         Assert.Equal("reference-item", NodeValue(nodesByKey[NodeValue(implementationEdge, "from")], "kind"));
         Assert.Equal("src/Orders.Api/Program.cs", NodeValue(nodesByKey[NodeValue(implementationEdge, "to")], "localId"));
 
-        var verificationEdge = Assert.Single(edges, edge => NodeValue(edge, "type") == "verified-by");
+        var verificationEdge = Assert.Single(edges, edge => NodeValue(edge, "type") == "references");
         Assert.Equal("reference-item", NodeValue(nodesByKey[NodeValue(verificationEdge, "from")], "kind"));
         Assert.Equal("test", NodeValue(nodesByKey[NodeValue(verificationEdge, "to")], "kind"));
     }
@@ -840,7 +844,7 @@ public sealed partial class GraphBuilderTests
             new CisGraphRelatedRequest(
                 contract.Key,
                 "reference-item",
-                ["implemented-by", "verified-by"],
+                ["implemented-by", "references"],
                 "both",
                 Depth: 1,
                 Limit: 10,
@@ -970,7 +974,7 @@ public sealed partial class GraphBuilderTests
                 dependency.Key,
                 null,
                 null,
-                ["verified-by", "contains", "belongs-to", "depends-on"],
+                ["references", "contains", "belongs-to", "depends-on"],
                 "both",
                 MaxDepth: 6,
                 MaxPaths: 1,
@@ -1104,10 +1108,11 @@ public sealed partial class GraphBuilderTests
     }
 
     [Fact]
-    public void Validate_DoesNotBecomeStaleWhenANewManagedDossierIsCatalogued()
+    public void NewManagedDossierRefreshesCurrentContextWithoutChangingMaterialBuildBaseline()
     {
         using var repository = TemporaryRepository.CreateInitializedApi();
-        Assert.Equal(0, CreateBuilder().Build(repository.Path).ExitCode);
+        var original = CreateBuilder().Build(repository.Path);
+        Assert.Equal(0, original.ExitCode);
 
         var taskPath = "docs/cis/changes/CIS-0002/agent-tasks/WORK-001.md";
         repository.Write(taskPath, """
@@ -1137,10 +1142,16 @@ public sealed partial class GraphBuilderTests
 
         var result = CreateValidator().Validate(repository.Path, strict: true);
 
-        Assert.Equal(0, result.ExitCode);
-        Assert.Equal("fresh", result.Freshness);
-        Assert.DoesNotContain(result.Diagnostics, diagnostic =>
+        Assert.Equal(5, result.ExitCode);
+        Assert.Equal("stale", result.Freshness);
+        Assert.Contains(result.Diagnostics, diagnostic =>
             diagnostic.Code == "CIS-GRAPH-VALIDATE-STALE-003");
+        var current = new GraphSnapshotReader(new CisRepositoryContextResolver(), builder: CreateBuilder()).ReadCurrent(repository.Path);
+        Assert.Equal(0, current.ExitCode);
+        Assert.Equal("fresh", current.Freshness);
+        Assert.Equal(original.BuildId, current.Graph!.Build.Id);
+        Assert.Contains(current.Graph.Nodes, node => node.Kind == "document" && node.Locations.Any(location => location.Path == taskPath));
+        Assert.Equal(0, CreateValidator().Validate(repository.Path, strict: true).ExitCode);
     }
 
     [Fact]
@@ -1715,14 +1726,14 @@ public sealed partial class GraphBuilderTests
         Assert.Equal(0, application.Invoke(["context", "pack", "--help"]));
     }
 
-    private static GraphBuilder CreateBuilder()
+    private static GraphBuilder CreateBuilder(IEnumerable<ICisTestResultAdapter>? resultAdapters = null)
     {
         var resolver = new CisRepositoryContextResolver();
         var reader = new DocumentationCatalogReader();
         var inspector = new MarkdownDocumentInspector();
         var inventory = new DocumentationInventoryService(resolver, reader, inspector);
         var validation = new DocumentationValidationService(resolver, reader, inventory, inspector);
-        return new GraphBuilder(resolver, reader, inventory, validation);
+        return new GraphBuilder(resolver, reader, inventory, validation, testResultAdapters: resultAdapters);
     }
 
     private static GraphQueryService CreateQueryService()

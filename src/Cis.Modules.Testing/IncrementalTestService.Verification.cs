@@ -9,6 +9,7 @@ public sealed partial class IncrementalTestService
     /// <summary>Recheck current native evidence and return a bounded receipt without executing or saving work.</summary>
     public IncrementalEvidenceResult Verify(IncrementalEvidenceOptions options)
     {
+        using var evidencePhase = CisInvocationTelemetry.MeasurePhase("evidence");
         var reasons = new Dictionary<string, IncrementalReuseReason[]>(StringComparer.Ordinal);
         try
         {
@@ -186,11 +187,13 @@ public sealed partial class IncrementalTestService
                 Batches = batches,
                 Refinements = refinements,
                 Credits = credits.Values.ToArray(),
-                Diagnostics = [!wantMutation ? "Current declared unit scope verified. Release qualification remains separate."
-                    : "Current declared-scope evidence verified. Historical postflight XML is not retained; full-filter native postflight receipts were checked. Release qualification remains separate."],
+                Diagnostics = selection.Diagnostics.Concat([!wantMutation ? "Current declared unit scope verified. Release qualification remains separate."
+                    : "Current declared-scope evidence verified. Historical postflight XML is not retained; full-filter native postflight receipts were checked. Release qualification remains separate."]).ToArray(),
             };
             Require(JsonSerializer.SerializeToUtf8Bytes(receipt, Json).Length <= 1024 * 1024,
                 "Verification receipt exceeds 1 MiB. Use smaller declared source profiles.");
+            CisInvocationTelemetry.RecordVerification("unit", "reused", selection.Batches.Length, "current-native-evidence");
+            if (wantMutation) CisInvocationTelemetry.RecordVerification("mutation", "reused", selection.Batches.Length, "current-native-evidence");
             return receipt;
 
             void AddInput(string file, string role)
@@ -202,6 +205,8 @@ public sealed partial class IncrementalTestService
         }
         catch (Exception error) when (Expected(error) || error is KeyNotFoundException or FormatException)
         {
+            CisInvocationTelemetry.RecordBlocker("incremental-verification-failed");
+            CisInvocationTelemetry.RecordVerification(options.Layer, "invalidated", reasons.Count, "material-or-evidence-change");
             // Do not echo native command arguments, profile environment values or report contents into exported diagnostics.
             return new("verification-failed", 4) { Diagnostics = [VerificationDiagnostic(error)], ReuseReasons = reasons };
         }

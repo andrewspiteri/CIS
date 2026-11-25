@@ -6,6 +6,86 @@ namespace Cis.Modules.Testing.Tests;
 
 public sealed class IncrementalNativeWorkTests
 {
+    [Fact]
+    public void SlowPreparationUsesTheExistingParentWindowWithoutShorteningTheNativeTimeout()
+    {
+        using var fixture = new IncrementalTestServiceTests.Fixture();
+        fixture.Save(fixture.Profile with
+        {
+            SourceFiles = ["src/A.cs"],
+            TestFiles = ["tests/ATests.cs"],
+            MutationCommand = null,
+            TimeoutSeconds = 120,
+            MaxRetainedBytes = 32 * 1024 * 1024,
+        });
+        var authority = new UnitInvocationAuthority(fixture.Path);
+        var advanced = false;
+        string? guardDirectory = null;
+        var observedTimeouts = new List<int>();
+        DateTimeOffset? originalChildDeadline = null;
+        var observedActiveDeadlines = new List<DateTimeOffset?>();
+        authority.BeforeStorageReservation = (operation, _, _) =>
+        {
+            if (operation != "native-unit" || advanced) return;
+            originalChildDeadline = DateTimeOffset.UtcNow.AddSeconds(Assert.Single(authority.ChildAdmissions).MaximumSeconds);
+            // Advance the existing controlled scope clock, not the native
+            // process clock: real preparation exceeded the old fifteen seconds.
+            authority.AdvancePreparation(125);
+            advanced = true;
+        };
+        authority.StorageClaimsObserved = (operation, _, claims) =>
+        {
+            if (operation != "native-unit") return;
+            foreach (var claim in claims ?? [])
+                if (claim.Scratch && Path.GetFileName(claim.Path).StartsWith("cis-mutation-", StringComparison.Ordinal))
+                    guardDirectory = claim.Path;
+        };
+        authority.BeforeNativeLaunch = (operation, _) =>
+        {
+            if (operation != "native-unit") return;
+            Assert.NotNull(guardDirectory);
+            using var request = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(guardDirectory, "request.json")));
+            observedTimeouts.Add(request.RootElement.GetProperty("timeoutSeconds").GetInt32());
+            observedActiveDeadlines.Add(fixture.SavedState().ActiveExecutionUntilUtc);
+        };
+        var service = new IncrementalTestService(fixture, authority, authority);
+
+        var result = service.Run(new(fixture.Path, "profile.json", "unit", 1, 300),
+            0, TestContext.Current.CancellationToken);
+
+        Assert.True(result.ExitCode == 0, JsonSerializer.Serialize(result));
+        Assert.True(advanced);
+        Assert.Equal(120, Assert.Single(observedTimeouts));
+        Assert.NotNull(originalChildDeadline);
+        var activeDeadline = Assert.Single(observedActiveDeadlines);
+        Assert.NotNull(activeDeadline);
+        Assert.InRange((activeDeadline.GetValueOrDefault() - originalChildDeadline.GetValueOrDefault()).TotalSeconds, -2, 2);
+        var child = Assert.Single(authority.ChildAdmissions);
+        Assert.True(child.MaximumSeconds > fixture.Profile.TimeoutSeconds + 15);
+        Assert.InRange(child.MaximumSeconds, 1, (int)Math.Floor(child.ParentRemainingSeconds));
+        Assert.Equal(1, authority.Launched);
+        Assert.Equal(1, result.ExecutedUnitBatches);
+        Assert.Equal(0, result.ExecutedMutationBatches);
+        Assert.Equal(0, authority.SettlementFailures);
+        var unit = Assert.Single(fixture.SavedState().Batches.Values).Unit!;
+        Assert.True(unit.Completed);
+        Assert.Equal(1, unit.Passed);
+        Assert.Equal(0, unit.Failed);
+        Assert.Equal(0, unit.Skipped);
+        var execution = Assert.IsType<MutationNativeExecution>(unit.Execution);
+        Assert.True(execution.SafelyStopped);
+        Assert.Equal("exited", execution.Status);
+        Assert.Equal(0, execution.ExitCode);
+        Assert.Empty(execution.SettlementErrors);
+        var calls = fixture.Calls();
+        Assert.Single(calls);
+        var verified = service.Verify(new(fixture.Path, "profile.json") { Layer = "unit" });
+        Assert.True(verified.ExitCode == 0, JsonSerializer.Serialize(verified));
+        Assert.True(verified.ScopeComplete);
+        Assert.Equal(unit.ReportSha256, Assert.Single(verified.Batches).UnitReportSha256);
+        Assert.Equal(calls, fixture.Calls());
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -165,8 +245,13 @@ public sealed class IncrementalNativeWorkTests
         private string Repository => repository;
         private readonly Dictionary<string, (CisAgentWorkReference Reference, string Operation, bool Finished)> _executions = new(StringComparer.Ordinal);
         private readonly Dictionary<string, CisOwnedStorageOperation> _operations = new(StringComparer.Ordinal);
+        private long preparationSeconds;
         public Func<string, string?, bool>? FailFinish { get; init; }
         public Action<string, CisAgentWorkReference, string>? BeforeStorageReservation { get; set; }
+        public Action<string, CisAgentWorkReference, IReadOnlyList<CisOwnedStoragePath>?>? StorageClaimsObserved { get; set; }
+        public Action<string, CisAgentWorkReference>? BeforeNativeLaunch { get; set; }
+        public List<(int MaximumSeconds, double ParentRemainingSeconds)> ChildAdmissions { get; } = [];
+        public void AdvancePreparation(int seconds) => preparationSeconds = checked(preparationSeconds + seconds);
         public bool Reconciled { get; set; }
         public bool NextOperationHeld { get; init; }
         public bool FailRootFinalizationReservation { get; init; }
@@ -223,6 +308,7 @@ public sealed class IncrementalNativeWorkTests
             bool clampToRemaining = false, string? actor = null)
         {
             BeforeStorageReservation?.Invoke(_executions[reference.ExecutionId].Operation, reference, operationId);
+            StorageClaimsObserved?.Invoke(_executions[reference.ExecutionId].Operation, reference, claims);
             if (FailRootFinalizationReservation && reference.ParentExecutionId is null
                 && operationId.StartsWith("evidence-mutation/", StringComparison.Ordinal) && maximumGrowthBytes > 0)
                 return new(new("held", true, Storage().Storage, ["Controlled result-finalization storage admission failure."]), null, 0);
@@ -244,14 +330,22 @@ public sealed class IncrementalNativeWorkTests
         private sealed class Scope(UnitInvocationAuthority owner, CisAgentWorkReference reference, int maximumSeconds) : ICisNativeWorkScope
         {
             private bool uncertain, finishAttempted;
+            private readonly long admittedPreparationSeconds = owner.preparationSeconds;
             public string AuthorityPath => owner.Repository;
             public string Actor => "Controlled unit controller";
             public CisAgentWorkReference Reference => reference;
             public int MaximumSeconds => maximumSeconds;
-            public TimeSpan Remaining => TimeSpan.FromSeconds(maximumSeconds);
+            public TimeSpan Remaining => TimeSpan.FromSeconds(Math.Max(0, maximumSeconds - (owner.preparationSeconds - admittedPreparationSeconds)));
             public CisNativeWorkAdmission AdmitChild(string executionId, string operation, int seconds)
-                => owner.Admit(executionId, seconds, reference.ExecutionId, operation);
-            public void Launch() => owner.Launched++;
+            {
+                owner.ChildAdmissions.Add((seconds, Remaining.TotalSeconds));
+                return owner.Admit(executionId, seconds, reference.ExecutionId, operation);
+            }
+            public void Launch()
+            {
+                owner.BeforeNativeLaunch?.Invoke(owner._executions[reference.ExecutionId].Operation, reference);
+                owner.Launched++;
+            }
             public void Started(int processId, string processStartedAtUtc, CisNativeWorkContainment? containment = null) { }
             public void Returned(bool safelyStopped) => Assert.True(safelyStopped);
             public void MarkUncertain(string reason) { uncertain = true; owner.MarkedUncertain++; }

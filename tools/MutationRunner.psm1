@@ -14,7 +14,7 @@ function Test-MutationAccountingPath {
 }
 
 function Get-MutationTreeBytes {
-    param([string]$Path, [string[]]$AccountingPaths = @())
+    param([string]$Path, [string[]]$AccountingPaths = @(), [string[]]$CoveredRoots = @())
     try {
         $rootAttributes = [IO.File]::GetAttributes($Path)
         if (-not ($rootAttributes -band [IO.FileAttributes]::Directory)) { throw 'Mutation storage is no longer a directory.' }
@@ -42,6 +42,8 @@ function Get-MutationTreeBytes {
                 try {
                     $attributes = [IO.File]::GetAttributes($entry.FullName)
                     if ($attributes -band [IO.FileAttributes]::ReparsePoint) {
+                        if (($attributes -band [IO.FileAttributes]::Directory) -and $CoveredRoots.Count -gt 0 -and
+                            (Test-MutationCoveredDirectoryAlias $entry.FullName $CoveredRoots $AccountingPaths)) { continue }
                         throw "Mutation storage contains a symbolic link: $($entry.FullName)"
                     }
                     if ($attributes -band [IO.FileAttributes]::Directory) { $pending.Push($entry.FullName) }
@@ -57,6 +59,45 @@ function Get-MutationTreeBytes {
         catch [IO.FileNotFoundException], [IO.DirectoryNotFoundException] { continue }
     }
     return $bytes
+}
+
+function Test-MutationCoveredDirectoryAlias {
+    param([string]$Path, [string[]]$CoveredRoots, [string[]]$AccountingPaths = @())
+    $comparison = if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+    try {
+        $target = [IO.DirectoryInfo]::new($Path).ResolveLinkTarget($false)
+        if ($null -eq $target) { return $false }
+        $resolved = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($target.FullName))
+        $attributes = [IO.File]::GetAttributes($resolved)
+        if (-not ($attributes -band [IO.FileAttributes]::Directory) -or
+            ($attributes -band [IO.FileAttributes]::ReparsePoint) -or
+            (Test-MutationAccountingPath $resolved $AccountingPaths)) { return $false }
+        $covered = @($CoveredRoots | Where-Object {
+            [string]::Equals($_, $resolved, $comparison) -or
+                $resolved.StartsWith($_ + [IO.Path]::DirectorySeparatorChar, $comparison)
+        }).Count -gt 0
+        if (-not $covered) { return $false }
+        $ancestor = $resolved
+        while (-not [string]::IsNullOrEmpty($ancestor)) {
+            if ([IO.File]::GetAttributes($ancestor) -band [IO.FileAttributes]::ReparsePoint) { return $false }
+            $ancestor = [IO.Path]::GetDirectoryName($ancestor)
+        }
+        # Resolve one hop only. The target's entire ordinary tree must be readable
+        # and unlinked; aliases are never followed to acquire more measured scope.
+        $pending = [Collections.Generic.Stack[string]]::new()
+        $pending.Push($resolved)
+        while ($pending.Count -gt 0) {
+            $directory = $pending.Pop()
+            if ([IO.File]::GetAttributes($directory) -band [IO.FileAttributes]::ReparsePoint) { return $false }
+            foreach ($entry in [IO.DirectoryInfo]::new($directory).EnumerateFileSystemInfos()) {
+                $attributes = [IO.File]::GetAttributes($entry.FullName)
+                if ($attributes -band [IO.FileAttributes]::ReparsePoint) { return $false }
+                if ($attributes -band [IO.FileAttributes]::Directory) { $pending.Push($entry.FullName) }
+            }
+        }
+        return $true
+    }
+    catch [IO.IOException], [UnauthorizedAccessException], [NotSupportedException] { return $false }
 }
 
 function Receive-MutationStreams($Streams) {
@@ -123,7 +164,7 @@ function Get-MutationOwnedBytes {
         try {
             $attributes = [IO.File]::GetAttributes($path)
             if ($attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Owned storage crosses a symbolic link.' }
-            [long]$bytes = if ($attributes -band [IO.FileAttributes]::Directory) { Get-MutationTreeBytes $path $AccountingPaths } else { [IO.FileInfo]::new($path).Length }
+            [long]$bytes = if ($attributes -band [IO.FileAttributes]::Directory) { Get-MutationTreeBytes $path $AccountingPaths ($roots.ToArray()) } else { [IO.FileInfo]::new($path).Length }
             if ($bytes -gt [long]::MaxValue - $total) { throw 'Owned storage exceeds the supported byte range.' }
             $total += $bytes
         }
@@ -169,6 +210,7 @@ function Invoke-BoundedMutationProcess {
     $status = 'exited'
     $problem = $null
     $watch = [Diagnostics.Stopwatch]::StartNew()
+    $nativeWatch = [Diagnostics.Stopwatch]::new()
     [long]$peakRun = 0
     [long]$peakRetained = 0
     [long]$peakOwned = 0
@@ -284,6 +326,7 @@ function Invoke-BoundedMutationProcess {
         $streams[0].reader = $process.StandardOutput
         $streams[1].reader = $process.StandardError
         foreach ($stream in $streams) { $stream.task = $stream.reader.ReadAsync($stream.buffer, 0, $stream.buffer.Length) }
+        $nativeWatch.Start()
         [IO.File]::WriteAllText($gatePath, 'ready')
         [long]$nextStorageCheck = 0
         $exitedAt = $null
@@ -300,7 +343,7 @@ function Invoke-BoundedMutationProcess {
                     break
                 }
             }
-            if ($watch.Elapsed.TotalSeconds -ge $TimeoutSeconds) { $status = 'timeout'; break }
+            if ($nativeWatch.Elapsed.TotalSeconds -ge $TimeoutSeconds) { $status = 'timeout'; break }
             if ($watch.ElapsedMilliseconds -ge $nextStorageCheck) {
                 $activeOwned = if ($IsWindows) { $job.ActiveProcessCount } else { @([Cis.Abstractions.CisProcessSession]::GetLiveProcessIds($sessionId)).Count }
                 $ownedProcessPeak = [Math]::Max($ownedProcessPeak, $activeOwned)

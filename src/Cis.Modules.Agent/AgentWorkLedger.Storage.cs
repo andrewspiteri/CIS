@@ -606,7 +606,8 @@ internal sealed partial class AgentWorkLedger
             .Concat(new[] { CisAgentWorkPaths.Ledger, CisAgentWorkPaths.Adoption, CisAgentWorkPaths.Lock }
                 .Select(relative => Path.GetFullPath(Path.Combine(authority.RepositoryPath, relative))))
             .Distinct(StoragePathComparer).ToArray();
-        return new(state, change, owner, MeasureStoragePaths(paths), MeasureStoragePaths(protectedPaths), paths, protectedPaths);
+        var declaredRoots = group.SelectMany(item => PolicyPaths(item.Storage!.Policy)).Distinct(StoragePathComparer).ToArray();
+        return new(state, change, owner, MeasureStoragePaths(paths, declaredRoots), MeasureStoragePaths(protectedPaths, declaredRoots), paths, protectedPaths);
     }
 
     private static void MatchStorageExecution(Ledger state, Change change, CisAgentWorkReference reference, bool requireLive)
@@ -695,19 +696,79 @@ internal sealed partial class AgentWorkLedger
             throw new InvalidDataException("Retained native scratch admission provenance does not match its exact path and original canonical native execution. Restore that evidence without changing claims or reservations.");
     }
 
-    private static long MeasureStoragePaths(IEnumerable<string> paths)
+    private static long MeasureStoragePaths(IEnumerable<string> paths, IReadOnlyList<string> declaredRoots,
+        IReadOnlyList<string>? excluded = null, IReadOnlyList<string>? excludedAliasTargets = null)
     {
+        var excludedPaths = excluded ?? [];
+        var aliasExclusions = excludedAliasTargets ?? excludedPaths;
         var files = new HashSet<string>(StoragePathComparer);
+        var directories = new HashSet<string>(StoragePathComparer);
+        var pending = new Stack<string>();
         long bytes = 0;
-        foreach (var path in paths.Select(Path.GetFullPath).Distinct(StoragePathComparer))
+        const string invalid = "Owned storage contains linked or unreadable material; repair its inventory before expanding.";
+        try
         {
-            if (!File.Exists(path) && !Directory.Exists(path)) continue;
-            if (CisPathSafety.IsReparsePoint(path) || Directory.Exists(path) && CisPathSafety.ContainsReparsePointInTree(path))
-                throw new InvalidDataException("Owned storage contains linked or unreadable material; repair its inventory before expanding.");
-            foreach (var file in File.Exists(path) ? new[] { path } : CisPathSafety.EnumerateFiles(path))
-                if (files.Add(file)) bytes = checked(bytes + new FileInfo(file).Length);
+            foreach (var path in paths.Select(Path.GetFullPath).Distinct(StoragePathComparer))
+            {
+                if (excludedPaths.Any(parent => StorageWithin(parent, path))) continue;
+                FileAttributes attributes;
+                try { attributes = File.GetAttributes(path); }
+                catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException) { continue; }
+                // An explicit root or claim never gains alias authority through measurement.
+                if (attributes.HasFlag(FileAttributes.ReparsePoint)) throw new InvalidDataException(invalid);
+                if (attributes.HasFlag(FileAttributes.Directory)) pending.Push(path);
+                else if (files.Add(path)) bytes = checked(bytes + new FileInfo(path).Length);
+            }
+            while (pending.TryPop(out var directory))
+            {
+                if (!directories.Add(directory)) continue;
+                if (File.GetAttributes(directory).HasFlag(FileAttributes.ReparsePoint)) throw new InvalidDataException(invalid);
+                foreach (var entry in Directory.EnumerateFileSystemEntries(directory, "*", new EnumerationOptions
+                {
+                    RecurseSubdirectories = false,
+                    ReturnSpecialDirectories = false,
+                    IgnoreInaccessible = false,
+                    AttributesToSkip = 0,
+                }))
+                {
+                    if (excludedPaths.Any(parent => StorageWithin(parent, entry))) continue;
+                    var attributes = File.GetAttributes(entry);
+                    if (attributes.HasFlag(FileAttributes.ReparsePoint))
+                    {
+                        if (attributes.HasFlag(FileAttributes.Directory) && IsCoveredStorageDirectoryAlias(entry, declaredRoots, aliasExclusions)) continue;
+                        throw new InvalidDataException(invalid);
+                    }
+                    if (attributes.HasFlag(FileAttributes.Directory)) pending.Push(entry);
+                    else if (files.Add(entry)) bytes = checked(bytes + new FileInfo(entry).Length);
+                }
+            }
         }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        { throw new InvalidDataException(invalid, error); }
         return bytes;
+    }
+
+    private static bool IsCoveredStorageDirectoryAlias(string path, IReadOnlyList<string> declaredRoots,
+        IReadOnlyList<string> excludedTargets)
+    {
+        try
+        {
+            // Never follow the alias during counting. Its ordinary target must be
+            // independently covered by a declared root and measured through that root.
+            var target = new DirectoryInfo(path).ResolveLinkTarget(returnFinalTarget: false);
+            if (target is null) return false;
+            var resolved = Path.GetFullPath(target.FullName);
+            var attributes = File.GetAttributes(resolved);
+            return attributes.HasFlag(FileAttributes.Directory) && !attributes.HasFlag(FileAttributes.ReparsePoint)
+                && declaredRoots.Any(root => StorageWithin(root, resolved))
+                && !excludedTargets.Any(root => StorageWithin(root, resolved))
+                && !CisPathSafety.ContainsReparsePoint(Path.GetPathRoot(resolved)!, resolved)
+                // Deliberately reject chains, cycles and nested aliases rather than
+                // introducing general link traversal or inferring more ownership.
+                && !CisPathSafety.ContainsReparsePointInTree(resolved);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or NotSupportedException)
+        { return false; }
     }
 
     private static bool StorageWithin(string root, string path)

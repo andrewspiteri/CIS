@@ -15,8 +15,10 @@ Reports plan lifecycle, work-item count, validation readiness, impact coverage, 
 open-decision count.
 
 ```text
-cis plan status <change-id> [--repo <path>] [--format <human|json|agent>]
+cis plan status <change-id> [--summary] [--repo <path>] [--format <human|json|agent>]
 ```
 
 Status is read-only and does not infer implementation progress from Git or agent
 activity.
+
+`--summary` returns compact JSON in every output format. It includes lifecycle state, application result, exit code, task totals, up to eight task rows, material blocker counts and bounded blocker messages. It discloses omitted rows and clipped text and points back to ordinary `--format json` for complete records. The complete projection is capped at 12,000 characters and 48,000 UTF-8 bytes; the underlying plan and default JSON shape are unchanged.

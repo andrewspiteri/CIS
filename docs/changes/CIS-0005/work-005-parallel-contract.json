@@ -1,0 +1,20 @@
+{
+  "tasks": [
+    {
+      "category": "implementation",
+      "complexity": "medium",
+      "dependsOn": [],
+      "title": "Reuse measured completion review under current material authority",
+      "scopeIds": [
+        "completion"
+      ],
+      "acceptanceCriteria": "Measure completion phases before selecting optimization; reusable pure review is keyed by current task/criteria/authority/material/policy/graph/receipt/report interpretation while final current input/contract concurrency fence remains uncached. Explain review reuse separately from native result reuse and actual execution; same-state calls cannot hide stale evidence.",
+      "validation": "Existing completion/participant fixtures cover unchanged same-state review, relevant changes to task/report/input/policy/authority, rejection of stale cached verdicts and concurrent mutation detection. Compare representative inclusive timing with limits.",
+      "paths": [
+        "src",
+        "tests",
+        "docs"
+      ]
+    }
+  ]
+}

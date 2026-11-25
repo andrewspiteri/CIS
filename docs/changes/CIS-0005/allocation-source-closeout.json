@@ -1,0 +1,70 @@
+{
+  "changeSeconds": 115200,
+  "changeAttempts": 24,
+  "restorationSeconds": 1200,
+  "controllers": [
+    "Codex"
+  ],
+  "decisionReference": "CIS-0005-SOURCE-CLOSEOUT:USER-APPROVED-8H:CONSTRAINT-PRESERVATION",
+  "acknowledgeHistoricalUnknown": true,
+  "storageCeilingReference": "CIS-OUTCOME-WORKFLOW-CORRECTION-2026-11-13:storage",
+  "expectedRevision": "6014cfa6e9fc459fb2e574e7bde881a9:57",
+  "tasks": [
+    {
+      "taskId": "WORK-001",
+      "seconds": 6900,
+      "attempts": 4,
+      "restorationSeconds": 0,
+      "allowRedistribution": true,
+      "fixed": false
+    },
+    {
+      "taskId": "WORK-002",
+      "seconds": 6900,
+      "attempts": 4,
+      "restorationSeconds": 0,
+      "allowRedistribution": true,
+      "fixed": false
+    },
+    {
+      "taskId": "WORK-003",
+      "seconds": 8400,
+      "attempts": 4,
+      "restorationSeconds": 0,
+      "allowRedistribution": true,
+      "fixed": false
+    },
+    {
+      "taskId": "WORK-004",
+      "seconds": 10500,
+      "attempts": 3,
+      "restorationSeconds": 0,
+      "allowRedistribution": true,
+      "fixed": false
+    },
+    {
+      "taskId": "WORK-005",
+      "seconds": 7200,
+      "attempts": 3,
+      "restorationSeconds": 0,
+      "allowRedistribution": true,
+      "fixed": false
+    },
+    {
+      "taskId": "WORK-006",
+      "seconds": 5700,
+      "attempts": 2,
+      "restorationSeconds": 0,
+      "allowRedistribution": true,
+      "fixed": false
+    },
+    {
+      "taskId": "WORK-007",
+      "seconds": 62400,
+      "attempts": 3,
+      "restorationSeconds": 1200,
+      "allowRedistribution": true,
+      "fixed": false
+    }
+  ]
+}

@@ -56,6 +56,8 @@ public sealed class FeedbackModule : ICisModule
     {
         var command = new Command("usage", "List recent sanitized tool-usage ledger entries.");
         var options = AddCommonOptions(command, includeLimit: true);
+        var details = new Option<bool>("--details") { Description = "Include optional phase, graph and verification observations in human or agent output." };
+        command.Options.Add(details);
         command.SetAction(parseResult =>
         {
             if (!TryInputs(parseResult.GetValue(options.Format), parseResult.GetValue(options.Since), out var format, out var since))
@@ -67,7 +69,7 @@ public sealed class FeedbackModule : ICisModule
                 parseResult.GetValue(options.Repo) ?? Directory.GetCurrentDirectory(),
                 since,
                 parseResult.GetValue(options.Limit!));
-            RenderUsage(result, format!);
+            RenderUsage(result, format!, parseResult.GetValue(details));
             return result.ExitCode;
         });
         return command;
@@ -146,18 +148,37 @@ public sealed class FeedbackModule : ICisModule
         foreach (var item in result.Commands) Console.WriteLine($"- {item.Command}: {item.InvocationCount} run(s), {item.FailedCount} execution failure(s), {item.NonSuccessfulCount} non-success, ~{item.OutputEstimatedTokens} output tokens, ~{item.PossibleTokenSavings} possible savings");
     }
 
-    private static void RenderUsage(FeedbackUsageResult result, string format)
+    private static void RenderUsage(FeedbackUsageResult result, string format, bool details)
     {
         if (format == "json") { Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions)); return; }
         if (format == "agent")
         {
             Console.WriteLine($"status={result.Status};exitCode={result.ExitCode};entries={result.Entries.Count}");
-            foreach (var item in result.Entries) Console.WriteLine($"usage={item.InvocationId};started={item.StartedAtUtc:O};command={Clean(item.Command)};exitCode={item.ExitCode};outcome={Clean(string.IsNullOrWhiteSpace(item.Outcome) ? ToolUsageStore.ClassifyOutcome(item.Command, item.ExitCode) : item.Outcome)};elapsedMs={item.ElapsedMilliseconds};outputEstimatedTokens={item.OutputEstimatedTokens};possibleTokenSavings={item.PossibleTokenSavings};basis={Clean(item.SavingsBasis)};confidence={Clean(item.SavingsConfidence)}");
+            foreach (var item in result.Entries)
+            {
+                Console.WriteLine($"usage={item.InvocationId};started={item.StartedAtUtc:O};command={Clean(item.Command)};exitCode={item.ExitCode};outcome={Clean(string.IsNullOrWhiteSpace(item.Outcome) ? ToolUsageStore.ClassifyOutcome(item.Command, item.ExitCode) : item.Outcome)};elapsedMs={item.ElapsedMilliseconds};outputEstimatedTokens={item.OutputEstimatedTokens};possibleTokenSavings={item.PossibleTokenSavings};basis={Clean(item.SavingsBasis)};confidence={Clean(item.SavingsConfidence)}");
+                if (details) RenderObservations(item);
+            }
             return;
         }
 
         Console.WriteLine($"Tool usage: {result.Status}; entries: {result.Entries.Count}");
-        foreach (var item in result.Entries) Console.WriteLine($"- {item.StartedAtUtc:u} {item.Command} exit={item.ExitCode} outcome={Clean(string.IsNullOrWhiteSpace(item.Outcome) ? ToolUsageStore.ClassifyOutcome(item.Command, item.ExitCode) : item.Outcome)} elapsed={item.ElapsedMilliseconds}ms output~{item.OutputEstimatedTokens} tokens savings~{item.PossibleTokenSavings} ({item.SavingsConfidence})");
+        foreach (var item in result.Entries)
+        {
+            Console.WriteLine($"- {item.StartedAtUtc:u} {item.Command} exit={item.ExitCode} outcome={Clean(string.IsNullOrWhiteSpace(item.Outcome) ? ToolUsageStore.ClassifyOutcome(item.Command, item.ExitCode) : item.Outcome)} elapsed={item.ElapsedMilliseconds}ms output~{item.OutputEstimatedTokens} tokens savings~{item.PossibleTokenSavings} ({item.SavingsConfidence})");
+            if (details) RenderObservations(item);
+        }
+    }
+
+    private static void RenderObservations(ToolUsageEntry item)
+    {
+        var observation = item.Observations;
+        Console.WriteLine($"attribution={item.InvocationId};operation={observation?.Operation ?? "unknown"};parent={observation?.ParentInvocationId ?? "unknown"};change={observation?.ChangeId ?? "unknown"};task={observation?.TaskId ?? "unknown"};stdoutUtf8Bytes={item.StandardOutputUtf8Bytes?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unknown"};stderrUtf8Bytes={item.StandardErrorUtf8Bytes?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unknown"};deliveredContextUtf8Bytes={observation?.DeliveredContextUtf8Bytes?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unknown"};droppedObservations={observation?.DroppedObservations.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unknown"}");
+        if (observation is null) return;
+        foreach (var phase in observation.Phases) Console.WriteLine(FormattableString.Invariant($"phase={phase.Phase};inclusiveMs={phase.ElapsedMilliseconds:F3};count={phase.Count}"));
+        foreach (var graph in observation.Graph) Console.WriteLine($"graphConsumer={graph.Consumer};snapshot={graph.SnapshotId ?? "unknown"};outcome={graph.Outcome};reason={graph.Reason}");
+        foreach (var verification in observation.Verification) Console.WriteLine($"verificationScope={verification.Scope};disposition={verification.Disposition};batches={verification.Batches};reason={verification.Reason}");
+        foreach (var blocker in observation.BlockerCodes) Console.WriteLine($"blocker={blocker}");
     }
 
     private static void RenderOpportunities(FeedbackOpportunityResult result, string format)

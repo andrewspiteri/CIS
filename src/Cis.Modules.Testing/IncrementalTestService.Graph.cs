@@ -5,15 +5,34 @@ namespace Cis.Modules.Testing;
 
 public sealed partial class IncrementalTestService
 {
-    private sealed record Selection(CisGraphSnapshotReadResult Snapshot, IncrementalTestBatch[] Batches);
+    private sealed record Selection(CisGraphSnapshotReadResult Snapshot, IncrementalTestBatch[] Batches,
+        IReadOnlyList<string> Diagnostics);
 
     private Selection Select(Input input, IncrementalTestState state, bool force)
     {
-        var snapshot = _graph.Read(input.Repository);
-        Require(snapshot.ExitCode == 0 && snapshot.Freshness == "fresh" && snapshot.Graph?.Build.Status == "complete"
-            && snapshot.Manifest is not null && snapshot.Graph.DiagnosticSummary.Errors == 0 && snapshot.Graph.DiagnosticSummary.Warnings == 0,
-            "A fresh, complete graph without errors or warnings is required. Run cis graph build before planning. " + string.Join("; ", snapshot.Errors));
+        CisGraphSnapshotReadResult snapshot;
+        using (CisInvocationTelemetry.MeasurePhase("graph"))
+        {
+            snapshot = _graph.ReadCurrent(input.Repository);
+        }
+        Require(snapshot.ExitCode == 0 && snapshot.Freshness == "fresh" && snapshot.Graph?.Build.Status is "complete" or "partial"
+            && snapshot.Manifest is not null && snapshot.Graph.DiagnosticSummary.Errors == 0,
+            "A fresh, complete graph input inventory without extraction errors is required. " + string.Join("; ", snapshot.Errors));
         var graph = snapshot.Graph!;
+        var warningDiagnostics = snapshot.Diagnostics.Where(item => item.Severity == "warning").ToArray();
+        // Known documentation and verification-mapping diagnostics do not alter compiler dependencies.
+        // Publishing a result reference must not change test selection and invalidate that same result.
+        // Missing diagnostic details and new warning kinds are uncertainty, never proof of independence.
+        var reliableDependencies = graph.DiagnosticSummary.Warnings == warningDiagnostics.Length
+            && warningDiagnostics.All(item => item.Code is "CIS-GRAPH-DOC-002" or "CIS-GRAPH-VERIFY-001" or "CIS-GRAPH-VERIFY-002")
+            && (graph.Build.Status == "complete" || warningDiagnostics.Length > 0);
+        var selectionDiagnostics = warningDiagnostics.Select(item => item.Code + ": " + item.Message).Take(12).ToList();
+        if (warningDiagnostics.Length > 12)
+            selectionDiagnostics.Add($"{warningDiagnostics.Length - 12} additional graph warnings remain in graph diagnostics.");
+        if (!reliableDependencies)
+            selectionDiagnostics.Add("Dependency evidence is incomplete or unclassified; using the configured full test filter and conservative input inventory.");
+        CisInvocationTelemetry.RecordGraph("incremental-selection", graph.Build.Id, "current",
+            reliableDependencies ? "dependency-evidence-available" : "conservative-full-scope");
         Require(graph.Nodes.Count <= 250000 && graph.Edges.Count <= 1000000, "Graph exceeds the incremental planning bound.");
         var paths = graph.Nodes.ToDictionary(node => node.Key, node => DependencyLocations(node).Select(location => location.Path.Replace('\\', '/'))
             .Where(path => CisPathSafety.TryResolveUnderRoot(input.Repository, path, out var full) && File.Exists(full))
@@ -23,6 +42,7 @@ public sealed partial class IncrementalTestService
         foreach (var edge in graph.Edges.Where(edge => edge.State is not ("proposed" or "rejected")
             && edge.Type is "calls" or "depends-on" or "references" or "implemented-by" or "implements" or "inherits-from"))
         {
+            if (ContextualVerificationEdge(edge)) continue;
             if (!paths.TryGetValue(edge.From, out var from) || !paths.TryGetValue(edge.To, out var to)) continue;
             foreach (var source in from) foreach (var target in to)
             {
@@ -57,7 +77,7 @@ public sealed partial class IncrementalTestService
             // fixtures and names whose separators do not imply the existing predicate.
             var classes = classNames.Where(name => !HasCoveringClassFilter(name, classNames))
                 .Select(name => "FullyQualifiedName~" + name + ".").Order(StringComparer.Ordinal).ToArray();
-            var narrow = source.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) && represented.Contains(source) && tests.Length > 0 && classes.Length > 0
+            var narrow = reliableDependencies && source.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) && represented.Contains(source) && tests.Length > 0 && classes.Length > 0
                 && snapshot.GraphCapabilities.Contains("compiler.calls", StringComparer.Ordinal);
             var filter = narrow ? "(" + profile.FullTestFilter + ")&(" + string.Join('|', classes) + ")" : profile.FullTestFilter;
             if (filter.Length > 32768) narrow = false;
@@ -66,6 +86,7 @@ public sealed partial class IncrementalTestService
             // Inconclusive selection uses every graph input, rather than treating missing edges as independence.
             var dependencies = (narrow ? Closure(tests.Append(source), forward) : allInputs.ToHashSet(PathComparer))
                 .Order(StringComparer.Ordinal).ToArray();
+            using var identityPhase = CisInvocationTelemetry.MeasurePhase("identity");
             var inputHashes = dependencies.Select(file => new { file, hash = HashFile(Safe(input.Repository, file)) }).ToArray();
             var relevantEdges = dependencies.SelectMany(file => forward.GetValueOrDefault(file, []).Select(target => file + "->" + target))
                 .Order(StringComparer.Ordinal).ToArray();
@@ -139,7 +160,10 @@ public sealed partial class IncrementalTestService
                     var previousUnitInputs = dependencies.Where(file => UnitDependencyInput(input, file, explicitUnitInputs)).ToArray();
                     previousUnit = HashObject(new
                     {
-                        input.UnitIdentity, source, tests, filter,
+                        input.UnitIdentity,
+                        source,
+                        tests,
+                        filter,
                         inputHashes = previousUnitInputs.Select(file => new { file, hash = HashFile(Safe(input.Repository, file)) }).ToArray(),
                         relevantEdges = previousUnitInputs.SelectMany(file => forward.GetValueOrDefault(file, [])
                             .Where(target => UnitDependencyInput(input, target, explicitUnitInputs)).Select(target => file + "->" + target))
@@ -148,7 +172,11 @@ public sealed partial class IncrementalTestService
                     var previousMutationInputs = dependencies.Where(file => !PathComparer.Equals(Safe(input.Repository, file), input.ProfilePath)).ToArray();
                     previousMutation = HashObject(new
                     {
-                        input.MutationIdentity, unit = previousUnit, source, tests, filter,
+                        input.MutationIdentity,
+                        unit = previousUnit,
+                        source,
+                        tests,
+                        filter,
                         inputHashes = previousMutationInputs.Select(file => new { file, hash = HashFile(Safe(input.Repository, file)) }).ToArray(),
                         relevantEdges = previousMutationInputs.SelectMany(file => forward.GetValueOrDefault(file, [])
                             .Where(target => !PathComparer.Equals(Safe(input.Repository, target), input.ProfilePath)).Select(target => file + "->" + target))
@@ -170,13 +198,17 @@ public sealed partial class IncrementalTestService
             result.Add(new(id, source, narrow ? "graph" : "all-tests", tests, filter, unit, mutation,
                 unitCurrent, mutationCurrent, dependencies)
             {
-                UnitInputs = unitBasis, MutationInputs = mutationBasis,
-                CanonicalUnitFingerprint = canonicalUnit, CanonicalMutationFingerprint = canonicalMutation,
+                UnitInputs = unitBasis,
+                MutationInputs = mutationBasis,
+                CanonicalUnitFingerprint = canonicalUnit,
+                CanonicalMutationFingerprint = canonicalMutation,
                 UnitReasons = ExplainReuse(input, state, prior?.Unit, unitBasis, unitCurrent, false),
                 MutationReasons = ExplainReuse(input, state, prior?.Mutation, mutationBasis, mutationCurrent, true)
             });
         }
-        return new(snapshot, result.ToArray());
+        CisInvocationTelemetry.RecordVerification("unit", "selected", result.Count,
+            reliableDependencies ? "dependency-selection" : "conservative-full-scope");
+        return new(snapshot, result.ToArray(), selectionDiagnostics);
     }
 
     private static HashSet<string> GraphOnlyInputs(Input input, CisGraphSnapshotReadResult snapshot,
@@ -207,6 +239,17 @@ public sealed partial class IncrementalTestService
         return new[] { input.Profile.UnitCommand, input.Profile.MutationCommand, input.Profile.RecoveryCommand }
             .Where(command => command is not null).SelectMany(command => command!).Concat(input.Profile.Environment.Values)
             .Any(value => references.Any(reference => value.Replace('\\', '/').Contains(reference, CisPathSafety.PlatformComparison)));
+    }
+
+    private static bool ContextualVerificationEdge(CisGraphEdge edge)
+    {
+        if (edge.Type is not ("references" or "implemented-by")) return false;
+        // The store merges observations. A contextual declaration cannot erase an
+        // independent compiler/project fact (or an unfamiliar conservative fact).
+        if (edge.Observations.Any(item => item.Method is not ("explicit-verification-declaration"
+            or "file-reference-cooccurrence" or "recorded-receipt-pin"))) return false;
+        return edge.Properties.GetValueOrDefault("role") is "explicit-result-reference" or "implementing-task"
+            || edge.Properties.GetValueOrDefault("mapping") == "explicit" || edge.Observations.Count > 0;
     }
 
     private static IEnumerable<CisGraphLocation> DependencyLocations(CisGraphNode node)
@@ -247,6 +290,7 @@ public sealed partial class IncrementalTestService
 
     private bool Current(Input input, string source, IncrementalStageResult? result, string fingerprint, bool mutation, string testFilter)
     {
+        using var evidencePhase = CisInvocationTelemetry.MeasurePhase("evidence");
         if (result is not { Completed: true } || result.Fingerprint != fingerprint
             || result.AssessmentContractVersion != CisIncrementalResultContract.Version
                 && !(input.LegacyIdentity && result.AssessmentContractVersion == 0)) return false;

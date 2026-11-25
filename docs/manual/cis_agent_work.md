@@ -333,6 +333,19 @@ Allocate storage once at the owning boundary. The following fragment is **synthe
 
 Owned totals include declared physical paths, known CIS agent/management data and exact associated native scratch. Overlapping paths count once; separate copies, ZIPs, manifests and retrievals still count. Count-only roots are protected and grant no deletion permission. Native and artifact writers reserve growth before expansion, then reconcile surviving bytes. Existing per-run limits/free-space checks also apply. Monitoring is bounded and sampled; it is not a machine-wide filesystem sandbox. Inspect `artifacts inventory` and review `artifacts plan` before delegated `--yes` cleanup. Deletion frees measured bytes, never time or attempts; protected/current/recovery/accounting and user-managed material remain protected.
 
+A directory alias inside an owned tree may be omitted from measurement only when its
+one-hop target is an ordinary, fully unlinked and readable directory tree already
+covered by a declared owned root. The ordinary target is counted through that root;
+the alias grants no ownership, claim or cleanup permission. File links, outside
+targets, chains, cycles, nested aliases and unverifiable targets hold inspection.
+Declared roots, explicit claims and native paths retain their existing link checks.
+An operation's growth measurement and its native monitoring apply the same rule
+to that operation's actual paths, rather than all globally owned roots. The target
+must be included in that growth domain and cannot use excluded accounting data as
+coverage. Its ordinary bytes and later growth count once; the original baseline
+and finite reservation remain unchanged. Run, output, retained and scratch trees
+retain their stricter link rejection.
+
 When native restoration is required, resume its retained profile. `--recovery-of <execution-id>` performs only the original pinned recovery command and healthy postflight, including when an interrupted controller lost its ordinary result record. The exact owner, original attempt and recovery recipe remain bound. Safely stopped recovery can spend the existing protected restoration reserve; it cannot clear live/uncertain process ownership, change its command or run a new campaign. Missing reports remain missing. Ordinary archive retrieval/restoration is a new bounded operation and does not acquire native recovery authority.
 
 Exact outside-root native scratch retains its admitting path, temporary parent and

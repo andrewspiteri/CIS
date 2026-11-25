@@ -1,0 +1,12 @@
+{
+  "name": "cis-playwright-browser-smoke",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Small real-browser fixture for CIS native report reconciliation.",
+  "scripts": {
+    "test:browser": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1"
+  }
+}

@@ -132,12 +132,18 @@ public sealed partial class GraphValidator
     private readonly SqliteGraphStore _store;
     private readonly IReadOnlyList<string> _expectedExtractors;
 
+    public GraphValidator(ICisRepositoryContextResolver repositoryContextResolver, SqliteGraphStore? store,
+        IEnumerable<ICisGraphAugmenter>? augmenters)
+        : this(repositoryContextResolver, store, augmenters, null)
+    {
+    }
+
     public GraphValidator(ICisRepositoryContextResolver repositoryContextResolver, SqliteGraphStore? store = null,
-        IEnumerable<ICisGraphAugmenter>? augmenters = null)
+        IEnumerable<ICisGraphAugmenter>? augmenters = null, IEnumerable<ICisTestResultAdapter>? resultAdapters = null)
     {
         _repositoryContextResolver = repositoryContextResolver;
         _store = store ?? new SqliteGraphStore();
-        _expectedExtractors = GraphBuilder.ComposeExtractors(augmenters);
+        _expectedExtractors = GraphBuilder.ComposeExtractors(augmenters, resultAdapters);
     }
 
     public GraphValidationResult Validate(string repositoryPath, bool strict)
@@ -739,7 +745,7 @@ public sealed partial class GraphValidator
             "precedes" => from == "invocation" && to == "invocation",
             "has-dataflow" => from == "symbol" && to == "dataflow",
             "authorized-by" => from is "symbol" or "reference-item" && to is "symbol" or "reference-item",
-            "verified-by" => from is "requirement" or "reference-item" or "component" or "symbol" or "workflow"
+            "verified-by" => from is "requirement" or "reference-item" or "component" or "symbol" or "workflow" or "source-file"
                 && to == "test",
             "governed-by" => to is "document" or "decision" or "api-rule",
             "publishes" or "subscribes-to" => from is "component" or "symbol" && to == "reference-item",
@@ -808,6 +814,17 @@ public sealed partial class GraphValidator
             }
 
             var inputState = GraphInputInspection.Read(input.Path, absolutePath);
+            try
+            {
+                if (GraphProjectionFingerprint.Read(repositoryPath, input.Path) != input.ProjectionHash)
+                    diagnostics.Add(Diagnostic("CIS-GRAPH-VALIDATE-STALE-003", "warning",
+                        $"Graph projection changed after the build: {input.Path}", input.Path));
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                diagnostics.Add(Diagnostic("CIS-GRAPH-VALIDATE-STALE-004", "warning",
+                    $"Graph projection cannot be read: {input.Path}", input.Path));
+            }
             if (!inputState.Exists)
             {
                 diagnostics.Add(Diagnostic(

@@ -546,12 +546,12 @@ describe('order review', () => {
         Assert.Equal(0, synchronized.ExitCode);
         Assert.True(synchronized.Applied);
         var markdown = File.ReadAllText(markdownPath);
-        Assert.Contains("automated_test_case_count: 1", markdown, StringComparison.Ordinal);
+        Assert.Contains("automation_source_linked_count: 1", markdown, StringComparison.Ordinal);
         Assert.Contains("automation_pending_count: 0", markdown, StringComparison.Ordinal);
-        Assert.Contains("- Automation status: Automated", markdown, StringComparison.Ordinal);
+        Assert.Contains("- Automation status: Source linked", markdown, StringComparison.Ordinal);
         Assert.Contains("::tests/order-review.test.ts:2`", markdown, StringComparison.Ordinal);
         Assert.Empty(services.Plans.ValidateManualTestAutomationCoverage(repository.Path, change.Id));
-        Assert.Contains("\"Automated\",\"", File.ReadAllText(services.Changes.DossierFile(change, "test-cases.csv")), StringComparison.Ordinal);
+        Assert.Contains("\"Source linked\",\"", File.ReadAllText(services.Changes.DossierFile(change, "test-cases.csv")), StringComparison.Ordinal);
         Assert.Contains("::tests/order-review.test.ts:2\"",
             File.ReadAllText(services.Changes.DossierFile(change, "test-cases.csv")), StringComparison.Ordinal);
     }
@@ -620,7 +620,7 @@ status: Draft
         Assert.Equal(approvedBackend.RequiredOutputs, retainedBackend.RequiredOutputs);
         Assert.Equal(approvedBackend.NegativeCriteria, retainedBackend.NegativeCriteria);
         Assert.Equal(contract, fresh.Plans.ReadTaskDigest(repository.Path, change.Id, backend.Id));
-        Assert.Contains("automated_test_case_count: 1",
+        Assert.Contains("automation_source_linked_count: 1",
             File.ReadAllText(services.Changes.DossierFile(change, "test-cases.md")), StringComparison.Ordinal);
 
         foreach (var task in taskBytes) Assert.Equal(task.Value, File.ReadAllBytes(task.Key));
@@ -1254,7 +1254,8 @@ status: Draft
         services.Usage.Record(new CisToolUsageCapture(
             ["context", "pack", "--repo", repository.Path], repository.Path,
             DateTimeOffset.Parse("2026-08-09T09:00:00Z"), DateTimeOffset.Parse("2026-08-09T09:00:01Z"),
-            1000, 0, 80, 0, [new CisTokenSavingsCandidate(100, 20, "focused context pack", "high", "context pack")]));
+            1000, 0, 80, 0, [new CisTokenSavingsCandidate(100, 20, "focused context pack", "high", "context pack")])
+        { CanonicalCommand = "context pack", RecognizedOptions = ["--repo"] });
         Assert.Equal(0, services.Plans.TransitionTask(new PlanTaskTransitionRequest(
             repository.Path, change.Id, task.Id, "InProgress", "delivery-agent", "Begin bounded work.")).ExitCode);
         var taskPath = Path.Combine(Path.GetDirectoryName(services.Changes.DossierFile(change, "plan.md"))!,

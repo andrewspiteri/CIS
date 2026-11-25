@@ -13,7 +13,8 @@ public sealed partial class FeedbackModuleTests
         var store = new ToolUsageStore();
         store.Record(new CisToolUsageCapture(["workspace", "snapshot", "--repo", _root], _root,
             DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, 1, 2, 100_000, 0,
-            [new(61, null, "nested agent summary", "high", "agent runs")], "blocked", "fixture-build"));
+            [new(61, null, "nested agent summary", "high", "agent runs")], "blocked", "fixture-build")
+        { CanonicalCommand = "workspace snapshot", RecognizedOptions = ["--repo"] });
         var entry = Assert.Single(store.Read(_root, null, 20).Entries);
         Assert.Equal("blocked", entry.Outcome);
         Assert.Equal("fixture-build", entry.BuildIdentity);

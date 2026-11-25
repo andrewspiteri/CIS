@@ -14,6 +14,7 @@ public sealed partial class AgentModule : ICisModule
     public void RegisterServices(IServiceCollection services)
     {
         services.AddSingleton(serviceProvider => new AgentService(
+            serviceProvider.GetService<ICisTaskContextPreparer>(),
             serviceProvider.GetRequiredService<ICisRepositoryContextResolver>(),
             serviceProvider.GetServices<ICisAgentProvider>(),
             serviceProvider.GetService<ICisWorkspaceRegistry>(),
@@ -125,10 +126,11 @@ public sealed partial class AgentModule : ICisModule
         var command = new Command("prepare", "Prepare or refresh a digest-bound task envelope.");
         var change = new Argument<string>("change-id"); var task = new Argument<string>("task-id");
         var provider = new Option<string>("--provider") { DefaultValueFactory = _ => "portable" };
+        var summary = new Option<bool>("--summary") { Description = "Bounded routine result; full envelope remains available on disk." };
         var repo = Repo(); var format = Format(); command.Arguments.Add(change); command.Arguments.Add(task);
-        command.Options.Add(provider); command.Options.Add(repo); command.Options.Add(format);
+        command.Options.Add(provider); command.Options.Add(repo); command.Options.Add(format); command.Options.Add(summary);
         command.SetAction(result => Render(service.Prepare(result.GetValue(repo)!, result.GetValue(change)!,
-            result.GetValue(task)!, result.GetValue(provider)!), result.GetValue(format)!)); return command;
+            result.GetValue(task)!, result.GetValue(provider)!), result.GetValue(format)!, routineSummary: result.GetValue(summary))); return command;
     }
 
     private static Command Run(AgentService service)
@@ -413,15 +415,34 @@ public sealed partial class AgentModule : ICisModule
     private static Command Simple(string name, string description, Func<string, AgentResult> action)
     {
         var command = new Command(name, description); var repo = Repo(); var format = Format(); command.Options.Add(repo); command.Options.Add(format);
-        command.SetAction(result => Render(action(result.GetValue(repo)!), result.GetValue(format)!)); return command;
+        var summary = new Option<bool>("--summary") { Description = "Bounded routine result; use ordinary JSON for all records." };
+        command.Options.Add(summary);
+        command.SetAction(result => Render(action(result.GetValue(repo)!), result.GetValue(format)!, routineSummary: result.GetValue(summary))); return command;
     }
 
-    private static int Render(AgentResult result, string format, bool summarizeRun = false, bool summarizeRuns = false)
+    private static int Render(AgentResult result, string format, bool summarizeRun = false, bool summarizeRuns = false, bool routineSummary = false)
     {
-        if (format == "json") Console.WriteLine(JsonSerializer.Serialize(
-            summarizeRun ? SummarizeRun(result) : summarizeRuns ? SummarizeRuns(result) : result, JsonOptions));
+        if (format is not ("human" or "json" or "agent"))
+        {
+            return 2;
+        }
+        if (routineSummary)
+        {
+            string output = AgentRoutineSummary.Render(result, format);
+            // Summary metadata does not deliver the advisory content body.
+            CisInvocationTelemetry.RecordDeliveredContext(0);
+            Console.WriteLine(output);
+            return result.ExitCode;
+        }
+        if (format == "json")
+        {
+            string output = JsonSerializer.Serialize(summarizeRun ? SummarizeRun(result) : summarizeRuns ? SummarizeRuns(result) : result, JsonOptions);
+            RecordJsonTaskContext(output);
+            Console.WriteLine(output);
+        }
         else if (format == "agent")
         {
+            CisInvocationTelemetry.RecordDeliveredContext(0);
             Console.WriteLine($"status={result.Status};exitCode={result.ExitCode};providers={result.Providers.Count};runs={result.Runs.Count};imports={result.Imports.Count};applied={result.Applied.ToString().ToLowerInvariant()}");
             if (result.Envelope is not null) Console.WriteLine($"envelope={result.Envelope.Id}");
             if (result.Run is not null) Console.WriteLine($"run={result.Run.Manifest.RunId};attempt={result.Run.Manifest.Attempt};runStatus={result.Run.Manifest.Status};provider={result.Run.Manifest.Provider}");
@@ -436,6 +457,7 @@ public sealed partial class AgentModule : ICisModule
         }
         else if (format == "human")
         {
+            CisInvocationTelemetry.RecordDeliveredContext(0);
             Console.WriteLine($"Agent: {result.Status}; providers={result.Providers.Count}; runs={result.Runs.Count}; imports={result.Imports.Count}");
             RenderWorkView(result.Work, format);
             foreach (var provider in result.Providers) Console.WriteLine($"- {provider.Id}: {(provider.DirectExecution ? "direct" : "envelope")} [{string.Join(", ", provider.Transports)}]");
@@ -448,6 +470,21 @@ public sealed partial class AgentModule : ICisModule
         }
         else return 2;
         return result.ExitCode;
+    }
+
+    private static void RecordJsonTaskContext(string output)
+    {
+        using var document = JsonDocument.Parse(output);
+        if (document.RootElement.TryGetProperty("envelope", out var envelope) && envelope.ValueKind == JsonValueKind.Object
+            && envelope.TryGetProperty("taskContext", out var context) && context.ValueKind == JsonValueKind.Object)
+        {
+            // Observe only the delivered advisory JSON value, including its actual metadata/formatting.
+            CisInvocationTelemetry.RecordDeliveredContext(System.Text.Encoding.UTF8.GetByteCount(context.GetRawText()));
+        }
+        else
+        {
+            CisInvocationTelemetry.RecordDeliveredContext(0);
+        }
     }
 
     private static object SummarizeRun(AgentResult result) => new

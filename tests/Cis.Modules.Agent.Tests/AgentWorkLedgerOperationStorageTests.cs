@@ -4,6 +4,91 @@ namespace Cis.Modules.Agent.Tests;
 
 public sealed partial class AgentWorkLedgerTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void WorkLedger_OperationAliasRequiresItsActualTargetDomainAndCountsTargetGrowthOnce(bool includeTarget)
+    {
+        using var f = new Fixture();
+        using var aliases = new StorageDirectoryAliases(f);
+        var identity = f.Identity("WORK-A");
+        var owned = Path.Combine(f.Context.RepositoryPath, "owned");
+        var domain = Path.Combine(owned, "domain");
+        var target = Path.Combine(owned, "packages/client-core");
+        Directory.CreateDirectory(target);
+        var payload = Path.Combine(target, "payload.bin");
+        File.WriteAllBytes(payload, new byte[31]);
+        var allocation = new CisAgentWorkAllocationRequest(300, 3, 0, [new(identity.TaskId, 240, 3)],
+            "approved fixture allocation", "one measured growth domain", AcknowledgeHistoricalUnknown: true)
+        {
+            Controllers = ["Controller"],
+            Storage = new(8 * 1024 * 1024,
+                [new(f.Context.RepositoryPath, ".cis/local"), new(f.Context.RepositoryPath, "owned") { Scratch = true }])
+        };
+        Assert.Equal(0, f.Ledger.Allocate(f.Context, identity.ChangeId, allocation, [identity], "Controller", "Count operation targets rather than their aliases.").ExitCode);
+        var native = f.Ledger.Admit(f.Context, identity, "native/operation-alias", 60, 60);
+        Assert.True(native.Admitted);
+        aliases.Create(Path.Combine(domain, "node_modules/client-core"), target);
+        Assert.True(f.Ledger.InspectStorage(f.Context, identity.ChangeId, identity.TaskId).Allowed);
+        var ledger = Path.Combine(f.Context.RepositoryPath, CisAgentWorkPaths.Ledger);
+        var retained = File.ReadAllBytes(ledger);
+        CisOwnedStoragePath[] claims = includeTarget ? [new(domain), new(target)] : [new(domain)];
+
+        var grant = f.Ledger.ReserveStorage(f.Context, native.Reference!, "native", 4096, claims, false, false, "Controller");
+
+        if (!includeTarget)
+        {
+            Assert.False(grant.Allowed);
+            Assert.Contains(grant.Result.Errors, error => error.Contains("operation growth domain", StringComparison.Ordinal));
+            Assert.Equal(retained, File.ReadAllBytes(ledger));
+        }
+        else
+        {
+            Assert.True(grant.Allowed, string.Join("; ", grant.Result.Errors));
+            Assert.Equal(31, grant.Operation!.InitialBytes);
+            Assert.Equal(31, grant.Operation.CurrentBytes);
+            File.WriteAllBytes(payload, new byte[47]);
+            var grown = f.Ledger.ReserveStorage(f.Context, native.Reference!, "native", 4096, null, false, false, "Controller");
+            Assert.True(grown.Allowed, string.Join("; ", grown.Result.Errors));
+            Assert.Equal(grant.ReservationId, grown.ReservationId);
+            Assert.Equal(31, grown.Operation!.InitialBytes);
+            Assert.Equal(47, grown.Operation.CurrentBytes);
+            Assert.Equal(16, grown.Operation.CurrentBytes - grown.Operation.InitialBytes);
+            Assert.Equal(grant.MaximumGrowthBytes, grown.MaximumGrowthBytes);
+            Assert.True(f.Ledger.SettleStorage(f.Context, native.Reference!, grant.ReservationId!, true, null).Allowed);
+        }
+        Assert.Equal(0, f.Ledger.Settle(f.Context, native.Reference!, "native-finished", true).ExitCode);
+    }
+
+    [Fact]
+    public void WorkLedger_OperationAliasCannotUseExcludedAccountingAsItsTargetCoverage()
+    {
+        using var f = new Fixture();
+        using var aliases = new StorageDirectoryAliases(f);
+        var identity = f.Identity("WORK-A");
+        var local = Path.Combine(f.Context.RepositoryPath, ".cis/local");
+        var target = Path.Combine(local, "agents/ordinary-target");
+        Directory.CreateDirectory(target);
+        File.WriteAllBytes(Path.Combine(target, "payload.bin"), new byte[31]);
+        var allocation = new CisAgentWorkAllocationRequest(300, 3, 0, [new(identity.TaskId, 240, 3)],
+            "approved fixture allocation", "accounting stays outside native growth", AcknowledgeHistoricalUnknown: true)
+        { Controllers = ["Controller"], Storage = new(8 * 1024 * 1024, [new(f.Context.RepositoryPath, ".cis/local")]) };
+        Assert.Equal(0, f.Ledger.Allocate(f.Context, identity.ChangeId, allocation, [identity], "Controller", "Retain excluded accounting boundaries.").ExitCode);
+        var native = f.Ledger.Admit(f.Context, identity, "native/excluded-target", 60, 60);
+        Assert.True(native.Admitted);
+        aliases.Create(Path.Combine(local, "domain/node_modules/client-core"), target);
+        Assert.True(f.Ledger.InspectStorage(f.Context, identity.ChangeId, identity.TaskId).Allowed);
+        var ledger = Path.Combine(f.Context.RepositoryPath, CisAgentWorkPaths.Ledger);
+        var retained = File.ReadAllBytes(ledger);
+
+        var grant = f.Ledger.ReserveStorage(f.Context, native.Reference!, "native", 4096, [new(local)], false, false, "Controller");
+
+        Assert.False(grant.Allowed);
+        Assert.Contains(grant.Result.Errors, error => error.Contains("operation growth domain", StringComparison.Ordinal));
+        Assert.Equal(retained, File.ReadAllBytes(ledger));
+        Assert.Equal(0, f.Ledger.Settle(f.Context, native.Reference!, "native-finished", true).ExitCode);
+    }
+
     [Fact]
     public void WorkLedger_ExactRetainedScratchMutationPreservesItsAdmissionAndSupersessionGuards()
     {

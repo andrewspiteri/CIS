@@ -9,6 +9,14 @@ internal sealed record GraphInputInspection(bool Exists, string? Hash, string? E
         => CisReadScope.Read(typeof(GraphInputInspection), relativePath, absolutePath,
             () => ReadCore(relativePath, absolutePath));
 
+    public static GraphInputInspection ReadCurrent(string relativePath, string absolutePath)
+    {
+        if (!File.Exists(absolutePath)) return new(false, null, null);
+        try { return new(true, GraphBuilder.HashInputCurrent(relativePath, absolutePath), null); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        { return new(true, null, exception.Message); }
+    }
+
     private static GraphInputInspection ReadCore(string relativePath, string absolutePath)
     {
         if (!File.Exists(absolutePath)) return new(false, null, null);

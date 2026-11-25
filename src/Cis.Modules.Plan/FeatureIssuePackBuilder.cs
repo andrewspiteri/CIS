@@ -907,14 +907,14 @@ internal static partial class FeatureIssuePackBuilder
             return new ManualTestCase(id, title, section, priority, type, preconditions, steps,
                 CleanLine(requirement.AcceptanceCriteria), requirement.Id,
                 requirement.FrontendType ?? "not-applicable",
-                references.Count > 0 ? "Automated" : "Pending",
+                references.Count > 0 ? "Source linked" : "Pending",
                 references);
         }).ToArray();
 
         var csv = RenderManualTestCasesCsv(cases);
         var csvSha256 = "sha256:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(csv))).ToLowerInvariant();
         var markdown = RenderManualTestCasesMarkdown(changeId, spec, source, cases, csvSha256);
-        return new(markdown, csv, cases.Length, cases.Count(test => test.AutomationStatus == "Automated"));
+        return new(markdown, csv, cases.Length, 0);
     }
 
     private static string RenderManualTestCasesMarkdown(
@@ -933,7 +933,8 @@ internal static partial class FeatureIssuePackBuilder
         builder.AppendLine($"feature_spec_path: {JsonSerializer.Serialize(source.Path)}");
         builder.AppendLine($"feature_spec_sha256: {JsonSerializer.Serialize(source.Sha256)}");
         builder.AppendLine($"test_case_count: {cases.Count}");
-        builder.AppendLine($"automated_test_case_count: {cases.Count(test => test.AutomationStatus == "Automated")}");
+        builder.AppendLine("automated_test_case_count: 0");
+        builder.AppendLine($"automation_source_linked_count: {cases.Count(test => test.AutomationStatus == "Source linked")}");
         builder.AppendLine($"automation_pending_count: {cases.Count(test => test.AutomationStatus == "Pending")}");
         builder.AppendLine("csv_path: test-cases.csv");
         builder.AppendLine($"csv_sha256: {JsonSerializer.Serialize(csvSha256)}");
@@ -944,6 +945,7 @@ internal static partial class FeatureIssuePackBuilder
         builder.AppendLine("# Manual test cases");
         builder.AppendLine();
         builder.AppendLine($"Generated from `{source.Path}`. Regenerate through feature planning after the source specification changes; do not record execution results in this derived catalogue.");
+        builder.AppendLine("Source linked means a test source mentions the case identity. It does not prove execution, assertions, or journey coverage; required browser cases must also have current native passing results and implementation review.");
         builder.AppendLine();
         builder.AppendLine("The companion `test-cases.csv` uses one row per case and portable field names that can be mapped during import into TestRail or another test-management system.");
         builder.AppendLine();

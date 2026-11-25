@@ -6,6 +6,128 @@ namespace Cis.Modules.Delivery.Tests;
 public sealed partial class EngineeringCompletionTests
 {
     [Theory]
+    [InlineData("valid", true)]
+    [InlineData("schema-one", false)]
+    [InlineData("schema-three", false)]
+    [InlineData("plain-passed", false)]
+    [InlineData("missing-scope", false)]
+    [InlineData("unknown-policy", false)]
+    [InlineData("empty-selection", false)]
+    [InlineData("duplicate-selection", false)]
+    [InlineData("selection-mismatch", false)]
+    [InlineData("overlap", false)]
+    [InlineData("wrong-workflow", false)]
+    [InlineData("wrong-id", false)]
+    [InlineData("wrong-digest", false)]
+    [InlineData("changed-profile", false)]
+    [InlineData("zero-tests", false)]
+    [InlineData("skipped", false)]
+    [InlineData("failed", false)]
+    [InlineData("changed-report", false)]
+    [InlineData("null-suites", false)]
+    [InlineData("null-selection", false)]
+    [InlineData("wrong-report-run", false)]
+    [InlineData("wrong-report-suite", false)]
+    [InlineData("wrong-own-run", false)]
+    [InlineData("cross-suite-report", false)]
+    public void SelectedSuiteNativeEvidenceRequiresExplicitCurrentBoundScope(string scenario, bool accepted)
+    {
+        using var fixture = new Fixture();
+        var manifest = SelectedNativeManifest(fixture);
+        if (scenario == "cross-suite-report")
+        {
+            manifest = manifest with { Suites = [manifest.Suites[0], manifest.Suites[0] with { SuiteId = "unrelated" }] };
+            manifest = manifest with { Scope = TestReconcileScope.Create(manifest, ["focused", "unrelated"], []) };
+        }
+        var node = System.Text.Json.JsonSerializer.SerializeToNode(manifest,
+            new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web))!;
+        switch (scenario)
+        {
+            case "schema-one": node["schemaVersion"] = 1; break;
+            case "schema-three": node["schemaVersion"] = 3; break;
+            case "plain-passed": node["status"] = "passed"; break;
+            case "missing-scope": node.AsObject().Remove("scope"); break;
+            case "unknown-policy": node["scope"]!["policy"] = "unknown"; break;
+            case "empty-selection": node["scope"]!["selectedSuiteIds"] = new JsonArray(); break;
+            case "duplicate-selection": node["scope"]!["selectedSuiteIds"] = new JsonArray("focused", "FOCUSED"); break;
+            case "selection-mismatch": node["scope"]!["selectedSuiteIds"] = new JsonArray("another"); break;
+            case "overlap": node["scope"]!["omittedSuiteIds"] = new JsonArray("focused"); break;
+            case "wrong-workflow": node["scope"]!["workflowRunId"] = "another"; break;
+            case "wrong-id": node["scope"]!["id"] = "another"; break;
+            case "wrong-digest": node["scope"]!["digest"] = new string('0', 64); break;
+            case "changed-profile": fixture.WriteJson("docs/references/test-suite-profile.md", new { fixture = "changed profile" }); break;
+            case "zero-tests": node["suites"]![0]!["total"] = 0; node["suites"]![0]!["passed"] = 0; break;
+            case "skipped": node["suites"]![0]!["skipped"] = 1; node["suites"]![0]!["passed"] = 0; break;
+            case "failed": node["suites"]![0]!["status"] = "failed"; node["suites"]![0]!["failed"] = 1; break;
+            case "changed-report": fixture.WriteJson("native.trx", new { fixture = "changed native bytes" }); break;
+            case "null-suites": node["suites"] = null; break;
+            case "null-selection": node["scope"]!["selectedSuiteIds"] = null; break;
+            case "wrong-report-run":
+                node["artifacts"]![0]!["runId"] = "different-run";
+                node["suites"]![0]!["artifacts"]![0]!["runId"] = "different-run";
+                break;
+            case "wrong-report-suite":
+                node["artifacts"]![0]!["suiteId"] = "different-suite";
+                node["suites"]![0]!["artifacts"]![0]!["suiteId"] = "different-suite";
+                break;
+            case "wrong-own-run": node["suites"]![0]!["artifacts"]![0]!["runId"] = "different-run"; break;
+            case "cross-suite-report":
+                node["artifacts"]![0]!["suiteId"] = "unrelated";
+                node["suites"]![0]!["artifacts"]![0]!["suiteId"] = "unrelated";
+                node["suites"]![1]!["artifacts"]![0]!["suiteId"] = "unrelated";
+                break;
+        }
+        fixture.WriteJson("selected-native.json", node);
+        var receipt = fixture.Receipt(EngineeringGateState.Passed) with
+        {
+            Gates = [new("unit", EngineeringGateState.Passed, "Synthetic selected native protocol; omitted suites are unassessed.",
+                [fixture.Artifact("selected-native.json")])]
+        };
+        Assert.Equal(accepted, fixture.Review(receipt).Count == 0);
+    }
+
+    [Theory]
+    [InlineData(94, false)]
+    [InlineData(95, true)]
+    public void SelectedSuiteCoverageRetainsTheChangedProductionThreshold(double lines, bool accepted)
+    {
+        using var fixture = new Fixture();
+        var manifest = SelectedNativeManifest(fixture);
+        fixture.WriteJson("coverage.json", new { fixture = "Synthetic native coverage binding protocol" });
+        var source = fixture.Artifact("coverage.json");
+        var coverageArtifact = new TestArtifact("coverage-result", source.Path, source.Sha256.Replace("sha256:", "", StringComparison.Ordinal),
+            new FileInfo(Path.Combine(fixture.Root, source.Path)).Length, manifest.RunId, SuiteId: "focused");
+        manifest = manifest with
+        {
+            Suites = [manifest.Suites[0] with { Coverage = new(lines, lines, lines, lines, "changed-production", source.Path, 100, (int)lines),
+                Artifacts = manifest.Suites[0].Artifacts.Concat([coverageArtifact]).ToArray() }],
+            Artifacts = manifest.Artifacts.Concat([coverageArtifact]).ToArray()
+        };
+        fixture.WriteJson("selected-native.json", System.Text.Json.JsonSerializer.SerializeToNode(manifest,
+            new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web))!);
+        var receipt = fixture.Receipt(EngineeringGateState.Passed) with
+        {
+            Gates = [new("coverage", EngineeringGateState.Passed, "Selected scope does not lower the existing changed-line threshold.",
+                [fixture.Artifact("selected-native.json")])]
+        };
+        Assert.Equal(accepted, fixture.Review(receipt, gateId: "coverage").Count == 0);
+    }
+
+    private static TestRunManifest SelectedNativeManifest(Fixture fixture)
+    {
+        fixture.WriteJson("docs/references/test-suite-profile.md", new { fixture = "Synthetic canonical profile binding" });
+        var profile = fixture.Artifact("docs/references/test-suite-profile.md");
+        var report = fixture.Artifact("native.trx");
+        var artifact = new TestArtifact("test-result", report.Path, report.Sha256.Replace("sha256:", "", StringComparison.Ordinal),
+            new FileInfo(Path.Combine(fixture.Root, report.Path)).Length, "RUN-SCOPE", SuiteId: "focused");
+        var manifest = new TestRunManifest(2, "RUN-SCOPE", "verify", "workflow-digest", "fixture", "revision",
+            profile.Sha256.Replace("sha256:", "", StringComparison.Ordinal), "fixture", "2000-01-01T00:00:00Z", "2000-01-01T00:01:00Z",
+            "scope-passed", [new("focused", "unit", "fixture", "passed", TestFailureKind.None, 1, 1, 0, 0, 1,
+                [new("TC-SCOPE-001", "Fixture native result", "passed", 1, null, null)], null, null, [artifact], [])], [artifact], InputDigest: "sha256:inputs");
+        return manifest with { Scope = TestReconcileScope.Create(manifest, ["focused"], ["unrelated"]) };
+    }
+
+    [Theory]
     [InlineData("accepted", true)]
     [InlineData("below-threshold", true)]
     [InlineData("expired", false)]

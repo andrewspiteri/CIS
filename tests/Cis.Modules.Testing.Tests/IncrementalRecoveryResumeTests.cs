@@ -228,7 +228,12 @@ public sealed class IncrementalRecoveryResumeTests
         Assert.Equal(0, revalidated.ReusedMutationBatches);
         Assert.True(fixture.SavedState().RecoveryRequired);
         Assert.False(Stage(fixture).Completed);
-        Assert.Single(Stage(fixture).ProducerRevalidations);
+        Assert.Empty(Stage(fixture).ProducerRevalidations);
+        Assert.Equal(CisIncrementalResultContract.Version, Stage(fixture).AssessmentContractVersion);
+        Assert.Equal(Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(typeof(IncrementalTestService).Assembly.Location))),
+            Stage(fixture).TestingProducerSha256);
+        Assert.Equal(Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(typeof(CisProcessJob).Assembly.Location))),
+            Stage(fixture).HelperProducerSha256);
         Assert.Equal(calls, fixture.Calls());
         File.Delete(fixture.Full(".cis/recovery-failure"));
         var resumed = fixture.Run();
@@ -310,8 +315,16 @@ public sealed class IncrementalRecoveryResumeTests
             var saved = state.Batches[batch.Id];
             state.Batches[batch.Id] = saved with
             {
-                Unit = saved.Unit! with { Fingerprint = batch.UnitFingerprint },
-                Mutation = saved.Mutation! with { Fingerprint = batch.MutationFingerprint },
+                Unit = saved.Unit! with
+                {
+                    Fingerprint = batch.UnitFingerprint, AssessmentContractVersion = 0,
+                    TestingProducerSha256 = null, HelperProducerSha256 = null, ProducerRevalidations = []
+                },
+                Mutation = saved.Mutation! with
+                {
+                    Fingerprint = batch.MutationFingerprint, AssessmentContractVersion = 0,
+                    TestingProducerSha256 = null, HelperProducerSha256 = null, ProducerRevalidations = []
+                },
             };
             fixture.WriteState(state);
         }

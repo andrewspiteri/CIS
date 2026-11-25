@@ -9,7 +9,7 @@ public sealed partial class TestingService
     {
         var resolution = _workspaceRegistry?.Resolve(context.RepositoryPath);
         var workspace = resolution is { IsSuccess: true } ? resolution.Workspace : null;
-        if (workspace?.AuthorityRepository?.Id != context.RepositoryId || manifests.Count == 0)
+        if (workspace?.AuthorityRepository?.Id != context.RepositoryId)
             return ReadProfile(context, diagnostics);
 
         // A documentation authority owns the catalogue, not its participants' native suites.

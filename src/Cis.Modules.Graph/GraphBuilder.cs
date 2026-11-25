@@ -12,7 +12,7 @@ using Microsoft.Data.Sqlite;
 
 namespace Cis.Modules.Graph;
 
-public sealed class GraphBuilder
+public sealed partial class GraphBuilder
 {
     internal const int GraphSchemaVersion = 2;
 
@@ -20,6 +20,8 @@ public sealed class GraphBuilder
     [
         "cis.catalog/1",
         "cis.markdown.repository-profile/1",
+        "cis.markdown.component-sheet/1",
+        "cis.markdown.verification-map/1",
         "cis.markdown.reference-table/2",
         "cis.markdown.governance-link/1",
         "cis.markdown.api-governance/1",
@@ -30,14 +32,17 @@ public sealed class GraphBuilder
         "cis.source-declarations/2",
         "cis.csharp.compiler/6",
         "cis.csharp.semantic-facts/3",
-        "cis.test-declarations/2",
+        "cis.test-declarations/3",
         "cis.project-dependencies/1",
         "cis.github-actions/1",
     ];
 
     internal static IReadOnlyList<string> CurrentExtractors => Extractors;
-    internal static IReadOnlyList<string> ComposeExtractors(IEnumerable<ICisGraphAugmenter>? augmenters)
-        => Extractors.Concat((augmenters ?? []).Select(item => item.Name).Distinct(StringComparer.Ordinal)).ToArray();
+    internal static IReadOnlyList<string> ComposeExtractors(IEnumerable<ICisGraphAugmenter>? augmenters,
+        IEnumerable<ICisTestResultAdapter>? resultAdapters = null)
+        => Extractors.Concat((augmenters ?? []).Select(item => item.Name).Distinct(StringComparer.Ordinal))
+            .Concat((resultAdapters ?? []).Select(adapter => "cis.native-result-adapter/" + adapter.Format + "/1")
+                .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)).ToArray();
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -51,6 +56,15 @@ public sealed class GraphBuilder
     private readonly SqliteGraphStore _store;
     private readonly DocumentationValidationService _validationService;
     private readonly IReadOnlyList<ICisGraphAugmenter> _augmenters;
+    private readonly IReadOnlyList<ICisTestResultAdapter> _testResultAdapters;
+
+    public GraphBuilder(ICisRepositoryContextResolver repositoryContextResolver,
+        DocumentationCatalogReader catalogReader, DocumentationInventoryService inventoryService,
+        DocumentationValidationService validationService, SqliteGraphStore? store,
+        IEnumerable<ICisGraphAugmenter>? augmenters)
+        : this(repositoryContextResolver, catalogReader, inventoryService, validationService, store, augmenters, null)
+    {
+    }
 
     public GraphBuilder(
         ICisRepositoryContextResolver repositoryContextResolver,
@@ -58,7 +72,8 @@ public sealed class GraphBuilder
         DocumentationInventoryService inventoryService,
         DocumentationValidationService validationService,
         SqliteGraphStore? store = null,
-        IEnumerable<ICisGraphAugmenter>? augmenters = null)
+        IEnumerable<ICisGraphAugmenter>? augmenters = null,
+        IEnumerable<ICisTestResultAdapter>? testResultAdapters = null)
     {
         _repositoryContextResolver = repositoryContextResolver;
         _catalogReader = catalogReader;
@@ -66,6 +81,7 @@ public sealed class GraphBuilder
         _validationService = validationService;
         _store = store ?? new SqliteGraphStore();
         _augmenters = (augmenters ?? []).OrderBy(item => item.Name, StringComparer.Ordinal).ToArray();
+        _testResultAdapters = (testResultAdapters ?? []).ToArray();
     }
 
     public GraphBuildResult Build(string repositoryPath, bool refresh = false)
@@ -128,7 +144,7 @@ public sealed class GraphBuilder
         }
 
         var git = ReadGitState(context.RepositoryPath);
-        var activeExtractors = ComposeExtractors(_augmenters);
+        var activeExtractors = ComposeExtractors(_augmenters, _testResultAdapters);
         foreach (var duplicate in _augmenters.GroupBy(item => item.Name, StringComparer.OrdinalIgnoreCase).Where(group => group.Count() > 1))
             diagnostics.Add(Diagnostic("CIS-GRAPH-AUGMENTER-001", "error", $"Graph augmenter is registered more than once: {duplicate.Key}", duplicate.Key));
         var buildId = CreateBuildId(inputs, activeExtractors);
@@ -228,6 +244,7 @@ public sealed class GraphBuilder
                 edge.State, edge.Confidence, edge.Observations, edges, edge.Properties);
         }
         timing.Mark("governance-and-augmenters");
+        ExtractVerificationMappings(context, catalog.Documents, documentNodesById, components, hashes, nodes, edges, diagnostics);
         ValidateEdges(nodes, edges, diagnostics);
 
         var orderedDiagnostics = diagnostics
@@ -313,7 +330,8 @@ public sealed class GraphBuilder
             try
             {
                 var normalizedPath = path.Replace('\\', '/');
-                inputs.Add(new CisGraphInput(normalizedPath, HashInput(normalizedPath, absolutePath)));
+                inputs.Add(new CisGraphInput(normalizedPath, HashInput(normalizedPath, absolutePath))
+                { ProjectionHash = GraphProjectionFingerprint.Read(context.RepositoryPath, normalizedPath) });
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
@@ -424,7 +442,8 @@ public sealed class GraphBuilder
         string repositoryNodeKey)
     {
         var result = new Dictionary<string, CisGraphNode>(StringComparer.OrdinalIgnoreCase);
-        foreach (var entry in documents.Where(IsRepositoryProfile))
+        var pendingLocations = new List<(DocumentationCatalogEntry Entry, ComponentPathRow Location)>();
+        foreach (var entry in documents.Where(entry => IsRepositoryProfile(entry) || IsComponentSheet(entry)))
         {
             var absolutePath = Path.Combine(
                 context.RepositoryPath,
@@ -435,7 +454,13 @@ public sealed class GraphBuilder
             }
 
             documentNodesById.TryGetValue(entry.Id, out var profileDocument);
-            foreach (var component in MarkdownGraphExtractor.ExtractComponents(content))
+            var sheet = IsComponentSheet(entry) ? ComponentSheetExtractor.Read(content) : null;
+            foreach (var issue in sheet?.Issues ?? [])
+                diagnostics.Add(Diagnostic("CIS-GRAPH-COMPONENT-001", "warning", issue, entry.Path));
+            IEnumerable<(ExtractedComponent Component, ComponentSheetRow? Row)> declarations = sheet is null
+                ? MarkdownGraphExtractor.ExtractComponents(content).Select(component => (component, (ComponentSheetRow?)null))
+                : sheet.Components.Select(row => (new ExtractedComponent(row.Id, string.Empty, [], [], [], [], "high", []), (ComponentSheetRow?)row));
+            foreach (var (component, catalogueRow) in declarations)
             {
                 if (component.Id.Contains("::", StringComparison.Ordinal))
                 {
@@ -450,36 +475,49 @@ public sealed class GraphBuilder
                 var evidence = Evidence(
                     "canonical-markdown",
                     entry.Path,
-                    "heading",
-                    component.Id,
+                    sheet is null ? "heading" : "line",
+                    catalogueRow is null ? component.Id : catalogueRow.Line.ToString(System.Globalization.CultureInfo.InvariantCulture),
                     hashes.GetValueOrDefault(entry.Path),
                     "declared",
-                    "cis.markdown.repository-profile/1",
+                    sheet is null ? "cis.markdown.repository-profile/1" : "cis.markdown.component-sheet/1",
                     component.Confidence);
+                var properties = new SortedDictionary<string, string>(SortedProperties(
+                    ("root", component.Root),
+                    ("ownsPaths", sheet is null ? component.Root : string.Empty),
+                    ("hasOwnershipDeclaration", (sheet is null).ToString().ToLowerInvariant()),
+                    ("languages", string.Join(',', component.Languages)),
+                    ("frameworks", string.Join(',', component.Frameworks)),
+                    ("roles", string.Join(',', component.Roles)),
+                    ("capabilities", string.Join(',', component.Capabilities)),
+                    ("confidence", component.Confidence),
+                    ("evidence", string.Join("; ", component.Evidence))).ToDictionary(pair => pair.Key, pair => pair.Value), StringComparer.Ordinal);
+                if (catalogueRow is not null)
+                {
+                    properties["classification"] = catalogueRow.Classification;
+                    properties["responsibility"] = catalogueRow.Responsibility;
+                    properties["owns"] = catalogueRow.Owns;
+                    properties["excludes"] = catalogueRow.Excludes;
+                    properties["requirementIds"] = catalogueRow.RequirementIds;
+                }
                 var node = new CisGraphNode(
                     CreateNodeKey(context.RepositoryId, "component", component.Id),
                     context.RepositoryId,
                     "component",
                     InferComponentSubtype(component),
                     component.Id,
-                    component.Id,
+                    string.IsNullOrWhiteSpace(catalogueRow?.Name) ? component.Id : catalogueRow.Name,
                     component.Roles.Order(StringComparer.Ordinal).ToArray(),
                     entry.Authority.ToLowerInvariant(),
                     entry.Status.ToLowerInvariant(),
-                    [new CisGraphLocation(entry.Path, "heading", component.Id)],
-                    SortedProperties(
-                        ("root", component.Root),
-                        ("languages", string.Join(',', component.Languages)),
-                        ("frameworks", string.Join(',', component.Frameworks)),
-                        ("roles", string.Join(',', component.Roles)),
-                        ("capabilities", string.Join(',', component.Capabilities)),
-                        ("confidence", component.Confidence),
-                        ("evidence", string.Join("; ", component.Evidence))),
+                    [new CisGraphLocation(entry.Path, evidence.LocatorKind, evidence.LocatorValue)],
+                    properties,
                     [evidence]);
-                if (!AddNode(node, nodes, diagnostics))
+                if (result.TryGetValue(component.Id, out var existing))
                 {
-                    continue;
+                    node = MergeComponent(existing, node, diagnostics);
+                    nodes[node.Key] = node;
                 }
+                else if (!AddNode(node, nodes, diagnostics)) continue;
 
                 result[component.Id] = node;
                 AddEdge(context.RepositoryId, "contains", repositoryNodeKey, node.Key, "declared", "high", [evidence], edges);
@@ -488,7 +526,35 @@ public sealed class GraphBuilder
                     AddEdge(context.RepositoryId, "describes", profileDocument.Key, node.Key, "declared", "high", [evidence], edges);
                 }
             }
+            pendingLocations.AddRange((sheet?.Locations ?? []).Select(location => (entry, location)));
         }
+        foreach (var (entry, location) in pendingLocations)
+        {
+            if (!result.TryGetValue(location.ComponentId, out var component))
+            {
+                diagnostics.Add(Diagnostic("CIS-GRAPH-COMPONENT-002", "warning",
+                    $"Path declaration refers to unknown component '{location.ComponentId}'.", entry.Path));
+                continue;
+            }
+            var property = location.Relationship == "owns" ? "ownsPaths" : "verificationPaths";
+            if (location.Relationship == "owns" && component.Provenance.Any(item => item.Extractor == "cis.markdown.repository-profile/1")
+                && !NormalizeRoot(component.Properties.GetValueOrDefault("root")).Equals(location.Path, StringComparison.OrdinalIgnoreCase))
+                diagnostics.Add(Diagnostic("CIS-GRAPH-COMPONENT-004", "warning",
+                    $"Component '{component.LocalId}' has differing legacy Root and canonical ownership declarations; review both retained declarations.",
+                    component.Provenance.Select(item => item.Path).Append(entry.Path).Distinct().ToArray()));
+            var properties = new SortedDictionary<string, string>(component.Properties.ToDictionary(pair => pair.Key, pair => pair.Value), StringComparer.Ordinal)
+            {
+                [property] = string.Join('\n', ComponentPaths(component, property).Append(location.Path).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.Ordinal)),
+            };
+            if (location.Relationship == "owns") properties["hasOwnershipDeclaration"] = "true";
+            var evidence = Evidence("canonical-markdown", entry.Path, "line",
+                location.Line.ToString(System.Globalization.CultureInfo.InvariantCulture), hashes.GetValueOrDefault(entry.Path),
+                "declared-path", "cis.markdown.component-sheet/1", "high", location.Relationship + ":" + location.Path);
+            component = component with { Properties = properties, Provenance = component.Provenance.Append(evidence).ToArray() };
+            result[component.LocalId] = component;
+            nodes[component.Key] = component;
+        }
+        DiagnoseComponentOwnership(result.Values, diagnostics);
 
         return result;
     }
@@ -1231,6 +1297,7 @@ public sealed class GraphBuilder
                 {
                     AddEdge(context.RepositoryId, "belongs-to", test.Key, component.Key, "discovered", "high", [evidence], edges);
                 }
+                LinkDeclaredComponentVerification(context, path, test, components.Values, edges);
             }
         }
 
@@ -1719,24 +1786,29 @@ public sealed class GraphBuilder
         }
         if (testReferences.Count == 0 || testSources.Count == 0) return;
         var matcher = new OrdinalPatternMatcher(testReferences.Keys);
-        // Evidence is file-scoped in the lexical adapter. Scan each file once, then retain the
-        // same links and provenance for every test declaration that the original scan matched.
+        // File co-occurrence does not establish assertions or execution by any test.
         foreach (var file in testSources.GroupBy(test => test.Node.Locations[0].Path, StringComparer.Ordinal))
         {
             foreach (var identity in matcher.Find(file.First().Content))
-            foreach (var reference in testReferences[identity])
-            foreach (var testSource in file)
-            {
-                AddEdge(
-                    context.RepositoryId,
-                    "verified-by",
-                    reference.Key,
-                    testSource.Node.Key,
-                    "discovered",
-                    "high",
-                    testSource.Node.Provenance,
-                    edges);
-            }
+                foreach (var reference in testReferences[identity])
+                    foreach (var testSource in file)
+                    {
+                        AddEdge(
+                            context.RepositoryId,
+                            "references",
+                            reference.Key,
+                            testSource.Node.Key,
+                            "discovered",
+                            "medium",
+                            testSource.Node.Provenance.Select(evidence => evidence with
+                            {
+                                Method = "file-reference-cooccurrence",
+                                Extractor = "cis.test-declarations/3",
+                                Confidence = "medium",
+                                ConfidenceReason = "Reference identity occurs in this file; assertion coverage and execution are unassessed.",
+                            }).ToArray(), edges,
+                            SortedProperties(("association", "file-reference-cooccurrence"), ("result", "not-recorded")));
+                    }
         }
     }
 
@@ -1746,15 +1818,14 @@ public sealed class GraphBuilder
     private static CisGraphNode? FindComponentForPath(string path, IEnumerable<CisGraphNode> components)
     {
         var normalizedPath = path.Replace('\\', '/').TrimStart('/');
-        return components
-            .Select(component => (Component: component, Root: NormalizeRoot(component.Properties.GetValueOrDefault("root"))))
-            .Where(item => item.Root.Length == 0
-                || normalizedPath.Equals(item.Root, StringComparison.OrdinalIgnoreCase)
-                || normalizedPath.StartsWith(item.Root + "/", StringComparison.OrdinalIgnoreCase))
-            .OrderByDescending(item => item.Root.Length)
-            .ThenBy(item => item.Component.LocalId, StringComparer.Ordinal)
-            .Select(item => item.Component)
-            .FirstOrDefault();
+        var matches = components.SelectMany(component => ComponentPaths(component, "ownsPaths")
+                .Select(root => (Component: component, Root: root)))
+            .Where(item => PathMatches(normalizedPath, item.Root)).ToArray();
+        if (matches.Length == 0) return null;
+        var longest = matches.Max(item => item.Root.Length);
+        var owners = matches.Where(item => item.Root.Length == longest).Select(item => item.Component)
+            .DistinctBy(component => component.Key).ToArray();
+        return owners.Length == 1 ? owners[0] : null;
     }
 
     private static string NormalizeRoot(string? root)
@@ -1764,8 +1835,8 @@ public sealed class GraphBuilder
 
     private static bool WorkflowReferencesComponent(string content, CisGraphNode component)
     {
-        var root = NormalizeRoot(component.Properties.GetValueOrDefault("root"));
-        return root.Length > 0 && content.Replace('\\', '/').Contains(root, StringComparison.OrdinalIgnoreCase);
+        return ComponentPaths(component, "ownsPaths").Any(root => root.Length > 0
+            && content.Replace('\\', '/').Contains(root, StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool IsDependencyManifest(string path)
@@ -2157,6 +2228,9 @@ public sealed class GraphBuilder
     internal static string HashInput(string relativePath, string absolutePath)
         => CisReadScope.Read(typeof(GraphBuilder), "input:" + relativePath, absolutePath,
             () => HashInputCore(relativePath, absolutePath));
+
+    internal static string HashInputCurrent(string relativePath, string absolutePath)
+        => HashInputCore(relativePath, absolutePath);
 
     private static string HashInputCore(string relativePath, string absolutePath)
     {

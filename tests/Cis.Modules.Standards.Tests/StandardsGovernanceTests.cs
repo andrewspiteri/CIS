@@ -215,9 +215,11 @@ public sealed class StandardsGovernanceTests
             Assert.Equal(0, initialized.ExitCode);
             Assert.Equal(0, validated.ExitCode);
             Assert.Equal(12, validated.Standards);
-            Assert.Equal(92, validated.Rules);
-            Assert.Equal(92, validated.ConformanceEntries);
+            Assert.Equal(93, validated.Rules);
+            Assert.Equal(93, validated.ConformanceEntries);
             Assert.Contains("source_repository: ChangeImpactStudio",
+                File.ReadAllText(System.IO.Path.Combine(root, "docs", "cis", "standards", "code-quality-standard.md")), StringComparison.Ordinal);
+            Assert.Contains("QUALITY-006",
                 File.ReadAllText(System.IO.Path.Combine(root, "docs", "cis", "standards", "code-quality-standard.md")), StringComparison.Ordinal);
             Assert.True(File.Exists(System.IO.Path.Combine(root, "docs", "cis", "standards", "api-controller-standard.md")));
             Assert.False(File.Exists(System.IO.Path.Combine(root, "docs", "cis", "standards", "frontend-interaction-standard.md")));

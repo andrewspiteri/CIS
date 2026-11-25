@@ -21,7 +21,7 @@ target and its canonical source locations. Packs are disposable derived state be
 cis context pack --id <id> [--kind <kind>] [--purpose <text>]
   [--root <repository-path>#<node-id>[#<kind>]]...
   [--verification <text>] [--depth <number>] [--limit <number>]
-  [--max-chars <number>] [--include-proposed] [--output <path>] [--force]
+  [--max-chars <number>] [--max-bytes <number>] [--include-proposed] [--output <path>] [--force]
   [--repo <path-or-registered-id>] [--workspace <path>]
   [--format <human|json|agent>]
 ```
@@ -57,11 +57,13 @@ registered ID. The repository portion of every `--root` may also be a registered
 The workspace registry removes path repetition but does not change graph evidence or
 create relationships.
 
-The character budget covers embedded excerpts. CIS assigns a bounded per-source share
-before consuming the remaining global budget so one highly connected file cannot crowd
-out every other source. An excerpt that crosses either bound is included partially and
-marked truncated; subsequent sources are listed as omitted. Duplicate traversal evidence
-is compacted, with total, shown, and omitted counts preserved in the pack.
+The delivery budget covers complete JSON, agent and human output and the written Markdown,
+including roots, selection metadata and diagnostics. CIS first assigns bounded excerpt
+shares, then reduces content and metadata until every standard representation fits both
+character and UTF-8 byte limits. The result reports complete delivery size separately from
+excerpt token estimates, along with metadata omissions, truncation and omitted-error state.
+Inspect `detailPath` for the larger selection; a small pack is not evidence that omitted
+sources or checks passed. Duplicate evidence retains total, shown and omitted counts.
 
 ## Options
 
@@ -74,7 +76,8 @@ is compacted, with total, shown, and omitted counts preserved in the pack.
 | `--verification <text>` | No | `connected tests and deterministic checks` | Records the requested verification evidence. |
 | `--depth <number>` | No | `2` | Limits traversal depth to 1–10. |
 | `--limit <number>` | No | `100` | Limits graph nodes to 1–1000. |
-| `--max-chars <number>` | No | `50000` | Limits embedded source content to 1000–1000000 characters. |
+| `--max-chars <number>` | No | `50000` | Limits the complete returned/rendered pack, including metadata, to 1000–1000000 characters. |
+| `--max-bytes <number>` | No | Four times `--max-chars` | Limits complete UTF-8 delivery to 1000–4000000 bytes. |
 | `--include-proposed` | No | `false` | Includes proposed relationships; rejected edges remain excluded. |
 | `--output <path>` | No | Content-addressed name | Selects a `.md` file beneath `.cis/local/context/`, or a file name in that directory. |
 | `--force` | No | `false` | Replaces different content at the selected derived output path. |
@@ -87,7 +90,7 @@ is compacted, with total, shown, and omitted counts preserved in the pack.
 - Reads the stored graph and repository sources without rebuilding them.
 - Requires every participating repository to be initialized with a built local graph;
   a missing or ambiguous additional root fails the pack rather than silently omitting it.
-- Writes one Markdown artifact beneath `.cis/local/context/` using an atomic replace.
+- Writes a bounded Markdown artifact and a derived `.details.json` selection record beneath `.cis/local/context/` using atomic replacement. The detail record retains the larger selection for inspection, up to its separate 8 MiB storage limit; further omission remains explicit.
 - Returns `unchanged` when the same content already exists.
 - Rejects output outside `.cis/local/context/`, including attempts to overwrite
   canonical documentation, source, or graph-generation files.

@@ -31,9 +31,19 @@ public sealed partial class DeliveryWorkflowTests
         using var application = new CisHostBuilder().AddModule(new RepositoryModule()).AddModule(new DocsModule())
             .AddModule(new GraphModule()).AddModule(new ContextModule()).AddModule(new ChangeModule())
             .AddModule(new ImpactModule()).Build();
-        Assert.Equal(0, application.Invoke(["impact", "accept", change.Id, finding.Id, "--actor", "Controller",
-            "--scope", "implementation", "--reason", "The exact component belongs to the accepted implementation scope.",
-            "--repo", repository.Path, "--format", "json"]));
+        var previousOutput = Console.Out;
+        using var output = new StringWriter();
+        int accepted;
+        try
+        {
+            Console.SetOut(output);
+            accepted = application.Invoke(["impact", "accept", change.Id, finding.Id, "--actor", "Controller",
+                "--scope", "implementation", "--reason", "The exact component belongs to the accepted implementation scope.",
+                "--repo", repository.Path, "--format", "json"]);
+        }
+        finally { Console.SetOut(previousOutput); }
+        Assert.True(accepted == 0, output.ToString());
+        Assert.Equal(change.GraphBuildId, new SqliteGraphStore().Read(repository.Path).Graph!.Build.Id);
         var derived = services.Impacts.Findings(repository.Path, change.Id);
         Assert.Equal(0, derived.ExitCode);
         var provenance = Assert.IsType<ImpactOutcomeDisposition>(Assert.Single(derived.Findings,
@@ -68,5 +78,36 @@ public sealed partial class DeliveryWorkflowTests
         Assert.NotEqual(0, services.Impacts.DispositionUnderOutcome(repository.Path, change.Id, finding.Id,
             "Controller", ["implementation"], "Do not replace that specific decision.").ExitCode);
         Assert.Equal("rejected", Assert.Single(services.Impacts.ReadImpact(change).Findings, item => item.Id == finding.Id).State);
+    }
+
+    [Fact]
+    public void OutcomeImpactDispositionRefreshCannotAcceptAChangedMaterialBaseline()
+    {
+        using var repository = TemporaryRepository.Create();
+        var services = CreateServices();
+        var change = Assert.IsType<ChangeDossier>(services.Changes.Create(new(repository.Path,
+            "Bounded existing component", "Deliver the accepted component behavior.", [new ChangeRoot("orders-api", "component")])).Change);
+        var analysed = services.Impacts.Analyse(new(repository.Path, change.Id, [], 1, 100, false));
+        Assert.Equal(0, analysed.ExitCode);
+        var finding = Assert.Single(analysed.Findings, item => item.Rationale == "Explicit analysis root.");
+        var authorized = services.Changes.Authorize(new(repository.Path, change.Id,
+            OutcomeRequest(repository.Path) with { VisualUi = false }, "Original human", "Authorize the exact material baseline."));
+        Assert.Equal(0, authorized.ExitCode);
+        var impact = File.ReadAllBytes(services.Changes.DossierFile(change, "impact.md"));
+        var proposal = File.ReadAllBytes(services.Changes.DossierFile(change, "proposal.md"));
+        repository.Write("src/Orders.Api/Changed.cs", "public class ChangedImplementation {}");
+        var resolver = new CisRepositoryContextResolver();
+        var currentService = new ImpactAnalysisService(services.Changes, new GraphQueryService(resolver),
+            new GraphSnapshotReader(resolver, builder: services.Graph));
+
+        var result = currentService.DispositionUnderOutcome(repository.Path, change.Id, finding.Id,
+            "Controller", ["implementation"], "A refresh cannot enlarge the original authority.");
+
+        Assert.NotEqual(0, result.ExitCode);
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Contains("exact retained graph baseline", StringComparison.Ordinal));
+        Assert.NotEqual(change.GraphBuildId, new SqliteGraphStore().Read(repository.Path).Graph!.Build.Id);
+        Assert.Equal(impact, File.ReadAllBytes(services.Changes.DossierFile(change, "impact.md")));
+        Assert.Equal(proposal, File.ReadAllBytes(services.Changes.DossierFile(change, "proposal.md")));
+        Assert.Equal(authorized.Authorization!.Digest, services.Changes.ReadAuthorization(repository.Path, change.Id)!.Digest);
     }
 }

@@ -1,0 +1,368 @@
+{
+  "authorizationId": "change-impact-studio:CIS-0005:outcome:d0a7a7eb660641fbac2ba7b9b105b75c",
+  "actor": "Codex",
+  "workItems": [
+    {
+      "id": "WORK-001",
+      "category": "implementation",
+      "complexity": "medium",
+      "parentId": null,
+      "taskPath": "agent-tasks/WORK-001.md",
+      "title": "Project canonical components and logical implementation ownership",
+      "requirementIds": [],
+      "impactIds": [],
+      "dependsOn": [],
+      "acceptanceCriteria": "Preserve canonical stable component identities/provenance and repository-profile support; explicit logical path ownership within shared projects and multi-component test verification resolve deterministically with visible conflicts and omissions. Reconcile accepted current consumer modules through RM-08 without inventing new requirements.",
+      "validation": "Focused graph component/identity/evidence regressions exercise canonical tables, legacy declarations, overlapping logical roots, conflicting primary owners and one test verifying multiple components. Inspect accepted consumer module boundaries and exact paths.",
+      "status": "InProgress",
+      "taskTypeKey": "core.legacy",
+      "taskTypeVersion": "1.0",
+      "approvalGate": "none",
+      "targets": [],
+      "decisionIds": [],
+      "negativeCriteria": [],
+      "requiredOutputs": [],
+      "frontendType": null,
+      "storyId": null,
+      "instanceKey": "outcome:seed:1dce19969d564d5b9f272a9f93e80b3d",
+      "workOwnerTaskId": null,
+      "authorizationScopeIds": [
+        "components"
+      ],
+      "authorizationScopeBasis": "sha256:ac5bb67a1f19ccf6503b389bbeb76c2f10dcd2e05f0203403a049d8e696c3e98",
+      "workPaths": [
+        "src/Cis.Modules.Graph",
+        "src/Cis.Abstractions",
+        "tests/Cis.Modules.Graph.Tests",
+        "docs"
+      ],
+      "assignee": null,
+      "verificationObligations": [
+        {
+          "id": "task-contract",
+          "criteria": [
+            "Preserve canonical stable component identities/provenance and repository-profile support; explicit logical path ownership within shared projects and multi-component test verification resolve deterministically with visible conflicts and omissions. Reconcile accepted current consumer modules through RM-08 without inventing new requirements."
+          ],
+          "description": "Focused graph component/identity/evidence regressions exercise canonical tables, legacy declarations, overlapping logical roots, conflicting primary owners and one test verifying multiple components. Inspect accepted consumer module boundaries and exact paths.",
+          "evidenceRoute": "review",
+          "evidenceExpectations": [
+            "Focused graph component/identity/evidence regressions exercise canonical tables, legacy declarations, overlapping logical roots, conflicting primary owners and one test verifying multiple components. Inspect accepted consumer module boundaries and exact paths."
+          ],
+          "sharedGateIds": [],
+          "basisReferences": []
+        }
+      ],
+      "contractErrors": []
+    },
+    {
+      "id": "WORK-003",
+      "category": "implementation",
+      "complexity": "medium",
+      "parentId": null,
+      "taskPath": "agent-tasks/WORK-003.md",
+      "title": "Refresh current decisions and preserve conservative native selection and reuse",
+      "requirementIds": [],
+      "impactIds": [],
+      "dependsOn": [],
+      "acceptanceCriteria": "Current impact and verification selection coalesce necessary refresh through existing orchestration, detect dirty add/edit/delete/dependency/interpretation changes, preserve historical navigation and approved baselines, expose scoped diagnostics and choose configured full fallback when dependency knowledge is uncertain. Unrelated documentation warnings retain eligible native evidence.",
+      "validation": "Existing graph/testing fixtures prove current freshness, conservative unknown-dependency fallback, unchanged second verification with zero extra native launches, relevant invalidation and unrelated documentation reuse. Retain existing report/authority/environment/settlement compatibility checks.",
+      "status": "InProgress",
+      "taskTypeKey": "core.legacy",
+      "taskTypeVersion": "1.0",
+      "approvalGate": "none",
+      "targets": [],
+      "decisionIds": [],
+      "negativeCriteria": [],
+      "requiredOutputs": [],
+      "frontendType": null,
+      "storyId": null,
+      "instanceKey": "outcome:48b46a20a050493a8680b76fa9280c02",
+      "workOwnerTaskId": null,
+      "authorizationScopeIds": [
+        "freshness"
+      ],
+      "authorizationScopeBasis": "sha256:4dfa492de16c5195536c83c123564a38e88a7656a38b4933816b04d798dabcc4",
+      "workPaths": [
+        "src",
+        "tests",
+        "docs"
+      ],
+      "assignee": null,
+      "verificationObligations": [
+        {
+          "id": "task-contract",
+          "criteria": [
+            "Current impact and verification selection coalesce necessary refresh through existing orchestration, detect dirty add/edit/delete/dependency/interpretation changes, preserve historical navigation and approved baselines, expose scoped diagnostics and choose configured full fallback when dependency knowledge is uncertain. Unrelated documentation warnings retain eligible native evidence."
+          ],
+          "description": "Existing graph/testing fixtures prove current freshness, conservative unknown-dependency fallback, unchanged second verification with zero extra native launches, relevant invalidation and unrelated documentation reuse. Retain existing report/authority/environment/settlement compatibility checks.",
+          "evidenceRoute": "review",
+          "evidenceExpectations": [
+            "Existing graph/testing fixtures prove current freshness, conservative unknown-dependency fallback, unchanged second verification with zero extra native launches, relevant invalidation and unrelated documentation reuse. Retain existing report/authority/environment/settlement compatibility checks."
+          ],
+          "sharedGateIds": [],
+          "basisReferences": []
+        }
+      ],
+      "contractErrors": []
+    },
+    {
+      "id": "WORK-004",
+      "category": "implementation",
+      "complexity": "medium",
+      "parentId": null,
+      "taskPath": "agent-tasks/WORK-004.md",
+      "title": "Deliver bounded task context and concise routine output",
+      "requirementIds": [],
+      "impactIds": [],
+      "dependsOn": [],
+      "acceptanceCriteria": "Normal preparation delivers existing context-pack content with accepted behavior/constraints, owning components/contracts, implementation/check locations, reasons/freshness/uncertainty/omissions and eligible evidence. The complete advisory envelope including metadata is size-bounded and remains separate from canonical authority. Opt-in concise mutation/status output preserves default machine compatibility and detail access.",
+      "validation": "Focused Context/Agent/Plan fixtures verify whole-delivery byte/character caps, authority digest compatibility, unavailable/stale context disclosure, normal prepare integration and opt-in concise task output; inspect presentation through normal CLI.",
+      "status": "InProgress",
+      "taskTypeKey": "core.legacy",
+      "taskTypeVersion": "1.0",
+      "approvalGate": "none",
+      "targets": [],
+      "decisionIds": [],
+      "negativeCriteria": [],
+      "requiredOutputs": [],
+      "frontendType": null,
+      "storyId": null,
+      "instanceKey": "outcome:74176234705241baabd6052dfdb880cc",
+      "workOwnerTaskId": null,
+      "authorizationScopeIds": [
+        "task-context"
+      ],
+      "authorizationScopeBasis": "sha256:ef92c03afa5b3332a5c20fa000ab0bc90be2f72c351fec4fb2828eea51b04fa1",
+      "workPaths": [
+        "src",
+        "tests",
+        "docs"
+      ],
+      "assignee": null,
+      "verificationObligations": [
+        {
+          "id": "task-contract",
+          "criteria": [
+            "Normal preparation delivers existing context-pack content with accepted behavior/constraints, owning components/contracts, implementation/check locations, reasons/freshness/uncertainty/omissions and eligible evidence. The complete advisory envelope including metadata is size-bounded and remains separate from canonical authority. Opt-in concise mutation/status output preserves default machine compatibility and detail access."
+          ],
+          "description": "Focused Context/Agent/Plan fixtures verify whole-delivery byte/character caps, authority digest compatibility, unavailable/stale context disclosure, normal prepare integration and opt-in concise task output; inspect presentation through normal CLI.",
+          "evidenceRoute": "review",
+          "evidenceExpectations": [
+            "Focused Context/Agent/Plan fixtures verify whole-delivery byte/character caps, authority digest compatibility, unavailable/stale context disclosure, normal prepare integration and opt-in concise task output; inspect presentation through normal CLI."
+          ],
+          "sharedGateIds": [],
+          "basisReferences": []
+        }
+      ],
+      "contractErrors": []
+    },
+    {
+      "id": "WORK-006",
+      "category": "implementation",
+      "complexity": "medium",
+      "parentId": null,
+      "taskPath": "agent-tasks/WORK-006.md",
+      "title": "Attribute bounded invocation cost in the existing usage ledger",
+      "requirementIds": [],
+      "impactIds": [],
+      "dependsOn": [],
+      "acceptanceCriteria": "Add optional invocation/parent, parsed operation, safe change/task, bounded phases, graph consumption/freshness/reuse reasons, verification disposition, blocker codes and observable delivered-context sizes to existing bounded usage records. Preserve old fields/readability and unknown historical values; no secrets/raw environment or invented model token savings.",
+      "validation": "Focused Abstractions/Host/Feedback fixtures cover nested scope/operation attribution, bounded observations, legacy JSON roundtrips and reporting, secret-free code-only reasons, actual rendered sizes and no new material test inputs.",
+      "status": "InProgress",
+      "taskTypeKey": "core.legacy",
+      "taskTypeVersion": "1.0",
+      "approvalGate": "none",
+      "targets": [],
+      "decisionIds": [],
+      "negativeCriteria": [],
+      "requiredOutputs": [],
+      "frontendType": null,
+      "storyId": null,
+      "instanceKey": "outcome:3efd638a7aa741d9b736a91fb3789c60",
+      "workOwnerTaskId": null,
+      "authorizationScopeIds": [
+        "attribution"
+      ],
+      "authorizationScopeBasis": "sha256:a72c70dddd440bb623aea5f026e2c8776333941059b9e4fb9b477b326a32540c",
+      "workPaths": [
+        "src",
+        "tests",
+        "docs"
+      ],
+      "assignee": null,
+      "verificationObligations": [
+        {
+          "id": "task-contract",
+          "criteria": [
+            "Add optional invocation/parent, parsed operation, safe change/task, bounded phases, graph consumption/freshness/reuse reasons, verification disposition, blocker codes and observable delivered-context sizes to existing bounded usage records. Preserve old fields/readability and unknown historical values; no secrets/raw environment or invented model token savings."
+          ],
+          "description": "Focused Abstractions/Host/Feedback fixtures cover nested scope/operation attribution, bounded observations, legacy JSON roundtrips and reporting, secret-free code-only reasons, actual rendered sizes and no new material test inputs.",
+          "evidenceRoute": "review",
+          "evidenceExpectations": [
+            "Focused Abstractions/Host/Feedback fixtures cover nested scope/operation attribution, bounded observations, legacy JSON roundtrips and reporting, secret-free code-only reasons, actual rendered sizes and no new material test inputs."
+          ],
+          "sharedGateIds": [],
+          "basisReferences": []
+        }
+      ],
+      "contractErrors": []
+    },
+    {
+      "id": "WORK-002",
+      "category": "implementation",
+      "complexity": "medium",
+      "parentId": null,
+      "taskPath": "agent-tasks/WORK-002.md",
+      "title": "Connect criteria to explicit implementation checks and honest results",
+      "requirementIds": [],
+      "impactIds": [],
+      "dependsOn": [],
+      "acceptanceCriteria": "Existing accepted criteria reach task/component/artifact/check and actual evidence through explicit mappings; lexical file co-occurrence stays discovered association, changed-file lists stay provenance, missing/currentness facts remain explicit. Bookkeeping/result references cannot self-invalidate native evidence.",
+      "validation": "Existing graph/plan/native evidence fixtures exercise explicit mappings, unresolved references, lexical false coverage, actual report digests/status/applicability and semantic versus status/result identity. Demonstrate at least one real RM-08 criterion using current evidence.",
+      "status": "InProgress",
+      "taskTypeKey": "core.legacy",
+      "taskTypeVersion": "1.0",
+      "approvalGate": "none",
+      "targets": [],
+      "decisionIds": [],
+      "negativeCriteria": [],
+      "requiredOutputs": [],
+      "frontendType": null,
+      "storyId": null,
+      "instanceKey": "outcome:bbfb4510690645688f988aa7b95a466f",
+      "workOwnerTaskId": null,
+      "authorizationScopeIds": [
+        "traceability"
+      ],
+      "authorizationScopeBasis": "sha256:b046ac59d51a12dcc43f98449290f1202355747e48302fa92f2be9f204511e37",
+      "workPaths": [
+        "src",
+        "tests",
+        "docs"
+      ],
+      "assignee": null,
+      "verificationObligations": [
+        {
+          "id": "task-contract",
+          "criteria": [
+            "Existing accepted criteria reach task/component/artifact/check and actual evidence through explicit mappings; lexical file co-occurrence stays discovered association, changed-file lists stay provenance, missing/currentness facts remain explicit. Bookkeeping/result references cannot self-invalidate native evidence."
+          ],
+          "description": "Existing graph/plan/native evidence fixtures exercise explicit mappings, unresolved references, lexical false coverage, actual report digests/status/applicability and semantic versus status/result identity. Demonstrate at least one real RM-08 criterion using current evidence.",
+          "evidenceRoute": "review",
+          "evidenceExpectations": [
+            "Existing graph/plan/native evidence fixtures exercise explicit mappings, unresolved references, lexical false coverage, actual report digests/status/applicability and semantic versus status/result identity. Demonstrate at least one real RM-08 criterion using current evidence."
+          ],
+          "sharedGateIds": [],
+          "basisReferences": []
+        }
+      ],
+      "contractErrors": []
+    },
+    {
+      "id": "WORK-005",
+      "category": "implementation",
+      "complexity": "medium",
+      "parentId": null,
+      "taskPath": "agent-tasks/WORK-005.md",
+      "title": "Reuse measured completion review under current material authority",
+      "requirementIds": [],
+      "impactIds": [],
+      "dependsOn": [],
+      "acceptanceCriteria": "Measure completion phases before selecting optimization; reusable pure review is keyed by current task/criteria/authority/material/policy/graph/receipt/report interpretation while final current input/contract concurrency fence remains uncached. Explain review reuse separately from native result reuse and actual execution; same-state calls cannot hide stale evidence.",
+      "validation": "Existing completion/participant fixtures cover unchanged same-state review, relevant changes to task/report/input/policy/authority, rejection of stale cached verdicts and concurrent mutation detection. Compare representative inclusive timing with limits.",
+      "status": "InProgress",
+      "taskTypeKey": "core.legacy",
+      "taskTypeVersion": "1.0",
+      "approvalGate": "none",
+      "targets": [],
+      "decisionIds": [],
+      "negativeCriteria": [],
+      "requiredOutputs": [],
+      "frontendType": null,
+      "storyId": null,
+      "instanceKey": "outcome:a5661e8ebf724fceb27564e419bde758",
+      "workOwnerTaskId": null,
+      "authorizationScopeIds": [
+        "completion"
+      ],
+      "authorizationScopeBasis": "sha256:911a891799441ecd9278ae623fc92a4f7f3520c2089f0a7382ffc88d6fab673e",
+      "workPaths": [
+        "src",
+        "tests",
+        "docs"
+      ],
+      "assignee": null,
+      "verificationObligations": [
+        {
+          "id": "task-contract",
+          "criteria": [
+            "Measure completion phases before selecting optimization; reusable pure review is keyed by current task/criteria/authority/material/policy/graph/receipt/report interpretation while final current input/contract concurrency fence remains uncached. Explain review reuse separately from native result reuse and actual execution; same-state calls cannot hide stale evidence."
+          ],
+          "description": "Existing completion/participant fixtures cover unchanged same-state review, relevant changes to task/report/input/policy/authority, rejection of stale cached verdicts and concurrent mutation detection. Compare representative inclusive timing with limits.",
+          "evidenceRoute": "review",
+          "evidenceExpectations": [
+            "Existing completion/participant fixtures cover unchanged same-state review, relevant changes to task/report/input/policy/authority, rejection of stale cached verdicts and concurrent mutation detection. Compare representative inclusive timing with limits."
+          ],
+          "sharedGateIds": [],
+          "basisReferences": []
+        }
+      ],
+      "contractErrors": []
+    },
+    {
+      "id": "WORK-007",
+      "category": "implementation",
+      "complexity": "medium",
+      "parentId": null,
+      "taskPath": "agent-tasks/WORK-007.md",
+      "title": "Build install and demonstrate the corrected consumer workflow",
+      "requirementIds": [],
+      "impactIds": [],
+      "dependsOn": [],
+      "acceptanceCriteria": "Produce Release distributable with exact source/artifact identity, preserve a practical rollback, update and verify actual explicit CISLIB invocation, refresh current derived context and complete all nine focused RM-08 demonstrations with real executed/reused evidence and honest remaining mappings/platform limits.",
+      "validation": "Run existing affected native checks and required build/package gates sequentially, verify exact installed artifact via normal wrapper, demonstrate current ownership/criterion/check/result paths and zero-launch repeat, retain rollback/hash manifest and concise before/after timing/output evidence within unchanged storage caps.",
+      "status": "InProgress",
+      "taskTypeKey": "core.legacy",
+      "taskTypeVersion": "1.0",
+      "approvalGate": "none",
+      "targets": [],
+      "decisionIds": [],
+      "negativeCriteria": [],
+      "requiredOutputs": [],
+      "frontendType": null,
+      "storyId": null,
+      "instanceKey": "outcome:378776d386004b978eeb54d70fe55f82",
+      "workOwnerTaskId": null,
+      "authorizationScopeIds": [
+        "distribution"
+      ],
+      "authorizationScopeBasis": "sha256:0fd5ef2af0a475d06f1b2e6db68c128c54a1c1af9bb204a5418c095bf91829a7",
+      "workPaths": [
+        "src",
+        "tests",
+        "tools",
+        "docs",
+        ".cis/local",
+        ".artifacts/outcome-workflow-correction"
+      ],
+      "assignee": null,
+      "verificationObligations": [
+        {
+          "id": "task-contract",
+          "criteria": [
+            "Produce Release distributable with exact source/artifact identity, preserve a practical rollback, update and verify actual explicit CISLIB invocation, refresh current derived context and complete all nine focused RM-08 demonstrations with real executed/reused evidence and honest remaining mappings/platform limits."
+          ],
+          "description": "Run existing affected native checks and required build/package gates sequentially, verify exact installed artifact via normal wrapper, demonstrate current ownership/criterion/check/result paths and zero-launch repeat, retain rollback/hash manifest and concise before/after timing/output evidence within unchanged storage caps.",
+          "evidenceRoute": "review",
+          "evidenceExpectations": [
+            "Run existing affected native checks and required build/package gates sequentially, verify exact installed artifact via normal wrapper, demonstrate current ownership/criterion/check/result paths and zero-launch repeat, retain rollback/hash manifest and concise before/after timing/output evidence within unchanged storage caps."
+          ],
+          "sharedGateIds": [],
+          "basisReferences": []
+        }
+      ],
+      "contractErrors": []
+    }
+  ],
+  "source": null
+}

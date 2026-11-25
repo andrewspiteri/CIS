@@ -22,6 +22,9 @@ public sealed class CisReadScope : IDisposable
 
     public static CisReadScope Enter() => new();
 
+    /// <summary>Invalidates reads after an explicit current-consumer refresh or publication.</summary>
+    public static void Invalidate() => Current.Value?.Clear();
+
     public static T Read<T>(object reader, string operation, string repositoryPath, Func<T> read) where T : notnull
     {
         T ReadMeasured()

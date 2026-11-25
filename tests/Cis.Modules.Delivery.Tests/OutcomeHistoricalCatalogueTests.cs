@@ -63,7 +63,7 @@ public sealed partial class DeliveryWorkflowTests
         var designBytes = File.ReadAllBytes(designPath);
         var sourceBytes = File.ReadAllBytes(Path.Combine(repository.Path, source));
         Assert.Contains("### TC-VIEW-001-001:", File.ReadAllText(cataloguePath), StringComparison.Ordinal);
-        Assert.Contains("- Automation status: Automated", File.ReadAllText(cataloguePath), StringComparison.Ordinal);
+        Assert.Contains("- Automation status: Source linked", File.ReadAllText(cataloguePath), StringComparison.Ordinal);
 
         var amended = services.Changes.Authorize(new(repository.Path, change.Id, request with
         {

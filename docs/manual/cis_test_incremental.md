@@ -96,7 +96,9 @@ cis test incremental run --profile <relative.json> --repo <target> --change CIS-
 ```
 
 `plan` and `status` read the current graph, inputs and saved reports without running
-tests. `run` executes pending batches. `--layer unit` runs unit work alone;
+test batches. Selection checks or refreshes missing/stale derived graph state at
+consumption time; it does not reset saved native results. `run` executes pending
+batches. `--layer unit` runs unit work alone;
 `--layer mutation` also runs any missing unit prerequisite. `all` is the default.
 `--force` reruns current results as well as pending work.
 With `--layer unit`, a healthy refresh preserves compatible completed mutation
@@ -105,6 +107,15 @@ Changed inputs or a failed unit refresh invalidate the affected mutation result.
 A damaged saved unit report also requires a new mutation check. A unit-only run
 reports `reusedMutationBatches: 0` because that counter describes the requested
 layer; preserved mutation reports remain available to a later mutation run.
+
+Add `--summary` to `plan`, `run`, `status` or `verify` for a compact JSON projection
+in any output format. It reports selected, executed, reused and pending batch
+counts where known, scope completeness, graph/state references, bounded diagnostics,
+omission counts and truncation flags. The entire output is capped at 8,000
+characters and 32,000 UTF-8 bytes. Omit the flag for the existing complete output.
+This option does not change selection, execution, settlement or result validity;
+`qualified: false` preserves the development-feedback boundary. Read-only `verify`
+reports zero executed batches; its reuse counts describe current verified evidence.
 
 ## Selection and reuse
 
@@ -135,8 +146,15 @@ execution and remains material. `PSModulePath` remains material. CIS passes the
 captured inherited value to the target instead of allowing its PowerShell driver
 to add module paths between identity capture and native execution.
 
-A fresh, complete graph without extraction errors or warnings is required. Refresh
-it after source or test changes. Each declared production file is one batch. CIS
+A fresh graph input inventory without extraction errors is required. Known scoped
+documentation/mapping warnings (`CIS-GRAPH-DOC-002`, `CIS-GRAPH-VERIFY-001` and
+`CIS-GRAPH-VERIFY-002`) remain visible without disabling otherwise reliable compiler
+dependency selection. Unclassified warnings, missing diagnostic detail or an
+unexplained partial graph use the configured full test filter and conservative
+input inventory. Extraction errors still hold selection. This does not suppress
+strict documentation validation or establish criterion coverage.
+
+Each declared production file is one batch. CIS
 follows callers to identify test files, then follows implementation and test
 dependencies to include shared code and fixtures in that batch's input identity.
 New test files in the same graph components enter selection automatically.
@@ -384,6 +402,14 @@ bound preparation, execution and result admission. A child uses its positive
 remaining time after preparation; a new file, resume or run ID does not refill
 capacity. Inspect `workControl.work` for consumed/reserved/remaining work and each
 retained native stage's `workReference` for the actual launch.
+
+For governed work, a native child's preparation and settlement use the existing
+parent's remaining window. Storage inventory and guard preparation consume that
+same window without reducing the profile's native timeout solely because they
+precede launch. The driver still cannot exceed the parent's remaining deadline.
+The native timeout starts when the existing owned target gate is released after
+job or session admission; inclusive duration observations retain preparation cost.
+When the parent has less time left, that remaining bound still limits native work.
 
 For a large file, `run --native-timeout-seconds <1-3600>` overrides the invocation
 guard within the command's remaining wall budget. Use one file batch when it needs

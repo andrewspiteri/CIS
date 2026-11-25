@@ -1,0 +1,23 @@
+{
+  "tasks": [
+    {
+      "category": "implementation",
+      "complexity": "medium",
+      "dependsOn": [],
+      "title": "Build install and demonstrate the corrected consumer workflow",
+      "scopeIds": [
+        "distribution"
+      ],
+      "acceptanceCriteria": "Produce Release distributable with exact source/artifact identity, preserve a practical rollback, update and verify actual explicit CISLIB invocation, refresh current derived context and complete all nine focused RM-08 demonstrations with real executed/reused evidence and honest remaining mappings/platform limits.",
+      "validation": "Run existing affected native checks and required build/package gates sequentially, verify exact installed artifact via normal wrapper, demonstrate current ownership/criterion/check/result paths and zero-launch repeat, retain rollback/hash manifest and concise before/after timing/output evidence within unchanged storage caps.",
+      "paths": [
+        "src",
+        "tests",
+        "tools",
+        "docs",
+        ".cis/local",
+        ".artifacts/outcome-workflow-correction"
+      ]
+    }
+  ]
+}

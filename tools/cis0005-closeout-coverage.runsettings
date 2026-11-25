@@ -1,0 +1,34 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<RunSettings>
+  <RunConfiguration>
+    <MaxCpuCount>2</MaxCpuCount>
+    <TargetFrameworkVersion>.NETCoreApp,Version=v10.0</TargetFrameworkVersion>
+    <TargetPlatform>x64</TargetPlatform>
+    <TestAdaptersPaths>C:/Users/andrs/.nuget/packages/microsoft.codecoverage/18.6.0/build/netstandard2.0;C:/miscwork/portfolio/andrewspiteri.dev/content/change-impact-studio/tests/Cis.Abstractions.Tests/bin/Release/net10.0;C:/miscwork/portfolio/andrewspiteri.dev/content/change-impact-studio/tests/Cis.Host.Tests/bin/Release/net10.0;C:/miscwork/portfolio/andrewspiteri.dev/content/change-impact-studio/tests/Cis.Modules.Agent.Tests/bin/Release/net10.0;C:/miscwork/portfolio/andrewspiteri.dev/content/change-impact-studio/tests/Cis.Modules.Context.Tests/bin/Release/net10.0;C:/miscwork/portfolio/andrewspiteri.dev/content/change-impact-studio/tests/Cis.Modules.Feedback.Tests/bin/Release/net10.0;C:/miscwork/portfolio/andrewspiteri.dev/content/change-impact-studio/tests/Cis.Modules.Graph.Tests/bin/Release/net10.0;C:/miscwork/portfolio/andrewspiteri.dev/content/change-impact-studio/tests/Cis.Modules.TechnicalIntent.Tests/bin/Release/net10.0;C:/miscwork/portfolio/andrewspiteri.dev/content/change-impact-studio/tests/Cis.Modules.Delivery.Tests/bin/Release/net10.0;C:/miscwork/portfolio/andrewspiteri.dev/content/change-impact-studio/tests/Cis.Modules.Testing.Tests/bin/Release/net10.0</TestAdaptersPaths>
+    <TestCaseFilter>FullyQualifiedName~Cis.Abstractions.Tests.|FullyQualifiedName~Cis.Host.Tests.|FullyQualifiedName~Cis.Modules.Agent.Tests.|FullyQualifiedName~Cis.Modules.Context.Tests.|FullyQualifiedName~Cis.Modules.Feedback.Tests.|FullyQualifiedName~Cis.Modules.Graph.Tests.|FullyQualifiedName~Cis.Modules.TechnicalIntent.Tests.|FullyQualifiedName~Cis.Modules.Delivery.Tests.EngineeringCompletionTests.|FullyQualifiedName~OutcomeImpactDisposition|FullyQualifiedName~CurrentImpact|FullyQualifiedName~PlanRoutineSummary|FullyQualifiedName~ParticipantCompletion|FullyQualifiedName~Cis.Modules.Testing.Tests.IncrementalTestServiceTests.|FullyQualifiedName~IncrementalGraphWarningTests|FullyQualifiedName~IncrementalVerificationContextTests|FullyQualifiedName~VerifyUnitCommandUsesTheAcceptedUnitScopeWithoutLaunchingAgain|FullyQualifiedName~PreviousProducerReviewCannotAuthorizeChangedOrInvalidPendingNativeEvidence|FullyQualifiedName~MutationRunnerScriptTests|FullyQualifiedName~IncrementalNativeWorkTests|FullyQualifiedName~Cis.Modules.Testing.Tests.TestingServiceTests.|FullyQualifiedName~OutcomeCompletion|FullyQualifiedName~RepeatedCompletionReviewMeasuresItsWorkAndRechecksChangedNativeArtifactBytes|FullyQualifiedName~CompletionInitialIdentityReuseStillChecksAuthorityAgainAtTheFinalFence|FullyQualifiedName~CompletingOneTaskPreservesAnotherTasksReviewAcrossNativeUsageBookkeeping</TestCaseFilter>
+    <TestSessionTimeout>3300000</TestSessionTimeout>
+  </RunConfiguration>
+  <DataCollectionRunSettings>
+    <DataCollectors>
+      <DataCollector friendlyName="Code Coverage" uri="datacollector://Microsoft/CodeCoverage/2.0">
+        <Configuration>
+          <Format>Cobertura</Format>
+          <CoverageFileName>coverage.cobertura.xml</CoverageFileName>
+          <IncludeTestAssembly>False</IncludeTestAssembly>
+          <CodeCoverage>
+            <EnableDynamicManagedInstrumentation>True</EnableDynamicManagedInstrumentation>
+            <EnableStaticManagedInstrumentation>False</EnableStaticManagedInstrumentation>
+            <EnableStaticNativeInstrumentation>False</EnableStaticNativeInstrumentation>
+            <EnableDynamicNativeInstrumentation>False</EnableDynamicNativeInstrumentation>
+            <ModulePaths>
+              <Include>
+                <ModulePath>.*[\\/]Cis\.[^\\/]*\.dll$</ModulePath>
+                <ModulePath>.*[\\/]cis\.dll$</ModulePath>
+              </Include>
+            </ModulePaths>
+          </CodeCoverage>
+        </Configuration>
+      </DataCollector>
+    </DataCollectors>
+  </DataCollectionRunSettings>
+</RunSettings>

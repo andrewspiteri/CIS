@@ -130,10 +130,10 @@ public sealed partial class DeliveryWorkflowTests
         Assert.Equal(approvalEvents, ReadWorkflowApprovalEvents(eventsPath));
         Assert.False(previousCatalogue.SequenceEqual(File.ReadAllBytes(cataloguePath)));
         var catalogue = File.ReadAllText(cataloguePath);
-        Assert.Contains("automated_test_case_count: 3", catalogue, StringComparison.Ordinal);
+        Assert.Contains("automation_source_linked_count: 3", catalogue, StringComparison.Ordinal);
         Assert.Contains("automation_pending_count: 0", catalogue, StringComparison.Ordinal);
         Assert.Contains("::tests/reviewed-value-delivery.test.ts:1", catalogue, StringComparison.Ordinal);
-        Assert.Equal(3, Regex.Matches(File.ReadAllText(csvPath), "\"Automated\"").Count);
+        Assert.Equal(3, Regex.Matches(File.ReadAllText(csvPath), "\"Source linked\"").Count);
         Assert.Empty(current.Plans.ValidateManualTestAutomationCoverage(repository.Path, change.Id));
         var derivedBytes = new[] { cataloguePath, csvPath, eventsPath }.ToDictionary(path => path, File.ReadAllBytes);
 

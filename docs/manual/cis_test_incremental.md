@@ -164,6 +164,23 @@ declarations, including partial declarations and interface relationships, remain
 dependency inputs. Pin external dependency and runtime identity through the
 declared configuration and tool inventory.
 
+The C# compiler's `inherits` relationships and the earlier `inherits-from`
+spelling both contribute dependencies. Repository inheritance and interface
+relationships connect every known candidate in their local family in both
+directions. This can deliberately select more tests: the graph does not establish
+which implementation or override a particular runtime instance uses. All bound
+declaration files of a partial type contribute to the same dependency closure.
+Compiler-bound field, property, indexer and event accesses are `references`,
+separate from method `calls` and separate from contextual verification links.
+
+An unresolved inheritance/interface endpoint or an external interface member
+dependency broadens each affected dependency family to the configured full test
+filter and conservative input inventory, with a diagnostic. External call-site
+observations never become declarations connecting otherwise independent callers.
+Changed compiler extraction contracts require a graph refresh; the compiler/7,
+semantic-facts/4 and compiler-cache v2 identities prevent older facts from being
+silently treated as the updated analysis.
+
 For C# files, class names from the graph produce a VSTest filter intersected with
 `fullTestFilter`. An outer dot-qualified class predicate replaces nested predicates
 that it already covers. Nested-only fixtures retain their own predicates. When

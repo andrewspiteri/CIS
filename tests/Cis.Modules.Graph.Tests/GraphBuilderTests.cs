@@ -518,7 +518,9 @@ public sealed partial class GraphBuilderTests
         Assert.Equal("reference-item", NodeValue(nodesByKey[NodeValue(implementationEdge, "from")], "kind"));
         Assert.Equal("src/Orders.Api/Program.cs", NodeValue(nodesByKey[NodeValue(implementationEdge, "to")], "localId"));
 
-        var verificationEdge = Assert.Single(edges, edge => NodeValue(edge, "type") == "references");
+        var verificationEdge = Assert.Single(edges, edge => NodeValue(edge, "type") == "references"
+            && NodeValue(nodesByKey[NodeValue(edge, "from")], "kind") == "reference-item"
+            && NodeValue(nodesByKey[NodeValue(edge, "to")], "kind") == "test");
         Assert.Equal("reference-item", NodeValue(nodesByKey[NodeValue(verificationEdge, "from")], "kind"));
         Assert.Equal("test", NodeValue(nodesByKey[NodeValue(verificationEdge, "to")], "kind"));
     }

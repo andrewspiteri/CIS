@@ -2794,3 +2794,15 @@ documents:
     type: implementation-plan
     status: proposed
     authority: derived
+
+  - id: change-impact-studio:change:cis-0005:review-d449dcf-corrections
+    path: docs/changes/CIS-0005/review-d449dcf-corrections.md
+    type: implementation-plan
+    status: active
+    authority: derived
+
+  - id: change-impact-studio:change:cis-0005:incremental-selection-correctness-plan
+    path: docs/changes/CIS-0005/incremental-selection-correctness-plan.md
+    type: implementation-plan
+    status: active
+    authority: derived

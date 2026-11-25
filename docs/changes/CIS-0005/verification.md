@@ -619,3 +619,166 @@ also passed separately. Coverage correction, current security reports, native
 implementation/review provenance and real-browser acceptance remain open. The
 consumer's completed d034 installation and RM-08 Run/Verify observation remain
 dated evidence. No main merge or release is part of this publication.
+
+## Corrections from the d449dcf review
+
+The supplied review identified five confirmed defects. The approved
+[bounded correction plan](review-d449dcf-corrections.md) retains the earlier
+source-closeout obligations separately. Component dispositions now validate the
+union of canonical ownership paths and the legacy root and retain that entire
+set in provenance. Current graph reads use an uncached input inventory. Managed
+catalogue type and authority changes refresh their semantic projection without
+changing the material implementation baseline. Resume refreshes advisory context
+against the actual working directory while preserving canonical task/envelope
+and authority bindings. Shared execution records validated task/change telemetry
+for Run and Resume.
+
+Final native selections passed **25 tests, zero failed or skipped**: 12 Graph,
+seven Impact and six Agent cases. Their actual TRX files are
+`.cis/local/testing/review-d449dcf/results/graph.trx`, `impact-rerun.trx` and
+`agent-fixed.trx`. The regressions cover addition-only source/test changes in one
+scope; independent catalogue type/authority changes; canonical, merged and root
+ownership; direct/worktree resume, unavailable context and actual execution
+attribution. Independent source/fixture review found no additional issue. That
+read-only inspection does not fulfill the separate required native Codex
+implementation/review provenance or full qualification obligations.
+
+Earlier failures remain retained. The new Impact fixtures initially used a stale
+query instead of the host's current snapshot reader. The new isolated Agent
+fixture first exceeded Windows Git's temporary-path limit, then incorrectly
+reported no changed files despite the retained interrupted edit. Its shorter
+owned path and accurate changed-file/validation report preserve the real guards.
+The solution-based formatter could not connect to its MSBuild pipe in the
+sandbox. Scoped folder whitespace formatting and unchanged verification passed.
+
+The exact local build snapshot is
+`0.3.0+worktree.0af366968e59af1546621307872181e0d464716b7d0abf0a39dce544b115efa8`,
+based on d449dcf plus the corrections. Its source, native-check, directory and ZIP
+inventories are bound under
+`.artifacts/outcome-workflow-correction/CIS-0005/WORK-007/review-d449dcf-0af366968e59/`.
+The build-manifest SHA256 is
+`d5f811dd15651d06ca271bb92972925433ff1b1071dc95d54133c68d5da3c9f0`.
+All 258 installed files match the byte counts and hashes in that manifest's
+inventory; the extra Windows apphost is included while the
+existing CISLIB wrapper retains its explicit DLL route. The installed host SHA256
+is `6c69acabfd006c37e862e9cb31469ea9d384e276ddba001ade506a1a0bf79445`.
+The consumer proof uses a fresh WORK-002 under CIS-0028 and preserves completed
+WORK-001. WORK-002 is now Complete through the normal checked transition; its
+logical attempt was closed through supported controller progress. The stable
+profile selected the same one AC-10 case: one passed, zero failed/skipped and
+zero pending unit batches. Unchanged Verify passed, an actual cached Run reported
+zero executed / one reused batch, and post-close Verify passed. The retained
+report SHA256 is
+`df4da9b798e61fa788f906a7debd46251f1db2cf8ea1889d83a07d180ff1a461`.
+There was no additional test launch during either verification or the cached Run.
+
+The preceding sandbox-context execution also passed that case, but the CLI
+refused publication when its 900-second metadata window expired. A following
+Verify correctly rejected a changed LOCALAPPDATA input. Both failures and their
+costs remain retained. A separate profile pins that input to an owned directory;
+the same named case then passed in the original Windows execution context.
+Final-selection counts do not erase that earlier development execution. No input
+guard or native timeout was disabled. The stable Run took 570,055 ms, its cached
+Run 297,878 ms, and post-close Verify 84,699 ms. These one-profile observations
+do not establish general performance or model-token savings, or automatic
+reduction of a broad test suite.
+
+The consumer's `.cis/local/testing/review-d449dcf/` records join the installation,
+cached-Run proof, post-close proof, physical/cost observations and preservation.
+All six explicit protected files, 388 original files and 301 old incremental
+files match their retained hashes. Critical counters, attempt state and holds
+across 27 previous changes / 142 owners are unchanged. Source build-input checks
+also show all 577 production inputs unchanged since packaging. Final counted
+source storage including reserve is 15,923,562,365 bytes under 16 GiB; consumer
+counted storage is 5,507,189,531 bytes under 6 GiB. The source and consumer cost
+receipts retain conservative manual estimates and exact timed failures/passes
+within the same shared four-hour increment; historical costs are not reset.
+
+These focused results do not replace the preceding 1,324-case candidate, its
+91.696 percent coverage measurement, current security reports, required native
+implementation/review provenance or real-browser acceptance. Those broader
+source obligations remain open. No commit, push, merge or release is included.
+
+## Compiler-backed incremental selection correction
+
+The approved [source correctness plan](incremental-selection-correctness-plan.md)
+now follows the compiler's actual `inherits` relation and retains the earlier
+`inherits-from` spelling. Repository inheritance and interface families include
+all known implementation and override candidates in both traversal directions.
+Compiler extraction records field, property, indexer and event references and
+every bound declaration of partial types. Selection joins partial declarations
+with a linear-size set of links. Unresolved inheritance/interface dependencies
+use the configured full eligible filter and conservative input inventory for
+affected families. External call-site observations remain separate from source
+declarations. Compiler/7, semantic-facts/4 and compiler-cache v2 identities require
+older facts to refresh.
+
+Twelve new cases exercise the actual GraphBuilder/GraphSnapshotReader output and
+incremental selector together. They cover inherited initializers, supplied
+interface implementations, virtual overrides, properties/indexers/events and
+partial declarations. They assert selected filters, dependency inventories,
+fingerprint/currentness invalidation and independent reuse. The inheritance
+regression deliberately prevents a direct member-reference edge from masking
+the original relation-name defect. Controlled executable fixture reports test
+the cache protocol; they do not execute the sample classes' domain assertions.
+Existing work/storage test controllers provide bounded protocol admission.
+The retained synthetic mutation-cache case uses the supported non-adopted
+diagnostic mode and explicitly asserts `legacy-unaccounted`, no pilot readiness
+and no controller assessment. This supplies no governed runner-readiness proof.
+
+The final selected Testing results cover **30 distinct cases, all passed, none
+skipped**: 12 compiler, 14 projection and four context cases. The matrix report
+`.cis/local/testing/selection-correctness/results/selection-matrix-composed.trx`
+contains 29 passes and the remaining fixture admission failure. Its corrected
+case passed in `selection-mutation-followup.trx`; it retained the original
+source/currentness and mutation reuse assertions. Independent read-only review
+found no further issue in the extraction, traversal, fixtures or authority
+composition. This is source/fixture review, not the separate native Codex
+implementation/review provenance required by the earlier closeout.
+
+All **120 distinct Graph cases** passed across the owning suite and follow-ups.
+`graph-regression.trx` retains 118 passes and two failures. The catalogue assertion
+was restricted to its intended reference-item-to-test endpoints and passed in
+`graph-followup.trx`. The unchanged corrupt-generation recovery case reproduced
+SQLite Error 14 under the long AppContainer temporary path, then passed with the
+shorter owned temporary root recorded by `graph-recovery-short-temp-operation.json`
+and `graph-recovery-short-temp.trx`. Recovery production code was unchanged.
+The two new compiler-extraction cases also passed in the earlier focused run.
+These are results across retained runs, not a claim that the original full run
+was failure-free.
+
+Development failures remain recorded under the same local evidence directory:
+the new Graph test's missing namespace import, the new Testing fixture's two
+collection-count compilation errors, and the fixture profile/admission failures.
+The fixes reuse existing contracts; no production authority guard was relaxed.
+Scoped folder whitespace verification passed after layout-only changes in two
+files. Release builds of Graph and Testing then passed with zero warnings or
+errors. Formatting diagnostics and the incompatible initial CLI option
+combination remain retained with their costs.
+
+The final resource observation records 15,924,334,982 source bytes including the
+protected reserve, below the existing 16 GiB ceiling. A further 1 MiB allowance
+covers closing evidence records inside that same ceiling. No cleanup was
+performed. The shared four-hour increment has a conservative manual-plus-timed
+estimate of 12,969,820 ms, including all three agents and failed checks, below
+14,400,000 ms. These estimates preserve previous costs and historical unknowns;
+they are not exact active-time or token measurements. The local
+`storage-final.json`, `shared-cost-final.json` and `final-source-inputs.json`
+record the observation, corrected explicit aggregation and source hashes.
+
+This stage changes source only. The previous installed CISLIB build and its
+completed one-profile proof remain historical evidence for that build. They do
+not contain this new selection correction. A maintained change-to-profile route,
+broad CISLIB coordinator pilot, measured elapsed benefit and default/CI adoption
+remain later work. No updated installation, broad qualification, token-savings
+claim, commit, push, merge or release is included. The earlier coverage, security,
+native provenance and real-browser closeout obligations remain open.
+
+## Publication of the reviewed corrections
+
+On 25 November 2026, Andrew Spiteri authorized pushing the current corrections
+to their existing feature branches without merging. This includes the preceding
+five-finding source fixes, compiler-backed selection correction and related
+CISLIB consumer-proof records. The retained checks above remain the validation
+basis. This publication does not complete the wider source closeout or install
+the new selector in CISLIB. Main merge and release remain outside this request.

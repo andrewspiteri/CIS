@@ -948,6 +948,7 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
                     ProviderSessionId = allowedCommands.Count > 0 || view.Manifest.AllowedCommands.Count > 0
                         ? null : view.Manifest.ProviderSessionId
                 };
+                envelope = RefreshResumedTaskContext(context, updated, envelope!);
                 if (work is not null)
                 {
                     if (work.RemainingProviderTime() <= TimeSpan.Zero)
@@ -1276,6 +1277,10 @@ public sealed partial class AgentService : ICisStoryTaskExecutor
         IReadOnlyList<string>? expectedQuestionIds = null, bool taskReview = false,
         IReadOnlyList<string>? evidenceDirectories = null, WorkExecutionScope? work = null)
     {
+        if (IsDirectWorkRun(manifest, envelope))
+        {
+            CisInvocationTelemetry.AssociateTask(envelope.ChangeId, envelope.TaskId);
+        }
         var minimumSeconds = work?.Reference.ParentExecutionId is null ? 30 : 1;
         if (manifest.TimeoutSeconds < minimumSeconds || manifest.TimeoutSeconds > 3600
             || work is not null && manifest.TimeoutSeconds > work.TimeoutSeconds)

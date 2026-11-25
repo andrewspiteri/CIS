@@ -222,7 +222,7 @@ public sealed partial class ImpactAnalysisService
             if (node.RepositoryId != graph.Build!.RepositoryId || node.Kind == "repository")
                 return Error(changeId, "Clarify repository-wide or foreign impact scope explicitly; a repository-profile location grants no source scope.");
             string[] paths = node.Kind == "component"
-                ? node.Properties.TryGetValue("root", out var root) ? new[] { root } : []
+                ? ComponentOwnershipPaths(node).ToArray()
                 : node.Locations.Select(location => location.Path).Distinct(StringComparer.Ordinal).ToArray();
             paths = paths.Select(path => path.Replace('\\', '/').TrimEnd('/')).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
             var scopes = authorization.Request.Scope.Where(scope => scopeIds.Contains(scope.Id, StringComparer.Ordinal)).ToArray();
@@ -230,7 +230,8 @@ public sealed partial class ImpactAnalysisService
                 || CisPathSafety.ContainsReparsePoint(repositoryPath, absolute)
                 || !scopes.SelectMany(scope => scope.Paths).Any(prefix => Covered(path, prefix))))
                 return Error(changeId, "The finding has missing or out-of-scope concrete paths; present that specific scope difference for a decision.");
-            if (finding.State == "accepted")
+            if (finding.State == "accepted" && (finding.OutcomeDisposition is null
+                || finding.OutcomeDisposition.Paths.SequenceEqual(paths, StringComparer.Ordinal)))
                 return new("unchanged", change.Id, change.GraphBuildId, document.Findings,
                     CalculateCompleteness(document.Findings, document.Truncated), [], false);
             var provenance = new ImpactOutcomeDisposition(authorization.Id, authorization.Digest,
@@ -267,6 +268,24 @@ public sealed partial class ImpactAnalysisService
         }
         catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException or ArgumentException)
         { return Error(changeId, error.Message); }
+    }
+
+    private static IEnumerable<string> ComponentOwnershipPaths(CisGraphNode component)
+    {
+        if (component.Properties.TryGetValue("ownsPaths", out var declaredPaths)
+            && (declaredPaths.Length > 0 || component.Properties.GetValueOrDefault("hasOwnershipDeclaration") == "true"))
+        {
+            foreach (var path in declaredPaths.Split('\n'))
+            {
+                // The graph represents an explicitly declared repository root as an empty path.
+                yield return path.Length == 0 ? "." : path;
+            }
+        }
+
+        if (component.Properties.TryGetValue("root", out var legacyRoot) && !string.IsNullOrWhiteSpace(legacyRoot))
+        {
+            yield return legacyRoot;
+        }
     }
 
     public ImpactResult CarryForwardApprovedFeature(

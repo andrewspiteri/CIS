@@ -132,6 +132,77 @@ public sealed partial class AgentExecutionTests
         Assert.Contains("their results are unknown", provider.LastRequest.Prompt, StringComparison.Ordinal);
         Assert.DoesNotContain("Fixture implementation", result.Envelope!.InstructionMarkdown, StringComparison.Ordinal);
         Assert.Equal((long?)Encoding.UTF8.GetByteCount(provider.LastRequest.Prompt), observations.Snapshot().DeliveredContextUtf8Bytes);
+        Assert.Equal("CIS-0001", observations.Snapshot().ChangeId);
+        Assert.Equal("WORK-090", observations.Snapshot().TaskId);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void Resume_UsesCurrentOrExplicitlyUnavailableContextAndAttributesExecutionWithoutChangingAcceptedAuthority(
+        bool isolated, bool contextUnavailable)
+    {
+        using var repository = AgentRepository.Create(git: isolated, shortPath: isolated);
+        repository.AddEligibleChange();
+        if (!isolated)
+        {
+            repository.Write("docs/cis/references/agent-provider-profile.md", "| direct-dirty-working-tree | allowed | Synthetic direct-working-tree policy. |\n");
+        }
+        const string sourcePath = "src/LinkedSource.cs";
+        repository.Write(sourcePath, "public class LinkedSource { public const int Version = 1; }\n");
+        if (isolated)
+        {
+            repository.CommitAll("Accepted task and version-one source baseline");
+        }
+        var preparer = new SourceTaskContextPreparer(sourcePath, contextUnavailable);
+        var provider = new InterruptedSourceEditingProvider(sourcePath);
+        var service = new AgentService(preparer, new CisRepositoryContextResolver(), [provider], clock: Clock);
+
+        var first = service.Run(repository.Path, "CIS-0001", "WORK-090", "fake", CisAgentRunModes.Implement,
+            CisAgentPermissions.WorkspaceWrite, null, "fake-json", 60, false, "Synthetic implementer", TestContext.Current.CancellationToken);
+
+        Assert.True(first.Run is not null, $"First attempt {first.Status}: {string.Join("; ", first.Diagnostics)}");
+        Assert.Equal(CisAgentRunStates.Interrupted, first.Run!.Manifest.Status);
+        Assert.Contains("Version = 1", provider.Inner.LastRequest!.Prompt, StringComparison.Ordinal);
+        Assert.Equal(isolated, first.Run.Manifest.IsolatedWorktree);
+        Assert.Contains("Version = 2", File.ReadAllText(Path.Combine(first.Run.Manifest.WorkingDirectory, sourcePath)), StringComparison.Ordinal);
+        Assert.Contains(isolated ? "Version = 1" : "Version = 2", repository.Read(sourcePath), StringComparison.Ordinal);
+        string envelopePath = Path.Combine(repository.Path, AgentService.RootPath, "envelopes", "CIS-0001", "WORK-090.json");
+        byte[] acceptedEnvelope = File.ReadAllBytes(envelopePath);
+        using var observations = CisInvocationTelemetry.Begin("agent resume");
+
+        var resumed = service.Resume(repository.Path, first.Run.Manifest.RunId, "Continue the interrupted implementation.",
+            "Synthetic implementer", "Resume after the first source edit.", false, TestContext.Current.CancellationToken);
+
+        Assert.True(resumed.ExitCode == 0, string.Join("; ", resumed.Diagnostics));
+        Assert.Equal(2, provider.Inner.ExecuteCalls);
+        Assert.Equal(2, preparer.Requests.Count);
+        Assert.Equal(resumed.Run!.Manifest.WorkingDirectory, preparer.Requests[1].RepositoryPath);
+        Assert.Equal(resumed.Run.Manifest.WorkingDirectory, preparer.Requests[1].TargetRepositoryPath);
+        Assert.DoesNotContain("Version = 1", provider.Inner.LastRequest!.Prompt, StringComparison.Ordinal);
+        if (contextUnavailable)
+        {
+            Assert.Equal("unknown", resumed.Envelope!.TaskContext!.Freshness);
+            Assert.Equal("unavailable", resumed.Envelope.TaskContext.Status);
+            Assert.Contains("CIS-TASK-CONTEXT-RESUME-UNAVAILABLE", resumed.Envelope.TaskContext.DiagnosticCodes);
+            Assert.Contains("Status: unavailable; freshness: unknown", provider.Inner.LastRequest.Prompt, StringComparison.Ordinal);
+        }
+        else
+        {
+            Assert.Contains("Version = 2", provider.Inner.LastRequest.Prompt, StringComparison.Ordinal);
+            Assert.Equal("fresh", resumed.Envelope!.TaskContext!.Freshness);
+            Assert.Contains("Version = 2", resumed.Envelope.TaskContext.Content, StringComparison.Ordinal);
+        }
+        Assert.Equal(first.Envelope!.InstructionMarkdown, resumed.Envelope.InstructionMarkdown);
+        Assert.Equal(first.Envelope.CanonicalTaskDigest, resumed.Envelope.CanonicalTaskDigest);
+        Assert.Equal(first.Envelope.AuthorityArtifacts, resumed.Envelope.AuthorityArtifacts);
+        Assert.Equal(first.Run.Manifest.AcceptedScopeDigest, resumed.Run.Manifest.AcceptedScopeDigest);
+        Assert.Equal(first.Run.Manifest.EnvelopeDigest, resumed.Run.Manifest.EnvelopeDigest);
+        Assert.Equal(acceptedEnvelope, File.ReadAllBytes(envelopePath));
+        Assert.Equal("CIS-0001", observations.Snapshot().ChangeId);
+        Assert.Equal("WORK-090", observations.Snapshot().TaskId);
+        Assert.Equal((long?)Encoding.UTF8.GetByteCount(provider.Inner.LastRequest.Prompt), observations.Snapshot().DeliveredContextUtf8Bytes);
     }
 
     [Fact]
@@ -189,6 +260,59 @@ public sealed partial class AgentExecutionTests
         Assert.True(preparer.ReturnedPrettyCharacters > 16_000);
         Assert.Equal("unavailable", result.Envelope!.TaskContext!.Status);
         Assert.Contains("CIS-TASK-CONTEXT-PROVIDER-INVALID", result.Envelope.TaskContext.DiagnosticCodes);
+    }
+
+    private sealed class SourceTaskContextPreparer(string sourcePath, bool unavailableOnResume) : ICisTaskContextPreparer
+    {
+        public List<CisTaskContextRequest> Requests { get; } = [];
+
+        public CisTaskContextDelivery Prepare(CisTaskContextRequest request)
+        {
+            Requests.Add(request);
+            if (unavailableOnResume && Requests.Count > 1)
+            {
+                throw new IOException("The synthetic current source could not be read.");
+            }
+            return new(1, "prepared", "fresh", "sha256:source-fixture",
+                File.ReadAllText(Path.Combine(request.RepositoryPath, sourcePath)), null,
+                request.MaxCharacters, request.MaxUtf8Bytes, 0, 0, 0, 0, []);
+        }
+    }
+
+    private sealed class InterruptedSourceEditingProvider(string sourcePath) : ICisAgentProvider
+    {
+        public FakeProvider Inner { get; } = new();
+        public CisAgentProviderDescriptor Descriptor => Inner.Descriptor;
+        public CisAgentProviderDiagnosis Diagnose(string repositoryPath) => Inner.Diagnose(repositoryPath);
+
+        public CisAgentProviderExecutionResult Execute(CisAgentExecutionRequest request,
+            Action<CisAgentProviderEvent> onEvent, CancellationToken cancellationToken)
+        {
+            var result = Inner.Execute(request, onEvent, cancellationToken);
+            if (Inner.ExecuteCalls == 1)
+            {
+                File.WriteAllText(Path.Combine(request.WorkingDirectory, sourcePath),
+                    "public class LinkedSource { public const int Version = 2; }\n");
+            }
+            Assert.Contains("Version = 2", File.ReadAllText(Path.Combine(request.WorkingDirectory, sourcePath)), StringComparison.Ordinal);
+            string[] changedFiles = [sourcePath];
+            string[] validations = ["Read the actual working source and confirmed version two."];
+            string[] evidence = [sourcePath];
+            return result with
+            {
+                Status = Inner.ExecuteCalls == 1 ? CisAgentRunStates.Interrupted : result.Status,
+                Summary = JsonSerializer.Serialize(new
+                {
+                    summary = "Retained the linked-source edit across the interrupted implementation.",
+                    changedFiles,
+                    validations,
+                    evidence
+                }),
+                ChangedFiles = changedFiles,
+                Validations = validations,
+                Evidence = evidence
+            };
+        }
     }
 
     private sealed class TaskContextPreparer(bool oversized = false, bool oversizedMetadata = false,

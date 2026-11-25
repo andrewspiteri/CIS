@@ -12,10 +12,18 @@ public sealed class IncrementalVerificationContextTests
     public void VerificationLinksDoNotTurnTaskBookkeepingIntoNativeInputsButExplicitFixturesRemainMaterial(bool explicitlyConsumed)
     {
         using var fixture = new IncrementalTestServiceTests.Fixture();
+        fixture.Save(fixture.Profile with
+        {
+            MutationCommand = null,
+            RecoveryCommand = null,
+            MaxRunBytes = 4 * 1024 * 1024,
+            MaxRetainedBytes = 32 * 1024 * 1024
+        });
         fixture.Write("docs/task.md", "task_status: InProgress\nOriginal completion observations.");
         if (explicitlyConsumed)
             fixture.Save(fixture.Profile with { ConfigFiles = [.. fixture.Profile.ConfigFiles, "docs/task.md"] });
-        var service = new IncrementalTestService(new VerificationReader(fixture));
+        var authority = new IncrementalNativeWorkTests.UnitInvocationAuthority(fixture.Path);
+        var service = new IncrementalTestService(new VerificationReader(fixture), authority, authority);
         var options = new IncrementalTestOptions(fixture.Path, "profile.json", "unit", 4, 120);
         var first = service.Run(options, 0, TestContext.Current.CancellationToken);
         Assert.True(first.ExitCode == 0, string.Join("; ", first.Diagnostics));
@@ -41,12 +49,20 @@ public sealed class IncrementalVerificationContextTests
     public void ContextualMetadataCannotEraseAnIndependentNativeDependency(string type, bool mixedObservations)
     {
         using var fixture = new IncrementalTestServiceTests.Fixture();
+        fixture.Save(fixture.Profile with
+        {
+            MutationCommand = null,
+            RecoveryCommand = null,
+            MaxRunBytes = 4 * 1024 * 1024,
+            MaxRetainedBytes = 32 * 1024 * 1024
+        });
         fixture.Write("docs/task.md", "An explicitly observed native dependency.");
         var reader = new VerificationReader(fixture, type, mixedObservations);
-        var service = new IncrementalTestService(reader);
+        var authority = new IncrementalNativeWorkTests.UnitInvocationAuthority(fixture.Path);
+        var service = new IncrementalTestService(reader, authority, authority);
         var options = new IncrementalTestOptions(fixture.Path, "profile.json", "unit", 4, 120);
         var first = service.Run(options, 0, TestContext.Current.CancellationToken);
-        Assert.Equal(0, first.ExitCode);
+        Assert.True(first.ExitCode == 0, string.Join("; ", first.Diagnostics));
         Assert.Contains("docs/task.md", first.Batches.Single(batch => batch.SourceFile == "src/A.cs").DependencyFiles);
 
         fixture.Write("docs/task.md", "The actual native dependency changed.");

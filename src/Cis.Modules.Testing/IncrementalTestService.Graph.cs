@@ -37,18 +37,57 @@ public sealed partial class IncrementalTestService
         var paths = graph.Nodes.ToDictionary(node => node.Key, node => DependencyLocations(node).Select(location => location.Path.Replace('\\', '/'))
             .Where(path => CisPathSafety.TryResolveUnderRoot(input.Repository, path, out var full) && File.Exists(full))
             .Distinct(PathComparer).ToArray(), StringComparer.Ordinal);
+        var repositorySymbols = graph.Nodes.Where(node => node.Kind == "symbol" && paths[node.Key].Length > 0)
+            .Select(node => node.Key).ToHashSet(StringComparer.Ordinal);
+        var interfaceTargets = graph.Nodes.Where(node => node.Subtype == "interface"
+            || node.Properties.GetValueOrDefault("declaringTypeKind") == "interface").Select(node => node.Key).ToHashSet(StringComparer.Ordinal);
+        var uncertainPaths = new HashSet<string>(PathComparer);
         var forward = new Dictionary<string, HashSet<string>>(PathComparer);
         var reverse = new Dictionary<string, HashSet<string>>(PathComparer);
+        foreach (var key in repositorySymbols)
+        {
+            if (paths[key].Length < 2) continue;
+            // Every bound partial declaration contributes to the same symbol,
+            // even when no dependency edge targets the type itself. A star keeps
+            // the closure connected without generating every declaration pair.
+            var declarations = paths[key].Order(StringComparer.Ordinal).ToArray();
+            foreach (var declaration in declarations.Skip(1))
+            {
+                Add(forward, declarations[0], declaration);
+                Add(forward, declaration, declarations[0]);
+                Add(reverse, declarations[0], declaration);
+                Add(reverse, declaration, declarations[0]);
+            }
+        }
         foreach (var edge in graph.Edges.Where(edge => edge.State is not ("proposed" or "rejected")
-            && edge.Type is "calls" or "depends-on" or "references" or "implemented-by" or "implements" or "inherits-from"))
+            && edge.Type is "calls" or "depends-on" or "references" or "implemented-by" or "implements" or "inherits" or "inherits-from"))
         {
             if (ContextualVerificationEdge(edge)) continue;
-            if (!paths.TryGetValue(edge.From, out var from) || !paths.TryGetValue(edge.To, out var to)) continue;
+            var from = paths.GetValueOrDefault(edge.From, []);
+            var to = paths.GetValueOrDefault(edge.To, []);
+            var dispatchRelation = edge.Type is "implements" or "inherits" or "inherits-from";
+            if (dispatchRelation && (!repositorySymbols.Contains(edge.From) || !repositorySymbols.Contains(edge.To)))
+            {
+                uncertainPaths.UnionWith(from);
+                uncertainPaths.UnionWith(to);
+            }
+            if ((edge.Type is "calls" or "references") && interfaceTargets.Contains(edge.To)
+                && !repositorySymbols.Contains(edge.To)) uncertainPaths.UnionWith(from);
             foreach (var source in from) foreach (var target in to)
             {
                 if (PathComparer.Equals(source, target)) continue;
                 Add(forward, source, target);
                 Add(reverse, target, source);
+                // A repository contract can dispatch to any known implementation,
+                // including an override inherited through a base implementation.
+                // These are conservative candidates, not observed runtime bindings.
+                // External symbols have no declaration paths and never join callers.
+                if (dispatchRelation
+                    && repositorySymbols.Contains(edge.From) && repositorySymbols.Contains(edge.To))
+                {
+                    Add(forward, target, source);
+                    Add(reverse, source, target);
+                }
             }
         }
         var profile = input.Profile;
@@ -63,6 +102,7 @@ public sealed partial class IncrementalTestService
             .Concat(profile.SourceFiles).Concat(profile.TestFiles).Distinct(PathComparer).Order(StringComparer.Ordinal).ToArray();
         var graphOnly = GraphOnlyInputs(input, snapshot, paths);
         var result = new List<IncrementalTestBatch>();
+        var uncertainBatches = new List<string>();
         foreach (var source in profile.SourceFiles.OrderBy(file => !PathComparer.Equals(file, profile.CanarySourceFile)).ThenBy(file => file, StringComparer.Ordinal))
         {
             var callers = Closure([source], reverse);
@@ -77,14 +117,17 @@ public sealed partial class IncrementalTestService
             // fixtures and names whose separators do not imply the existing predicate.
             var classes = classNames.Where(name => !HasCoveringClassFilter(name, classNames))
                 .Select(name => "FullyQualifiedName~" + name + ".").Order(StringComparer.Ordinal).ToArray();
+            var dependencyFamily = Closure(tests.Append(source), forward);
+            var uncertain = callers.Concat(dependencyFamily).Any(uncertainPaths.Contains);
+            if (uncertain) uncertainBatches.Add(source);
             var narrow = reliableDependencies && source.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) && represented.Contains(source) && tests.Length > 0 && classes.Length > 0
-                && snapshot.GraphCapabilities.Contains("compiler.calls", StringComparer.Ordinal);
+                && !uncertain && snapshot.GraphCapabilities.Contains("compiler.calls", StringComparer.Ordinal);
             var filter = narrow ? "(" + profile.FullTestFilter + ")&(" + string.Join('|', classes) + ")" : profile.FullTestFilter;
             if (filter.Length > 32768) narrow = false;
             if (!narrow) { tests = allTests.Order(StringComparer.Ordinal).ToArray(); filter = profile.FullTestFilter; }
             // File-level closure includes shared fixtures and transitive implementation dependencies.
             // Inconclusive selection uses every graph input, rather than treating missing edges as independence.
-            var dependencies = (narrow ? Closure(tests.Append(source), forward) : allInputs.ToHashSet(PathComparer))
+            var dependencies = (narrow ? dependencyFamily : allInputs.ToHashSet(PathComparer))
                 .Order(StringComparer.Ordinal).ToArray();
             using var identityPhase = CisInvocationTelemetry.MeasurePhase("identity");
             var inputHashes = dependencies.Select(file => new { file, hash = HashFile(Safe(input.Repository, file)) }).ToArray();
@@ -206,6 +249,10 @@ public sealed partial class IncrementalTestService
                 MutationReasons = ExplainReuse(input, state, prior?.Mutation, mutationBasis, mutationCurrent, true)
             });
         }
+        selectionDiagnostics.AddRange(uncertainBatches.Take(12).Select(source => source
+            + ": unresolved interface or inheritance dependencies reach this batch; using the configured full test filter and conservative input inventory."));
+        if (uncertainBatches.Count > 12)
+            selectionDiagnostics.Add($"{uncertainBatches.Count - 12} additional batches use the same unresolved-dependency fallback.");
         CisInvocationTelemetry.RecordVerification("unit", "selected", result.Count,
             reliableDependencies ? "dependency-selection" : "conservative-full-scope");
         return new(snapshot, result.ToArray(), selectionDiagnostics);

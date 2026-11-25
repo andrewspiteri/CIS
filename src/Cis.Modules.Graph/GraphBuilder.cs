@@ -30,8 +30,8 @@ public sealed partial class GraphBuilder
         "cis.markdown.decisions/1",
         "cis.repository-files/1",
         "cis.source-declarations/2",
-        "cis.csharp.compiler/6",
-        "cis.csharp.semantic-facts/3",
+        "cis.csharp.compiler/7",
+        "cis.csharp.semantic-facts/4",
         "cis.test-declarations/3",
         "cis.project-dependencies/1",
         "cis.github-actions/1",
@@ -1346,7 +1346,7 @@ public sealed partial class GraphBuilder
             .ToDictionary(group => group.Key, group => group.OrderBy(call => call.Ordinal).ToArray(), StringComparer.Ordinal);
         foreach (var discovered in analysis.Symbols)
         {
-            if (!sourceNodes.TryGetValue(discovered.Path, out var sourceNode))
+            if (!sourceNodes.ContainsKey(discovered.Path))
             {
                 continue;
             }
@@ -1362,17 +1362,14 @@ public sealed partial class GraphBuilder
                     $"C# symbol '{discovered.QualifiedName}' spans conflicting component scopes; ownership is unconfirmed.",
                     discovered.OwnershipConflictPaths.ToArray()));
             }
-            var line = discovered.Line.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            var evidence = Evidence(
-                "repository-source",
-                discovered.Path,
-                "line",
-                line,
-                hashes.GetValueOrDefault(discovered.Path),
-                "compiler-binding",
-                "cis.csharp.compiler/6",
-                "high",
-                "Roslyn resolved the declaration within the repository compilation.");
+            IReadOnlyList<CSharpCompilerDeclarationLocation> declarations = discovered.DeclarationLocations.Count > 0 ? discovered.DeclarationLocations
+                : [new CSharpCompilerDeclarationLocation(discovered.Path, discovered.Line)];
+            var declarationEvidence = declarations.Select(declaration => Evidence(
+                "repository-source", declaration.Path, "line",
+                declaration.Line.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                hashes.GetValueOrDefault(declaration.Path), "compiler-binding", "cis.csharp.compiler/7", "high",
+                "Roslyn resolved the declaration within the repository compilation.")).ToArray();
+            var evidence = declarationEvidence[0];
             var callSemantics = callsByCaller.GetValueOrDefault(discovered.LocalId)?
                 .SelectMany(call => call.Semantics)
                 .Distinct(StringComparer.Ordinal)
@@ -1391,7 +1388,8 @@ public sealed partial class GraphBuilder
                     .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray(),
                 "derived",
                 "active",
-                [new CisGraphLocation(discovered.Path, "line", line)],
+                declarations.Select(declaration => new CisGraphLocation(declaration.Path, "line",
+                    declaration.Line.ToString(System.Globalization.CultureInfo.InvariantCulture))).ToArray(),
                 SortedProperties(
                     ("language", "csharp"),
                     ("component", component?.LocalId ?? string.Empty),
@@ -1404,9 +1402,12 @@ public sealed partial class GraphBuilder
                     ("generated", (discovered.GeneratedReasons.Count > 0).ToString().ToLowerInvariant()),
                     ("generatedReasons", string.Join("; ", discovered.GeneratedReasons)),
                     ("callSemantics", string.Join("; ", callSemantics))),
-                [evidence]);
+                declarationEvidence);
             AddOrMergeNode(symbol, nodes, diagnostics);
-            AddEdge(context.RepositoryId, "contains", sourceNode.Key, symbol.Key, "discovered", "high", [evidence], edges);
+            foreach (var declaration in declarations)
+                if (sourceNodes.TryGetValue(declaration.Path, out var declarationSource))
+                    AddEdge(context.RepositoryId, "contains", declarationSource.Key, symbol.Key, "discovered", "high",
+                        declarationEvidence.Where(item => item.Path == declaration.Path).ToArray(), edges);
             if (component is not null)
             {
                 AddEdge(context.RepositoryId, "belongs-to", symbol.Key, component.Key, "discovered", "high", [evidence], edges);
@@ -1415,7 +1416,7 @@ public sealed partial class GraphBuilder
         }
 
         var referencedById = analysis.ReferencedSymbols.ToDictionary(symbol => symbol.LocalId, StringComparer.Ordinal);
-        foreach (var relation in analysis.Annotations.Concat(analysis.Interfaces))
+        foreach (var relation in analysis.Annotations.Concat(analysis.Interfaces).Concat(analysis.References))
         {
             var sourceKey = CreateNodeKey(context.RepositoryId, "symbol", relation.SourceLocalId);
             if (!nodes.ContainsKey(sourceKey)) continue;
@@ -1567,6 +1568,7 @@ public sealed partial class GraphBuilder
                 ("signature", target.Signature),
                 ("assembly", target.Assembly),
                 ("external", "true"),
+                ("declaringTypeKind", target.DeclaringTypeKind),
                 ("semantics", string.Join("; ", target.Semantics))),
             [evidence]);
         AddOrMergeNode(node, nodes, diagnostics);
@@ -1586,7 +1588,7 @@ public sealed partial class GraphBuilder
             line.ToString(System.Globalization.CultureInfo.InvariantCulture),
             hashes.GetValueOrDefault(path),
             method,
-            "cis.csharp.semantic-facts/3",
+            "cis.csharp.semantic-facts/4",
             "high",
             $"Roslyn produced a bounded semantic fact for {reason}.");
 

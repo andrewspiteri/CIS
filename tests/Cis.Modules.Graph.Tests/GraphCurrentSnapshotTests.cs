@@ -71,6 +71,37 @@ public sealed partial class GraphBuilderTests
         Assert.Contains(second.Graph.Nodes, node => node.Kind == "symbol" && node.Label == "ReplacementProgram");
     }
 
+    [Theory]
+    [InlineData("src/Orders.Api/Added.cs", false)]
+    [InlineData("src/Orders.Api/AddedTests.cs", true)]
+    public void ReadCurrentSeesAnAdditionOnlyInsideTheSameReadScope(string addedPath, bool testFile)
+    {
+        using var repository = TemporaryRepository.CreateInitializedApi();
+        var reader = new GraphSnapshotReader(new CisRepositoryContextResolver(), builder: CreateBuilder());
+        using var scope = CisReadScope.Enter();
+        var first = reader.ReadCurrent(repository.Path);
+        Assert.Equal("fresh", first.Freshness);
+        Assert.Same(first, reader.ReadCurrent(repository.Path));
+
+        repository.Write(addedPath, testFile
+            ? "public class AddedTests { [Fact] public void AddedCheck() {} }"
+            : "public class Added {}");
+
+        var current = reader.ReadCurrent(repository.Path);
+
+        Assert.Equal(0, current.ExitCode);
+        Assert.Equal("fresh", current.Freshness);
+        Assert.NotSame(first, current);
+        Assert.NotEqual(first.Graph!.Build.Id, current.Graph!.Build.Id);
+        Assert.Contains(current.Graph.Nodes, node => node.Kind == "source-file" && node.LocalId == addedPath);
+        if (testFile)
+        {
+            Assert.Contains(current.Graph.Nodes, node => node.Kind == "test" && node.Label == "AddedCheck");
+        }
+
+        Assert.Same(current, reader.ReadCurrent(repository.Path));
+    }
+
     [Fact]
     public void ReadCurrentWithoutRefreshServiceDisclosesStaleAndFailedRefreshKeepsError()
     {

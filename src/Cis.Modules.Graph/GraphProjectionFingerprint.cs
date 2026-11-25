@@ -25,7 +25,7 @@ internal static class GraphProjectionFingerprint
             if (!catalogue.IsSuccess) throw new IOException("Projection catalogue could not be read.");
             var managed = catalogue.Catalog!.Documents.Where(entry => GraphBuilder.IsManagedChangeDossierPath(entry.Path))
                 .OrderBy(entry => entry.Path, StringComparer.Ordinal)
-                .Select(entry => new { entry.Id, entry.Path });
+                .Select(entry => new { entry.Id, entry.Path, entry.Type, entry.Authority });
             return GraphEvidenceReceipt.Digest(JsonSerializer.Serialize(managed));
         }
         var content = File.ReadAllText(absolute);

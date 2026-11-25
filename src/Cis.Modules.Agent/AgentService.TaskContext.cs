@@ -4,6 +4,47 @@ namespace Cis.Modules.Agent;
 
 public sealed partial class AgentService
 {
+    private AgentTaskEnvelope RefreshResumedTaskContext(CisRepositoryContext authority,
+        AgentRunManifest manifest, AgentTaskEnvelope envelope)
+    {
+        if (!IsDirectWorkRun(manifest, envelope))
+        {
+            return envelope;
+        }
+        using var phase = CisInvocationTelemetry.MeasurePhase("agent.resume.context");
+        try
+        {
+            CisReadScope.Invalidate();
+            var current = authority;
+            if (manifest.TargetRepositoryId == authority.RepositoryId)
+            {
+                current = authority with
+                {
+                    RepositoryPath = manifest.WorkingDirectory,
+                    DocumentationPath = Path.Combine(manifest.WorkingDirectory, authority.DocumentationRoot),
+                    CatalogPath = Path.Combine(manifest.WorkingDirectory,
+                        Path.GetRelativePath(authority.RepositoryPath, authority.CatalogPath))
+                };
+            }
+            // Refresh only derived advice. The original persisted envelope, canonical
+            // task text and accepted authority bindings remain the retained contract.
+            return envelope with
+            {
+                TaskContext = PrepareTaskContext(current, envelope.ChangeId, envelope.TaskId,
+                    envelope.CanonicalTaskPath, envelope.InstructionMarkdown, manifest.WorkingDirectory)
+            };
+        }
+        catch (Exception error) when (error is IOException or InvalidDataException
+            or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            return envelope with
+            {
+                TaskContext = UnavailableTaskContext("CIS-TASK-CONTEXT-RESUME-UNAVAILABLE",
+                    "Current advisory context could not be prepared for the resumed working directory. Inspect current implementation and verification evidence; the retained canonical task and authority remain unchanged.")
+            };
+        }
+    }
+
     private CisTaskContextDelivery PrepareTaskContext(CisRepositoryContext context, string changeId,
         string taskId, string taskPath, string taskText, string? targetRepositoryPath)
     {

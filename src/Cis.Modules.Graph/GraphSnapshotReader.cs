@@ -152,7 +152,7 @@ public sealed class GraphSnapshotReader : ICisGraphSnapshotReader
         if (graph.Nodes.Any(node => node.Kind == "test")) capabilities.Add("tests.symbols");
         if (graph.Edges.Any(edge => edge.Type == "calls" && nodeKinds.TryGetValue(edge.From, out var kind) && kind == "test"))
             capabilities.Add("tests.calls");
-        if (manifest.Extractors.Any(extractor => extractor is "cis.csharp.semantic-facts/1" or "cis.csharp.semantic-facts/2" or "cis.csharp.semantic-facts/3"))
+        if (manifest.Extractors.Any(extractor => extractor is "cis.csharp.semantic-facts/1" or "cis.csharp.semantic-facts/2" or "cis.csharp.semantic-facts/3" or "cis.csharp.semantic-facts/4"))
         {
             capabilities.Add("compiler.symbols");
             capabilities.Add("compiler.calls");
@@ -193,7 +193,10 @@ public sealed class GraphSnapshotReader : ICisGraphSnapshotReader
         }
         try
         {
-            foreach (var currentPath in ImplementationGraphExtractor.EnumerateInputPaths(repositoryPath))
+            var currentPaths = current
+                ? ImplementationGraphExtractor.EnumerateCurrentInputPaths(repositoryPath)
+                : ImplementationGraphExtractor.EnumerateInputPaths(repositoryPath);
+            foreach (var currentPath in currentPaths)
                 if (!known.Contains(currentPath)) stale.Add(currentPath + " (new)");
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)

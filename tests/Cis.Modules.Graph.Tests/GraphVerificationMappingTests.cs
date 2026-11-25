@@ -184,6 +184,57 @@ public sealed partial class GraphBuilderTests
         Assert.Equal(field == "title" ? "Revised declared behavior" : "Check declared behavior", task.Label);
     }
 
+    [Theory]
+    [InlineData("type", "decision-record")]
+    [InlineData("authority", "proposal")]
+    public void ManagedCatalogueClassificationChangesRefreshProjectionWithoutChangingMaterialBaseline(string field, string value)
+    {
+        using var fixture = VerificationFixture.Create();
+        var reader = fixture.Reader();
+        using var scope = CisReadScope.Enter();
+        var first = reader.ReadCurrent(fixture.Repository.Path);
+        var taskBefore = Assert.Single(first.Graph!.Nodes, node => node.Kind == "document" && node.LocalId == "fixture:task:one");
+        var catalogBefore = Assert.Single(first.Manifest!.Inputs, input => input.Path == "docs/cis/catalog.yml");
+        var taskBytes = File.ReadAllBytes(Path.Combine(fixture.Repository.Path, VerificationFixture.TaskPath));
+        var catalog = Path.Combine(fixture.Repository.Path, "docs/cis/catalog.yml");
+        var text = File.ReadAllText(catalog);
+        var taskStart = text.IndexOf("  - id: fixture:task:one", StringComparison.Ordinal);
+        var nextEntry = text.IndexOf("  - id:", taskStart + 1, StringComparison.Ordinal);
+        var taskEntry = text[taskStart..nextEntry];
+        var oldValue = field == "type" ? "agent-task" : "canonical";
+        File.WriteAllText(catalog, text[..taskStart]
+            + taskEntry.Replace(field + ": " + oldValue, field + ": " + value, StringComparison.Ordinal)
+            + text[nextEntry..]);
+
+        var current = reader.ReadCurrent(fixture.Repository.Path);
+
+        Assert.Equal(0, current.ExitCode);
+        Assert.Equal("fresh", current.Freshness);
+        Assert.NotSame(first, current);
+        Assert.Equal(first.Graph.Build.Id, current.Graph!.Build.Id);
+        var catalogAfter = Assert.Single(current.Manifest!.Inputs, input => input.Path == "docs/cis/catalog.yml");
+        Assert.Equal(catalogBefore.Hash, catalogAfter.Hash);
+        Assert.NotEqual(catalogBefore.ProjectionHash, catalogAfter.ProjectionHash);
+        Assert.Equal(taskBytes, File.ReadAllBytes(Path.Combine(fixture.Repository.Path, VerificationFixture.TaskPath)));
+        var task = Assert.Single(current.Graph.Nodes, node => node.Kind == "document" && node.LocalId == "fixture:task:one");
+        Assert.Equal(field == "type" ? value : taskBefore.Subtype, task.Subtype);
+        Assert.Equal(field == "authority" ? value : taskBefore.Authority, task.Authority);
+        if (field == "type")
+        {
+            Assert.Contains("decision", task.Facets);
+            Assert.Contains(current.Diagnostics, diagnostic => diagnostic.Code == "CIS-GRAPH-VERIFY-001");
+            Assert.DoesNotContain(current.Graph.Edges, edge => edge.To == task.Key && edge.Type == "references"
+                && current.Graph.Nodes.Any(node => node.Key == edge.From && node.Kind == "requirement"));
+        }
+        else
+        {
+            Assert.DoesNotContain("canonical-document", task.Facets);
+            Assert.Contains(task.Provenance, evidence => evidence.Method == "proposed");
+        }
+
+        Assert.Same(current, reader.ReadCurrent(fixture.Repository.Path));
+    }
+
     [Fact]
     public void TaskStatusCheckboxAndCompletionBookkeepingReuseContextProjection()
     {
@@ -293,7 +344,12 @@ public sealed partial class GraphBuilderTests
             var hash = new string('a', 64);
             fixture.Save(new("verified", 0)
             {
-                ProfileId = "fixture", ProfilePath = ProfilePath, ProfileSha256 = Hash(ProfilePath), Layer = "unit", ScopeComplete = true, VerifiedUtc = stamp,
+                ProfileId = "fixture",
+                ProfilePath = ProfilePath,
+                ProfileSha256 = Hash(ProfilePath),
+                Layer = "unit",
+                ScopeComplete = true,
+                VerifiedUtc = stamp,
                 Inputs = [new(Artifact, Hash(Artifact), ["source"]), new(TestPath, Hash(TestPath), ["test"]),
                     new(ProfilePath, Hash(ProfilePath), ["profile"]), new("C:/external/native-tool.dll", hash, ["producer"])],
                 Closures = [new("closure", [1], [0])],

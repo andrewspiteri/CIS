@@ -37,7 +37,7 @@ No roots declared. Supply roots to `cis impact analyse`.
 
 ## Authorized outcome and limits
 
-Derived from [the canonical authorization](authorization.json), decision `CIS-0005-SOURCE-CLOSEOUT:USER-APPROVED-8H:CONSTRAINT-PRESERVATION`, recorded for Andrew Spiteri. Tasks reference this shared context; their organization is not a separate human review.
+Derived from [the canonical authorization](authorization.json), decision `CIS-0005-SELECTION-CORRECTNESS:USER-APPROVED-4H-20261125`, recorded for Andrew Spiteri. Tasks reference this shared context; their organization is not a separate human review.
 
 Implement current bounded requirement and verification context through the updated CIS distributable and verified explicit-route consumer installation.
 
@@ -56,7 +56,7 @@ Implement current bounded requirement and verification context through the updat
 - Source retains existing 16 GiB counted ceiling and 256 MiB reserve; consumer retains existing physical 6 GiB ceiling and 64 MiB reserve. Staging and rollback count; unknown/protected ownership does not grant deletion authority.
 - User approved CIS-0005's seven-task plan and one shared allocation; all agents, already-performed intake, native checks, documentation, packaging, installation and consumer proof share the same totals.
 
-The total is 115,200 active seconds and 24 logical attempts, including 1,200 protected restoration seconds. Storage is 17,179,869,184 bytes including existing files and 268,435,456 protected reserve bytes.
+The total is 144,000 active seconds and 24 logical attempts, including 1,200 protected restoration seconds. Storage is 17,179,869,184 bytes including existing files and 268,435,456 protected reserve bytes.
 Owned roots: `.artifacts/outcome-workflow-correction` (count only), `.cis/local`, `src` (count only), `tests` (count only).
 Controllers: Codex. Task organization: delegated; resource distribution within the total: delegated.
 Visual UI: not applicable; manual-test catalogue: no obligation recorded.

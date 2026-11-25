@@ -67,6 +67,9 @@ internal static partial class ImplementationGraphExtractor
         => CisReadScope.Read(typeof(ImplementationGraphExtractor), nameof(EnumerateInputPaths), repositoryPath,
             () => EnumerateInputPathsCore(repositoryPath));
 
+    public static IReadOnlyList<string> EnumerateCurrentInputPaths(string repositoryPath)
+        => EnumerateInputPathsCore(repositoryPath);
+
     private static IReadOnlyList<string> EnumerateInputPathsCore(string repositoryPath)
     {
         var scope = GraphInputScope.Read(repositoryPath);
@@ -78,7 +81,8 @@ internal static partial class ImplementationGraphExtractor
         {
             var entries = new DirectoryInfo(directory).EnumerateFileSystemInfos("*", new EnumerationOptions
             {
-                AttributesToSkip = FileAttributes.ReparsePoint, IgnoreInaccessible = false
+                AttributesToSkip = FileAttributes.ReparsePoint,
+                IgnoreInaccessible = false
             }).ToArray();
             foreach (var child in entries.OfType<DirectoryInfo>().OrderBy(entry => entry.FullName, StringComparer.OrdinalIgnoreCase))
             {
